@@ -1,167 +1,167 @@
-//! Мультикадровые спрайты M.A.X. — тела RES-ресурсов с тегами `COMMTWR`…`WALDO`
-//! и `S_*` (тени).
+//! Multi-frame sprites of M.A.X. — bodies of RES resources with tags `COMMTWR`…`WALDO`
+//! and `S_*` (shadows).
 //!
-//! Формат описан в `max-original-dasm/formats/spw.md` (важно: файлы `*.SPW` в
-//! каталоге игры — это RIFF/WAVE-звуки, а не спрайты, §1):
+//! The format is described in `max-original-dasm/formats/spw.md` (important: the `*.SPW` files in
+//! the game directory are RIFF/WAVE sounds, not sprites, §1):
 //!
 //! ```text
 //! ImageMultiHeader:
 //! +0x00  u16 image_count
-//! +0x02  u32 frame_offset[image_count]   — смещения кадров ОТ НАЧАЛА СПРАЙТА
+//! +0x02  u32 frame_offset[image_count]   — frame offsets FROM THE START OF THE SPRITE
 //!
-//! ImageMultiFrameHeader (по frame_offset[i]):
+//! ImageMultiFrameHeader (at frame_offset[i]):
 //! +0x00  i16 width, i16 height, i16 hotx, i16 hoty
-//! +0x08  u32 row_offset[height]          — смещения строк ОТ НАЧАЛА СПРАЙТА
+//! +0x08  u32 row_offset[height]          — row offsets FROM THE START OF THE SPRITE
 //!
-//! строка спрайта: {u8 skip, u8 count, u8 pixels[count]}*, 0xFF — конец строки
-//! строка тени:    {u8 skip, u8 count}*,                     0xFF — конец строки
+//! sprite row: {u8 skip, u8 count, u8 pixels[count]}*, 0xFF — end of row
+//! shadow row:    {u8 skip, u8 count}*,                     0xFF — end of row
 //! ```
 //!
-//! Ключевые свойства формата, воспроизведённые здесь (§4, §9):
-//! * прозрачность **структурная**: пропущенные пиксели в файле отсутствуют,
-//!   поэтому [`SpriteFrame::pixels`] хранит `None` на их месте;
-//! * сумма `skip + count` по прогонам строки может быть меньше `width` —
-//!   хвост строки прозрачен и в файле не записан (`TANK` кадр 0: 39 из 44, §4.2);
-//! * байт `0xFF` — терминатор строки только в позиции счётчика `skip`; внутри
-//!   поля пикселей он допустим и читается как обычный индекс палитры (§4.1);
-//! * прогон с `count == 0` валиден («только пропуск»);
-//! * в кадрах тени пиксельных байтов нет вообще: прогон — пара счётчиков
-//!   `{skip, count}`, поэтому тень декодируется в маску затемнения (§4.3);
-//! * спрайты не имеют ни сигнатуры, ни флагов — «тень или нет» определяется
-//!   только тегом ресурса, поэтому режим задаётся параметром [`decode`].
+//! Key properties of the format reproduced here (§4, §9):
+//! * transparency is **structural**: skipped pixels are absent from the file,
+//!   so [`SpriteFrame::pixels`] stores `None` in their place;
+//! * the sum of `skip + count` over the runs of a row may be less than `width` —
+//!   the tail of the row is transparent and not recorded in the file (`TANK` frame 0: 39 of 44, §4.2);
+//! * the `0xFF` byte is a row terminator only in the position of the `skip` counter; inside
+//!   the pixel field it is allowed and is read as an ordinary palette index (§4.1);
+//! * a run with `count == 0` is valid ("skip only");
+//! * in shadow frames there are no pixel bytes at all: a run is a pair of counters
+//!   `{skip, count}`, so the shadow decodes into a darkening mask (§4.3);
+//! * sprites have neither a signature nor flags — "shadow or not" is determined
+//!   only by the resource tag, so the mode is set by the [`decode`] parameter.
 //!
-//! Декодер не паникует на битых данных: структурные ошибки возвращаются как
-//! [`SpriteError`], чтение за границы ресурса невозможно (§9.13).
+//! The decoder does not panic on corrupt data: structural errors are returned as
+//! [`SpriteError`]; reading past the resource boundary is impossible (§9.13).
 
 use std::fmt;
 
-/// Размер заголовка спрайта: `u16 image_count`.
+/// Sprite header size: `u16 image_count`.
 pub const HEADER_SIZE: usize = 2;
-/// Размер заголовка кадра: 4 × `i16` (width, height, hotx, hoty).
+/// Frame header size: 4 × `i16` (width, height, hotx, hoty).
 pub const FRAME_HEADER_SIZE: usize = 8;
-/// Терминатор строки (`row_delimiter` в `Gfx_DecodeSprite`).
+/// Row terminator (`row_delimiter` in `Gfx_DecodeSprite`).
 pub const ROW_DELIMITER: u8 = 0xFF;
-/// Сколько цветов в палитре (индекс пикселя — `u8`).
+/// How many colors are in the palette (a pixel index is `u8`).
 pub const PALETTE_SIZE: usize = 256;
-/// Верхний предел пикселей одного кадра: защита от OOM на битом заголовке.
+/// Upper bound on the pixels of one frame: protection against OOM on a corrupt header.
 pub const MAX_FRAME_PIXELS: usize = 16 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
-// Ошибки
+// Errors
 // ---------------------------------------------------------------------------
 
-/// Ошибка разбора тела спрайта.
+/// Sprite body parsing error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpriteError {
-    /// Тело короче двухбайтного `image_count`.
+    /// The body is shorter than the two-byte `image_count`.
     TooShort {
-        /// Фактическая длина тела ресурса.
+        /// Actual length of the resource body.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// `image_count == 0` — у спрайта нет ни одного кадра (§9.13).
+    /// `image_count == 0` — the sprite has no frames at all (§9.13).
     ZeroImages,
-    /// Таблица смещений кадров не помещается в тело ресурса.
+    /// The frame offset table does not fit into the resource body.
     OffsetTableTruncated {
-        /// `image_count` из заголовка.
+        /// `image_count` from the header.
         image_count: u16,
-        /// Требуемый конец таблицы (в байтах от начала спрайта).
+        /// Required end of the table (in bytes from the start of the sprite).
         needed: usize,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// `frame_offset[i]` указывает за пределы тела ресурса.
+    /// `frame_offset[i]` points beyond the resource body.
     FrameOutOfBounds {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Смещение кадра из таблицы.
+        /// Frame offset from the table.
         offset: u32,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Заголовок кадра или таблица смещений строк не помещаются в тело.
+    /// The frame header or the row offset table does not fit into the body.
     FrameTruncated {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Смещение кадра.
+        /// Frame offset.
         offset: u32,
-        /// Требуемый конец заголовка кадра вместе с таблицей строк.
+        /// Required end of the frame header together with the row table.
         needed: usize,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Размеры кадра неположительны (`width <= 0` или `height <= 0`).
+    /// The frame dimensions are not positive (`width <= 0` or `height <= 0`).
     BadDimensions {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// `width` из заголовка кадра.
+        /// `width` from the frame header.
         width: i16,
-        /// `height` из заголовка кадра.
+        /// `height` from the frame header.
         height: i16,
     },
-    /// Кадр требует больше пикселей, чем [`MAX_FRAME_PIXELS`] — заголовок битый.
+    /// The frame requires more pixels than [`MAX_FRAME_PIXELS`] — the header is corrupt.
     FrameTooLarge {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// `width` из заголовка кадра.
+        /// `width` from the frame header.
         width: u16,
-        /// `height` из заголовка кадра.
+        /// `height` from the frame header.
         height: u16,
     },
-    /// `row_offset[y]` указывает за пределы тела ресурса.
+    /// `row_offset[y]` points beyond the resource body.
     RowOutOfBounds {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Индекс строки.
+        /// Row index.
         row: usize,
-        /// Смещение строки из таблицы.
+        /// Row offset from the table.
         offset: u32,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Строка не завершилась терминатором `0xFF` до конца тела ресурса.
+    /// The row did not end with the `0xFF` terminator before the end of the resource body.
     RowUnterminated {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Индекс строки.
+        /// Row index.
         row: usize,
-        /// Смещение строки.
+        /// Row offset.
         offset: u32,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Пара счётчиков `{skip, count}` или байт терминатора обрывается концом тела.
+    /// The counter pair `{skip, count}` or the terminator byte is cut off by the end of the body.
     RunHeaderTruncated {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Индекс строки.
+        /// Row index.
         row: usize,
-        /// Смещение чтения.
+        /// Read offset.
         offset: usize,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Поле пикселей прогона обрывается концом тела ресурса.
+    /// The pixel field of a run is cut off by the end of the resource body.
     PixelPayloadTruncated {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Индекс строки.
+        /// Row index.
         row: usize,
-        /// Смещение чтения.
+        /// Read offset.
         offset: usize,
-        /// Фактическая длина тела.
+        /// Actual body length.
         len: usize,
     },
-    /// Сумма `skip + count` по прогонам строки превышает `width` (§4.2).
+    /// The sum of `skip + count` over the runs of a row exceeds `width` (§4.2).
     RowOverrun {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Индекс строки.
+        /// Row index.
         row: usize,
-        /// Накопленная позиция по x после прогона.
+        /// Accumulated x position after the run.
         x: u32,
-        /// `width` кадра.
+        /// `width` of the frame.
         width: u16,
     },
 }
@@ -263,72 +263,72 @@ impl fmt::Display for SpriteError {
 impl std::error::Error for SpriteError {}
 
 // ---------------------------------------------------------------------------
-// Структуры данных
+// Data structures
 // ---------------------------------------------------------------------------
 
-/// Один прогон строки в том виде, в каком он записан в файле.
+/// One row run as recorded in the file.
 ///
-/// У обычного спрайта `pixels.len() == count`, у строки тени `pixels` пуст:
-/// там за парой счётчиков байтов пикселей нет.
+/// For an ordinary sprite `pixels.len() == count`; for a shadow row `pixels` is empty:
+/// there are no pixel bytes after the counter pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteRun {
-    /// `u8 skip` — сколько прозрачных пикселей пропустить.
+    /// `u8 skip` — how many transparent pixels to skip.
     pub skip: u8,
-    /// `u8 count` — сколько пикселей (для тени — затемняемых) идёт дальше.
+    /// `u8 count` — how many pixels (for a shadow, darkened ones) follow.
     pub count: u8,
-    /// Индексы палитры прогона; пусто для теней.
+    /// Palette indices of the run; empty for shadows.
     pub pixels: Vec<u8>,
 }
 
 impl SpriteRun {
-    /// Прогон не содержит пиксельных байтов (строка тени).
+    /// The run contains no pixel bytes (a shadow row).
     #[inline]
     pub fn is_shadow(&self) -> bool {
         self.pixels.is_empty()
     }
 
-    /// Сколько пикселей строки покрывает прогон (`skip + count`).
+    /// How many pixels of the row the run covers (`skip + count`).
     #[inline]
     pub fn span(&self) -> u32 {
         u32::from(self.skip) + u32::from(self.count)
     }
 }
 
-/// Одна строка кадра: последовательность прогонов до терминатора `0xFF`.
+/// One frame row: a sequence of runs up to the `0xFF` terminator.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpriteRow {
-    /// Прогоны в файловом порядке.
+    /// Runs in file order.
     pub runs: Vec<SpriteRun>,
-    /// Сумма `skip + count` по прогонам; может быть меньше `width` (§4.2).
+    /// Sum of `skip + count` over the runs; may be less than `width` (§4.2).
     pub painted: u32,
 }
 
 impl SpriteRow {
-    /// Сколько прогонов с непустым полем пикселей.
+    /// How many runs have a non-empty pixel field.
     pub fn painted_runs(&self) -> usize {
         self.runs.iter().filter(|run| run.count > 0).count()
     }
 }
 
-/// Кадр обычного (не теневого) спрайта.
+/// Frame of an ordinary (non-shadow) sprite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteFrame {
-    /// Ширина кадра в пикселях.
+    /// Frame width in pixels.
     pub width: u16,
-    /// Высота кадра в пикселях.
+    /// Frame height in pixels.
     pub height: u16,
-    /// Горячая точка (якорь) по x.
+    /// Hot spot (anchor) along x.
     pub hotx: i16,
-    /// Горячая точка (якорь) по y.
+    /// Hot spot (anchor) along y.
     pub hoty: i16,
-    /// Разобранные строки — как в файле (потерянных данных нет).
+    /// Parsed rows — as in the file (no data is lost).
     pub rows: Vec<SpriteRow>,
-    /// Пиксели кадра `width * height`, row-major: `None` — прозрачность.
+    /// Frame pixels `width * height`, row-major: `None` is transparency.
     pub pixels: Vec<Option<u8>>,
 }
 
 impl SpriteFrame {
-    /// Пиксель по координатам кадра; `None` за границей и на прозрачности.
+    /// Pixel by frame coordinates; `None` outside the boundary and on transparency.
     #[inline]
     pub fn pixel(&self, x: u32, y: u32) -> Option<u8> {
         if x >= u32::from(self.width) || y >= u32::from(self.height) {
@@ -338,19 +338,19 @@ impl SpriteFrame {
         self.pixels[(y as usize) * (self.width as usize) + (x as usize)]
     }
 
-    /// Строка кадра по индексу.
+    /// Frame row by index.
     #[inline]
     pub fn row(&self, y: usize) -> Option<&SpriteRow> {
         self.rows.get(y)
     }
 
-    /// Число непрозрачных пикселей кадра.
+    /// Number of opaque pixels in the frame.
     pub fn opaque_pixels(&self) -> usize {
         self.pixels.iter().filter(|pixel| pixel.is_some()).count()
     }
 
-    /// Прямоугольник кадра с учётом горячей точки в координатах «якоря»:
-    /// `ulx = point.x - hotx`, `uly = point.y - hoty` (§5.1 при `divisor = 2`).
+    /// Frame rectangle taking the hot spot into account in "anchor" coordinates:
+    /// `ulx = point.x - hotx`, `uly = point.y - hoty` (§5.1 with `divisor = 2`).
     pub fn bounds_for_anchor(&self, x: i32, y: i32) -> (i32, i32, i32, i32) {
         let ulx = x - i32::from(self.hotx);
         let uly = y - i32::from(self.hoty);
@@ -364,38 +364,38 @@ impl SpriteFrame {
     }
 }
 
-/// Мультикадровый спрайт: `u16 image_count` + кадры подряд.
+/// Multi-frame sprite: `u16 image_count` + frames in sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteSheet {
-    /// `image_count` из заголовка.
+    /// `image_count` from the header.
     pub image_count: u16,
-    /// Кадры в порядке `frame_offset[]` (`len() == image_count`).
+    /// Frames in `frame_offset[]` order (`len() == image_count`).
     pub frames: Vec<SpriteFrame>,
 }
 
 impl SpriteSheet {
-    /// Кадр по индексу (`GetSpriteFrame`).
+    /// Frame by index (`GetSpriteFrame`).
     #[inline]
     pub fn frame(&self, index: usize) -> Option<&SpriteFrame> {
         self.frames.get(index)
     }
 
-    /// Число кадров (совпадает с `image_count`).
+    /// Number of frames (matches `image_count`).
     #[inline]
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
-    /// Кадров нет (невозможно для успешно разобранного спрайта).
+    /// No frames (impossible for a successfully parsed sprite).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    /// Кадр по индексу с обёрткой вокруг модуля 8 — раскладка кадров юнита
-    /// «фаза × 8 + угол» (§5.3): `image_base + phase * 8 + angle`.
+    /// Frame by index with wrap-around modulo 8 — the unit frame layout is
+    /// "phase × 8 + angle" (§5.3): `image_base + phase * 8 + angle`.
     ///
-    /// Возвращает `None`, если итоговый индекс выходит за `image_count`.
+    /// Returns `None` if the resulting index is outside `image_count`.
     #[inline]
     pub fn directional_frame(
         &self,
@@ -407,47 +407,47 @@ impl SpriteSheet {
     }
 }
 
-/// Заголовок кадров юнита — ресурс `D_*` (`Unit::GetFrameInfo`,
+/// Unit frame header — the `D_*` resource (`Unit::GetFrameInfo`,
 /// `max-cpp-port/src/unit.cpp:51-76`).
 ///
-/// Это **не** спрайт, а 8-байтовый (или 24-байтовый для турелей) блок
-/// метаданных: базы и количества кадров корпуса, башни, выстрела и коннектора.
-/// Для юнитов с `TURRET_SPRITE`/`SPINNING_TURRET` далее идут 8 пар
-/// `(dx, dy): i8` — `angle_offsets[body_angle]`, на сколько пикселей сдвинуть
-/// башню относительно якоря корпуса.
+/// This is **not** a sprite but an 8-byte (or 24-byte for turrets) block of
+/// metadata: bases and counts of hull, turret, firing and connector frames.
+/// For units with `TURRET_SPRITE`/`SPINNING_TURRET` there follow 8 pairs
+/// `(dx, dy): i8` — `angle_offsets[body_angle]`, by how many pixels to shift
+/// the turret relative to the anchor of the hull.
 ///
-/// C++ читает счётчики как `int8_t` (`D_INFANT[1] = 0xC8` → -56); здесь
-/// счётчики `u8`, потому что отрицательных количеств кадров не бывает и
-/// значение используется только для выбора кадра (200 у пехоты).
+/// C++ reads the counters as `int8_t` (`D_INFANT[1] = 0xC8` → -56); here
+/// the counters are `u8`, because negative frame counts do not exist and
+/// the value is used only to choose a frame (200 for infantry).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FrameInfo {
-    /// База кадров корпуса (`image_base`).
+    /// Hull frame base (`image_base`).
     pub image_base: u8,
-    /// Число кадров корпуса (`image_count`).
+    /// Number of hull frames (`image_count`).
     pub image_count: u8,
-    /// База кадров башни (`turret_image_base`).
+    /// Turret frame base (`turret_image_base`).
     pub turret_image_base: u8,
-    /// Число кадров башни (`turret_image_count`).
+    /// Number of turret frames (`turret_image_count`).
     pub turret_image_count: u8,
-    /// База кадров выстрела (`firing_image_base`).
+    /// Firing frame base (`firing_image_base`).
     pub firing_image_base: u8,
-    /// Число кадров выстрела (`firing_image_count`).
+    /// Number of firing frames (`firing_image_count`).
     pub firing_image_count: u8,
-    /// База кадров коннектора (`connector_image_base`).
+    /// Connector frame base (`connector_image_base`).
     pub connector_image_base: u8,
-    /// Число кадров коннектора (`connector_image_count`).
+    /// Number of connector frames (`connector_image_count`).
     pub connector_image_count: u8,
-    /// Смещение башни для каждого из 8 углов корпуса; нули, если блок короче.
+    /// Turret offset for each of the 8 hull angles; zeros if the block is shorter.
     pub angle_offsets: [(i8, i8); 8],
 }
 
 impl FrameInfo {
-    /// Размер минимального блока (8 счётчиков).
+    /// Size of the minimal block (8 counters).
     pub const HEADER_SIZE: usize = 8;
-    /// Размер блока с `angle_offsets` (8 счётчиков + 8 пар).
+    /// Size of the block with `angle_offsets` (8 counters + 8 pairs).
     pub const TURRET_SIZE: usize = 24;
 
-    /// Разбирает ресурс `D_*`; `None`, если он короче 8 байт.
+    /// Parses the `D_*` resource; `None` if it is shorter than 8 bytes.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < Self::HEADER_SIZE {
             return None;
@@ -475,38 +475,38 @@ impl FrameInfo {
         })
     }
 
-    /// `angle_offsets[body_angle]` — куда рисовать башню (`angle` 0..7).
+    /// `angle_offsets[body_angle]` — where to draw the turret (`angle` 0..7).
     pub fn turret_offset(&self, body_angle: u8) -> (i32, i32) {
         let (x, y) = self.angle_offsets[usize::from(body_angle & 7)];
 
         (i32::from(x), i32::from(y))
     }
 
-    /// Индекс кадра башни: `turret_image_base + turret_angle` (0..7).
+    /// Turret frame index: `turret_image_base + turret_angle` (0..7).
     pub fn turret_frame_index(&self, turret_angle: u8) -> usize {
         usize::from(self.turret_image_base) + usize::from(turret_angle & 7)
     }
 }
 
-/// Кадр тени: маска затемнения вместо пикселей (§4.3).
+/// Shadow frame: a darkening mask instead of pixels (§4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowFrame {
-    /// Ширина кадра в пикселях.
+    /// Frame width in pixels.
     pub width: u16,
-    /// Высота кадра в пикселях.
+    /// Frame height in pixels.
     pub height: u16,
-    /// Горячая точка (якорь) по x.
+    /// Hot spot (anchor) along x.
     pub hotx: i16,
-    /// Горячая точка (якорь) по y.
+    /// Hot spot (anchor) along y.
     pub hoty: i16,
-    /// Разобранные строки: пары `{skip, count}` без пиксельных байтов.
+    /// Parsed rows: `{skip, count}` pairs without pixel bytes.
     pub rows: Vec<SpriteRow>,
-    /// Маска `width * height`, row-major: `true` — затемнить пиксель карты.
+    /// Mask `width * height`, row-major: `true` — darken the map pixel.
     pub mask: Vec<bool>,
 }
 
 impl ShadowFrame {
-    /// Затемняется ли пиксель кадра по координатам.
+    /// Whether the frame pixel is darkened by coordinates.
     #[inline]
     pub fn darkened(&self, x: u32, y: u32) -> bool {
         if x >= u32::from(self.width) || y >= u32::from(self.height) {
@@ -516,12 +516,12 @@ impl ShadowFrame {
         self.mask[(y as usize) * (self.width as usize) + (x as usize)]
     }
 
-    /// Число затемняемых пикселей кадра.
+    /// Number of darkened pixels in the frame.
     pub fn darkened_pixels(&self) -> usize {
         self.mask.iter().filter(|&&cell| cell).count()
     }
 
-    /// Прямоугольник тени с учётом горячей точки (как [`SpriteFrame::bounds_for_anchor`]).
+    /// Shadow rectangle taking the hot spot into account (like [`SpriteFrame::bounds_for_anchor`]).
     pub fn bounds_for_anchor(&self, x: i32, y: i32) -> (i32, i32, i32, i32) {
         let ulx = x - i32::from(self.hotx);
         let uly = y - i32::from(self.hoty);
@@ -535,46 +535,46 @@ impl ShadowFrame {
     }
 }
 
-/// Мультикадровая тень (`S_*`-ресурс).
+/// Multi-frame shadow (`S_*` resource).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowSheet {
-    /// `image_count` из заголовка.
+    /// `image_count` from the header.
     pub image_count: u16,
-    /// Кадры в порядке `frame_offset[]`.
+    /// Frames in `frame_offset[]` order.
     pub frames: Vec<ShadowFrame>,
 }
 
 impl ShadowSheet {
-    /// Кадр по индексу.
+    /// Frame by index.
     #[inline]
     pub fn frame(&self, index: usize) -> Option<&ShadowFrame> {
         self.frames.get(index)
     }
 
-    /// Число кадров.
+    /// Number of frames.
     #[inline]
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
-    /// Кадров нет (невозможно для успешно разобранной тени).
+    /// No frames (impossible for a successfully parsed shadow).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 }
 
-/// Результат [`decode`]: спрайт либо тень — режим задаётся вызывающим.
+/// Result of [`decode`]: a sprite or a shadow — the mode is set by the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodedSprite {
-    /// Обычный спрайт: пиксели-индексы палитры.
+    /// Ordinary sprite: palette index pixels.
     Sprite(SpriteSheet),
-    /// Тень: маска затемнения.
+    /// Shadow: a darkening mask.
     Shadow(ShadowSheet),
 }
 
 impl DecodedSprite {
-    /// Спрайт, если тело декодировано в обычном режиме.
+    /// Sprite, if the body was decoded in ordinary mode.
     pub fn as_sprite(&self) -> Option<&SpriteSheet> {
         match self {
             Self::Sprite(sheet) => Some(sheet),
@@ -582,7 +582,7 @@ impl DecodedSprite {
         }
     }
 
-    /// Тень, если тело декодировано в режиме тени.
+    /// Shadow, if the body was decoded in shadow mode.
     pub fn as_shadow(&self) -> Option<&ShadowSheet> {
         match self {
             Self::Sprite(_) => None,
@@ -590,20 +590,20 @@ impl DecodedSprite {
         }
     }
 
-    /// Тело декодировано как тень.
+    /// The body was decoded as a shadow.
     pub fn is_shadow(&self) -> bool {
         matches!(self, Self::Shadow(_))
     }
 }
 
 // ---------------------------------------------------------------------------
-// Декодер
+// Decoder
 // ---------------------------------------------------------------------------
 
-/// Декодирует тело спрайта. `shadow = true` читает строки как пары
-/// `{skip, count}` без пиксельных байтов (теги `S_*`, §4.3).
+/// Decodes the sprite body. `shadow = true` reads rows as `{skip, count}` pairs
+/// without pixel bytes (tags `S_*`, §4.3).
 ///
-/// Режим нельзя определить по содержимому (§3.4), поэтому он приходит извне.
+/// The mode cannot be determined from the contents (§3.4), so it comes from outside.
 pub fn decode(bytes: &[u8], shadow: bool) -> Result<DecodedSprite, SpriteError> {
     if bytes.len() < HEADER_SIZE {
         return Err(SpriteError::TooShort {
@@ -668,7 +668,7 @@ pub fn decode(bytes: &[u8], shadow: bool) -> Result<DecodedSprite, SpriteError> 
     Ok(frames)
 }
 
-/// Декодирует тело обычного спрайта (теги `COMMTWR`…`WALDO`).
+/// Decodes the body of an ordinary sprite (tags `COMMTWR`…`WALDO`).
 pub fn decode_sprite(bytes: &[u8]) -> Result<SpriteSheet, SpriteError> {
     match decode(bytes, false)? {
         DecodedSprite::Sprite(sheet) => Ok(sheet),
@@ -676,7 +676,7 @@ pub fn decode_sprite(bytes: &[u8]) -> Result<SpriteSheet, SpriteError> {
     }
 }
 
-/// Декодирует тело тени (теги `S_*`).
+/// Decodes the body of a shadow (tags `S_*`).
 pub fn decode_shadow(bytes: &[u8]) -> Result<ShadowSheet, SpriteError> {
     match decode(bytes, true)? {
         DecodedSprite::Shadow(sheet) => Ok(sheet),
@@ -691,7 +691,7 @@ fn frame_offset(bytes: &[u8], index: usize) -> u32 {
     u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
 }
 
-/// Сырой (ещё не разложенный в `pixels`/`mask`) кадр.
+/// Raw (not yet laid out into `pixels`/`mask`) frame.
 struct RawFrame {
     width: u16,
     height: u16,
@@ -768,7 +768,7 @@ fn sprite_frame_from_raw(raw: RawFrame) -> SpriteFrame {
     }
 }
 
-/// Разбирает один кадр: заголовок, таблицу строк и сами строки.
+/// Parses one frame: header, row table and the rows themselves.
 fn decode_frame(
     bytes: &[u8],
     index: usize,
@@ -849,7 +849,7 @@ fn decode_frame(
     })
 }
 
-/// Разбирает строку до терминатора `0xFF` (§4.1 / §4.3).
+/// Parses a row up to the `0xFF` terminator (§4.1 / §4.3).
 fn decode_row(
     bytes: &[u8],
     frame: usize,
@@ -935,21 +935,21 @@ fn decode_row(
 }
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Собирает тело спрайта из кадров вида `(width, height, hotx, hoty, rows)`,
-    /// где `rows` — уже закодированные строки (байты вместе с терминатором).
+    /// Builds a sprite body from frames of the form `(width, height, hotx, hoty, rows)`,
+    /// where `rows` are already encoded rows (bytes together with the terminator).
     fn build_sprite(frames: &[(u16, u16, i16, i16, Vec<Vec<u8>>)]) -> Vec<u8> {
         let image_count = frames.len() as u16;
         let mut out = Vec::new();
 
         out.extend_from_slice(&image_count.to_le_bytes());
-        // Заглушки смещений кадров, заполняются ниже.
+        // Frame offset stubs, filled in below.
         out.extend(std::iter::repeat_n(0u8, 4 * frames.len()));
 
         for (index, (width, height, hotx, hoty, rows)) in frames.iter().enumerate() {
@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn decodes_rows_with_transparent_tail_and_hot_spot() {
-        // width = 6, row = {skip 1, count 2, [A, B]}, {skip 1, count 2, [C, D]} -> x = 6? нет: 1+2+1+2 = 6.
+        // width = 6, row = {skip 1, count 2, [A, B]}, {skip 1, count 2, [C, D]} -> x = 6? no: 1+2+1+2 = 6.
         let mut row = run(1, &[0xAA, 0xBB]);
 
         row.extend(run(1, &[0xCC, 0xDD]));
@@ -1012,13 +1012,13 @@ mod tests {
         );
         assert_eq!(frame.opaque_pixels(), 4);
         assert_eq!(frame.rows[0].painted, 6);
-        // height = 1, hot = (3, 4), точка (10, 20) -> кадр (7, 16)..(13, 17).
+        // height = 1, hot = (3, 4), point (10, 20) -> frame (7, 16)..(13, 17).
         assert_eq!(frame.bounds_for_anchor(10, 20), (7, 16, 13, 17));
     }
 
     #[test]
     fn tail_shorter_than_width_is_transparent() {
-        // Реальный edge-кейс TANK §3.1: сумма счётчиков меньше width.
+        // A real edge case from TANK §3.1: the sum of the counters is less than width.
         let mut row = run(1, &[0x11]);
 
         row.push(ROW_DELIMITER);
@@ -1032,7 +1032,7 @@ mod tests {
 
     #[test]
     fn ff_inside_pixel_payload_is_a_palette_index() {
-        // 0xFF допустим внутри поля пикселей: декодер читает ровно count байт.
+        // 0xFF is allowed inside the pixel field: the decoder reads exactly count bytes.
         let mut row = run(0, &[ROW_DELIMITER, 0x00, ROW_DELIMITER]);
 
         row.push(ROW_DELIMITER);
@@ -1060,7 +1060,7 @@ mod tests {
 
     #[test]
     fn shadow_rows_are_pairs_of_counters() {
-        // S_TANK §3.2: {4, 5}, {25, 5}, 0xFF при width = 49.
+        // S_TANK §3.2: {4, 5}, {25, 5}, 0xFF at width = 49.
         let mut row = vec![4, 5, 25, 5];
 
         row.push(ROW_DELIMITER);
@@ -1104,7 +1104,7 @@ mod tests {
         assert_eq!(sheet.frames[1].pixels, vec![Some(3)]);
         assert_eq!((sheet.frames[1].hotx, sheet.frames[1].hoty), (7, 8));
 
-        // Кадры юнитов раскладываются «фаза × 8 + угол» (§5.3).
+        // Unit frames are laid out as "phase × 8 + angle" (§5.3).
         assert!(sheet.directional_frame(0, 0, 0).is_some());
         assert!(sheet.directional_frame(0, 1, 0).is_none());
     }
@@ -1128,7 +1128,7 @@ mod tests {
             1
         );
 
-        // Та же ширина, но строка тени: пары {0, 2} без пиксельных байтов.
+        // The same width, but a shadow row: {0, 2} pairs without pixel bytes.
         let mut shadow_row = vec![0, 2];
 
         shadow_row.push(ROW_DELIMITER);
@@ -1160,7 +1160,7 @@ mod tests {
             Err(SpriteError::ZeroImages)
         ));
 
-        // image_count = 5, а таблица обрезана.
+        // image_count = 5, but the table is truncated.
         let mut truncated = vec![5, 0, 0, 0];
 
         assert!(matches!(
@@ -1168,7 +1168,7 @@ mod tests {
             Err(SpriteError::OffsetTableTruncated { .. })
         ));
 
-        // Кадр за концом тела.
+        // A frame beyond the end of the body.
         truncated = vec![1, 0, 0xFF, 0x00, 0x00, 0x00];
 
         assert!(matches!(
@@ -1176,7 +1176,7 @@ mod tests {
             Err(SpriteError::FrameOutOfBounds { .. })
         ));
 
-        // Нулевая ширина кадра.
+        // Zero frame width.
         let zero_width = build_sprite(&[(0, 1, 0, 0, vec![vec![ROW_DELIMITER]])]);
 
         assert!(matches!(
@@ -1184,8 +1184,8 @@ mod tests {
             Err(SpriteError::BadDimensions { .. })
         ));
 
-        // Строка без терминатора: доходит до конца тела.
-        // height = 1, прогон {skip 0, count 1, 0xAA} и ни одного 0xFF в конце.
+        // A row without a terminator: it reaches the end of the body.
+        // height = 1, run {skip 0, count 1, 0xAA} and no 0xFF at the end.
         let broken = build_sprite(&[(1, 1, 0, 0, vec![vec![0u8, 1, 0xAA]])]);
 
         assert!(matches!(
@@ -1193,7 +1193,7 @@ mod tests {
             Err(SpriteError::RowUnterminated { .. })
         ));
 
-        // Строка выходит за width.
+        // The row goes beyond width.
         let mut overrun = run(3, &[1, 2, 3]);
 
         overrun.push(ROW_DELIMITER);
@@ -1205,8 +1205,8 @@ mod tests {
             Err(SpriteError::RowOverrun { .. })
         ));
 
-        // Обрезанное поле пикселей.
-        let mut clipped = vec![0u8, 5, 1, 2]; // count = 5, а байтов только 2
+        // A truncated pixel field.
+        let mut clipped = vec![0u8, 5, 1, 2]; // count = 5, but only 2 bytes
 
         clipped.push(ROW_DELIMITER);
 
@@ -1218,12 +1218,12 @@ mod tests {
         ));
     }
 
-    /// `D_TANK` из `MAX.RES` — 24 байта: корпус 0..7, башня 8..15,
-    /// выстрел 16..23 и `angle_offsets` (те же числа, что читает C++).
+    /// `D_TANK` from `MAX.RES` — 24 bytes: hull 0..7, turret 8..15,
+    /// firing 16..23 and `angle_offsets` (the same numbers C++ reads).
     #[test]
     fn frame_info_decodes_tank_data() {
         let bytes = [
-            0u8, 8, 8, 8, 16, 8, 0, 0, // счётчики
+            0u8, 8, 8, 8, 16, 8, 0, 0, // counters
             0, 7, 0xFF, 7, 0xF8, 0, 0xF8, 0xF9, // (0,7) (-7,7) (-8,0) (-8,-7)
             0, 0xF8, 6, 0xF8, 7, 0, 7, 6, // (0,-8) (6,-8) (7,0) (7,6)
         ];
@@ -1240,11 +1240,11 @@ mod tests {
         assert_eq!(info.turret_offset(0), (0, 7));
         assert_eq!(info.turret_offset(2), (-8, 0));
         assert_eq!(info.turret_offset(7), (7, 6));
-        // `angle` маскируется в 0..7, как в C++ (`image_index & 0x07`).
+        // `angle` is masked to 0..7, as in C++ (`image_index & 0x07`).
         assert_eq!(info.turret_offset(10), (-8, 0));
     }
 
-    /// 8-байтовый ресурс (`D_FIRING`) — без башни/смещений (`angle_offsets` = 0).
+    /// 8-byte resource (`D_FIRING`) — without turret/offsets (`angle_offsets` = 0).
     #[test]
     fn frame_info_without_offsets_is_valid() {
         let info = FrameInfo::decode(&[0, 16, 0, 0, 16, 16, 0, 0]).expect("D_FIRING");
@@ -1253,7 +1253,7 @@ mod tests {
         assert_eq!(info.turret_image_count, 0);
         assert_eq!(info.angle_offsets, [(0, 0); 8]);
         assert_eq!(info.turret_offset(2), (0, 0));
-        // Пехота: `image_count` = 200 (0xC8), C++ читает int8 → -56.
+        // Infantry: `image_count` = 200 (0xC8), C++ reads int8 → -56.
         assert_eq!(FrameInfo::decode(&[0, 200, 0, 0, 0, 0, 0, 0]).unwrap().image_count, 200);
         assert_eq!(FrameInfo::decode(&[0, 1, 2]), None, "короче заголовка");
     }

@@ -1,47 +1,47 @@
-//! Камера и выбор видимого: преобразование координат карта → экран.
+//! Camera and visible selection: map -> screen coordinate transform.
 //!
-//! Карта M.A.X. — сетка [`MAP_WIDTH`]×[`MAP_HEIGHT`] клеток по 64 пикселя
-//! (`GFX_MAP_TILE_SIZE`). Камера хранит центр в «мировых» пикселях карты
-//! (`0..MAP_WIDTH*64`) и масштаб — сколько **экранных** пикселей приходится на
-//! одну клетку (`zoom`); в оригинале это `Gfx_ZoomLevel`, где 64 — масштаб 1:1.
+//! The M.A.X. map is a grid of [`MAP_WIDTH`]×[`MAP_HEIGHT`] cells of 64 pixels
+//! (`GFX_MAP_TILE_SIZE`). The camera stores the center in "world" map pixels
+//! (`0..MAP_WIDTH*64`) and the scale — how many **screen** pixels fall on
+//! one cell (`zoom`); in the original this is `Gfx_ZoomLevel`, where 64 is the 1:1 scale.
 //!
-//! Вся арифметика целочисленная (как в C++-порте: 16.16 fixed point), поэтому
-//! преобразования детерминированы и тестируются без окна. Углы экрана и карты
-//! клиппуются: камера не уезжает за карту.
+//! All arithmetic is integer (as in the C++ port: 16.16 fixed point), so the
+//! transforms are deterministic and tested without a window. The screen and map corners
+//! are clipped: the camera does not move beyond the map.
 //!
-//! Порядок отрисовки — по «земле» юнита: сначала верхние (меньший `y`), потом
-//! нижние, чтобы нижний юнит перекрывал верхнего (§5.4 spw.md).
+//! The drawing order is by the unit's "ground": first the upper ones (smaller `y`), then
+//! the lower ones, so that the lower unit overlaps the upper one (§5.4 spw.md).
 
 use max_core::geo::{MAP_HEIGHT, MAP_WIDTH};
 
 use crate::buffer::PixelRect;
 
-/// Пикселей карты в одной клетке (`GFX_MAP_TILE_SIZE`).
+/// Map pixels in one cell (`GFX_MAP_TILE_SIZE`).
 pub const MAP_TILE_PIXELS: i32 = 64;
-/// Минимальный масштаб: 8 экранных пикселей на клетку.
+/// Minimum scale: 8 screen pixels per cell.
 pub const MIN_ZOOM: u32 = 8;
-/// Максимальный масштаб: 128 экранных пикселей на клетку.
+/// Maximum scale: 128 screen pixels per cell.
 pub const MAX_ZOOM: u32 = 128;
-/// Масштаб по умолчанию — 1:1 (как `Gfx_ZoomLevel` в оригинале).
+/// Default scale — 1:1 (like `Gfx_ZoomLevel` in the original).
 pub const DEFAULT_ZOOM: u32 = 64;
-/// Шаг изменения масштаба (кнопки приближения/отдаления).
+/// Zoom change step (zoom-in/zoom-out buttons).
 pub const ZOOM_STEP: u32 = 2;
 
-/// Диапазон видимых клеток (включительно по обоим углам).
+/// Range of visible cells (inclusive at both corners).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileRange {
-    /// Минимальный x.
+    /// Minimum x.
     pub x0: i16,
-    /// Минимальный y.
+    /// Minimum y.
     pub y0: i16,
-    /// Максимальный x (включительно).
+    /// Maximum x (inclusive).
     pub x1: i16,
-    /// Максимальный y (включительно).
+    /// Maximum y (inclusive).
     pub y1: i16,
 }
 
 impl TileRange {
-    /// Диапазон из двух углов в любом порядке; пустой диапазон даёт `None`.
+    /// Range from two corners in any order; an empty range yields `None`.
     pub fn new(x0: i16, y0: i16, x1: i16, y1: i16) -> Option<Self> {
         if x0 > x1 || y0 > y1 {
             return None;
@@ -50,38 +50,38 @@ impl TileRange {
         Some(Self { x0, y0, x1, y1 })
     }
 
-    /// Ширина в клетках.
+    /// Width in cells.
     #[inline]
     pub fn width(&self) -> i16 {
         self.x1 - self.x0 + 1
     }
 
-    /// Высота в клетках.
+    /// Height in cells.
     #[inline]
     pub fn height(&self) -> i16 {
         self.y1 - self.y0 + 1
     }
 
-    /// Число клеток.
+    /// Number of cells.
     #[inline]
     pub fn count(&self) -> usize {
         self.width() as usize * self.height() as usize
     }
 
-    /// Клетка входит в диапазон.
+    /// The cell is within the range.
     #[inline]
     pub fn contains(&self, x: i16, y: i16) -> bool {
         x >= self.x0 && x <= self.x1 && y >= self.y0 && y <= self.y1
     }
 
-    /// Клетки диапазона в порядке отрисовки (строки сверху вниз, внутри
-    /// строки — слева направо).
+    /// Cells of the range in drawing order (rows top to bottom, inside a
+    /// row — left to right).
     pub fn cells(&self) -> impl Iterator<Item = (i16, i16)> + '_ {
         (self.y0..=self.y1).flat_map(move |y| (self.x0..=self.x1).map(move |x| (x, y)))
     }
 }
 
-/// Камера: размер экрана, центр в мировых пикселях и масштаб.
+/// Camera: screen size, center in world pixels and scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Viewport {
     screen_width: u32,
@@ -98,7 +98,7 @@ impl Default for Viewport {
 }
 
 impl Viewport {
-    /// Экран `width × height`, центр — центр карты, масштаб [`DEFAULT_ZOOM`].
+    /// Screen `width × height`, center — the center of the map, scale [`DEFAULT_ZOOM`].
     pub fn new(width: u32, height: u32) -> Self {
         let mut viewport = Self {
             screen_width: width,
@@ -113,7 +113,7 @@ impl Viewport {
         viewport
     }
 
-    /// Экран с явным центром (в мировых пикселях).
+    /// Screen with an explicit center (in world pixels).
     pub fn with_center(width: u32, height: u32, center: (i32, i32), zoom: u32) -> Self {
         let mut viewport = Self {
             screen_width: width,
@@ -128,54 +128,54 @@ impl Viewport {
         viewport
     }
 
-    /// Размер экрана `(width, height)`.
+    /// Screen size `(width, height)`.
     #[inline]
     pub fn screen(&self) -> (u32, u32) {
         (self.screen_width, self.screen_height)
     }
 
-    /// Центр в мировых пикселях.
+    /// Center in world pixels.
     #[inline]
     pub fn center(&self) -> (i32, i32) {
         (self.center_x, self.center_y)
     }
 
-    /// Масштаб: экранных пикселей на клетку.
+    /// Scale: screen pixels per cell.
     #[inline]
     pub fn zoom(&self) -> u32 {
         self.zoom
     }
 
-    /// Размер клетки на экране в пикселях.
+    /// Cell size on screen in pixels.
     #[inline]
     pub fn tile_pixels(&self) -> i32 {
         self.zoom as i32
     }
 
-    /// Масштаб 1:1 (клетка 64 экранных пикселя).
+    /// 1:1 scale (a cell of 64 screen pixels).
     #[inline]
     pub fn is_native_zoom(&self) -> bool {
         self.zoom == DEFAULT_ZOOM
     }
 
-    /// Устанавливает масштаб с клампом; возвращает фактический масштаб.
+    /// Sets the scale with clamping; returns the actual scale.
     pub fn set_zoom(&mut self, zoom: u32) -> u32 {
         self.zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
         self.clamp_center();
         self.zoom
     }
 
-    /// Приближает на [`ZOOM_STEP`] (с клампом).
+    /// Zooms in by [`ZOOM_STEP`] (with clamping).
     pub fn zoom_in(&mut self) -> u32 {
         self.set_zoom(self.zoom * ZOOM_STEP)
     }
 
-    /// Отдаляет на [`ZOOM_STEP`] (с клампом).
+    /// Zooms out by [`ZOOM_STEP`] (with clamping).
     pub fn zoom_out(&mut self) -> u32 {
         self.set_zoom(self.zoom / ZOOM_STEP)
     }
 
-    /// Мировой пиксель, который виден в левом верхнем углу экрана.
+    /// The world pixel visible at the top-left corner of the screen.
     pub fn origin(&self) -> (i32, i32) {
         let half_width_world = (i64::from(self.screen_width) * i64::from(MAP_TILE_PIXELS)
             / (2 * i64::from(self.zoom))) as i32;
@@ -188,7 +188,7 @@ impl Viewport {
         )
     }
 
-    /// Мировые пиксели -> пиксели экрана.
+    /// World pixels -> screen pixels.
     pub fn world_to_screen(&self, world_x: i32, world_y: i32) -> (i32, i32) {
         let (origin_x, origin_y) = self.origin();
         let zoom = i64::from(self.zoom);
@@ -201,7 +201,7 @@ impl Viewport {
         )
     }
 
-    /// Пиксели экрана -> мировые пиксели.
+    /// Screen pixels -> world pixels.
     pub fn screen_to_world(&self, screen_x: i32, screen_y: i32) -> (i32, i32) {
         let (origin_x, origin_y) = self.origin();
         let zoom = i64::from(self.zoom);
@@ -212,7 +212,7 @@ impl Viewport {
         )
     }
 
-    /// Левый верхний угол клетки на экране.
+    /// Top-left corner of the cell on screen.
     pub fn grid_to_screen(&self, grid_x: i16, grid_y: i16) -> (i32, i32) {
         self.world_to_screen(
             i32::from(grid_x) * MAP_TILE_PIXELS,
@@ -220,7 +220,7 @@ impl Viewport {
         )
     }
 
-    /// Клетка под точкой экрана (может быть за картой — не клампится).
+    /// The cell under a screen point (may be beyond the map — not clamped).
     pub fn screen_to_grid(&self, screen_x: i32, screen_y: i32) -> (i16, i16) {
         let (world_x, world_y) = self.screen_to_world(screen_x, screen_y);
 
@@ -230,31 +230,31 @@ impl Viewport {
         )
     }
 
-    /// Прямоугольник клетки на экране (размер — [`Viewport::tile_pixels`]).
+    /// Rectangle of the cell on screen (size — [`Viewport::tile_pixels`]).
     pub fn tile_rect(&self, grid_x: i16, grid_y: i16) -> PixelRect {
         let (screen_x, screen_y) = self.grid_to_screen(grid_x, grid_y);
 
         PixelRect::new(screen_x, screen_y, self.tile_pixels(), self.tile_pixels())
     }
 
-    /// Центрирует камеру на клетке.
+    /// Centers the camera on a cell.
     pub fn center_on_grid(&mut self, grid_x: i16, grid_y: i16) {
         self.center_x = i32::from(grid_x) * MAP_TILE_PIXELS + MAP_TILE_PIXELS / 2;
         self.center_y = i32::from(grid_y) * MAP_TILE_PIXELS + MAP_TILE_PIXELS / 2;
         self.clamp_center();
     }
 
-    /// Центрирует камеру на мировом пикселе.
+    /// Centers the camera on a world pixel.
     pub fn center_on_world(&mut self, world_x: i32, world_y: i32) {
         self.center_x = world_x;
         self.center_y = world_y;
         self.clamp_center();
     }
 
-    /// Сдвигает камеру на экранную дельту (например, мышью).
+    /// Moves the camera by a screen delta (e.g. with the mouse).
     ///
-    /// Экранные пиксели переводятся в мировые по текущему масштабу, поэтому
-    /// содержимое «едет» ровно за курсором; результат клампится по карте.
+    /// Screen pixels are converted to world pixels at the current scale, so that the
+    /// content moves exactly with the cursor; the result is clamped to the map.
     pub fn scroll_by_screen(&mut self, delta_x: i32, delta_y: i32) {
         let world_x =
             (i64::from(delta_x) * i64::from(MAP_TILE_PIXELS) / i64::from(self.zoom)) as i32;
@@ -266,7 +266,7 @@ impl Viewport {
         self.clamp_center();
     }
 
-    /// Не даёт камере выйти за карту (с учётом половины экрана).
+    /// Prevents the camera from going beyond the map (accounting for half the screen).
     pub fn clamp_center(&mut self) {
         let map_width_world = i32::from(MAP_WIDTH) * MAP_TILE_PIXELS;
         let map_height_world = i32::from(MAP_HEIGHT) * MAP_TILE_PIXELS;
@@ -292,8 +292,8 @@ impl Viewport {
         }
     }
 
-    /// Видимый диапазон клеток (обрезан по карте); `None`, если камера смотрит
-    /// мимо карты.
+    /// Visible cell range (clipped to the map); `None` if the camera looks
+    /// past the map.
     pub fn visible_tiles(&self) -> Option<TileRange> {
         let (x0, y0) = self.screen_to_grid(0, 0);
         let (x1, y1) =
@@ -307,13 +307,13 @@ impl Viewport {
         TileRange::new(x0, y0, x1, y1)
     }
 
-    /// Клетка видна на экране.
+    /// The cell is visible on screen.
     pub fn is_tile_visible(&self, grid_x: i16, grid_y: i16) -> bool {
         self.visible_tiles()
             .is_some_and(|range| range.contains(grid_x, grid_y))
     }
 
-    /// Экранный прямоугольник пересекается с экраном.
+    /// The screen rectangle intersects the screen.
     pub fn is_rect_visible(&self, rect: PixelRect) -> bool {
         rect.intersect(PixelRect::new(
             0,
@@ -324,10 +324,10 @@ impl Viewport {
         .is_some()
     }
 
-    /// Индексы юнитов, видимых в текущем кадре, в порядке отрисовки §5.4.
+    /// Indices of the units visible in the current frame, in §5.4 drawing order.
     ///
-    /// `margin_tiles` расширяет видимую область, чтобы спрайты, чья горячая
-    /// точка за экраном, но «тело» на экране, не исчезали.
+    /// `margin_tiles` expands the visible area so that sprites whose hot
+    /// spot is off screen but whose "body" is on screen do not disappear.
     pub fn visible_units(&self, units: &[(i16, i16)], margin_tiles: i16) -> Vec<usize> {
         let Some(range) = self.visible_tiles() else {
             return Vec::new();
@@ -352,10 +352,10 @@ impl Viewport {
     }
 }
 
-/// Порядок отрисовки набора позиций: по «земле» (`y`), затем по `x`.
+/// Drawing order of a set of positions: by "ground" (`y`), then by `x`.
 ///
-/// Возвращает индексы исходного среза; сортировка устойчивая, поэтому юниты
-/// с одинаковой позицией сохраняют порядок списка.
+/// Returns indices of the source slice; the sort is stable, so units
+/// with the same position keep the list order.
 pub fn draw_order(units: &[(i16, i16)]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..units.len()).collect();
 
@@ -368,8 +368,8 @@ pub fn draw_order(units: &[(i16, i16)]) -> Vec<usize> {
 mod tests {
     use super::*;
 
-    /// Экран 512×384 при масштабе 64: половина экрана — (256, 192) мировых
-    /// пикселей, поэтому центр карты (3584, 3584) даёт ровно клеточный угол
+    /// Screen 512×384 at scale 64: half the screen is (256, 192) world
+    /// pixels, so the center of the map (3584, 3584) gives an exact cell corner
     /// (3328, 3392) = (52, 53).
     fn test_viewport() -> Viewport {
         Viewport::new(512, 384)
@@ -383,13 +383,13 @@ mod tests {
         assert_eq!(viewport.zoom(), DEFAULT_ZOOM);
         assert!(viewport.is_native_zoom());
         assert_eq!(viewport.tile_pixels(), 64);
-        // Центр карты 112*64/2 = 3584.
+        // Center of the map 112*64/2 = 3584.
         assert_eq!(viewport.center(), (3584, 3584));
         assert_eq!(viewport.origin(), (3328, 3392));
         assert_eq!(viewport.grid_to_screen(52, 53), (0, 0));
         assert_eq!(viewport.grid_to_screen(53, 53), (64, 0));
 
-        // Видимы клетки 52..=59 по x и 53..=58 по y (8 × 6 = 48 клеток).
+        // Cells 52..=59 in x and 53..=58 in y are visible (8 × 6 = 48 cells).
         let range = viewport.visible_tiles().unwrap();
 
         assert_eq!((range.x0, range.y0, range.x1, range.y1), (52, 53, 59, 58));
@@ -405,7 +405,7 @@ mod tests {
 
         assert_eq!(viewport.zoom_out(), 32);
         assert_eq!(viewport.tile_pixels(), 32);
-        // При zoom 32 в кадр входит 512/32 = 16 клеток по x и 384/32 = 12 по y.
+        // At zoom 32 the frame fits 512/32 = 16 cells in x and 384/32 = 12 in y.
         let range = viewport.visible_tiles().unwrap();
 
         assert_eq!(range.width(), 16);
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(viewport.screen_to_grid(64, 64), (53, 54));
         assert!(viewport.is_rect_visible(rect));
 
-        // Клетка за правой границей экрана не видна.
+        // A cell beyond the right edge of the screen is not visible.
         assert_eq!(viewport.tile_rect(60, 53), PixelRect::new(512, 0, 64, 64));
         assert!(!viewport.is_rect_visible(viewport.tile_rect(60, 53)));
         assert!(!viewport.is_rect_visible(PixelRect::new(1000, 1000, 64, 64)));
@@ -444,7 +444,7 @@ mod tests {
         let mut viewport = test_viewport();
 
         viewport.center_on_grid(0, 0);
-        // Половина экрана — (256, 192) мировых пикселей, ближе к краю нельзя.
+        // Half the screen is (256, 192) world pixels, no closer to the edge allowed.
         assert_eq!(viewport.origin(), (0, 0));
         assert_eq!(viewport.center(), (256, 192));
 
@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(range.x1, MAP_WIDTH - 1);
         assert_eq!(range.y1, MAP_HEIGHT - 1);
 
-        // Сдвиг за пределы карты тоже клампится.
+        // A shift beyond the map is clamped too.
         viewport.scroll_by_screen(-100_000, -100_000);
         assert_eq!(viewport.origin(), (0, 0));
     }
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(viewport.origin(), (before.0 + 64, before.1 + 32));
         assert_eq!(viewport.center(), (3584 + 64, 3584 + 32));
 
-        // При zoom 32 один экранный пиксель — два мировых.
+        // At zoom 32 one screen pixel is two world pixels.
         viewport.set_zoom(32);
         let before = viewport.origin();
 
@@ -482,7 +482,7 @@ mod tests {
     fn draw_order_is_by_ground_then_x() {
         let units = [(10, 5), (3, 9), (7, 5), (1, 9), (0, 1)];
 
-        // y = 1: (0,1); y = 5: (7,5) и (10,5); y = 9: (1,9) и (3,9).
+        // y = 1: (0,1); y = 5: (7,5) and (10,5); y = 9: (1,9) and (3,9).
         assert_eq!(draw_order(&units), vec![4, 2, 0, 3, 1]);
     }
 
@@ -490,20 +490,20 @@ mod tests {
     fn visible_units_filters_and_orders() {
         let viewport = test_viewport();
 
-        // Видимы клетки 52..=59 x 53..=58.
+        // Cells 52..=59 x 53..=58 are visible.
         let units = [
-            (55, 55), // виден
-            (10, 10), // не виден
-            (52, 57), // виден, ниже
-            (56, 54), // виден, выше
-            (52, 53), // виден (угол)
-            (60, 55), // за правой границей
+            (55, 55), // visible
+            (10, 10), // not visible
+            (52, 57), // visible, below
+            (56, 54), // visible, above
+            (52, 53), // visible (corner)
+            (60, 55), // beyond the right edge
         ];
 
         let visible = viewport.visible_units(&units, 0);
 
         assert_eq!(visible, vec![4, 3, 0, 2]);
-        // С запасом в клетку появляется юнит на x = 60 (тот же y, ниже по x).
+        // With a one-cell margin the unit at x = 60 appears (same y, further along x).
         assert_eq!(viewport.visible_units(&units, 1), vec![4, 3, 0, 5, 2]);
     }
 

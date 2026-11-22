@@ -1,177 +1,177 @@
-//! FLC/FLI — анимации Autodesk FLIC (`*.FLC` рядом с `MAX.RES`).
+//! FLC/FLI — Autodesk FLIC animations (`*.FLC` next to `MAX.RES`).
 //!
-//! Оракул — `max-cpp-port/src/flicsmgr.cpp` (декодер `flicsmgr_*`) и
-//! `game_manager.cpp::GameManager_MenuCreateFlic`/`AdvanceFlic` (портрет
-//! `WINDOW_CORNER_FLIC`). Формат описан в публичной спецификации Autodesk
-//! FLIC (`flic.htm`): 128-байтный заголовок, далее кадры по 16-байтному
-//! заголовку, внутри кадра — чанки.
+//! Oracle — `max-cpp-port/src/flicsmgr.cpp` (decoder `flicsmgr_*`) and
+//! `game_manager.cpp::GameManager_MenuCreateFlic`/`AdvanceFlic` (the
+//! `WINDOW_CORNER_FLIC` portrait). The format is described in the public Autodesk
+//! FLIC specification (`flic.htm`): a 128-byte header, then frames with a 16-byte
+//! header, and chunks inside a frame.
 //!
 //! ```text
-//! +0x00 u32 size            — размер файла (в эталонных файлах совпадает)
-//! +0x04 u16 type            — 0xAF12 (FLC) / 0xAF11 (FLI; не поддерживается)
-//! +0x06 u16 frames          — число кадров
+//! +0x00 u32 size            — file size (matches in the reference files)
+//! +0x04 u16 type            — 0xAF12 (FLC) / 0xAF11 (FLI; not supported)
+//! +0x06 u16 frames          — number of frames
 //! +0x08 u16 width, +0x0A height, +0x0C depth, +0x0E flags
-//! +0x10 u32 speed           — мс на кадр (в MAX.RES: 71, у 128×256 — 67)
-//! +0x50 u32 oframe1         — смещение первого кадра
-//! +0x54 u32 oframe2         — смещение второго кадра (ring frame)
+//! +0x10 u32 speed           — ms per frame (in MAX.RES: 71, for 128×256 — 67)
+//! +0x50 u32 oframe1         — offset of the first frame
+//! +0x54 u32 oframe2         — offset of the second frame (ring frame)
 //! ```
 //!
-//! Кадр: `u32 size` (включая заголовок), `u16 type = 0xF1FA`, `u16 chunks`,
-//! 8 байт резерва. Чанк: `u32 size` (включая 6-байтный заголовок, размер
-//! чётный), `u16 type`, далее тело.
+//! Frame: `u32 size` (including the header), `u16 type = 0xF1FA`, `u16 chunks`,
+//! 8 bytes of reserve. Chunk: `u32 size` (including the 6-byte header, the size
+//! is even), `u16 type`, then the body.
 //!
-//! | Чанк | ID | Что делает |
+//! | Chunk | ID | What it does |
 //! |---|---|---|
-//! | `COLOR_256` | 4 | палитра: `u16 packets`, пакеты `u8 skip, u8 count (0→256), count×RGB` |
-//! | `DELTA_FLC` | 7 | дельта по словам (`FLI_SS2`): строки, опциональные слова, пакеты `u8 skip, i8 words` |
-//! | `COLOR_64` | 11 | палитра в 6-битных компонентах |
-//! | `DELTA_FLI` | 12 | дельта по байтам (`FLI_LC`): `u16 first_line, u16 lines`, пакеты `u8 skip, i8 count` |
-//! | `BLACK` | 13 | кадр в чёрный |
-//! | `BYTE_RUN` | 15 | полный кадр RLE: на строку `u8 packets`, затем `i8 count` + байт/литералы |
-//! | `LITERAL` | 16 | полный кадр без сжатия (`width*height` байт) |
-//! | `PSTAMP` | 18 | «почтовая марка» (превью) — в C++-порте игнорируется |
+//! | `COLOR_256` | 4 | palette: `u16 packets`, packets `u8 skip, u8 count (0→256), count×RGB` |
+//! | `DELTA_FLC` | 7 | word-based delta (`FLI_SS2`): rows, optional words, packets `u8 skip, i8 words` |
+//! | `COLOR_64` | 11 | palette in 6-bit components |
+//! | `DELTA_FLI` | 12 | byte-based delta (`FLI_LC`): `u16 first_line, u16 lines`, packets `u8 skip, i8 count` |
+//! | `BLACK` | 13 | frame to black |
+//! | `BYTE_RUN` | 15 | full RLE frame: per row `u8 packets`, then `i8 count` + byte/literals |
+//! | `LITERAL` | 16 | full frame without compression (`width*height` bytes) |
+//! | `PSTAMP` | 18 | "postage stamp" (preview) — ignored in the C++ port |
 //!
-//! # Отличия от C++-порта (и почему они безопасны)
+//! # Differences from the C++ port (and why they are safe)
 //!
-//! * **Границы проверяются**: C++ читает `memcpy`-ями без контроля длины, наш
-//!   декодер возвращает [`FlicError`] вместо паники/порчи кучи. На всех 71
-//!   ресурсе MAX.RES оба декодера дают одинаковые пиксели (`flic_vectors`).
-//! * **`DELTA_FLI` (12) реализован**: в C++ его нет, в 71 ресурсе MAX.RES он не
-//!   встречается — нужен только для полноты формата.
-//! * **Палитровые чанки копятся в 6-битном виде** — как системная палитра
-//!   C++-порта: байты `COLOR_256` сдвигаются `>> 2`, `COLOR_64` уже 6-битные
-//!   (для 8-битного RGB умножьте на 4). К портрету палитра не применяется:
-//!   `load_flic_palette = 0` в `GameManager_MenuCreateFlic`, индексы кадра идут
-//!   через палитру окна (`FRAMEPIC`). Палитра нужна для полноты формата и
-//!   будущих экранов с `load_flic_palette = 1`.
-//! * **`PSTAMP` пропускается** (как `default:` в C++), но его размер
-//!   валидируется.
+//! * **Bounds are checked**: C++ reads with `memcpy` without length control, our
+//!   decoder returns [`FlicError`] instead of a panic/heap corruption. On all 71
+//!   MAX.RES resources both decoders give identical pixels (`flic_vectors`).
+//! * **`DELTA_FLI` (12) is implemented**: C++ does not have it, and it does not occur
+//!   in the 71 MAX.RES resources — it is needed only for format completeness.
+//! * **Palette chunks accumulate in 6-bit form** — like the system palette of the
+//!   C++ port: `COLOR_256` bytes are shifted `>> 2`, `COLOR_64` are already 6-bit
+//!   (for 8-bit RGB multiply by 4). The palette is not applied to the portrait:
+//!   `load_flic_palette = 0` in `GameManager_MenuCreateFlic`, the frame indices go
+//!   through the window palette (`FRAMEPIC`). The palette is needed for format completeness and
+//!   future screens with `load_flic_palette = 1`.
+//! * **`PSTAMP` is skipped** (like `default:` in C++), but its size
+//!   is validated.
 //!
-//! Кадры — дельта-кодированные: кадр `N` требует применения кадров `0..=N`.
-//! [`Flic::decode_frame`] делает это с нуля (детерминированно, без состояния),
-//! [`FlicPlayer`] — инкрементально, как `flicsmgr_advance_animation`.
+//! The frames are delta-encoded: frame `N` requires applying frames `0..=N`.
+//! [`Flic::decode_frame`] does this from scratch (deterministically, without state),
+//! [`FlicPlayer`] — incrementally, like `flicsmgr_advance_animation`.
 //!
-//! Ошибки формата возвращаются значениями, паник на битых данных нет:
-//! `#![forbid(unsafe_code)]` в крейте и проверки каждого чтения.
+//! Format errors are returned as values; there are no panics on corrupt data:
+//! `#![forbid(unsafe_code)]` in the crate and checks on every read.
 
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Размер заголовка FLIC (`sizeof(FlicHeader)` в C++-порте).
+/// FLIC header size (`sizeof(FlicHeader)` in the C++ port).
 pub const FLIC_HEADER_SIZE: usize = 128;
-/// Размер заголовка кадра (`sizeof(FrameHeader)`).
+/// Frame header size (`sizeof(FrameHeader)`).
 pub const FLIC_FRAME_HEADER_SIZE: usize = 16;
-/// Размер заголовка чанка (`sizeof(FlicChunkHeader)`).
+/// Chunk header size (`sizeof(FlicChunkHeader)`).
 pub const FLIC_CHUNK_HEADER_SIZE: usize = 6;
-/// Сигнатура FLC (`FLICSMGR_FLC_TYPE`).
+/// FLC signature (`FLICSMGR_FLC_TYPE`).
 pub const FLC_MAGIC: u16 = 0xAF12;
-/// Сигнатура FLI (`FLICSMGR_FLI_TYPE`) — формат не поддерживается.
+/// FLI signature (`FLICSMGR_FLI_TYPE`) — the format is not supported.
 pub const FLI_MAGIC: u16 = 0xAF11;
-/// Тип кадра (`FLICSMGR_FRAME_TYPE`).
+/// Frame type (`FLICSMGR_FRAME_TYPE`).
 pub const FRAME_MAGIC: u16 = 0xF1FA;
-/// Цветов в палитре.
+/// Colors in the palette.
 pub const FLIC_PALETTE_SIZE: usize = 256;
 
-/// Палитра кадра: 256 × RGB в 6-битном виде (как системная палитра C++-порта;
-/// для 8-битного RGB умножьте компоненты на 4).
+/// Frame palette: 256 × RGB in 6-bit form (like the system palette of the C++ port;
+/// for 8-bit RGB multiply the components by 4).
 pub type FlicPalette = [[u8; 3]; FLIC_PALETTE_SIZE];
 
 // ---------------------------------------------------------------------------
-// Ошибки
+// Errors
 // ---------------------------------------------------------------------------
 
-/// Ошибка разбора/декодирования FLC.
+/// FLC parse/decoding error.
 #[derive(Debug)]
 pub enum FlicError {
-    /// Файл не читается.
+    /// The file cannot be read.
     Io {
-        /// Путь, который читался.
+        /// The path that was being read.
         path: PathBuf,
-        /// Причина от ОС.
+        /// Reason from the OS.
         source: io::Error,
     },
-    /// Данных меньше, чем нужно для заголовка.
+    /// Less data than needed for the header.
     TooShort {
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Сигнатура не `0xAF12`.
+    /// The signature is not `0xAF12`.
     BadMagic {
-        /// Найденная сигнатура.
+        /// The signature found.
         found: u16,
     },
-    /// В заголовке ноль кадров — анимировать нечего.
+    /// Zero frames in the header — nothing to animate.
     NoFrames,
-    /// Нулевые или неразумно большие размеры кадра.
+    /// Zero or unreasonably large frame dimensions.
     BadGeometry {
-        /// Ширина из заголовка.
+        /// Width from the header.
         width: u16,
-        /// Высота из заголовка.
+        /// Height from the header.
         height: u16,
     },
-    /// Кадр с таким номером не существует.
+    /// A frame with that number does not exist.
     FrameIndex {
-        /// Запрошенный номер.
+        /// The requested number.
         index: usize,
-        /// Сколько кадров в файле.
+        /// How many frames are in the file.
         frames: usize,
     },
-    /// Структурная ошибка в кадре.
+    /// Structural error in a frame.
     Frame {
-        /// Номер кадра.
+        /// Frame number.
         index: usize,
-        /// Смещение кадра в файле.
+        /// Offset of the frame in the file.
         offset: usize,
-        /// Что именно не так.
+        /// What exactly is wrong.
         reason: FrameError,
     },
-    /// Структурная ошибка при чтении/декодировании.
+    /// Structural error while reading/decoding.
     Format {
-        /// Смещение в файле, где обнаружена ошибка.
+        /// Offset in the file where the error was detected.
         offset: usize,
-        /// Что ожидалось.
+        /// What was expected.
         what: &'static str,
     },
 }
 
-/// Чем плох кадр.
+/// What is wrong with the frame.
 #[derive(Debug)]
 pub enum FrameError {
-    /// Кадр выходит за конец файла.
+    /// The frame extends beyond the end of the file.
     Truncated {
-        /// Нужно байт.
+        /// Bytes needed.
         needed: usize,
-        /// Доступно байт.
+        /// Bytes available.
         available: usize,
     },
-    /// Тип кадра не `0xF1FA`.
+    /// The frame type is not `0xF1FA`.
     BadType {
-        /// Найденный тип.
+        /// The type found.
         found: u16,
     },
-    /// Размер кадра меньше заголовка.
+    /// The frame size is smaller than the header.
     BadSize {
-        /// Найденный размер.
+        /// The size found.
         size: u32,
     },
-    /// Чанк выходит за границы кадра или имеет нулевой размер.
+    /// The chunk extends beyond the frame bounds or has a zero size.
     BadChunk {
-        /// Номер чанка в кадре.
+        /// Chunk number in the frame.
         index: usize,
-        /// Смещение чанка.
+        /// Chunk offset.
         offset: usize,
-        /// Что не так.
+        /// What is wrong.
         reason: &'static str,
     },
-    /// Неизвестный/неподдерживаемый тип чанка.
+    /// Unknown/unsupported chunk type.
     UnknownChunk {
-        /// Номер чанка в кадре.
+        /// Chunk number in the frame.
         index: usize,
-        /// Тип чанка.
+        /// Chunk type.
         kind: u16,
     },
 }
@@ -241,39 +241,39 @@ impl fmt::Display for FrameError {
 }
 
 // ---------------------------------------------------------------------------
-// Заголовок
+// Header
 // ---------------------------------------------------------------------------
 
-/// Заголовок FLIC (128 байт).
+/// FLIC header (128 bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlicHeader {
-    /// Размер файла из заголовка.
+    /// File size from the header.
     pub size: u32,
-    /// `0xAF12` (FLC) или `0xAF11` (FLI).
+    /// `0xAF12` (FLC) or `0xAF11` (FLI).
     pub kind: u16,
-    /// Число кадров.
+    /// Number of frames.
     pub frames: u16,
-    /// Ширина кадра.
+    /// Frame width.
     pub width: u16,
-    /// Высота кадра.
+    /// Frame height.
     pub height: u16,
-    /// Глубина цвета (8).
+    /// Color depth (8).
     pub depth: u16,
-    /// Флаги (в ресурсах MAX — 3).
+    /// Flags (3 in the MAX resources).
     pub flags: u16,
-    /// Задержка кадра в миллисекундах (`speed`).
+    /// Frame delay in milliseconds (`speed`).
     pub speed_ms: u32,
-    /// Смещение первого кадра.
+    /// Offset of the first frame.
     pub first_frame: u32,
-    /// Смещение второго кадра (`oframe2`).
+    /// Offset of the second frame (`oframe2`).
     pub second_frame: u32,
 }
 
 // ---------------------------------------------------------------------------
-// Чтение
+// Reading
 // ---------------------------------------------------------------------------
 
-/// Курсор по байтам с проверками границ.
+/// Byte cursor with bounds checks.
 struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -342,10 +342,10 @@ impl<'a> Reader<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Полотно кадра
+// Frame canvas
 // ---------------------------------------------------------------------------
 
-/// Индексное полотно кадра: `width × height` байт палитровых индексов.
+/// Indexed frame canvas: `width × height` bytes of palette indices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Canvas {
     width: usize,
@@ -403,7 +403,7 @@ impl Canvas {
         Ok(())
     }
 
-    /// Заполняет кадр одним индексом (`BLACK` = 0).
+    /// Fills the frame with one index (`BLACK` = 0).
     fn fill(&mut self, value: u8) {
         self.pixels.fill(value);
     }
@@ -413,26 +413,26 @@ impl Canvas {
 // Flic
 // ---------------------------------------------------------------------------
 
-/// Один кадр после декодирования.
+/// One frame after decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlicFrame {
-    /// Ширина.
+    /// Width.
     pub width: usize,
-    /// Высота.
+    /// Height.
     pub height: usize,
-    /// Индексы палитры, построчно.
+    /// Palette indices, row by row.
     pub pixels: Vec<u8>,
-    /// Палитра после применения всех чанков до этого кадра включительно.
+    /// Palette after applying all chunks up to and including this frame.
     pub palette: FlicPalette,
 }
 
 impl FlicFrame {
-    /// RGBA-пиксели кадра по системной палитре окна (как C++ `win_draw_rect`:
-    /// индексы кадра переводятся текущей палитрой экрана).
+    /// RGBA pixels of the frame via the window system palette (like C++ `win_draw_rect`:
+    /// the frame indices are translated by the current screen palette).
     ///
-    /// `palette` — 256 цветов `[r, g, b, a]`; для портрета это палитра
-    /// `FRAMEPIC` (`crate::panels::UiPalette`), потому что C++ рисует FLIC
-    /// в 8-битный буфер окна, не подменяя системную палитру.
+    /// `palette` — 256 colors `[r, g, b, a]`; for the portrait this is the
+    /// `FRAMEPIC` palette (`crate::panels::UiPalette`), because C++ draws the FLIC
+    /// into the 8-bit window buffer without replacing the system palette.
     pub fn rgba(&self, palette: &[[u8; 4]; FLIC_PALETTE_SIZE]) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.pixels.len() * 4);
 
@@ -443,20 +443,20 @@ impl FlicFrame {
         out
     }
 
-    /// Число пикселей.
+    /// Number of pixels.
     #[inline]
     pub fn len(&self) -> usize {
         self.pixels.len()
     }
 
-    /// Пустой кадр (не бывает у валидного FLC, нужен для `clippy`).
+    /// Empty frame (never occurs in a valid FLC, needed for `clippy`).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.pixels.is_empty()
     }
 }
 
-/// Разобранный FLC-файл: заголовок, найденные кадры, сырые байты.
+/// Parsed FLC file: header, found frames, raw bytes.
 #[derive(Debug, Clone)]
 pub struct Flic {
     header: FlicHeader,
@@ -464,7 +464,7 @@ pub struct Flic {
     data: Vec<u8>,
 }
 
-/// Границы кадра в файле.
+/// Frame bounds in the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrameSpan {
     offset: usize,
@@ -473,13 +473,13 @@ struct FrameSpan {
 }
 
 impl Flic {
-    /// Разбирает FLC из байтов: заголовок + список кадров (без декодирования).
+    /// Parses an FLC from bytes: header + frame list (without decoding).
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// [`FlicError::BadMagic`] — не `0xAF12` (FLI не поддерживается, как в C++),
-    /// [`FlicError::NoFrames`], [`FlicError::BadGeometry`], а также структурные
-    /// ошибки кадров ([`FlicError::Frame`]).
+    /// [`FlicError::BadMagic`] — not `0xAF12` (FLI is not supported, as in C++),
+    /// [`FlicError::NoFrames`], [`FlicError::BadGeometry`], as well as structural
+    /// frame errors ([`FlicError::Frame`]).
     pub fn parse(bytes: &[u8]) -> Result<Self, FlicError> {
         if bytes.len() < FLIC_HEADER_SIZE {
             return Err(FlicError::TooShort {
@@ -536,7 +536,7 @@ impl Flic {
         })
     }
 
-    /// Читает и разбирает FLC-файл.
+    /// Reads and parses an FLC file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FlicError> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|source| FlicError::Io {
@@ -604,56 +604,56 @@ impl Flic {
         })
     }
 
-    /// Заголовок.
+    /// Header.
     #[inline]
     pub fn header(&self) -> &FlicHeader {
         &self.header
     }
 
-    /// Ширина кадра.
+    /// Frame width.
     #[inline]
     pub fn width(&self) -> usize {
         usize::from(self.header.width)
     }
 
-    /// Высота кадра.
+    /// Frame height.
     #[inline]
     pub fn height(&self) -> usize {
         usize::from(self.header.height)
     }
 
-    /// Число кадров (из заголовка).
+    /// Number of frames (from the header).
     #[inline]
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
 
-    /// Длительность кадра из заголовка (мс); для портрета C++ её не использует
-    /// (анимация идёт фиксированные 15 FPS).
+    /// Frame duration from the header (ms); for the portrait C++ does not use it
+    /// (the animation runs at a fixed 15 FPS).
     #[inline]
     pub fn speed_ms(&self) -> u32 {
         self.header.speed_ms
     }
 
-    /// Размер файла из заголовка.
+    /// File size from the header.
     #[inline]
     pub fn declared_size(&self) -> u32 {
         self.header.size
     }
 
-    /// Сырые байты файла.
+    /// Raw bytes of the file.
     #[inline]
     pub fn bytes(&self) -> &[u8] {
         &self.data
     }
 
-    /// Анимированный FLC (`frames > 1`); одиночные кадры C++ считает статикой.
+    /// Animated FLC (`frames > 1`); C++ treats single frames as static.
     #[inline]
     pub fn is_animated(&self) -> bool {
         self.frames.len() > 1
     }
 
-    /// Смещения кадров (для тестов/диагностики): `(offset, size, chunks)`.
+    /// Frame offsets (for tests/diagnostics): `(offset, size, chunks)`.
     pub fn frame_spans(&self) -> Vec<(usize, usize, u16)> {
         self.frames
             .iter()
@@ -661,12 +661,12 @@ impl Flic {
             .collect()
     }
 
-    /// Декодирует кадр `index` с нуля: применяет кадры `0..=index`.
+    /// Decodes frame `index` from scratch: applies frames `0..=index`.
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// [`FlicError::FrameIndex`] — такого кадра нет; [`FlicError::Format`] /
-    /// [`FlicError::Frame`] — битые данные.
+    /// [`FlicError::FrameIndex`] — no such frame; [`FlicError::Format`] /
+    /// [`FlicError::Frame`] — corrupt data.
     pub fn decode_frame(&self, index: usize) -> Result<FlicFrame, FlicError> {
         if index >= self.frames.len() {
             return Err(FlicError::FrameIndex {
@@ -690,7 +690,7 @@ impl Flic {
         })
     }
 
-    /// Декодирует все кадры подряд (для тестов и предпросчёта анимации).
+    /// Decodes all frames in sequence (for tests and animation precomputation).
     pub fn decode_all(&self) -> Result<Vec<FlicFrame>, FlicError> {
         let mut canvas = Canvas::new(self.width(), self.height());
         let mut palette: FlicPalette = [[0; 3]; FLIC_PALETTE_SIZE];
@@ -709,8 +709,8 @@ impl Flic {
         Ok(out)
     }
 
-    /// Палитра после всех кадров (6-битные компоненты, как системная палитра
-    /// C++-порта).
+    /// Palette after all frames (6-bit components, like the system palette of the
+    /// C++ port).
     pub fn palette(&self) -> Result<FlicPalette, FlicError> {
         let mut canvas = Canvas::new(self.width(), self.height());
         let mut palette: FlicPalette = [[0; 3]; FLIC_PALETTE_SIZE];
@@ -722,7 +722,7 @@ impl Flic {
         Ok(palette)
     }
 
-    /// Применяет чанки одного кадра.
+    /// Applies the chunks of one frame.
     fn decode_span(
         &self,
         span: &FrameSpan,
@@ -806,7 +806,7 @@ impl Flic {
         Ok(())
     }
 
-    /// Декодирует один чанк (см. таблицу в документации модуля).
+    /// Decodes one chunk (see the table in the module documentation).
     fn decode_chunk(
         &self,
         kind: u16,
@@ -836,8 +836,8 @@ impl Flic {
                 canvas.pixels.copy_from_slice(&body[..needed]);
             }
             18 => {
-                // PSTAMP: превью-«марка», C++ его не рисует. Размер чанка уже
-                // проверен в `decode_span`.
+                // PSTAMP: a preview "stamp", C++ does not draw it. The chunk size has already
+                // been checked in `decode_span`.
             }
             other => {
                 return Err(FlicError::Frame {
@@ -854,10 +854,10 @@ impl Flic {
         Ok(())
     }
 
-    /// Палитровый чанк: `u16 packets`, пакеты `u8 skip, u8 count (0→256), RGB`.
+    /// Palette chunk: `u16 packets`, packets `u8 skip, u8 count (0→256), RGB`.
     ///
-    /// `shift` — сдвиг в 6-битную системную палитру C++-порта (`2` для
-    /// `COLOR_256` = 8-битные байты файла, `0` для `COLOR_64`).
+    /// `shift` — shift into the 6-bit system palette of the C++ port (`2` for
+    /// `COLOR_256` = 8-bit file bytes, `0` for `COLOR_64`).
     fn decode_color(body: &[u8], shift: u32, palette: &mut FlicPalette) -> Result<(), FlicError> {
         let mut reader = Reader::new(body, 0);
         let packets = reader.u16()?;
@@ -894,14 +894,14 @@ impl Flic {
         Ok(())
     }
 
-    /// `BYTE_RUN` (15): полный кадр, на строку `u8` (число пакетов, не
-    /// используется), затем пакеты `i8 count`: `>= 0` — повтор следующего
-    /// байта, `< 0` — `-count` литеральных байт.
+    /// `BYTE_RUN` (15): a full frame, per row a `u8` (number of packets, not
+    /// used), then packets `i8 count`: `>= 0` — repeat the next
+    /// byte, `< 0` — `-count` literal bytes.
     fn decode_byte_run(body: &[u8], canvas: &mut Canvas) -> Result<(), FlicError> {
         let mut reader = Reader::new(body, 0);
 
         for y in 0..canvas.height {
-            // Первый байт строки — счётчик пакетов; C++ его пропускает.
+            // The first byte of a row is the packet counter; C++ skips it.
             let _packets = reader.u8()?;
             let mut x = 0usize;
 
@@ -933,14 +933,14 @@ impl Flic {
         Ok(())
     }
 
-    /// `DELTA_FLC` (7), он же `FLI_SS2`: строки со словами-пикселями.
+    /// `DELTA_FLC` (7), also `FLI_SS2`: rows with word pixels.
     ///
-    /// Формат строки: опциональные слова (`0x8000`), затем `packet_count`,
-    /// затем пакеты `u8 skip, i8 words`.
+    /// Row format: optional words (`0x8000`), then `packet_count`,
+    /// then packets `u8 skip, i8 words`.
     ///
-    /// Опциональное слово: если выставлен бит `0x4000` — это отрицательное
-    /// число пропускаемых строк (`-word`), иначе младший байт — последний
-    /// пиксель текущей строки (ровно как в `flicsmgr_decode_delta_flc`).
+    /// Optional word: if bit `0x4000` is set, it is a negative
+    /// number of skipped rows (`-word`), otherwise the low byte is the last
+    /// pixel of the current row (exactly as in `flicsmgr_decode_delta_flc`).
     fn decode_delta_flc(body: &[u8], canvas: &mut Canvas) -> Result<(), FlicError> {
         let mut reader = Reader::new(body, 0);
         let lines = reader.u16()?;
@@ -991,11 +991,11 @@ impl Flic {
         Ok(())
     }
 
-    /// `DELTA_FLI` (12), он же `FLI_LC`: `u16 first_line, u16 lines`, в каждой
-    /// строке `u8 packets` и пакеты `u8 skip, i8 count` (байтовые).
+    /// `DELTA_FLI` (12), also `FLI_LC`: `u16 first_line, u16 lines`, in each
+    /// row `u8 packets` and packets `u8 skip, i8 count` (byte-based).
     ///
-    /// В C++-порте чанка нет (в 71 ресурсе MAX.RES он не встречается);
-    /// реализован по спецификации для полноты формата.
+    /// The C++ port has no such chunk (it does not occur in the 71 MAX.RES resources);
+    /// it is implemented per the specification for format completeness.
     fn decode_delta_fli(body: &[u8], canvas: &mut Canvas) -> Result<(), FlicError> {
         let mut reader = Reader::new(body, 0);
         let first_line = usize::from(reader.u16()?);
@@ -1040,11 +1040,11 @@ impl Flic {
 }
 
 // ---------------------------------------------------------------------------
-// Проигрыватель
+// Player
 // ---------------------------------------------------------------------------
 
-/// Инкрементальный проигрыватель кадров — порт `flicsmgr_advance_animation`:
-/// кадры применяются по одному, без повторного декодирования с нуля.
+/// Incremental frame player — a port of `flicsmgr_advance_animation`:
+/// frames are applied one by one, without re-decoding from scratch.
 #[derive(Debug, Clone)]
 pub struct FlicPlayer<'a> {
     flic: &'a Flic,
@@ -1054,7 +1054,7 @@ pub struct FlicPlayer<'a> {
 }
 
 impl<'a> FlicPlayer<'a> {
-    /// Начинает с кадра 0.
+    /// Starts at frame 0.
     pub fn new(flic: &'a Flic) -> Result<Self, FlicError> {
         let mut player = Self {
             flic,
@@ -1086,27 +1086,27 @@ impl<'a> FlicPlayer<'a> {
         Ok(())
     }
 
-    /// Номер текущего кадра.
+    /// Number of the current frame.
     #[inline]
     pub fn frame_index(&self) -> usize {
         self.frame_index
     }
 
-    /// Текущие индексы палитры.
+    /// Current palette indices.
     #[inline]
     pub fn pixels(&self) -> &[u8] {
         &self.canvas.pixels
     }
 
-    /// Палитра после текущего кадра.
+    /// Palette after the current frame.
     #[inline]
     pub fn palette(&self) -> &FlicPalette {
         &self.palette
     }
 
-    /// Следующий кадр. После последнего — снова кадр 1 (как
-    /// `flicsmgr_advance_animation` при `animate == 2`), у статичного FLC
-    /// (`frames == 1`) остаётся кадр 0.
+    /// Next frame. After the last one — frame 1 again (like
+    /// `flicsmgr_advance_animation` with `animate == 2`); for a static FLC
+    /// (`frames == 1`) frame 0 stays.
     pub fn advance(&mut self) -> Result<usize, FlicError> {
         if self.flic.frames.len() <= 1 {
             return Ok(self.frame_index);
@@ -1123,7 +1123,7 @@ impl<'a> FlicPlayer<'a> {
         Ok(self.frame_index)
     }
 
-    /// Текущий кадр как [`FlicFrame`] (для сверки с `decode_frame`).
+    /// Current frame as a [`FlicFrame`] (for comparison with `decode_frame`).
     pub fn frame(&self) -> FlicFrame {
         FlicFrame {
             width: self.canvas.width,
@@ -1135,14 +1135,14 @@ impl<'a> FlicPlayer<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Минимальный FLC из готовых кадров: `frames` кадров по `chunks`.
+    /// Minimal FLC from ready frames: `frames` frames of `chunks`.
     fn build_flic(width: u16, height: u16, frames: &[&[(u16, Vec<u8>)]], speed: u32) -> Vec<u8> {
         let mut out = vec![0u8; FLIC_HEADER_SIZE];
         let mut frame_offsets = Vec::new();
@@ -1184,13 +1184,13 @@ mod tests {
         out
     }
 
-    /// `BYTE_RUN`-кадр: каждая строка — байт пакетов и литеральные пиксели.
+    /// `BYTE_RUN` frame: each row is a packet byte and literal pixels.
     fn byte_run(width: usize, height: usize, value: u8) -> Vec<u8> {
         let mut body = Vec::new();
 
         for _ in 0..height {
             body.push(1u8);
-            body.push(width as u8); // count, < 128 — повтор
+            body.push(width as u8); // count, < 128 — repeat
             body.push(value);
         }
 
@@ -1259,11 +1259,11 @@ mod tests {
 
     #[test]
     fn decodes_color_chunks_into_palette() {
-        // Пакет палитры: skip 0, count 2, два цвета (8-битные).
+        // Palette packet: skip 0, count 2, two colors (8-bit).
         let mut color = Vec::new();
         color.extend_from_slice(&1u16.to_le_bytes());
         color.extend_from_slice(&[0, 2, 255, 0, 0, 0, 255, 0]);
-        // COLOR_64: 6-битные значения без сдвига, skip 1 → индекс 1.
+        // COLOR_64: 6-bit values without shift, skip 1 → index 1.
         let mut color64 = Vec::new();
         color64.extend_from_slice(&1u16.to_le_bytes());
         color64.extend_from_slice(&[1, 1, 63, 0, 0, 0, 63, 0]);
@@ -1281,10 +1281,10 @@ mod tests {
         let first = flic.decode_frame(0).unwrap();
         let second = flic.decode_frame(1).unwrap();
 
-        // COLOR_256 сдвигает на 2 бита — как C++ (`>> 2` в 6-битную палитру).
+        // COLOR_256 shifts by 2 bits — like C++ (`>> 2` into the 6-bit palette).
         assert_eq!(first.palette[0], [63, 0, 0]);
         assert_eq!(first.palette[1], [0, 63, 0]);
-        // Второй кадр: COLOR_64 без сдвига перезаписал индекс 1.
+        // Second frame: COLOR_64 without shift overwrote index 1.
         assert_eq!(second.palette[0], [63, 0, 0]);
         assert_eq!(second.palette[1], [63, 0, 0]);
         assert_eq!(second.palette[2], [0, 0, 0]);
@@ -1294,21 +1294,21 @@ mod tests {
 
     #[test]
     fn decodes_delta_flc_skip_last_byte_and_runs() {
-        // 4×4, кадр 0 — все 9, кадр 1 — дельта:
-        // строк 2: первая строка начинается с пропуска 1 строки, затем пакет
-        // «пропустить 1, повторить 1 слово (0x0A0A)», во второй строке —
-        // опциональное слово с последним байтом 0x0B.
+        // 4×4, frame 0 — all 9s, frame 1 — a delta:
+        // 2 rows: the first row starts with a skip of 1 row, then a packet
+        // "skip 1, repeat 1 word (0x0A0A)", in the second row —
+        // an optional word with the last byte 0x0B.
         let mut delta = Vec::new();
-        delta.extend_from_slice(&2u16.to_le_bytes()); // 2 строки
-                                                      // опциональное слово -1 = 0xFFFF → пропуск одной строки
+        delta.extend_from_slice(&2u16.to_le_bytes()); // 2 rows
+                                                      // optional word -1 = 0xFFFF → skip one row
         delta.extend_from_slice(&0xFFFFu16.to_le_bytes());
-        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 пакет
+        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 packet
         delta.push(1); // skip
-        delta.push(0xFF); // -1 слово
+        delta.push(0xFF); // -1 word
         delta.extend_from_slice(&0x0A0Au16.to_le_bytes());
-        // вторая строка: опциональное слово 0x800B — последний байт 0x0B
+        // second row: optional word 0x800B — last byte 0x0B
         delta.extend_from_slice(&0x800Bu16.to_le_bytes());
-        delta.extend_from_slice(&0u16.to_le_bytes()); // 0 пакетов
+        delta.extend_from_slice(&0u16.to_le_bytes()); // 0 packets
 
         let bytes = build_flic(4, 4, &[&[(15, byte_run(4, 4, 9))], &[(7, delta)]], 71);
         let flic = Flic::parse(&bytes).unwrap();
@@ -1319,18 +1319,18 @@ mod tests {
         assert_eq!(&second.pixels[4..8], &[9, 0x0A, 0x0A, 9]);
         assert_eq!(&second.pixels[8..12], &[9, 9, 9, 0x0B]);
         assert_eq!(first.pixels, vec![9; 16]);
-        // Кадры независимы: повторное декодирование даёт те же пиксели.
+        // The frames are independent: re-decoding gives the same pixels.
         assert_eq!(flic.decode_frame(0).unwrap(), first);
     }
 
     #[test]
     fn player_matches_random_access_decoding() {
-        // Дельта кадра 1: в первой строке пакет «skip 0, повторить слово 0x0202».
+        // Delta of frame 1: in the first row a packet "skip 0, repeat word 0x0202".
         let mut delta = Vec::new();
-        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 строка
-        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 пакет
+        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 row
+        delta.extend_from_slice(&1u16.to_le_bytes()); // 1 packet
         delta.push(0); // skip
-        delta.push(0xFF); // -1 слово
+        delta.push(0xFF); // -1 word
         delta.extend_from_slice(&0x0202u16.to_le_bytes());
 
         let bytes = build_flic(
@@ -1358,17 +1358,17 @@ mod tests {
         assert_eq!(player.frame(), flic.decode_frame(2).unwrap());
         assert_eq!(player.pixels(), vec![0; 16].as_slice());
 
-        // Через последний кадр — снова кадр 1 (как `animate == 2` в C++:
-        // дельта применяется к текущему буферу, а не к кадру 0).
+        // Past the last frame — frame 1 again (like `animate == 2` in C++:
+        // the delta is applied to the current buffer, not to frame 0).
         assert_eq!(player.advance().unwrap(), 1);
         let mut expected = vec![0u8; 16];
         expected[0] = 2;
         expected[1] = 2;
         assert_eq!(player.pixels(), expected.as_slice());
-        // И это не то же самое, что декодирование с нуля: так работает C++.
+        // And that is not the same as decoding from scratch: that is how C++ works.
         assert_ne!(player.frame().pixels, flic.decode_frame(1).unwrap().pixels);
 
-        // Статичный FLC: advance не двигает кадр.
+        // Static FLC: advance does not move the frame.
         let single = build_flic(2, 2, &[&[(15, byte_run(2, 2, 3))]], 71);
         let single = Flic::parse(&single).unwrap();
         let mut player = FlicPlayer::new(&single).unwrap();
@@ -1381,13 +1381,13 @@ mod tests {
     fn rejects_truncated_and_broken_chunks() {
         let good = build_flic(4, 4, &[&[(15, byte_run(4, 4, 1))]], 71);
 
-        // Обрезанный файл.
+        // Truncated file.
         assert!(matches!(
             Flic::parse(&good[..good.len() - 2]),
             Err(FlicError::Frame { .. })
         ));
 
-        // Чанк с нулевым размером: кадр разбирается, но не декодируется.
+        // A zero-size chunk: the frame parses but does not decode.
         let mut broken = good.clone();
         let chunk_offset = FLIC_HEADER_SIZE + FLIC_FRAME_HEADER_SIZE;
         broken[chunk_offset..chunk_offset + 4].copy_from_slice(&0u32.to_le_bytes());
@@ -1400,7 +1400,7 @@ mod tests {
             })
         ));
 
-        // Неизвестный чанк.
+        // Unknown chunk.
         let mut broken = good.clone();
         broken[chunk_offset + 4..chunk_offset + 6].copy_from_slice(&77u16.to_le_bytes());
         let flic = Flic::parse(&broken).unwrap();
@@ -1412,7 +1412,7 @@ mod tests {
             })
         ));
 
-        // Нулевая серия BYTE_RUN — не зацикливаемся.
+        // Zero-length BYTE_RUN series — do not loop forever.
         let mut zero_run = Vec::new();
         zero_run.push(0u8);
         zero_run.extend_from_slice(&[0, 0, 0, 0, 0]);
@@ -1423,7 +1423,7 @@ mod tests {
             Err(FlicError::Format { .. })
         ));
 
-        // Индекс кадра за пределами.
+        // Frame index out of range.
         let flic = Flic::parse(&good).unwrap();
         assert!(matches!(
             flic.decode_frame(5),
@@ -1450,7 +1450,7 @@ mod tests {
 
         assert_eq!(flic.decode_frame(1).unwrap().pixels, vec![0, 0]);
         assert_eq!(flic.decode_frame(2).unwrap().pixels, vec![1, 2]);
-        // PTSAMP/неизвестные кадры не ломают `palette()`.
+        // PTSAMP/unknown frames do not break `palette()`.
         assert_eq!(flic.palette().unwrap(), [[0; 3]; 256]);
     }
 }

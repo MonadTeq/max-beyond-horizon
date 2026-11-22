@@ -1,24 +1,24 @@
-//! WRL (World) — карты планет M.A.X.
+//! WRL (World) — planet maps of M.A.X.
 //!
-//! Формат описан в `max-original-dasm/formats/wrl.md`:
+//! The format is described in `max-original-dasm/formats/wrl.md`:
 //!
 //! ```text
-//! +0x0000  u8[3]                сигнатура "WRL" (у SNOW_1.WRL — "DMO")
+//! +0x0000  u8[3]                signature "WRL" (for SNOW_1.WRL — "DMO")
 //! +0x0003  u16 LE               layer_count
-//! +0x0005  Point[layer_count]   dims: {i16 x; i16 y} (используется dims[0])
-//! +…       u8[W*H]              миникарта (индексы палитры)
-//! +…       u16[W*H] LE          карта tile-id, row-major
+//! +0x0005  Point[layer_count]   dims: {i16 x; i16 y} (dims[0] is used)
+//! +…       u8[W*H]              minimap (palette indices)
+//! +…       u16[W*H] LE          tile-id map, row-major
 //! +…       u16 LE               tile_count
-//! +…       u8[tile_count*4096]  пиксели тайлов 64×64, 1 байт на пиксель
-//! +…       u8[768]              палитра 256 × RGB (8 бит на канал)
-//! +…       u8[tile_count]       pass-таблица (0..3)
+//! +…       u8[tile_count*4096]  pixels of 64×64 tiles, 1 byte per pixel
+//! +…       u8[768]              palette 256 × RGB (8 bits per channel)
+//! +…       u8[tile_count]       pass table (0..3)
 //! ```
 //!
-//! Сжатия нет: тайлы — сырые индексы палитры. Загрузчик порта **не проверяет**
-//! сигнатуру (`SNOW_1.WRL` начинается с `"DMO"`), поэтому сигнатура `"DMO"`
-//! принимается с предупреждением, а любая другая — ошибка.
+//! There is no compression: the tiles are raw palette indices. The port's loader does **not check**
+//! the signature (`SNOW_1.WRL` starts with `"DMO"`), so the `"DMO"` signature
+//! is accepted with a warning, and any other one is an error.
 //!
-//! [`WrlMap::surface_map`] строит [`SurfaceMap`] по формуле `world.cpp:382-412`
+//! [`WrlMap::surface_map`] builds a [`SurfaceMap`] by the formula of `world.cpp:382-412`
 //! (`formats/wrl.md` §3.1):
 //!
 //! ```text
@@ -26,11 +26,11 @@
 //! surface[i] = PassData[pass_table[tile_ids[i]]]
 //! ```
 //!
-//! Как и `max_core::setup::derive_surface_map`, клетки с `tile_id >= tile_count`
-//! и тайлы с `pass_byte > 3` получают [`Surface::NONE`] (в C++ это было бы
-//! чтение за границей массива, §7.6). Баг-фиксы порта (`ApplyBugFixes`,
-//! §3.3) привязаны к SHA-256 конкретных файлов и здесь не применяются: это
-//! отдельный слой политики, а не разбор формата.
+//! As in `max_core::setup::derive_surface_map`, cells with `tile_id >= tile_count`
+//! and tiles with `pass_byte > 3` get [`Surface::NONE`] (in C++ this would be
+//! a read past the array boundary, §7.6). The port's bug fixes (`ApplyBugFixes`,
+//! §3.3) are tied to the SHA-256 of specific files and are not applied here: that is
+//! a separate policy layer, not format parsing.
 
 use std::fmt;
 use std::fs;
@@ -41,95 +41,95 @@ use max_types::enums::Surface;
 use max_types::geo::MAP_TILES;
 use max_types::map::{MapSize, SurfaceMap};
 
-/// Штатная сигнатура WRL (3 байта, без NUL).
+/// Standard WRL signature (3 bytes, no NUL).
 pub const WRL_SIGNATURE: [u8; 3] = *b"WRL";
-/// Известное исключение: битая сигнатура `SNOW_1.WRL` (§1.1).
+/// A known exception: the corrupt `SNOW_1.WRL` signature (§1.1).
 pub const DMO_SIGNATURE: [u8; 3] = *b"DMO";
-/// Длина сигнатуры.
+/// Signature length.
 pub const SIGNATURE_LEN: usize = 3;
-/// Сторона тайла (`GFX_MAP_TILE_SIZE`).
+/// Tile side (`GFX_MAP_TILE_SIZE`).
 pub const TILE_SIZE: usize = 64;
-/// Пикселей (байт) в одном тайле: 64×64.
+/// Pixels (bytes) in one tile: 64×64.
 pub const TILE_PIXELS: usize = TILE_SIZE * TILE_SIZE;
-/// Цветов в палитре (`PALETTE_SIZE`).
+/// Colors in the palette (`PALETTE_SIZE`).
 pub const PALETTE_COLORS: usize = 256;
-/// Каналов на цвет (RGB).
+/// Channels per color (RGB).
 pub const PALETTE_STRIDE: usize = 3;
-/// Байт в палитре: 256 × 3.
+/// Bytes in the palette: 256 × 3.
 pub const PALETTE_BYTES: usize = PALETTE_COLORS * PALETTE_STRIDE;
-/// Индексы pass-таблицы -> [`Surface`] (`PassData[]` из `world.cpp:382`).
+/// Pass-table indices -> [`Surface`] (`PassData[]` from `world.cpp:382`).
 pub const PASS_TABLE_SURFACES: [Surface; 4] =
     [Surface::LAND, Surface::WATER, Surface::COAST, Surface::AIR];
-/// Штатная ширина карты.
+/// Standard map width.
 pub const STANDARD_WIDTH: i16 = 112;
-/// Штатная высота карты.
+/// Standard map height.
 pub const STANDARD_HEIGHT: i16 = 112;
-/// Размер стекового массива `Point map_layer_dimensions[12]` в C++-порте.
+/// Size of the stack array `Point map_layer_dimensions[12]` in the C++ port.
 pub const MAX_CPP_LAYERS: u16 = 12;
 
-/// Смещения секций разобранного WRL (в байтах от начала файла).
+/// Offsets of the parsed WRL sections (in bytes from the start of the file).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WrlOffsets {
-    /// Сигнатура (`0`).
+    /// Signature (`0`).
     pub signature: usize,
     /// `layer_count`.
     pub layer_count: usize,
-    /// Массив `dims[layer_count]`.
+    /// The `dims[layer_count]` array.
     pub dims: usize,
-    /// Миникарта (`W*H` байт).
+    /// Minimap (`W*H` bytes).
     pub minimap: usize,
-    /// Карта tile-id (`W*H × u16`).
+    /// Tile-id map (`W*H × u16`).
     pub tile_ids: usize,
-    /// Поле `tile_count`.
+    /// The `tile_count` field.
     pub tile_count: usize,
-    /// Пиксели тайлов (`tile_count × 4096`).
+    /// Tile pixels (`tile_count × 4096`).
     pub tiles: usize,
-    /// Палитра (768 байт).
+    /// Palette (768 bytes).
     pub palette: usize,
-    /// Pass-таблица (`tile_count` байт).
+    /// Pass table (`tile_count` bytes).
     pub pass_table: usize,
-    /// Конец данных (`pass_table + tile_count`).
+    /// End of the data (`pass_table + tile_count`).
     pub end: usize,
 }
 
-/// Ошибка разбора/чтения WRL-файла.
+/// WRL file parse/read error.
 #[derive(Debug)]
 pub enum WrlError {
-    /// Не удалось прочитать файл целиком.
+    /// Failed to read the file entirely.
     Io {
-        /// Путь, который читался.
+        /// The path that was being read.
         path: PathBuf,
-        /// Причина от ОС.
+        /// Reason from the OS.
         source: io::Error,
     },
-    /// Файл короче заголовка (3 + 2 байта).
+    /// The file is shorter than the header (3 + 2 bytes).
     TooShort {
-        /// Фактическая длина файла.
+        /// Actual file length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Первые 3 байта — не `"WRL"` и не известное исключение `"DMO"`.
+    /// The first 3 bytes are neither `"WRL"` nor the known exception `"DMO"`.
     BadSignature {
-        /// Фактическая сигнатура.
+        /// Actual signature.
         found: [u8; 3],
     },
-    /// `layer_count == 0`: в файле нет `dims[0]`, карта повреждена.
+    /// `layer_count == 0`: the file has no `dims[0]`, the map is corrupt.
     ZeroLayers,
-    /// `dims[0]` содержит неположительные размеры.
+    /// `dims[0]` contains non-positive dimensions.
     InvalidDimensions {
-        /// Ширина из `dims[0]`.
+        /// Width from `dims[0]`.
         width: i16,
-        /// Высота из `dims[0]`.
+        /// Height from `dims[0]`.
         height: i16,
     },
-    /// Очередная секция не помещается в файл.
+    /// The next section does not fit into the file.
     Truncated {
-        /// Название секции.
+        /// Name of the section.
         section: &'static str,
-        /// Требуемый конец секции (смещение от начала файла).
+        /// Required end of the section (offset from the start of the file).
         needed: usize,
-        /// Фактическая длина файла.
+        /// Actual file length.
         file_len: usize,
     },
 }
@@ -176,11 +176,11 @@ impl std::error::Error for WrlError {
     }
 }
 
-/// Разобранная карта WRL.
+/// Parsed WRL map.
 ///
-/// Байты файла хранятся целиком: `minimap`/`tile_ids`/`pass_table`/`palette`
-/// разбираются в удобные структуры, а пиксели тайлов читаются срезами из
-/// [`WrlMap::tiles`] без копирования.
+/// The file bytes are stored whole: `minimap`/`tile_ids`/`pass_table`/`palette`
+/// are parsed into convenient structures, and tile pixels are read as slices from
+/// [`WrlMap::tiles`] without copying.
 #[derive(Clone)]
 pub struct WrlMap {
     data: Vec<u8>,
@@ -200,12 +200,12 @@ pub struct WrlMap {
 }
 
 impl WrlMap {
-    /// Разбирает карту из байтов (копирует срез во владение).
+    /// Parses the map from bytes (copies the slice into ownership).
     pub fn parse(data: &[u8]) -> Result<Self, WrlError> {
         Self::from_vec(data.to_vec())
     }
 
-    /// Разбирает карту из уже имеющегося `Vec<u8>` (без копирования данных).
+    /// Parses the map from an existing `Vec<u8>` (without copying the data).
     pub fn from_vec(data: Vec<u8>) -> Result<Self, WrlError> {
         let file_len = data.len();
 
@@ -401,7 +401,7 @@ impl WrlMap {
         })
     }
 
-    /// Читает и разбирает карту из файла.
+    /// Reads and parses the map from a file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, WrlError> {
         let path = path.as_ref();
         let data = fs::read(path).map_err(|source| WrlError::Io {
@@ -412,87 +412,87 @@ impl WrlMap {
         Self::from_vec(data)
     }
 
-    /// Сырые байты файла целиком.
+    /// Raw bytes of the whole file.
     #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Длина файла в байтах.
+    /// File length in bytes.
     #[inline]
     pub fn file_size(&self) -> usize {
         self.data.len()
     }
 
-    /// Сигнатура из первых 3 байт (может быть `"DMO"`).
+    /// Signature from the first 3 bytes (may be `"DMO"`).
     #[inline]
     pub fn signature(&self) -> [u8; 3] {
         self.signature
     }
 
-    /// Сигнатура как текст (Latin-1, без потерь).
+    /// Signature as text (Latin-1, lossless).
     pub fn signature_text(&self) -> String {
         self.signature.iter().map(|&byte| byte as char).collect()
     }
 
-    /// Число слоёв из заголовка (реальные файлы — 1).
+    /// Number of layers from the header (real files have 1).
     #[inline]
     pub fn layer_count(&self) -> u16 {
         self.layer_count
     }
 
-    /// Размеры всех слоёв `dims[layer_count]`.
+    /// Dimensions of all layers `dims[layer_count]`.
     #[inline]
     pub fn layer_dimensions(&self) -> &[MapSize] {
         &self.layer_dimensions
     }
 
-    /// Ширина карты (`dims[0].x`).
+    /// Map width (`dims[0].x`).
     #[inline]
     pub fn width(&self) -> i16 {
         self.width
     }
 
-    /// Высота карты (`dims[0].y`).
+    /// Map height (`dims[0].y`).
     #[inline]
     pub fn height(&self) -> i16 {
         self.height
     }
 
-    /// Число клеток `W*H`.
+    /// Number of cells `W*H`.
     #[inline]
     pub fn cells(&self) -> usize {
         self.cells
     }
 
-    /// `dims[0]` совпадает со штатным 112×112.
+    /// `dims[0]` matches the standard 112×112.
     #[inline]
     pub fn is_standard_size(&self) -> bool {
         (self.width, self.height) == (STANDARD_WIDTH, STANDARD_HEIGHT)
     }
 
-    /// Миникарта: `W*H` байт индексов палитры, row-major.
+    /// Minimap: `W*H` bytes of palette indices, row-major.
     #[inline]
     pub fn minimap(&self) -> &[u8] {
         &self.minimap
     }
 
-    /// Карта tile-id: `W*H` значений `u16`, row-major (`y*W + x`).
+    /// Tile-id map: `W*H` `u16` values, row-major (`y*W + x`).
     #[inline]
     pub fn tile_map(&self) -> &[u16] {
         &self.tile_ids
     }
 
-    /// Число тайлов в наборе.
+    /// Number of tiles in the set.
     #[inline]
     pub fn tile_count(&self) -> u16 {
         self.tile_count
     }
 
-    /// Все пиксели тайлов подряд: `tile_count × 64×64` байт.
+    /// All tile pixels in sequence: `tile_count × 64×64` bytes.
     ///
-    /// Пиксель — индекс палитры этого же файла; порядок — по id тайла,
-    /// внутри тайла row-major.
+    /// A pixel is a palette index of this same file; the order is by tile id,
+    /// inside a tile row-major.
     #[inline]
     pub fn tiles(&self) -> &[u8] {
         let end = self.offsets.tiles + TILE_PIXELS * self.tile_count as usize;
@@ -500,7 +500,7 @@ impl WrlMap {
         &self.data[self.offsets.tiles..end]
     }
 
-    /// Сырые 64×64 байта одного тайла; `None`, если `tile_id` вне набора.
+    /// Raw 64×64 bytes of one tile; `None` if `tile_id` is outside the set.
     pub fn tile_pixels(&self, tile_id: u16) -> Option<&[u8]> {
         if tile_id >= self.tile_count {
             return None;
@@ -511,20 +511,20 @@ impl WrlMap {
         Some(&self.data[start..start + TILE_PIXELS])
     }
 
-    /// Палитра: сырые 768 байт (`256 × RGB`, 8 бит на канал).
+    /// Palette: raw 768 bytes (`256 × RGB`, 8 bits per channel).
     #[inline]
     pub fn palette(&self) -> &[u8; PALETTE_BYTES] {
         &self.palette
     }
 
-    /// Pass-таблица: `tile_count` сырых байт 0..3.
+    /// Pass table: `tile_count` raw bytes 0..3.
     #[inline]
     pub fn pass_table(&self) -> &[u8] {
         &self.pass_table
     }
 
-    /// Pass-таблица, отображённая в [`Surface`] (`0→LAND, 1→WATER, 2→COAST,
-    /// 3→AIR`); байты вне 0..3 дают [`Surface::NONE`].
+    /// Pass table mapped to [`Surface`] (`0→LAND, 1→WATER, 2→COAST,
+    /// 3→AIR`); bytes outside 0..3 give [`Surface::NONE`].
     pub fn pass_surfaces(&self) -> Vec<Surface> {
         self.pass_table
             .iter()
@@ -537,14 +537,14 @@ impl WrlMap {
             .collect()
     }
 
-    /// Карта поверхностей по формуле `formats/wrl.md` §3.1.
+    /// Surface map by the formula of `formats/wrl.md` §3.1.
     ///
-    /// `surface[i] = PassData[pass_table[tile_ids[i]]]`, клетки с
-    /// `tile_id >= tile_count` остаются [`Surface::NONE`]. Результат — карта
-    /// фиксированного размера `max_core::geo::MAP_TILES`; для штатных 112×112
-    /// раскладка совпадает с `max_core::setup::derive_surface_map` байт-в-байт.
-    /// Для нестандартных dims[0] клетки копируются по плоскому row-major
-    /// индексу (`y*W + x`), а недостающие остаются [`Surface::NONE`].
+    /// `surface[i] = PassData[pass_table[tile_ids[i]]]`, cells with
+    /// `tile_id >= tile_count` stay [`Surface::NONE`]. The result is a map
+    /// of the fixed size `max_core::geo::MAP_TILES`; for the stock 112×112
+    /// the layout matches `max_core::setup::derive_surface_map` byte for byte.
+    /// For non-standard dims[0] the cells are copied by the flat row-major
+    /// index (`y*W + x`), and the missing ones stay [`Surface::NONE`].
     pub fn surface_map(&self) -> SurfaceMap {
         let surfaces = self.pass_surfaces();
         let mut tiles = [Surface::NONE; MAP_TILES];
@@ -559,19 +559,19 @@ impl WrlMap {
         SurfaceMap::from_tiles(tiles)
     }
 
-    /// Смещения секций (для отладки и тестов).
+    /// Section offsets (for debugging and tests).
     #[inline]
     pub fn offsets(&self) -> &WrlOffsets {
         &self.offsets
     }
 
-    /// Некритичные расхождения с форматом (пусто для эталонных файлов).
+    /// Non-critical discrepancies with the format (empty for reference files).
     #[inline]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
-    /// Хвост после pass-таблицы в байтах (в реальных файлах — 0).
+    /// Tail after the pass table in bytes (0 in real files).
     #[inline]
     pub fn trailing_bytes(&self) -> usize {
         self.data.len().saturating_sub(self.offsets.end)
@@ -596,7 +596,7 @@ impl fmt::Debug for WrlMap {
 mod tests {
     use super::*;
 
-    /// Собирает минимальный WRL заданного размера (layer_count = 1).
+    /// Builds a minimal WRL of the given size (layer_count = 1).
     fn build_wrl(
         width: i16,
         height: i16,
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn out_of_range_values_become_none() {
-        // 2×2: tile_id 5 вне набора (tile_count = 1), pass 9 вне 0..3.
+        // 2×2: tile_id 5 is outside the set (tile_count = 1), pass 9 is outside 0..3.
         let bytes = build_wrl(2, 2, &[0, 5, 0, 0], 1, &[9]);
         let map = WrlMap::parse(&bytes).unwrap();
 
@@ -659,7 +659,7 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("pass-таблицы")));
 
-        // Валидный pass 2 -> COAST.
+        // A valid pass 2 -> COAST.
         let bytes = build_wrl(2, 2, &[0, 5, 0, 0], 1, &[2]);
         let map = WrlMap::parse(&bytes).unwrap();
 

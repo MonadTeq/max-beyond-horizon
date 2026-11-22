@@ -1,12 +1,12 @@
-//! Целочисленная геометрия: точки, направления, размеры карты.
+//! Integer geometry: points, directions, map dimensions.
 //!
-//! Порт `max-cpp-port/src/point.hpp` и `path.hpp`:
-//! * [`Point`] — `int16_t x, y` (арифметика через `int` с сужением, как в C++);
-//! * [`PathStep`] — `int8_t x, y` (шаг пути);
-//! * [`Direction`] — 8 направлений по часовой стрелке от севера;
-//! * [`DIRECTION_OFFSETS`] — смещения `(dx, dy)` для каждого направления.
+//! Port of `max-cpp-port/src/point.hpp` and `path.hpp`:
+//! * [`Point`] — `int16_t x, y` (arithmetic via `int` with narrowing, as in C++);
+//! * [`PathStep`] — `int8_t x, y` (path step);
+//! * [`Direction`] — 8 directions clockwise from north;
+//! * [`DIRECTION_OFFSETS`] — the `(dx, dy)` offsets of each direction.
 //!
-//! Никаких `f32`/`f64`: все расстояния целочисленные (DESIGN.md §6.4).
+//! No `f32`/`f64`: all distances are integer (DESIGN.md §6.4).
 
 use core::fmt;
 use core::ops::{Add, AddAssign, Sub, SubAssign};
@@ -15,13 +15,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::enums::InvalidEnumValue;
 
-/// Ширина карты в тайлах (WRL-файл; в V70 — всегда 112).
+/// Map width in tiles (WRL file; in V70 it is always 112).
 pub const MAP_WIDTH: i16 = 112;
-/// Высота карты в тайлах.
+/// Map height in tiles.
 pub const MAP_HEIGHT: i16 = 112;
-/// Количество тайлов карты: `112 * 112 == 12544`.
+/// Number of map tiles: `112 * 112 == 12544`.
 pub const MAP_TILES: usize = MAP_WIDTH as usize * MAP_HEIGHT as usize;
-/// Размер карты по умолчанию (каркасный `map::MapSize`).
+/// Default map size (skeleton `map::MapSize`).
 pub const MAP_SIZE: crate::map::MapSize = crate::map::MapSize {
     width: MAP_WIDTH,
     height: MAP_HEIGHT,
@@ -31,32 +31,32 @@ pub const MAP_SIZE: crate::map::MapSize = crate::map::MapSize {
 // Point / PathStep
 // ---------------------------------------------------------------------------
 
-/// Точка/координата на сетке карты — `Point { int16_t x, y; }`.
+/// Point/coordinate on the map grid — `Point { int16_t x, y; }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Point {
-    /// Координата по X (запад→восток).
+    /// X coordinate (west→east).
     pub x: i16,
-    /// Координата по Y (север→юг).
+    /// Y coordinate (north→south).
     pub y: i16,
 }
 
 impl Point {
-    /// Нулевая точка.
+    /// Zero point.
     pub const ZERO: Self = Self { x: 0, y: 0 };
 
-    /// Создаёт точку.
+    /// Creates a point.
     #[inline]
     pub const fn new(x: i16, y: i16) -> Self {
         Self { x, y }
     }
 
-    /// Индекс тайла в плоском массиве `SurfaceMap` при ширине [`MAP_WIDTH`].
+    /// Index of a tile in the flat `SurfaceMap` array at width [`MAP_WIDTH`].
     #[inline]
     pub const fn index(self) -> usize {
         self.y as usize * MAP_WIDTH as usize + self.x as usize
     }
 
-    /// Точка по индексу тайла (обратная к [`Point::index`] для `MAP_WIDTH`).
+    /// Point from a tile index (inverse of [`Point::index`] for `MAP_WIDTH`).
     #[inline]
     pub const fn from_index(index: usize) -> Self {
         Self {
@@ -65,7 +65,7 @@ impl Point {
         }
     }
 
-    /// Манхэттенское расстояние (целочисленное, без переполнения i16).
+    /// Manhattan distance (integer, without i16 overflow).
     #[inline]
     pub const fn manhattan_distance(self, other: Self) -> i32 {
         let dx = (self.x as i32 - other.x as i32).abs();
@@ -73,7 +73,7 @@ impl Point {
         dx + dy
     }
 
-    /// Расстояние Чебышёва (максимум по осям).
+    /// Chebyshev distance (maximum over the axes).
     #[inline]
     pub const fn chebyshev_distance(self, other: Self) -> i32 {
         let dx = (self.x as i32 - other.x as i32).abs();
@@ -85,7 +85,7 @@ impl Point {
         }
     }
 
-    /// Квадрат евклидова расстояния (в C++ считается в `i32`).
+    /// Square of the Euclidean distance (computed in `i32` in C++).
     #[inline]
     pub const fn distance_squared(self, other: Self) -> i32 {
         let dx = self.x as i32 - other.x as i32;
@@ -93,10 +93,10 @@ impl Point {
         dx * dx + dy * dy
     }
 
-    /// Целочисленное евклидово расстояние (усечение, как `sqrt` в `i32`).
+    /// Integer Euclidean distance (truncated, like `sqrt` in `i32`).
     #[inline]
     pub fn euclidean_distance(self, other: Self) -> i32 {
-        // Целочисленный квадратный корень: только целая арифметика.
+        // Integer square root: integer arithmetic only.
         let mut value = self.distance_squared(other);
         if value <= 0 {
             return 0;
@@ -118,19 +118,19 @@ impl Point {
         root
     }
 
-    /// Соседняя точка в заданном направлении (арифметика с заворачиванием i16,
-    /// как сужение `int` в C++).
+    /// Neighboring point in the given direction (i16 wrapping arithmetic,
+    /// like the narrowing of `int` in C++).
     #[inline]
     pub const fn step(self, direction: Direction) -> Self {
         let offset = direction.offset();
-        // C++: `short += short` считается в `int` и сужается при записи.
+        // C++: `short += short` is computed in `int` and narrowed on store.
         Self {
             x: (self.x as i32 + offset.x as i32) as i16,
             y: (self.y as i32 + offset.y as i32) as i16,
         }
     }
 
-    /// Направление от `self` к `other`, если точки лежат на одной из 8 линий.
+    /// Direction from `self` to `other` if the points lie on one of the 8 lines.
     pub fn direction_to(self, other: Self) -> Option<Direction> {
         let dx = (other.x as i32 - self.x as i32).signum();
         let dy = (other.y as i32 - self.y as i32).signum();
@@ -190,23 +190,23 @@ impl SubAssign for Point {
     }
 }
 
-/// Шаг пути — `PathStep { int8_t x, y; }` (`point.hpp`).
+/// Path step — `PathStep { int8_t x, y; }` (`point.hpp`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PathStep {
-    /// Смещение по X.
+    /// X offset.
     pub x: i8,
-    /// Смещение по Y.
+    /// Y offset.
     pub y: i8,
 }
 
 impl PathStep {
-    /// Создаёт шаг пути.
+    /// Creates a path step.
     #[inline]
     pub const fn new(x: i8, y: i8) -> Self {
         Self { x, y }
     }
 
-    /// Преобразует шаг в [`Point`]-смещение.
+    /// Converts the step into a [`Point`] offset.
     #[inline]
     pub const fn as_point(self) -> Point {
         Point {
@@ -220,32 +220,32 @@ impl PathStep {
 // Direction
 // ---------------------------------------------------------------------------
 
-/// Направление на сетке — C++ `Direction` / `UnitAngleType`.
+/// Direction on the grid — C++ `Direction` / `UnitAngleType`.
 ///
-/// 8 значений по часовой стрелке от севера: N, NE, E, SE, S, SW, W, NW.
+/// 8 values clockwise from north: N, NE, E, SE, S, SW, W, NW.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Direction {
-    /// Север (`DIRECTION_NORTH`).
+    /// North (`DIRECTION_NORTH`).
     North = 0,
-    /// Северо-восток.
+    /// Northeast.
     NorthEast = 1,
-    /// Восток.
+    /// East.
     East = 2,
-    /// Юго-восток.
+    /// Southeast.
     SouthEast = 3,
-    /// Юг.
+    /// South.
     South = 4,
-    /// Юго-запад.
+    /// Southwest.
     SouthWest = 5,
-    /// Запад.
+    /// West.
     West = 6,
-    /// Северо-запад.
+    /// Northwest.
     NorthWest = 7,
 }
 
 impl Direction {
-    /// Все направления в порядке C++.
+    /// All directions in C++ order.
     pub const ALL: [Self; 8] = [
         Self::North,
         Self::NorthEast,
@@ -257,34 +257,34 @@ impl Direction {
         Self::NorthWest,
     ];
 
-    /// `DIRECTION_COUNT` из `path.hpp`.
+    /// `DIRECTION_COUNT` from `path.hpp`.
     pub const COUNT: usize = 8;
 
-    /// Смещение `(dx, dy)` этого направления.
+    /// `(dx, dy)` offset of this direction.
     #[inline]
     pub const fn offset(self) -> Point {
         DIRECTION_OFFSETS[self as usize]
     }
 
-    /// Декодирует значение с маской `& 7` (как `UnitsManager_GetTargetAngle`).
+    /// Decodes a value with a `& 7` mask (as `UnitsManager_GetTargetAngle`).
     #[inline]
     pub const fn from_raw_masked(raw: u8) -> Self {
         Self::ALL[(raw & 7) as usize]
     }
 
-    /// Противоположное направление (поворот на 180°).
+    /// Opposite direction (180° turn).
     #[inline]
     pub const fn opposite(self) -> Self {
         Self::ALL[((self as usize) + 4) & 7]
     }
 
-    /// Поворот по часовой стрелке на 45°.
+    /// Rotate clockwise by 45°.
     #[inline]
     pub const fn rotate_cw(self) -> Self {
         Self::ALL[((self as usize) + 1) & 7]
     }
 
-    /// Поворот против часовой стрелки на 45°.
+    /// Rotate counter-clockwise by 45°.
     #[inline]
     pub const fn rotate_ccw(self) -> Self {
         Self::ALL[((self as usize) + 7) & 7]
@@ -345,9 +345,9 @@ impl fmt::Display for Direction {
     }
 }
 
-/// Смещения направлений — C++ `DIRECTION_OFFSETS` (`path.hpp`).
+/// Direction offsets — C++ `DIRECTION_OFFSETS` (`path.hpp`).
 ///
-/// Порядок: N, NE, E, SE, S, SW, W, NW (по часовой стрелке от севера).
+/// Order: N, NE, E, SE, S, SW, W, NW (clockwise from north).
 pub const DIRECTION_OFFSETS: [Point; Direction::COUNT] = [
     Point { x: 0, y: -1 },
     Point { x: 1, y: -1 },
@@ -360,7 +360,7 @@ pub const DIRECTION_OFFSETS: [Point; Direction::COUNT] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -396,7 +396,7 @@ mod tests {
         p -= Point::new(1, 1);
         assert_eq!(p, Point::new(2, 3));
 
-        // Сужение переполнения i16 — как `as short` в C++.
+        // i16 overflow narrowing — like `as short` in C++.
         assert_eq!(
             Point::new(i16::MAX, 0) + Point::new(1, 0),
             Point::new(i16::MIN, 0)
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(a.distance_squared(b), 25);
         assert_eq!(a.euclidean_distance(b), 5);
         assert_eq!(a.euclidean_distance(a), 0);
-        assert_eq!(a.euclidean_distance(Point::new(1, 1)), 1); // sqrt(2) усекается
+        assert_eq!(a.euclidean_distance(Point::new(1, 1)), 1); // sqrt(2) is truncated
     }
 
     #[test]
@@ -485,7 +485,7 @@ mod tests {
             Some(Direction::East)
         );
         assert_eq!(origin.direction_to(origin), None);
-        // Не сосед — направление не определено.
+        // Not a neighbor — the direction is undefined.
         assert_eq!(origin.direction_to(Point::new(12, 10)), Some(Direction::East));
         assert_eq!(origin.direction_to(Point::new(11, 10)), Some(Direction::East));
     }

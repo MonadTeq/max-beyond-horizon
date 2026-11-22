@@ -12,11 +12,11 @@
 //! duplicate packet structs. Types without a simulation counterpart (lobby
 //! nodes, audit snapshots) have their DTOs here.
 //!
-//! Зависимость от max_core намеренная (read-only проекция симуляции в провод,
-//! пакеты 23/45/53/54) — см. max-brh-docs/development/PLAN-refactor.md Ф5.3 /
-//! architect-rules.md. НЕ добавлять новые вызовы max_core без пересмотра
-//! решения. Вызов apply_* или мутация GameState из max_net аннулирует это
-//! решение.
+//! The dependency on max_core is intentional (read-only projection of the
+//! simulation onto the wire, packets 23/45/53/54) — see
+//! max-brh-docs/development/PLAN-refactor.md §5.3 /
+//! architect-rules.md. Do NOT add new max_core calls without revisiting the
+//! decision. Calling apply_* or mutating GameState from max_net voids it.
 
 pub mod command;
 pub mod lobby;
@@ -864,16 +864,16 @@ mod tests {
 
     #[test]
     fn packet_18_decodes_a_cpp_smart_string_frame() {
-        // Байтовый литерал собран вручную по C++:
-        //   `Remote_SendNetPacket_18` (remote.cpp:2675-2684) пишет
-        //   `uint8_t 0x12`, `uint16_t sender_team`, затем `SmartString`;
+        // The byte literal is assembled by hand from C++:
+        //   `Remote_SendNetPacket_18` (remote.cpp:2675-2684) writes
+        //   `uint8_t 0x12`, `uint16_t sender_team`, then `SmartString`;
         //   `operator<<(NetPacket&, const SmartString&)` (net_packet.cpp:179-184)
-        //   пишет `u16 length = strlen + 1` и `length` байт, включая NUL.
-        // APPL-тип на проводе — `0x50 + 0x12 = 0x62`.
+        //   writes `u16 length = strlen + 1` and `length` bytes, including the NUL.
+        // The APPL type on the wire is `0x50 + 0x12 = 0x62`.
         let frame = [
             0x62, // APPL 18
             0x01, 0x00, // sender_team = 1 (GREEN)
-            0x06, 0x00, // SmartString length = 6 (5 символов + NUL)
+            0x06, 0x00, // SmartString length = 6 (5 characters + NUL)
             b'H', b'e', b'l', b'l', b'o', 0x00,
         ];
         let decoded = Packet::decode(&frame).expect("C++ frame decodes");
@@ -890,9 +890,9 @@ mod tests {
 
     #[test]
     fn packet_18_empty_message_is_one_nul_byte() {
-        // C++ `Remote_SendNetPacket_18` не отправляет пустые сообщения, но
-        // `SmartString("")` на проводе — `len = 1` + NUL; декодер обязан
-        // принять такой кадр без ошибки.
+        // C++ `Remote_SendNetPacket_18` does not send empty messages, but
+        // `SmartString("")` on the wire is `len = 1` + NUL; the decoder must
+        // accept such a frame without error.
         let frame = [0x62, 0x00, 0x00, 0x01, 0x00, 0x00];
         let decoded = Packet::decode(&frame).expect("empty chat decodes");
 

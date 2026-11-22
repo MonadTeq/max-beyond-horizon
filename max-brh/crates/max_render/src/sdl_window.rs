@@ -1,25 +1,25 @@
-//! Тонкий SDL3-слой: окно, текстура кадра, события.
+//! Thin SDL3 layer: window, frame texture, events.
 //!
-//! Модуль собирается только под feature `sdl` (см. `Cargo.toml`), поэтому
-//! чистая часть крейта и все её тесты работают без установленного SDL3.
-//! Здесь нет игровой логики и нет отрисовки как таковой: слой принимает готовый
-//! [`RgbaBuffer`], заливает его в потоковую текстуру и отдаёт окну.
+//! The module builds only under the `sdl` feature (see `Cargo.toml`), so the
+//! pure part of the crate and all its tests work without SDL3 installed.
+//! There is no game logic and no drawing as such here: the layer takes a ready
+//! [`RgbaBuffer`], uploads it into a streaming texture and hands it to the window.
 //!
-//! Почему SDL3, а не SDL2: C++-порт (`max-cpp-port`) и оригинальная игра
-//! используют SDL3, поэтому окно и ввод совпадают по API с эталоном. Крейт
-//! `sdl3` (crates.io) требует либо системного SDL3 (`libsdl3-dev`, vcpkg), либо
-//! сборки из исходников:
+//! Why SDL3 and not SDL2: the C++ port (`max-cpp-port`) and the original game
+//! use SDL3, so the window and input match the reference by API. The
+//! `sdl3` crate (crates.io) requires either a system SDL3 (`libsdl3-dev`, vcpkg) or
+//! a build from source:
 //!
 //! ```text
-//! # вариант 1 — системный SDL3 (Linux: apt install libsdl3-dev; Windows: vcpkg):
+//! # option 1 — system SDL3 (Linux: apt install libsdl3-dev; Windows: vcpkg):
 //! cargo run -p max_render --features sdl --example window
 //!
-//! # вариант 2 — SDL3 собирается из исходников (нужен cmake; docker/CI):
+//! # option 2 — SDL3 is built from source (cmake required; docker/CI):
 //! cargo run -p max_render --features sdl-from-source --example window
 //! ```
 //!
-//! Запуск без feature `sdl` даёт ошибку компиляции у вызывающего кода
-//! (модуля просто нет) — это осознанно: SDL не должен протекать в чистые тесты.
+//! Running without the `sdl` feature gives a compilation error in the calling code
+//! (the module simply does not exist) — this is deliberate: SDL must not leak into pure tests.
 
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ use sdl3::EventPump;
 use crate::buffer::RgbaBuffer;
 use crate::frame_scale::FrameScale;
 
-/// Клавиша окна в терминах UI: `max_app` не зависит от типов SDL.
+/// A window key in UI terms: `max_app` does not depend on SDL types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowKey {
     /// Esc.
@@ -47,60 +47,60 @@ pub enum WindowKey {
     Tab,
     /// Backspace.
     Backspace,
-    /// Стрелка вверх.
+    /// Up arrow.
     Up,
-    /// Стрелка вниз.
+    /// Down arrow.
     Down,
-    /// Стрелка влево.
+    /// Left arrow.
     Left,
-    /// Стрелка вправо.
+    /// Right arrow.
     Right,
     /// Page Up.
     PageUp,
     /// Page Down.
     PageDown,
-    /// Печатный ASCII-символ (SDL отдаёт базовую раскладку: `a`, `0`, `.`).
+    /// Printable ASCII character (SDL reports the base layout: `a`, `0`, `.`).
     Char(char),
-    /// Печатный ASCII-символ с зажатым Alt (`Alt+P` — пауза в игре).
+    /// Printable ASCII character with Alt held (`Alt+P` — pause in the game).
     Alt(char),
-    /// Любая другая клавиша (модификаторы, F-клавиши, …).
+    /// Any other key (modifiers, F-keys, …).
     Other,
 }
 
-/// Событие окна, пригодное для UI-цикла без протекания SDL-типов.
+/// Window event suitable for a UI loop without leaking SDL types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowInput {
-    /// Нажатие клавиши (автоповтор отфильтрован).
+    /// Key press (auto-repeat filtered out).
     Key(WindowKey),
-    /// Движение мыши в пикселях окна.
+    /// Mouse movement in window pixels.
     MouseMove {
-        /// Координата x.
+        /// x coordinate.
         x: i32,
-        /// Координата y.
+        /// y coordinate.
         y: i32,
     },
-    /// Нажатие левой кнопки мыши.
+    /// Left mouse button press.
     MouseClick {
-        /// Координата x.
+        /// x coordinate.
         x: i32,
-        /// Координата y.
+        /// y coordinate.
         y: i32,
     },
-    /// Нажатие правой кнопки мыши (в игре — приказ движения/отмена).
+    /// Right mouse button press (move order/cancel in the game).
     MouseRightClick {
-        /// Координата x.
+        /// x coordinate.
         x: i32,
-        /// Координата y.
+        /// y coordinate.
         y: i32,
     },
 }
 
-/// Переводит SDL-клавишу в [`WindowKey`].
+/// Translates an SDL key into [`WindowKey`].
 fn window_key(code: Keycode) -> WindowKey {
     window_key_mod(code, Mod::empty())
 }
 
-/// [`window_key`] с модификаторами: `Alt+<печатный>` → [`WindowKey::Alt`]
+/// [`window_key`] with modifiers: `Alt+<printable>` → [`WindowKey::Alt`]
 /// (C++ `GNW_KB_KEY_LALT_P`).
 fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
     let alt = modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD);
@@ -123,7 +123,7 @@ fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
         Keycode::PageUp => WindowKey::PageUp,
         Keycode::PageDown => WindowKey::PageDown,
         _ => {
-            // Базовые ASCII-коды SDL3 совпадают с ASCII (`A = 97`, `_0 = 48`).
+            // The basic SDL3 ASCII codes match ASCII (`A = 97`, `_0 = 48`).
             match code as u32 {
                 raw @ 0x20..=0x7E => WindowKey::Char(char::from_u32(raw).unwrap_or('?')),
                 _ => WindowKey::Other,
@@ -132,12 +132,12 @@ fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
     }
 }
 
-/// Ошибка инициализации окна/вывода кадра.
+/// Window/frame output initialization error.
 #[derive(Debug)]
 pub struct WindowError {
-    /// Этап, на котором произошла ошибка (`init`, `video`, `window`, …).
+    /// The stage at which the error occurred (`init`, `video`, `window`, …).
     pub stage: &'static str,
-    /// Сообщение SDL.
+    /// SDL message.
     pub message: String,
 }
 
@@ -158,42 +158,42 @@ impl std::fmt::Display for WindowError {
 
 impl std::error::Error for WindowError {}
 
-/// Окно SDL3 с потоковой текстурой под RGBA8-кадр.
+/// SDL3 window with a streaming texture for an RGBA8 frame.
 ///
-/// Текстура создаётся на каждый [`SdlWindow::present`] — крейт `sdl3` даёт
-/// `Texture<'creator>`, которую нельзя хранить рядом с её `TextureCreator` в
-/// одной структуре без `unsafe` (а `unsafe` в этом крейте запрещён). Для
-/// клиента это неважно: SDL переиспользует драйверный буфер, а кадр всё равно
-/// перерисовывается целиком.
+/// The texture is created on every [`SdlWindow::present`] — the `sdl3` crate yields a
+/// `Texture<'creator>` that cannot be stored next to its `TextureCreator` in
+/// one structure without `unsafe` (and `unsafe` is forbidden in this crate). For
+/// the client this does not matter: SDL reuses the driver buffer, and the frame is
+/// redrawn entirely anyway.
 pub struct SdlWindow {
     canvas: Canvas<Window>,
     creator: TextureCreator<WindowContext>,
     events: EventPump,
     title: String,
-    /// Логический размер кадра (640×480 в UI-режиме).
+    /// Logical frame size (640×480 in UI mode).
     base_size: (u32, u32),
-    /// Текущая раскладка кадра в окно (целочисленный масштаб + поля).
+    /// Current layout of the frame in the window (integer scale + bars).
     frame_scale: FrameScale,
-    /// Кэш курсоров: ключ (`CursorId | frame << 8`) → SDL-курсор.
+    /// Cursor cache: key (`CursorId | frame << 8`) → SDL cursor.
     cursors: HashMap<u32, Cursor>,
-    /// Какой ключ сейчас установлен (SDL-курсор живёт в этом кэше).
+    /// Which key is currently installed (the SDL cursor lives in this cache).
     active_cursor: Option<u32>,
-    /// Контекст SDL держим последним: поля Rust удаляются в порядке
-    /// объявления, поэтому окно/курсоры уничтожаются **до** `SDL_Quit`.
+    /// The SDL context is kept last: Rust fields are dropped in declaration
+    /// order, so the window/cursors are destroyed **before** `SDL_Quit`.
     _sdl: sdl3::Sdl,
 }
 
 impl SdlWindow {
-    /// Создаёт окно `width × height` с заголовком `title`.
+    /// Creates a `width × height` window with the title `title`.
     pub fn new(title: &str, width: u32, height: u32) -> Result<Self, WindowError> {
         Self::new_scaled(title, width, height, Some(1))
     }
 
-    /// Создаёт окно `width*scale × height*scale`; `scale = None` — подобрать
-    /// целочисленный масштаб под рабочий стол (по умолчанию, пункт F).
+    /// Creates a `width*scale × height*scale` window; `scale = None` — pick an
+    /// integer scale for the desktop (the default, item F).
     ///
-    /// Окно ресайзится; [`Self::present`] каждый кадр пересчитывает
-    /// [`FrameScale`] и выводит кадр nearest-neighbour с чёрными полями.
+    /// The window is resizable; [`Self::present`] recomputes
+    /// [`FrameScale`] every frame and outputs the frame nearest-neighbour with black bars.
     pub fn new_scaled(
         title: &str,
         width: u32,
@@ -248,22 +248,22 @@ impl SdlWindow {
         })
     }
 
-    /// Размер окна в пикселях.
+    /// Window size in pixels.
     pub fn size(&self) -> (u32, u32) {
         self.canvas.window().size()
     }
 
-    /// Логический размер кадра.
+    /// Logical frame size.
     pub fn base_size(&self) -> (u32, u32) {
         self.base_size
     }
 
-    /// Текущий целочисленный масштаб кадра.
+    /// Current integer frame scale.
     pub fn frame_scale(&self) -> FrameScale {
         self.frame_scale
     }
 
-    /// Пересчитывает раскладку под текущий размер окна и размер кадра.
+    /// Recomputes the layout for the current window size and frame size.
     pub fn update_frame_scale(&mut self, frame_width: u32, frame_height: u32) -> FrameScale {
         let (window_width, window_height) = self.size();
 
@@ -278,28 +278,28 @@ impl SdlWindow {
         self.frame_scale
     }
 
-    /// Точка окна → координаты кадра (для кликов при масштабе ≠ 1).
+    /// Window point → frame coordinates (for clicks at scale ≠ 1).
     pub fn window_to_frame(&self, x: i32, y: i32) -> Option<(i32, i32)> {
         self.frame_scale.window_to_frame(x, y)
     }
 
-    /// Заголовок окна.
+    /// Window title.
     pub fn title(&self) -> &str {
         &self.title
     }
 
-    /// Меняет заголовок окна.
+    /// Changes the window title.
     pub fn set_title(&mut self, title: &str) {
         self.title = title.to_owned();
         self.canvas.window_mut().set_title(title).ok();
     }
 
-    /// Ставит курсор из RGBA8-кадра с hotspot (`SDL_CreateColorCursor`).
+    /// Sets the cursor from an RGBA8 frame with a hotspot (`SDL_CreateColorCursor`).
     ///
-    /// `key` — идентификатор кадра (`CursorId | frame << 8`): SDL-курсоры
-    /// кэшируются, повторный вызов с тем же ключом ничего не делает. Так
-    /// анимированный `PTR_PATH` (10 кадров) не пересоздаёт курсор каждый тик.
-    /// Прозрачные пиксели (`alpha == 0`) остаются прозрачными.
+    /// `key` is the frame identifier (`CursorId | frame << 8`): SDL cursors
+    /// are cached, so a repeated call with the same key does nothing. Thus
+    /// the animated `PTR_PATH` (10 frames) does not recreate the cursor every tick.
+    /// Transparent pixels (`alpha == 0`) remain transparent.
     #[allow(clippy::too_many_arguments)]
     pub fn set_cursor_rgba(
         &mut self,
@@ -358,12 +358,12 @@ impl SdlWindow {
         Ok(())
     }
 
-    /// Выводит кадр: заливает текстуру и выводит её в окно nearest-neighbour.
+    /// Outputs the frame: uploads the texture and presents it to the window nearest-neighbour.
     ///
-    /// Кадр не растягивается на всё окно: [`FrameScale`] считает целый
-    /// масштаб и центрирует его, а вокруг остаются чёрные поля. Так каждый
-    /// пиксель кадра 640×480 остаётся квадратным блоком `N×N` на любом
-    /// мониторе (пункт F), а мышь переводится обратно через
+    /// The frame is not stretched over the whole window: [`FrameScale`] computes an integer
+    /// scale and centers it, and black bars remain around it. Thus every
+    /// pixel of the 640×480 frame remains a square `N×N` block on any
+    /// monitor (item F), and the mouse is translated back through
     /// [`Self::window_to_frame`].
     pub fn present(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
         if buffer.is_empty() {
@@ -401,7 +401,7 @@ impl SdlWindow {
         Ok(())
     }
 
-    /// Заливает окно цветом (например, перед первым кадром).
+    /// Fills the window with a color (e.g. before the first frame).
     pub fn clear(&mut self, color: crate::buffer::Rgba) {
         self.canvas.set_draw_color(sdl3::pixels::Color::RGBA(
             color.r, color.g, color.b, color.a,
@@ -409,21 +409,21 @@ impl SdlWindow {
         self.canvas.clear();
     }
 
-    /// Опрашивает очередь событий и возвращает их UI-слою.
+    /// Polls the event queue and returns the events to the UI layer.
     ///
-    /// Координаты мыши переводятся из окна в логический кадр через
-    /// [`FrameScale`]: при масштабе 2 клик в окне 1280×960 приходит в UI как
-    /// клик в кадре 640×480 (пункт F). Клик по чёрному полю вне кадра даёт
-    /// `(-1, -1)` — UI его игнорирует.
+    /// Mouse coordinates are translated from the window to the logical frame through
+    /// [`FrameScale`]: at scale 2 a click in a 1280×960 window arrives at the UI as
+    /// a click in a 640×480 frame (item F). A click on a black bar outside the frame yields
+    /// `(-1, -1)` — the UI ignores it.
     ///
-    /// `running == false` означает закрытие окна (`Quit`); Esc **не** закрывает
-    /// окно на этом уровне — UI решает сам (в меню — выход, в подэкране —
-    /// назад). Для старого поведения «Esc закрывает окно» есть [`Self::poll`].
+    /// `running == false` means the window was closed (`Quit`); Esc does **not** close
+    /// the window at this level — the UI decides itself (in the menu — exit, in a subscreen —
+    /// back). For the old "Esc closes the window" behavior there is [`Self::poll`].
     pub fn poll_input(&mut self) -> (bool, Vec<WindowInput>) {
         let mut running = true;
         let mut inputs = Vec::new();
-        // Окно могли ресайзить с прошлого кадра — обновляем раскладку до
-        // пересчёта координат мыши.
+        // The window may have been resized since the previous frame — update the layout before
+        // recomputing the mouse coordinates.
         let (window_width, window_height) = self.size();
         self.frame_scale = FrameScale::fit(
             window_width,
@@ -470,11 +470,11 @@ impl SdlWindow {
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseRightClick { x, y });
                 }
-                // P4 (TC-1107): alt-tab/сворачивание/разворачивание не
-                // останавливают цикл. SDL3 присылает Window-события, ввод по ним
-                // не идёт, окно остаётся живым, следующий кадр рисуется как
-                // обычно. Ветка явная, чтобы поведение было видно и покрыто
-                // тестом [`window_event_is_input_neutral`].
+                // P4 (TC-1107): alt-tab/minimize/restore do not
+                // stop the loop. SDL3 sends Window events, no input comes
+                // from them, the window stays alive, and the next frame is drawn as
+                // usual. The branch is explicit so that the behavior is visible and covered by
+                // the test [`window_event_is_input_neutral`].
                 sdl3::event::Event::Window { win_event, .. }
                     if window_event_is_input_neutral(win_event) => {}
                 _ => {}
@@ -484,11 +484,11 @@ impl SdlWindow {
         (running, inputs)
     }
 
-    /// Опрашивает очередь событий.
+    /// Polls the event queue.
     ///
-    /// Возвращает `false`, когда окно пора закрывать (закрытие окна или Esc).
-    /// Это прежнее поведение `--connect --sdl`; UI-цикл использует
-    /// [`Self::poll_input`], чтобы обрабатывать Esc как навигацию.
+    /// Returns `false` when it is time to close the window (window close or Esc).
+    /// This is the former behavior of `--connect --sdl`; the UI loop uses
+    /// [`Self::poll_input`] to handle Esc as navigation.
     pub fn poll(&mut self) -> bool {
         let (running, inputs) = self.poll_input();
 
@@ -499,13 +499,13 @@ impl SdlWindow {
     }
 }
 
-/// P4 (TC-1107): события окна, которые не несут ввода и не должны
-/// останавливать цикл — потеря/получение фокуса (alt-tab), сворачивание,
-/// разворачивание, показ/скрытие/перерисовка, вход/выход курсора.
+/// P4 (TC-1107): window events that carry no input and must not
+/// stop the loop — focus loss/gain (alt-tab), minimize,
+/// restore, show/hide/redraw, cursor enter/leave.
 ///
-/// Окно при них остаётся живым: `poll_input` возвращает `running = true`, а
-/// следующий кадр рисуется как обычно. Явный предикат — чтобы это поведение
-/// было видно в коде и проверялось тестом без настоящего окна.
+/// With them the window stays alive: `poll_input` returns `running = true`, and
+/// the next frame is drawn as usual. An explicit predicate — so that this behavior
+/// is visible in the code and is checked by a test without a real window.
 pub fn window_event_is_input_neutral(event: WindowEvent) -> bool {
     matches!(
         event,

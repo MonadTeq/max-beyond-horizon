@@ -1,31 +1,31 @@
-//! Картинки интерфейса из `MAX.RES`: `ImageSimpleHeader` и `ImageBigHeader`.
+//! Interface images from `MAX.RES`: `ImageSimpleHeader` and `ImageBigHeader`.
 //!
-//! Оригинал (и C++-порт, `window_manager.cpp`) рисует весь хром окна картинками:
-//! `FRAMEPIC` — фон окна 640×480 со **своей** палитрой и RLE, `PANELTOP`/
-//! `PANELBTM` — половинки левой панели 171×239/241 (9-байтный заголовок, пиксели
-//! по системной палитре `COLOR.PAL`).
+//! The original (and the C++ port, `window_manager.cpp`) draws the whole window chrome with images:
+//! `FRAMEPIC` — the 640×480 window background with **its own** palette and RLE, `PANELTOP`/
+//! `PANELBTM` — halves of the left panel 171×239/241 (9-byte header, pixels
+//! via the system palette `COLOR.PAL`).
 //!
 //! ```text
-//! ImageSimpleHeader (9 байт, packed):
+//! ImageSimpleHeader (9 bytes, packed):
 //!   i16 width, i16 height, i16 ulx, i16 uly, u8 transparent_color
-//!   далее u8[width*height] — индексы палитры
+//!   then u8[width*height] — palette indices
 //!
-//! ImageBigHeader (777 байт, packed):
+//! ImageBigHeader (777 bytes, packed):
 //!   i16 ulx, i16 uly, i16 width, i16 height
 //!   u8 palette[3 * 256]   (RGB)
 //!   u8 transparent_color
-//!   далее по строкам RLE: i16 n; n > 0 → n литеральных байт, n < 0 → -n раз
-//!   следующий байт (см. `WindowManager_DecodeBigImage`)
+//!   then per row RLE: i16 n; n > 0 → n literal bytes, n < 0 → -n times
+//!   the next byte (see `WindowManager_DecodeBigImage`)
 //! ```
 
-/// Ошибка разбора картинки.
+/// Image parsing error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageError {
-    /// Данных меньше, чем обещает заголовок.
+    /// Less data than the header promises.
     Truncated { needed: usize, got: usize },
-    /// Нулевой/подозрительно большой размер.
+    /// Zero/suspiciously large size.
     BadSize { width: i32, height: i32 },
-    /// RLE-строка вылезла за границы или за конец данных.
+    /// An RLE row ran past the bounds or past the end of the data.
     BadRle { row: usize, offset: i32 },
 }
 
@@ -47,45 +47,45 @@ impl std::fmt::Display for ImageError {
 
 impl std::error::Error for ImageError {}
 
-/// Размер заголовка [`SimpleImage`] в файле.
+/// Size of the [`SimpleImage`] header in the file.
 ///
-/// В C++ `sizeof(ImageSimpleHeader) == 9` (8 байт полей + `transparent_color`),
-/// но `WindowManager_DecodeSimpleImage` берёт данные с `&image->transparent_color`,
-/// то есть с 8-го байта: девятый байт структуры — это **первый пиксель**, а не
-/// отдельное поле. Проверено на `PANELTOP`/`PANELBTM`: `8 + w*h == size` точно.
+/// In C++ `sizeof(ImageSimpleHeader) == 9` (8 bytes of fields + `transparent_color`),
+/// but `WindowManager_DecodeSimpleImage` takes the data from `&image->transparent_color`,
+/// that is, from the 8th byte: the ninth byte of the structure is the **first pixel**, not
+/// a separate field. Verified on `PANELTOP`/`PANELBTM`: `8 + w*h == size` exactly.
 pub const SIMPLE_HEADER: usize = 8;
-/// Смещение RLE-потока [`BigImage`] в ресурсе.
+/// Offset of the [`BigImage`] RLE stream in the resource.
 ///
-/// C++ `sizeof(ImageBigHeader) == 777` (после палитры есть поле
-/// `transparent_color`), но `WindowManager_DecodeBigImage` берёт данные с
-/// `&image->transparent_color`, т.е. RLE начинается **в** байте 776. Проверено
-/// на реальных ресурсах: декод с 776 даёт целый кадр (`FRAMEPIC`, `ENDGAME*`),
-/// а с 777 — сдвиг на байт и «scanline»-артефакты. Поэтому смещение — 776;
-/// `transparent` в [`BigImage`] читается из того же байта (для фоновых картинок
-/// C++ это поле не использует).
+/// C++ `sizeof(ImageBigHeader) == 777` (after the palette there is a field
+/// `transparent_color`), but `WindowManager_DecodeBigImage` takes the data from
+/// `&image->transparent_color`, i.e. the RLE starts **at** byte 776. Verified
+/// on real resources: decoding from 776 gives a complete frame (`FRAMEPIC`, `ENDGAME*`),
+/// while from 777 — a one-byte shift and "scanline" artifacts. Therefore the offset is 776;
+/// `transparent` in [`BigImage`] is read from the same byte (for background images
+/// C++ does not use this field).
 pub const BIG_HEADER: usize = 776;
-/// Байт на цвет в палитре big-картинки.
+/// Bytes per color in the big-image palette.
 pub const PALETTE_BYTES: usize = 3 * 256;
 
-/// Картинка без собственной палитры (индексы → `COLOR.PAL`).
+/// Image without its own palette (indices → `COLOR.PAL`).
 #[derive(Debug, Clone)]
 pub struct SimpleImage {
-    /// Ширина в пикселях.
+    /// Width in pixels.
     pub width: i16,
-    /// Высота в пикселях.
+    /// Height in pixels.
     pub height: i16,
-    /// Смещение от левого верхнего угла окна.
+    /// Offset from the top-left corner of the window.
     pub ulx: i16,
-    /// Смещение от верха окна.
+    /// Offset from the top of the window.
     pub uly: i16,
-    /// Индекс прозрачного цвета: первый байт пикселей (в C++ поле
-    /// `transparent_color` — это `&pixels[0]`).
+    /// Transparent color index: the first byte of the pixels (in C++ the field
+    /// `transparent_color` is `&pixels[0]`).
     pub transparent: u8,
     pixels: Vec<u8>,
 }
 
 impl SimpleImage {
-    /// Разбирает `ImageSimpleHeader` + пиксели.
+    /// Parses `ImageSimpleHeader` + pixels.
     pub fn decode(bytes: &[u8]) -> Result<Self, ImageError> {
         if bytes.len() < SIMPLE_HEADER {
             return Err(ImageError::Truncated {
@@ -98,9 +98,9 @@ impl SimpleImage {
         let height = i16::from_le_bytes([bytes[2], bytes[3]]);
         let ulx = i16::from_le_bytes([bytes[4], bytes[5]]);
         let uly = i16::from_le_bytes([bytes[6], bytes[7]]);
-        // Поля `transparent_color` в файле нет: C++ читает его как первый
-        // байт пикселей (`&image->transparent_color`), поэтому прозрачный
-        // индекс — это `pixels[0]`.
+        // There is no `transparent_color` field in the file: C++ reads it as the first
+        // byte of the pixels (`&image->transparent_color`), so the transparent
+        // index is `pixels[0]`.
         let transparent = bytes[SIMPLE_HEADER];
 
         if width <= 0 || height <= 0 {
@@ -128,7 +128,7 @@ impl SimpleImage {
         })
     }
 
-    /// Индекс палитры в точке (`None` — вне картинки).
+    /// Palette index at a point (`None` — outside the image).
     pub fn pixel(&self, x: u32, y: u32) -> Option<u8> {
         if x >= self.width as u32 || y >= self.height as u32 {
             return None;
@@ -139,32 +139,32 @@ impl SimpleImage {
             .copied()
     }
 
-    /// Индексы палитры (row-major).
+    /// Palette indices (row-major).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
 }
 
-/// Картинка со своей палитрой и RLE (фон окна).
+/// Image with its own palette and RLE (the window background).
 #[derive(Debug, Clone)]
 pub struct BigImage {
-    /// Смещение от левого верхнего угла окна.
+    /// Offset from the top-left corner of the window.
     pub ulx: i16,
-    /// Смещение от верха окна.
+    /// Offset from the top of the window.
     pub uly: i16,
-    /// Ширина в пикселях.
+    /// Width in pixels.
     pub width: i16,
-    /// Высота в пикселях.
+    /// Height in pixels.
     pub height: i16,
-    /// Палитра RGB (256 × 3).
+    /// RGB palette (256 × 3).
     pub palette: [u8; PALETTE_BYTES],
-    /// Индекс прозрачного цвета.
+    /// Transparent color index.
     pub transparent: u8,
     pixels: Vec<u8>,
 }
 
 impl BigImage {
-    /// Разбирает `ImageBigHeader` + RLE-строки.
+    /// Parses `ImageBigHeader` + RLE rows.
     pub fn decode(bytes: &[u8]) -> Result<Self, ImageError> {
         if bytes.len() < BIG_HEADER {
             return Err(ImageError::Truncated {
@@ -198,35 +198,35 @@ impl BigImage {
 
             while line_position < row_len {
                 if offset + 2 > bytes.len() {
-                    // Поток может кончиться на пару байт раньше, чем ждёт цикл
-                    // строк: C++ читает за границей записи и получает мусор.
-                    // Остаток кадра оставляем нулевым вместо ошибки.
+                    // The stream may end a couple of bytes earlier than the row loop
+                    // expects: C++ reads past the record boundary and gets garbage.
+                    // We leave the rest of the frame zeroed instead of erroring.
                     break 'rows;
                 }
 
                 let word = i16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
                 offset += 2;
 
-                // Кодировщик может выпустить чанк, который выходит за строку
-                // (например, у FRAMEPIC первая строка: литерал 255 + повтор
-                // 1616 при ширине 640). C++ (`WindowManager_DecodeBigImage`)
-                // пишет его подряд и просто переходит к следующей строке, а
-                // следующая строка начинается с её начала и перекрывает «хвост».
-                // Воспроизводим это поведение 1:1: пишем с clipping'ом по
-                // концу буфера, счётчик строки увеличиваем на длину чанка.
+                // The encoder may emit a chunk that runs past the row
+                // (e.g. in FRAMEPIC the first row: a literal of 255 + a repeat of
+                // 1616 at a width of 640). C++ (`WindowManager_DecodeBigImage`)
+                // writes it sequentially and simply moves to the next row, and
+                // the next row starts at its beginning and overwrites the "tail".
+                // We reproduce this behavior 1:1: we write with clipping at
+                // the end of the buffer and advance the row counter by the chunk length.
                 let start = row * row_len + line_position;
                 let limit = pixels.len();
 
                 if word > 0 {
                     let count = word as usize;
                     if offset + count > bytes.len() {
-                        // У `SNOW_PIC` (128×128) поток содержит служебный
-                        // литерал 29744, выходящий за запись: если оборвать все
-                        // строки, картинка останется почти чёрной. Начинаем
-                        // следующую строку со следующего слова — так декодер
-                        // ресинхронизируется, и все остальные big image
-                        // (FRAMEPIC/PLANETSE/MULTGAME/P_*) остаются
-                        // побайтово теми же (проверено тестом
+                        // In `SNOW_PIC` (128×128) the stream contains a service
+                        // literal of 29744 that runs past the record: if all rows are cut off,
+                        // the picture stays almost black. We start
+                        // the next row at the next word — that way the decoder
+                        // resynchronizes, and all the other big images
+                        // (FRAMEPIC/PLANETSE/MULTGAME/P_*) stay
+                        // byte-identical (verified by the test
                         // `snow_pic_decodes_all_rows`).
                         break;
                     }
@@ -266,7 +266,7 @@ impl BigImage {
         })
     }
 
-    /// Цвет RGB по индексу палитры картинки.
+    /// RGB color by the image's palette index.
     pub fn color(&self, index: u8) -> [u8; 3] {
         let base = index as usize * 3;
 
@@ -277,7 +277,7 @@ impl BigImage {
         ]
     }
 
-    /// Индекс палитры в точке.
+    /// Palette index at a point.
     pub fn pixel(&self, x: u32, y: u32) -> Option<u8> {
         if x >= self.width as u32 || y >= self.height as u32 {
             return None;
@@ -288,12 +288,12 @@ impl BigImage {
             .copied()
     }
 
-    /// Цвет RGB в точке.
+    /// RGB color at a point.
     pub fn rgb(&self, x: u32, y: u32) -> Option<[u8; 3]> {
         self.pixel(x, y).map(|index| self.color(index))
     }
 
-    /// Индексы палитры (row-major).
+    /// Palette indices (row-major).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
@@ -310,8 +310,8 @@ mod tests {
         bytes.extend_from_slice(&2i16.to_le_bytes());
         bytes.extend_from_slice(&7i16.to_le_bytes());
         bytes.extend_from_slice(&9i16.to_le_bytes());
-        // Пиксели начинаются сразу за 8-байтным заголовком: в C++ девятый байт
-        // структуры (`transparent_color`) — это первый пиксель.
+        // The pixels start right after the 8-byte header: in C++ the ninth byte
+        // of the structure (`transparent_color`) is the first pixel.
         bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
 
         let image = SimpleImage::decode(&bytes).expect("должна разобраться");
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn simple_image_rejects_truncated() {
-        // Заголовок просит 3×2, а пикселей четыре.
+        // The header asks for 3×2, but there are four pixels.
         let bytes = [3u8, 0, 2, 0, 0, 0, 0, 0, 0, 1, 2, 3];
 
         assert!(matches!(
@@ -343,14 +343,14 @@ mod tests {
         ));
     }
 
-    /// Заголовок big-картинки + RLE-строки.
+    /// Big-image header + RLE rows.
     fn big_image_bytes(rows: &[Vec<u8>]) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&0i16.to_le_bytes());
         bytes.extend_from_slice(&0i16.to_le_bytes());
         bytes.extend_from_slice(&2i16.to_le_bytes()); // width
         bytes.extend_from_slice(&(rows.len() as i16).to_le_bytes());
-        // палитра: индекс 1 = (10,20,30), индекс 2 = (40,50,60)
+        // palette: index 1 = (10,20,30), index 2 = (40,50,60)
         let mut palette = [0u8; PALETTE_BYTES];
         palette[3..6].copy_from_slice(&[10, 20, 30]);
         palette[6..9].copy_from_slice(&[40, 50, 60]);
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn big_image_rle_literal_and_repeat() {
-        // Строка 1: литерал из 2 байт; строка 2: повтор -2 значения 2.
+        // Row 1: a literal of 2 bytes; row 2: a repeat of -2 of value 2.
         let mut row1 = Vec::new();
         row1.extend_from_slice(&2i16.to_le_bytes());
         row1.extend_from_slice(&[1, 2]);
@@ -384,15 +384,15 @@ mod tests {
 
     #[test]
     fn big_image_allows_chunk_crossing_row_boundary() {
-        // Как у FRAMEPIC: чанк шире строки. C++ пишет подряд и переходит к
-        // следующей строке; хвост перекрывается началом следующей строки.
+        // As in FRAMEPIC: the chunk is wider than the row. C++ writes sequentially and moves to
+        // the next row; the tail is overwritten by the start of the next row.
         let mut rows = Vec::new();
-        // строка 0: литерал 3 байта при ширине 2 (залезает в строку 1)
+        // row 0: a literal of 3 bytes at a width of 2 (spills into row 1)
         let mut row0 = Vec::new();
         row0.extend_from_slice(&3i16.to_le_bytes());
         row0.extend_from_slice(&[1, 2, 1]);
         rows.push(row0);
-        // строка 1: повтор -2 значения 2
+        // row 1: a repeat of -2 of value 2
         let mut row1 = Vec::new();
         row1.extend_from_slice(&(-2i16).to_le_bytes());
         row1.push(2);
@@ -412,11 +412,11 @@ mod tests {
 
     #[test]
     fn big_image_tolerates_short_stream() {
-        // Первый литерал читается, второй обрывается: остаток кадра — нули.
+        // The first literal is read, the second is cut off: the rest of the frame is zeros.
         let mut row = Vec::new();
         row.extend_from_slice(&1i16.to_le_bytes());
         row.push(1);
-        row.extend_from_slice(&9i16.to_le_bytes()); // данных для него уже нет
+        row.extend_from_slice(&9i16.to_le_bytes()); // there is no more data for it
         row.extend_from_slice(&[2, 3]);
 
         let image = BigImage::decode(&big_image_bytes(&[row])).expect("короткий поток допустим");
@@ -425,9 +425,9 @@ mod tests {
         assert_eq!(image.pixel(1, 0), Some(0), "недостающее — нули");
     }
 
-    /// `SNOW_PIC` — регрессия декодера: в его RLE есть литерал, который
-    /// выходит за запись (служебный чанк). Если на нём оборвать **все** строки,
-    /// картинка планеты остаётся почти чёрной (было видно в сетке 8×3).
+    /// `SNOW_PIC` — decoder regression: its RLE contains a literal that
+    /// runs past the record (a service chunk). If **all** rows are cut off there,
+    /// the planet picture stays almost black (visible in the 8×3 grid).
     #[test]
     fn snow_pic_decodes_all_rows() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");

@@ -1,18 +1,18 @@
-//! Перечисления, битовые маски и ключевые константы модели M.A.X.
+//! Enumerations, bit masks and key constants of the M.A.X. model.
 //!
-//! Источники значений:
-//! * оракул `max-cpp-port/src/enums.hpp`, `resourcetable.hpp`, `planetselectmenu.hpp`;
-//! * `max-cpp-port-max-brh-docs/save.md` (V70) — имена и значения сохраняемых перечислений;
-//! * `max-brh-docs/state-model.md` §2 — предлагаемые Rust-имена.
+//! Value sources:
+//! * oracle `max-cpp-port/src/enums.hpp`, `resourcetable.hpp`, `planetselectmenu.hpp`;
+//! * `max-cpp-port-max-brh-docs/save.md` (V70) — names and values of the saved enumerations;
+//! * `max-brh-docs/state-model.md` §2 — the proposed Rust names.
 //!
-//! Правила модуля (DESIGN.md §3.2):
-//! * каждое перечисление — `#[repr(uN)]` с точными значениями C++;
+//! Module rules (DESIGN.md §3.2):
+//! * every enumeration is `#[repr(uN)]` with exact C++ values;
 //! * derive: `Debug, Clone, Copy, PartialEq, Eq, Hash` (+ `Serialize, Deserialize`
-//!   для снапшотов/дебага);
-//! * обратное преобразование — `TryFrom<u8>`/`TryFrom<u16>`, ошибка
-//!   [`InvalidEnumValue`] с именем типа и сырым значением;
-//! * у каждого перечисления есть `ALL` и `COUNT` — тесты round-trip проходят по
-//!   всем вариантам без «забытых» значений.
+//!   for snapshots/debug);
+//! * the inverse conversion is `TryFrom<u8>`/`TryFrom<u16>`, the error is
+//!   [`InvalidEnumValue`] with the type name and the raw value;
+//! * every enumeration has `ALL` and `COUNT` — round-trip tests run over
+//!   all variants without "forgotten" values.
 
 use core::fmt;
 use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
@@ -22,22 +22,22 @@ use serde::{Deserialize, Serialize};
 use crate::team::{TeamId, TeamKind};
 
 // ---------------------------------------------------------------------------
-// Ошибка преобразования
+// Conversion error
 // ---------------------------------------------------------------------------
 
-/// Сырое числовое значение не соответствует ни одному варианту перечисления.
+/// The raw numeric value does not match any variant of the enumeration.
 ///
-/// Возвращается `TryFrom<u8>`/`TryFrom<u16>` всех перечислений модуля.
+/// Returned by `TryFrom<u8>`/`TryFrom<u16>` of all enumerations of the module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InvalidEnumValue {
-    /// Имя перечисления, для которого выполнено преобразование.
+    /// Name of the enumeration the conversion was performed for.
     pub type_name: &'static str,
-    /// Неизвестное сырое значение.
+    /// Unknown raw value.
     pub value: u32,
 }
 
 impl InvalidEnumValue {
-    /// Создаёт ошибку преобразования.
+    /// Creates a conversion error.
     #[inline]
     pub const fn new(type_name: &'static str, value: u32) -> Self {
         Self { type_name, value }
@@ -57,10 +57,10 @@ impl fmt::Display for InvalidEnumValue {
 impl std::error::Error for InvalidEnumValue {}
 
 // ---------------------------------------------------------------------------
-// Макросы объявления перечислений
+// Enumeration declaration macros
 // ---------------------------------------------------------------------------
 
-/// Генерирует `From<Enum> for Repr` и `TryFrom<Repr> for Enum`.
+/// Generates `From<Enum> for Repr` and `TryFrom<Repr> for Enum`.
 macro_rules! impl_conversions {
     ($name:ty, $repr:ty, [$($variant:ident),+ $(,)?]) => {
         impl From<$name> for $repr {
@@ -86,19 +86,19 @@ macro_rules! impl_conversions {
     };
 }
 
-/// Добавляет `ALL` и `COUNT` — используется тестами round-trip.
+/// Adds `ALL` and `COUNT` — used by round-trip tests.
 macro_rules! impl_all {
     ($name:ty, [$($variant:ident),+ $(,)?]) => {
         impl $name {
-            /// Все варианты в порядке объявления (совпадает с порядком C++).
+            /// All variants in declaration order (matches the C++ order).
             pub const ALL: &'static [Self] = &[$(Self::$variant),+];
-            /// Количество вариантов.
+            /// Number of variants.
             pub const COUNT: usize = Self::ALL.len();
         }
     };
 }
 
-/// Объявляет перечисление с `#[repr(u8)]` и полным набором преобразований.
+/// Declares an enumeration with `#[repr(u8)]` and the full set of conversions.
 macro_rules! enum_u8 {
     ($(#[$doc:meta])* $name:ident {
         $($(#[$vmeta:meta])* $variant:ident = $value:expr),+ $(,)?
@@ -116,7 +116,7 @@ macro_rules! enum_u8 {
     };
 }
 
-/// Объявляет перечисление с `#[repr(u16)]` и полным набором преобразований.
+/// Declares an enumeration with `#[repr(u16)]` and the full set of conversions.
 macro_rules! enum_u16 {
     ($(#[$doc:meta])* $name:ident {
         $($(#[$vmeta:meta])* $variant:ident = $value:expr),+ $(,)?
@@ -135,11 +135,11 @@ macro_rules! enum_u16 {
 }
 
 // ---------------------------------------------------------------------------
-// Команды
+// Teams
 // ---------------------------------------------------------------------------
 
-// `TeamKind` объявлен в `team.rs` (каркас сохраняет имя); здесь только
-// добавляются преобразования C++-значений и идиоматичный алиас `TeamType`.
+// `TeamKind` is declared in `team.rs` (the skeleton keeps the name); here only
+// the C++ value conversions and the idiomatic alias `TeamType` are added.
 impl_all!(
     TeamKind,
     [None, Player, Computer, Remote, Eliminated]
@@ -155,17 +155,17 @@ impl_conversions!(
     [None, Player, Computer, Remote, Eliminated]
 );
 
-/// Синоним C++/save.md `TeamType` / `PlayerType`.
+/// Alias of the C++/save.md `TeamType` / `PlayerType`.
 ///
-/// Значения: `None=0`, `Player=1` (`TEAM_TYPE_HUMAN`), `Computer=2`,
+/// Values: `None=0`, `Player=1` (`TEAM_TYPE_HUMAN`), `Computer=2`,
 /// `Remote=3`, `Eliminated=4`.
 pub type TeamType = TeamKind;
 
 enum_u8! {
-    /// Индекс команды — C++ `PlayerTeamType`, save.md `TeamIndex`.
+    /// Team index — C++ `PlayerTeamType`, save.md `TeamIndex`.
     ///
-    /// Внутри крейта идентификатор команды — newtype [`TeamId`]; этот enum нужен
-    /// для точного парсинга сейвов и сетевых пакетов.
+    /// Within the crate the team identifier is the newtype [`TeamId`]; this enum is needed
+    /// for exact parsing of saves and network packets.
     TeamIndex {
         Red = 0x00,
         Green = 0x01,
@@ -175,7 +175,7 @@ enum_u8! {
     }
 }
 
-/// `PLAYER_TEAM_MAX` из `enums.hpp`: количество индексов команд (0..=4).
+/// `PLAYER_TEAM_MAX` from `enums.hpp`: number of team indices (0..=4).
 pub const PLAYER_TEAM_MAX: u8 = 5;
 
 impl From<TeamIndex> for TeamId {
@@ -195,22 +195,22 @@ impl TryFrom<TeamId> for TeamIndex {
 }
 
 impl TeamId {
-    /// Красная команда (`PLAYER_TEAM_RED`).
+    /// Red team (`PLAYER_TEAM_RED`).
     pub const RED: Self = Self(0);
-    /// Зелёная команда (`PLAYER_TEAM_GREEN`).
+    /// Green team (`PLAYER_TEAM_GREEN`).
     pub const GREEN: Self = Self(1);
-    /// Синяя команда (`PLAYER_TEAM_BLUE`).
+    /// Blue team (`PLAYER_TEAM_BLUE`).
     pub const BLUE: Self = Self(2);
-    /// Серая команда (`PLAYER_TEAM_GRAY`).
+    /// Gray team (`PLAYER_TEAM_GRAY`).
     pub const GRAY: Self = Self(3);
-    /// Псевдокоманда нейтральных юнитов (`PLAYER_TEAM_ALIEN`).
+    /// Pseudo-team of neutral units (`PLAYER_TEAM_ALIEN`).
     pub const ALIEN: Self = Self(4);
-    /// Значение `PLAYER_TEAM_MAX` (не команда, а счётчик).
+    /// The value of `PLAYER_TEAM_MAX` (not a team, but a counter).
     pub const MAX: Self = Self(PLAYER_TEAM_MAX);
 }
 
 enum_u8! {
-    /// Клан команды — C++ `TeamClanType`, save.md `TeamClan` (1–8, случайный — 0).
+    /// Team clan — C++ `TeamClanType`, save.md `TeamClan` (1–8, random is 0).
     TeamClan {
         Random = 0x00,
         TheChosen = 0x01,
@@ -224,11 +224,11 @@ enum_u8! {
     }
 }
 
-/// Синоним C++-имени `TeamClanType`.
+/// Alias of the C++ name `TeamClanType`.
 pub type TeamClanType = TeamClan;
 
 enum_u8! {
-    /// Уровень сложности ИИ — C++ `OpponentType`, save.md `OpponentType`.
+    /// AI difficulty level — C++ `OpponentType`, save.md `OpponentType`.
     Opponent {
         Clueless = 0,
         Apprentice = 1,
@@ -239,11 +239,11 @@ enum_u8! {
     }
 }
 
-/// Синоним C++/save.md `OpponentType`.
+/// Alias of the C++/save.md `OpponentType`.
 pub type OpponentType = Opponent;
 
 enum_u8! {
-    /// Режим игры — C++ анонимный `PLAY_MODE_*`, save.md `PlayMode`.
+    /// Game mode — C++ anonymous `PLAY_MODE_*`, save.md `PlayMode`.
     PlayMode {
         TurnBased = 0,
         SimultaneousMoves = 1,
@@ -252,7 +252,7 @@ enum_u8! {
 }
 
 enum_u8! {
-    /// Тип победы — C++ анонимный `VICTORY_TYPE_*`, save.md `VictoryType`.
+    /// Victory type — C++ anonymous `VICTORY_TYPE_*`, save.md `VictoryType`.
     VictoryType {
         Duration = 0,
         Score = 1,
@@ -260,7 +260,7 @@ enum_u8! {
 }
 
 enum_u8! {
-    /// Тип файла сохранения — save.md `FileType` (контекст партии/лобби).
+    /// Save file type — save.md `FileType` (match/lobby context).
     FileType {
         Custom = 0,
         Tutorial = 1,
@@ -276,7 +276,7 @@ enum_u8! {
 }
 
 enum_u8! {
-    /// Планета — save.md `PlanetType`, C++ `PlanetType` (`planetselectmenu.hpp`).
+    /// Planet — save.md `PlanetType`, C++ `PlanetType` (`planetselectmenu.hpp`).
     Planet {
         Snowcrab = 0,
         Frigia = 1,
@@ -305,13 +305,13 @@ enum_u8! {
     }
 }
 
-/// Синоним C++/save.md `PlanetType`.
+/// Alias of the C++/save.md `PlanetType`.
 pub type PlanetType = Planet;
 
 enum_u8! {
-    /// Тема исследований — C++ `ResearchTopicType`, save.md `ResearchTopic`.
+    /// Research topic — C++ `ResearchTopicType`, save.md `ResearchTopic`.
     ///
-    /// Порядок совпадает с атрибутами `UnitValues` (`ATTRIB_*`).
+    /// The order matches the `UnitValues` attributes (`ATTRIB_*`).
     ResearchTopic {
         Attack = 0,
         Shots = 1,
@@ -324,14 +324,14 @@ enum_u8! {
     }
 }
 
-/// Синоним C++-имени `ResearchTopicType`.
+/// Alias of the C++ name `ResearchTopicType`.
 pub type ResearchTopicType = ResearchTopic;
 
-/// `RESEARCH_TOPIC_COUNT` из `enums.hpp`.
+/// `RESEARCH_TOPIC_COUNT` from `enums.hpp`.
 pub const RESEARCH_TOPIC_COUNT: usize = ResearchTopic::COUNT;
 
 enum_u8! {
-    /// Состояние партии — C++ `GameStateType` (16 значений).
+    /// Match state — C++ `GameStateType` (16 values).
     GameStateType {
         Unused0 = 0x0,
         Unused1 = 0x1,
@@ -353,7 +353,7 @@ enum_u8! {
 }
 
 enum_u8! {
-    /// Исход команды — C++ `WinLossState`.
+    /// Team outcome — C++ `WinLossState`.
     WinLossState {
         Generic = 0,
         Pending = 1,
@@ -363,7 +363,7 @@ enum_u8! {
 }
 
 enum_u8! {
-    /// Стратегия ИИ — C++ `AiStrategyType` (0..=9, `AI_STRATEGY_MAX` = 10).
+    /// AI strategy — C++ `AiStrategyType` (0..=9, `AI_STRATEGY_MAX` = 10).
     AiStrategy {
         Random = 0,
         Defensive = 1,
@@ -378,11 +378,11 @@ enum_u8! {
     }
 }
 
-/// `AI_STRATEGY_MAX` — счётчик стратегий (не вариант).
+/// `AI_STRATEGY_MAX` — strategy counter (not a variant).
 pub const AI_STRATEGY_MAX: u8 = 10;
 
 enum_u8! {
-    /// Уровень осторожности ИИ — C++ `CautionLevelType`.
+    /// AI caution level — C++ `CautionLevelType`.
     CautionLevel {
         None = 0,
         AvoidReactionFire = 1,
@@ -392,13 +392,13 @@ enum_u8! {
 }
 
 // ---------------------------------------------------------------------------
-// Приказы юнита
+// Unit orders
 // ---------------------------------------------------------------------------
 
 enum_u8! {
-    /// Внутренний приказ юнита — C++ `UnitOrderType` / save.md `OrderType`.
+    /// Internal unit order — C++ `UnitOrderType` / save.md `OrderType`.
     ///
-    /// Не путать с `Order` (`max_core::order`) — клиентской командой серверу.
+    /// Not to be confused with `Order` (`max_core::order`) — the client command to the server.
     UnitOrder {
         Await = 0x00,
         Transform = 0x01,
@@ -418,7 +418,7 @@ enum_u8! {
         Load = 0x0F,
         Idle = 0x10,
         Repair = 0x11,
-        /// `ORDER_17` (0x12): имя в C++ не восстановлено; save.md — `REFUEL`.
+        /// `ORDER_17` (0x12): the name was not recovered in C++; save.md has `REFUEL`.
         Order17 = 0x12,
         Reload = 0x13,
         Transfer = 0x14,
@@ -436,14 +436,14 @@ enum_u8! {
     }
 }
 
-/// Синоним C++-имени `UnitOrderType`.
+/// Alias of the C++ name `UnitOrderType`.
 pub type UnitOrderType = UnitOrder;
 
-/// `ORDER_COUNT_MAX` из `enums.hpp`.
+/// `ORDER_COUNT_MAX` from `enums.hpp`.
 pub const ORDER_COUNT_MAX: u8 = UnitOrder::COUNT as u8;
 
 enum_u8! {
-    /// Состояние исполнения приказа — C++ `UnitOrderStateType` (47 значений).
+    /// Order execution state — C++ `UnitOrderStateType` (47 values).
     UnitOrderState {
         Init = 0x00,
         ExecutingOrder = 0x01,
@@ -495,20 +495,20 @@ enum_u8! {
     }
 }
 
-/// Синоним C++-имени `UnitOrderStateType`.
+/// Alias of the C++ name `UnitOrderStateType`.
 pub type UnitOrderStateType = UnitOrderState;
 
 // ---------------------------------------------------------------------------
-// Тип юнита: 93 варианта ResourceID / UnitType
+// Unit type: 93 ResourceID / UnitType variants
 // ---------------------------------------------------------------------------
 
 enum_u16! {
-    /// Тип юнита — C++ `ResourceID` (диапазон `UNIT_START..UNIT_END`), save.md
+    /// Unit type — C++ `ResourceID` (range `UNIT_START..UNIT_END`), save.md
     /// `UnitType`.
     ///
-    /// 93 игровых типа, `#[repr(u16)]`, значения 0x00–0x5C; 0x5D (`UNIT_END`) —
-    /// счётчик, а не вариант. Имена — смысловые (C++-токен / save.md указаны в
-    /// комментариях); ресурсный токен типа отдаёт [`UnitType::tag`].
+    /// 93 game types, `#[repr(u16)]`, values 0x00–0x5C; 0x5D (`UNIT_END`) is
+    /// a counter, not a variant. The names are semantic (the C++ token / save.md name is given in
+    /// the comments); the resource token of a type is returned by [`UnitType::tag`].
     UnitType {
         /// `COMMTWR` / `UNIT_TYPE_GOLD_REFINERY`.
         GoldRefinery = 0x00,
@@ -699,25 +699,25 @@ enum_u16! {
     }
 }
 
-/// `UNIT_END` из `resourcetable.hpp`: количество типов юнитов (0x5D = 93).
+/// `UNIT_END` from `resourcetable.hpp`: number of unit types (0x5D = 93).
 pub const UNIT_END: u16 = 0x5D;
-/// Количество типов юнитов.
+/// Number of unit types.
 pub const UNIT_TYPE_COUNT: usize = UnitType::COUNT;
 
-/// Ресурсный токен типа юнита — C++ `ResourceID` / ресурс `SC_UNITS`.
+/// Resource token of a unit type — C++ `ResourceID` / the `SC_UNITS` resource.
 ///
-/// Токен (`COMMTWR`, `MININGST`, …) — это **данные** (совместимость с файлами
-/// ресурсов), а не имя типа: правило 6.4 `rust-programming-rules.md`. Он же
-/// первая часть doc-комментария каждого варианта (`/// TOKEN / C++_NAME`) и
-/// ключ таблицы User-Friendly Name в слое представления (`max_app`,
+/// The token (`COMMTWR`, `MININGST`, …) is **data** (compatibility with the file
+/// resources), not the type name: rule 6.4 of `rust-programming-rules.md`. It is also
+/// the first part of the doc comment of each variant (`/// TOKEN / C++_NAME`) and
+/// the key of the User-Friendly Name table in the presentation layer (`max_app`,
 /// `data/unit_names.json`).
 ///
-/// Соответствие C++: `resourcetable.hpp` / `UNIT_TYPE_*`, `ResourceManager_GetUnit`.
+/// C++ correspondence: `resourcetable.hpp` / `UNIT_TYPE_*`, `ResourceManager_GetUnit`.
 impl UnitType {
-    /// Токен ресурса типа (`COMMTWR` для [`UnitType::GoldRefinery`] и т.д.).
+    /// Resource token of the type (`COMMTWR` for [`UnitType::GoldRefinery`], etc.).
     ///
-    /// Для всех 93 вариантов: значение — ровно первая часть doc-комментария
-    /// варианта. Порядок и дискриминанты enum не затрагиваются.
+    /// For all 93 variants: the value is exactly the first part of the doc comment of
+    /// the variant. The order and discriminants of the enum are not affected.
     #[inline]
     pub fn tag(&self) -> &'static str {
         match self {
@@ -734,7 +734,7 @@ impl UnitType {
             UnitType::Hangar => "HANGAR",
             UnitType::Dock => "DOCK",
             UnitType::Connector => "CNCT_4W",
-            // 0x0D–0x14: декорации — обломки, следы, плиты, конусы.
+            // 0x0D–0x14: decorations — debris, tracks, plates, cones.
             UnitType::LargeRubble => "LRGRUBLE",
             UnitType::SmallRubble => "SMLRUBLE",
             UnitType::LargeTape => "LRGTAPE",
@@ -743,7 +743,7 @@ impl UnitType {
             UnitType::SmallSlab => "SMLSLAB",
             UnitType::LargeCones => "LRGCONES",
             UnitType::SmallCones => "SMLCONES",
-            // 0x15–0x2A: здания, дороги, мины.
+            // 0x15–0x2A: buildings, roads, mines.
             UnitType::Road => "ROAD",
             UnitType::LandingPad => "LANDPAD",
             UnitType::Shipyard => "SHIPYARD",
@@ -766,13 +766,13 @@ impl UnitType {
             UnitType::MiningStation => "MININGST",
             UnitType::LandMine => "LANDMINE",
             UnitType::SeaMine => "SEAMINE",
-            // 0x2B–0x2F: эффекты взрывов.
+            // 0x2B–0x2F: explosion effects.
             UnitType::LandExplosion => "LNDEXPLD",
             UnitType::AirExplosion => "AIREXPLD",
             UnitType::SeaExplosion => "SEAEXPLD",
             UnitType::BuildingExplosion => "BLDEXPLD",
             UnitType::HitExplosion => "HITEXPLD",
-            // 0x30–0x53: юнит-типы (строитель, боевые, транспорт, alien).
+            // 0x30–0x53: unit types (builder, combat, transport, alien).
             UnitType::MasterBuilder => "MASTER",
             UnitType::Constructor => "CONSTRCT",
             UnitType::Scout => "SCOUT",
@@ -809,7 +809,7 @@ impl UnitType {
             UnitType::AlienTank => "ALNTANK",
             UnitType::AlienAssaultGun => "ALNASGUN",
             UnitType::AlienPlane => "ALNPLANE",
-            // 0x54–0x5A: снаряды и следы (эффекты).
+            // 0x54–0x5A: projectiles and trails (effects).
             UnitType::Rocket => "ROCKET",
             UnitType::Torpedo => "TORPEDO",
             UnitType::AlienMissile => "ALNMISSL",
@@ -817,7 +817,7 @@ impl UnitType {
             UnitType::AlienArtilleryBall => "ALNABALL",
             UnitType::RocketSmoke => "RKTSMOKE",
             UnitType::TorpedoBubble => "TRPBUBLE",
-            // 0x5B–0x5C: harvester и «мёртвый WALDO».
+            // 0x5B–0x5C: harvester and the "dead WALDO".
             UnitType::Harvester => "HARVSTER",
             UnitType::DeadWaldo => "WALDO",
         }
@@ -825,13 +825,13 @@ impl UnitType {
 }
 
 // ---------------------------------------------------------------------------
-// SurfaceType — битовая маска проходимости
+// SurfaceType — passability bit mask
 // ---------------------------------------------------------------------------
 
-/// Проходимость клетки — C++ `SURFACE_TYPE_*`, save.md `SurfaceType`.
+/// Cell passability — C++ `SURFACE_TYPE_*`, save.md `SurfaceType`.
 ///
-/// Это **битовая маска**, а не исключающий enum: клетка может быть
-/// `LAND | COAST`, `WATER | COAST` и т.п. Один байт на клетку (`SurfaceMap`).
+/// This is a **bit mask**, not an exclusive enum: a cell can be
+/// `LAND | COAST`, `WATER | COAST`, etc. One byte per cell (`SurfaceMap`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct Surface(u8);
 
@@ -846,10 +846,10 @@ impl Surface {
     pub const COAST: Self = Self(0x04);
     /// `SURFACE_TYPE_AIR`.
     pub const AIR: Self = Self(0x08);
-    /// Все определённые биты (0x0F).
+    /// All defined bits (0x0F).
     pub const ALL: Self = Self(0x0F);
 
-    /// Создаёт маску из битов; `None`, если установлены неизвестные биты.
+    /// Creates a mask from bits; `None` if unknown bits are set.
     #[inline]
     pub const fn from_bits(bits: u8) -> Option<Self> {
         if bits & !Self::ALL.0 == 0 {
@@ -859,31 +859,31 @@ impl Surface {
         }
     }
 
-    /// Создаёт маску, отбрасывая неизвестные биты.
+    /// Creates a mask, discarding unknown bits.
     #[inline]
     pub const fn from_bits_truncate(bits: u8) -> Self {
         Self(bits & Self::ALL.0)
     }
 
-    /// Сырое значение маски.
+    /// Raw value of the mask.
     #[inline]
     pub const fn bits(self) -> u8 {
         self.0
     }
 
-    /// Маска пуста.
+    /// The mask is empty.
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// Содержит все биты `other`.
+    /// Contains all bits of `other`.
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
-    /// Пересекается с `other`.
+    /// Overlaps with `other`.
     #[inline]
     pub const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
@@ -959,128 +959,128 @@ impl Not for Surface {
     }
 }
 
-/// Синоним C++/save.md `SurfaceType`.
+/// Alias of the C++/save.md `SurfaceType`.
 pub type SurfaceType = Surface;
 
 // ---------------------------------------------------------------------------
-// Байтовые константы (флаги, карго, коннекторы)
+// Byte constants (flags, cargo, connectors)
 // ---------------------------------------------------------------------------
 
-/// Флаги юнита — C++ анонимный enum `GROUND_COVER` … `REGENERATING_UNIT`.
+/// Unit flags — C++ anonymous enum `GROUND_COVER` … `REGENERATING_UNIT`.
 ///
-/// В C++ это `uint32_t`-биты; здесь — константы без внешнего `bitflags`.
+/// In C++ these are `uint32_t` bits; here they are constants without an external `bitflags`.
 pub mod unit_flags {
-    /// Наземное укрытие.
+    /// Ground cover.
     pub const GROUND_COVER: u32 = 0x1;
-    /// Идёт взрыв.
+    /// An explosion is in progress.
     pub const EXPLODING: u32 = 0x2;
-    /// Анимированный юнит.
+    /// Animated unit.
     pub const ANIMATED: u32 = 0x4;
-    /// Юнит-коннектор.
+    /// Connector unit.
     pub const CONNECTOR_UNIT: u32 = 0x8;
-    /// Здание.
+    /// Building.
     pub const BUILDING: u32 = 0x10;
-    /// Ракетный юнит.
+    /// Missile unit.
     pub const MISSILE_UNIT: u32 = 0x20;
-    /// Воздушный мобильный юнит.
+    /// Air mobile unit.
     pub const MOBILE_AIR_UNIT: u32 = 0x40;
-    /// Морской мобильный юнит.
+    /// Sea mobile unit.
     pub const MOBILE_SEA_UNIT: u32 = 0x80;
-    /// Наземный мобильный юнит.
+    /// Land mobile unit.
     pub const MOBILE_LAND_UNIT: u32 = 0x100;
-    /// Стационарный юнит.
+    /// Stationary unit.
     pub const STATIONARY: u32 = 0x200;
-    /// Хэш-бит команды GRAY.
+    /// GRAY team hash bit.
     pub const HASH_TEAM_GRAY: u32 = 0x400;
-    /// Хэш-бит команды BLUE.
+    /// BLUE team hash bit.
     pub const HASH_TEAM_BLUE: u32 = 0x800;
-    /// Хэш-бит команды GREEN.
+    /// GREEN team hash bit.
     pub const HASH_TEAM_GREEN: u32 = 0x1000;
-    /// Хэш-бит команды RED.
+    /// RED team hash bit.
     pub const HASH_TEAM_RED: u32 = 0x2000;
-    /// Юнит можно улучшать.
+    /// The unit can be upgraded.
     pub const UPGRADABLE: u32 = 0x4000;
-    /// Хэш-бит derelict/нейтральных.
+    /// Hash bit of derelict/neutral units.
     pub const HASH_TEAM_DERELICT: u32 = 0x8000;
-    /// Парящий юнит.
+    /// Hovering unit.
     pub const HOVERING: u32 = 0x10000;
-    /// Есть спрайт выстрела.
+    /// Has a fire sprite.
     pub const HAS_FIRING_SPRITE: u32 = 0x20000;
-    /// Стреляет ракетами.
+    /// Fires rockets.
     pub const FIRES_MISSILES: u32 = 0x40000;
-    /// Юнит-строитель.
+    /// Builder unit.
     pub const CONSTRUCTOR_UNIT: u32 = 0x80000;
-    /// Электронный юнит.
+    /// Electronic unit.
     pub const ELECTRONIC_UNIT: u32 = 0x200000;
-    /// Выбираемый.
+    /// Selectable.
     pub const SELECTABLE: u32 = 0x400000;
-    /// Автономный.
+    /// Autonomous.
     pub const STANDALONE: u32 = 0x800000;
-    /// Требует плиту.
+    /// Requires a plate.
     pub const REQUIRES_SLAB: u32 = 0x1000000;
-    /// Спрайт башни.
+    /// Turret sprite.
     pub const TURRET_SPRITE: u32 = 0x2000000;
-    /// Сторожевой юнит.
+    /// Sentinel unit.
     pub const SENTRY_UNIT: u32 = 0x4000000;
-    /// Вращающаяся башня.
+    /// Rotating turret.
     pub const SPINNING_TURRET: u32 = 0x8000000;
-    /// Регенерирующий юнит.
+    /// Regenerating unit.
     pub const REGENERATING_UNIT: u32 = 0x10000000;
 }
 
-/// Флаги груза — C++ `CARGO_*` (тип груза — младшие 5 бит).
+/// Cargo flags — C++ `CARGO_*` (cargo type is the low 5 bits).
 pub const CARGO_FUEL: u8 = 0x20;
-/// Флаг груза «золото».
+/// Cargo flag "gold".
 pub const CARGO_GOLD: u8 = 0x40;
-/// Флаг груза «материалы».
+/// Cargo flag "materials".
 pub const CARGO_MATERIALS: u8 = 0x80;
-/// Маска количества груза (младшие 5 бит).
+/// Cargo amount mask (low 5 bits).
 pub const CARGO_MASK: u8 = 0x1F;
 
-/// Направления коннекторов — C++ `ConnectorDirectionType` (8 бит).
+/// Connector directions — C++ `ConnectorDirectionType` (8 bits).
 pub const CONNECTOR_NORTH_LEFT: u16 = 0x1;
-/// Север-право.
+/// North-right.
 pub const CONNECTOR_NORTH_RIGHT: u16 = 0x2;
-/// Восток-верх.
+/// East-top.
 pub const CONNECTOR_EAST_TOP: u16 = 0x4;
-/// Восток-низ.
+/// East-bottom.
 pub const CONNECTOR_EAST_BOTTOM: u16 = 0x8;
-/// Юг-лево.
+/// South-left.
 pub const CONNECTOR_SOUTH_LEFT: u16 = 0x10;
-/// Юг-право.
+/// South-right.
 pub const CONNECTOR_SOUTH_RIGHT: u16 = 0x20;
-/// Запад-верх.
+/// West-top.
 pub const CONNECTOR_WEST_TOP: u16 = 0x40;
-/// Запад-низ.
+/// West-bottom.
 pub const CONNECTOR_WEST_BOTTOM: u16 = 0x80;
-/// Соединение в процессе проверки (не направление).
+/// Connection under test (not a direction).
 pub const CONNECTION_BEING_TESTED: u16 = 0x400;
 
-/// Бит `NO_RETREAT` в `UnitInfo::ai_state_bits`.
+/// `NO_RETREAT` bit in `UnitInfo::ai_state_bits`.
 pub const AI_STATE_NO_RETREAT: u32 = 1;
-/// Маска cooldown цели в `ai_state_bits`.
+/// Target cooldown mask in `ai_state_bits`.
 pub const AI_STATE_TARGET_COOLDOWN_MASK: u32 = 0xFE;
-/// Напоминание «движение завершено».
+/// "Movement finished" reminder.
 pub const AI_STATE_MOVE_FINISHED_REMINDER: u32 = 0x100;
-/// Напоминание «отступление».
+/// "Retreat" reminder.
 pub const AI_STATE_RETREAT_REMINDER: u32 = 0x200;
 
-/// Маска видимости команды в `ResourceMap` (фактическая, см. DESIGN риск 5).
+/// Team visibility mask in `ResourceMap` (the actual one, see DESIGN risk 5).
 pub const RESOURCE_MAP_VISIBILITY_MASK: u16 = 0x3C00;
 
-/// Значения `InfoMapType` (AI): нет информации.
+/// `InfoMapType` values (AI): no information.
 pub const INFO_MAP_NO_INFO: u8 = 0x00;
-/// Исследовано.
+/// Surveyed.
 pub const INFO_MAP_EXPLORED: u8 = 0x01;
-/// Минное поле.
+/// Minefield.
 pub const INFO_MAP_MINE_FIELD: u8 = 0x02;
-/// Фронтир.
+/// Frontier.
 pub const INFO_MAP_FRONTIER: u8 = 0x04;
-/// Зона зачистки.
+/// Clearing zone.
 pub const INFO_MAP_CLEAR_OUT_ZONE: u8 = 0x08;
 
 // ---------------------------------------------------------------------------
-// Тесты: значения, размеры, round-trip всех вариантов
+// Tests: values, sizes, round-trip of all variants
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1173,9 +1173,9 @@ mod tests {
 
     #[test]
     fn unit_type_tags_match_resources() {
-        // Токен — первая часть doc-комментария варианта (`/// TOKEN / C++_NAME`);
-        // он же ключ UFN-таблицы в слое представления, поэтому у 93 вариантов
-        // ровно 93 различных токена в формате ресурса.
+        // The token is the first part of the doc comment of a variant (`/// TOKEN / C++_NAME`);
+        // it is also the key of the UFN table in the presentation layer, so the 93 variants
+        // have exactly 93 distinct tokens in the resource format.
         assert_eq!(UnitType::COUNT, 93);
         assert_eq!(UnitType::GoldRefinery.tag(), "COMMTWR");
         assert_eq!(UnitType::MaterialStorage.tag(), "ADUMP");
@@ -1253,7 +1253,7 @@ mod tests {
 
     #[test]
     fn enum_roundtrip_is_exhaustive() {
-        // Все сырые значения u8/u16 либо декодируются, либо дают ошибку.
+        // Every raw u8/u16 value either decodes or yields an error.
         for raw in 0..=u8::MAX {
             let _ = TeamKind::try_from(raw);
             let _ = TeamIndex::try_from(raw);
@@ -1310,7 +1310,7 @@ mod tests {
             Surface::ALL.bits()
         );
 
-        // Все 16 допустимых комбинаций битов проходят round-trip.
+        // All 16 valid bit combinations pass the round-trip.
         for bits in 0u8..=0x0F {
             let surface = Surface::from_bits(bits).unwrap();
             assert_eq!(Surface::try_from(surface.bits()).unwrap(), surface);
@@ -1347,7 +1347,7 @@ mod tests {
         assert_eq!(id.team(), TeamId::GREEN);
         assert_eq!(id.object_index(), 7);
 
-        // Индекс маскируется 13 битами, как в C++.
+        // The index is masked with 13 bits, as in C++.
         let id = UnitId::new(TeamId::GRAY, 0xFFFF);
         assert_eq!(id.object_index(), 0x1FFF);
         assert_eq!(id.team(), TeamId::GRAY);

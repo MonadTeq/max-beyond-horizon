@@ -1,16 +1,16 @@
-//! Отрисовка спрайтов в RGBA-буфер: палитра, командные цвета, тени.
+//! Drawing sprites into an RGBA buffer: palette, team colors, shadows.
 //!
-//! Порядок индексации повторяет `Gfx_DecodeSprite` (`gfx.cpp:212`, §5.2 spw.md):
-//! **сначала LUT команды**, потом LUT яркости:
-//! `цвет = палитра[ brightness[ level ][ team_lut[index] ] ]`.
+//! The indexing order repeats `Gfx_DecodeSprite` (`gfx.cpp:212`, §5.2 spw.md):
+//! **team LUT first**, then the brightness LUT:
+//! `color = palette[ brightness[ level ][ team_lut[index] ] ]`.
 //!
-//! Тень — не пиксели, а маска затемнения (§4.3): [`SpriteRenderer::draw_shadow`]
-//! применяет к уже нарисованным пикселям формулу таблицы яркости уровня 5
-//! (`c' = c * 5*32 / 224`). Прозрачные пиксели спрайта не пишутся вовсе, так
-//! что порядок «тень -> спрайт» даёт картинку оригинала
+//! The shadow is not pixels but a darkening mask (§4.3): [`SpriteRenderer::draw_shadow`]
+//! applies the formula of the level 5 brightness table to already drawn pixels
+//! (`c' = c * 5*32 / 224`). Transparent sprite pixels are not written at all, so
+//! the "shadow -> sprite" order produces the original's picture
 //! (`UnitInfo::RenderWithConnectors`).
 //!
-//! Всё это чистые функции над [`RgbaBuffer`]: ни окна, ни SDL, ни состояния.
+//! All of this is pure functions over [`RgbaBuffer`]: no window, no SDL, no state.
 
 use max_assets::sprite::{ShadowFrame, SpriteFrame};
 
@@ -19,17 +19,17 @@ use crate::palette::{
     BrightnessLut, ColorLut, Palette, FULL_BRIGHTNESS_LEVEL, SHADOW_BRIGHTNESS_LEVEL,
 };
 
-/// Результат одной операции отрисовки.
+/// Result of one drawing operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DrawStats {
-    /// Сколько пикселей реально изменено.
+    /// How many pixels were actually changed.
     pub drawn: u32,
-    /// Сколько пикселей не попало в буфер (клиппинг по границам).
+    /// How many pixels did not fit into the buffer (clipping at the bounds).
     pub clipped: u32,
 }
 
 impl DrawStats {
-    /// Сумма результатов (например, тень + спрайт).
+    /// Sum of results (e.g. shadow + sprite).
     pub fn merge(self, other: Self) -> Self {
         Self {
             drawn: self.drawn + other.drawn,
@@ -38,10 +38,10 @@ impl DrawStats {
     }
 }
 
-/// Отрисовщик спрайтов: палитра + таблицы перекраски + команда.
+/// Sprite renderer: palette + recolor tables + team.
 ///
-/// Один и тот же рендерер рисует все кадры одного юнита: команда и уровень
-/// яркости — свойства юнита, а не кадра.
+/// The same renderer draws all frames of one unit: the team and the brightness
+/// level are properties of the unit, not of the frame.
 #[derive(Debug, Clone, Copy)]
 pub struct SpriteRenderer<'a> {
     palette: &'a Palette,
@@ -51,7 +51,7 @@ pub struct SpriteRenderer<'a> {
 }
 
 impl<'a> SpriteRenderer<'a> {
-    /// Рендерер для команды `team` и уровня яркости `level` (0..=7).
+    /// Renderer for team `team` and brightness level `level` (0..=7).
     pub fn new(
         palette: &'a Palette,
         brightness: &'a BrightnessLut,
@@ -66,7 +66,7 @@ impl<'a> SpriteRenderer<'a> {
         }
     }
 
-    /// Рендерер нейтральной техники (identity-LUT) на полной яркости.
+    /// Renderer for neutral equipment (identity LUT) at full brightness.
     pub fn neutral(palette: &'a Palette, brightness: &'a BrightnessLut) -> Self {
         Self::new(
             palette,
@@ -76,7 +76,7 @@ impl<'a> SpriteRenderer<'a> {
         )
     }
 
-    /// Цвет палитры для индекса спрайта после командной LUT и LUT яркости.
+    /// Palette color for a sprite index after the team LUT and the brightness LUT.
     #[inline]
     pub fn color_for(&self, index: u8) -> Rgba {
         let team_index = self.team.map(index);
@@ -85,22 +85,22 @@ impl<'a> SpriteRenderer<'a> {
         self.palette.rgba(level_index)
     }
 
-    /// Уровень яркости рендерера.
+    /// Brightness level of the renderer.
     #[inline]
     pub fn level(&self) -> u8 {
         self.level
     }
 
-    /// Командная LUT рендерера.
+    /// Team LUT of the renderer.
     #[inline]
     pub fn team(&self) -> &ColorLut {
         &self.team
     }
 
-    /// Рисует кадр так, что горячая точка попадает в `anchor`.
+    /// Draws the frame so that the hot spot lands at `anchor`.
     ///
-    /// Позиция — `anchor - hot` (§5.1 при `divisor = 2`, масштаб 1:1).
-    /// Прозрачные пиксели не пишутся. За границами буфера — клиппинг.
+    /// Position — `anchor - hot` (§5.1 with `divisor = 2`, scale 1:1).
+    /// Transparent pixels are not written. Outside the buffer — clipping.
     pub fn draw_frame(
         &self,
         dst: &mut RgbaBuffer,
@@ -112,7 +112,7 @@ impl<'a> SpriteRenderer<'a> {
         self.draw_rect(dst, frame, (ulx, uly), |_, index| self.color_for(index))
     }
 
-    /// Рисует кадр сплошным силуэтом командного цвета — режим `zoom_level < 8`
+    /// Draws the frame as a solid silhouette of the team color — the `zoom_level < 8` mode
     /// (`Gfx_TeamColorIndexBase != 0`, §5.2).
     pub fn draw_frame_silhouette(
         &self,
@@ -126,11 +126,11 @@ impl<'a> SpriteRenderer<'a> {
         self.draw_rect(dst, frame, (ulx, uly), |_, _| color)
     }
 
-    /// Затемняет уже нарисованную карту по маске тени.
+    /// Darkens the already drawn map by the shadow mask.
     ///
-    /// Прозрачные пиксели кадра тени пропускаются; уровень затемнения по
-    /// умолчанию — [`SHADOW_BRIGHTNESS_LEVEL`] (5). Затемняются только
-    /// существующие пиксели буфера.
+    /// Transparent pixels of the shadow frame are skipped; the default darkening level
+    /// is [`SHADOW_BRIGHTNESS_LEVEL`] (5). Only the already
+    /// existing buffer pixels are darkened.
     pub fn draw_shadow(
         &self,
         dst: &mut RgbaBuffer,
@@ -140,7 +140,7 @@ impl<'a> SpriteRenderer<'a> {
         self.draw_shadow_at_level(dst, frame, anchor, SHADOW_BRIGHTNESS_LEVEL)
     }
 
-    /// То же, но с явным уровнем затемнения (0..=7).
+    /// The same, but with an explicit darkening level (0..=7).
     pub fn draw_shadow_at_level(
         &self,
         dst: &mut RgbaBuffer,
@@ -169,8 +169,8 @@ impl<'a> SpriteRenderer<'a> {
         stats
     }
 
-    /// Рисует юнит в порядке оригинала: тень (со смещением `shadow_offset`),
-    /// затем спрайт (`UnitInfo::RenderWithConnectors`, §5.4).
+    /// Draws a unit in the original's order: shadow (with the `shadow_offset` offset),
+    /// then the sprite (`UnitInfo::RenderWithConnectors`, §5.4).
     pub fn draw_unit(
         &self,
         dst: &mut RgbaBuffer,
@@ -192,12 +192,12 @@ impl<'a> SpriteRenderer<'a> {
         stats.merge(self.draw_frame(dst, frame, anchor))
     }
 
-    /// Рисует юнит с масштабом камеры (`zoom`, 64 — 1:1).
+    /// Draws a unit with the camera scale (`zoom`, 64 — 1:1).
     ///
-    /// Повторяет `UnitInfo::RenderSprite`/`RenderShadow`: при `Gfx_ZoomLevel`
-    /// спрайт и тень масштабируются вместе с клеткой (`zoom / 64`), иначе на
-    /// уменьшенном/увеличенном масштабе юниты выглядят «приклеенными» к
-    /// экрану, а не к карте. Горячая точка и смещение тени тоже масштабируются.
+    /// Repeats `UnitInfo::RenderSprite`/`RenderShadow`: at `Gfx_ZoomLevel` the
+    /// sprite and shadow are scaled together with the cell (`zoom / 64`), otherwise at a
+    /// reduced/increased scale units look "glued" to the
+    /// screen instead of the map. The hot spot and the shadow offset are scaled too.
     pub fn draw_unit_scaled(
         &self,
         dst: &mut RgbaBuffer,
@@ -226,13 +226,13 @@ impl<'a> SpriteRenderer<'a> {
         stats.merge(self.draw_frame_scaled(dst, frame, anchor, zoom))
     }
 
-    /// Рисует башню/пушку поверх корпуса — `UnitInfo::RenderWithConnectors`:
-    /// тень и спрайт башни со сдвигом `offset` (`angle_offsets[angle]`) от
-    /// якоря корпуса.
+    /// Draws the turret/gun on top of the hull — `UnitInfo::RenderWithConnectors`:
+    /// the shadow and the sprite of the turret with the `offset` shift (`angle_offsets[angle]`) from
+    /// the anchor of the hull.
     ///
-    /// `offset` задан в пикселях исходного спрайта и масштабируется вместе с
-    /// `zoom` (64 — 1:1), как в C++ (`Gfx_MapScalingFactor`). Тень башни
-    /// смещается на тот же `shadow_offset`, что и тень корпуса.
+    /// `offset` is given in pixels of the source sprite and is scaled together with
+    /// `zoom` (64 — 1:1), as in C++ (`Gfx_MapScalingFactor`). The turret shadow
+    /// is shifted by the same `shadow_offset` as the hull shadow.
     pub fn draw_turret_scaled(
         &self,
         dst: &mut RgbaBuffer,
@@ -267,7 +267,7 @@ impl<'a> SpriteRenderer<'a> {
         stats.merge(self.draw_frame_scaled(dst, frame, turret_anchor, zoom))
     }
 
-    /// Кадр с масштабом `zoom` (64 — 1:1), ближайший сосед.
+    /// Frame at scale `zoom` (64 — 1:1), nearest neighbor.
     pub fn draw_frame_scaled(
         &self,
         dst: &mut RgbaBuffer,
@@ -299,7 +299,7 @@ impl<'a> SpriteRenderer<'a> {
         stats
     }
 
-    /// Тень с масштабом `zoom` (64 — 1:1), ближайший сосед.
+    /// Shadow at scale `zoom` (64 — 1:1), nearest neighbor.
     pub fn draw_shadow_scaled(
         &self,
         dst: &mut RgbaBuffer,
@@ -333,9 +333,9 @@ impl<'a> SpriteRenderer<'a> {
         stats
     }
 
-    /// Буфер `width × height` с одним кадром (якорь в горячей точке).
+    /// `width × height` buffer with a single frame (anchor at the hot spot).
     ///
-    /// Удобно для тестов и для кэширования кадра как текстуры.
+    /// Convenient for tests and for caching the frame as a texture.
     pub fn render_frame(&self, frame: &SpriteFrame) -> RgbaBuffer {
         let mut buffer = RgbaBuffer::new(u32::from(frame.width), u32::from(frame.height));
 
@@ -348,7 +348,7 @@ impl<'a> SpriteRenderer<'a> {
         buffer
     }
 
-    /// Прямоугольник, который займёт кадр в координатах буфера (до клиппинга).
+    /// The rectangle the frame will occupy in buffer coordinates (before clipping).
     pub fn frame_rect(&self, frame: &SpriteFrame, anchor: (i32, i32)) -> PixelRect {
         let (ulx, uly) = self.frame_origin(frame, anchor);
 
@@ -403,17 +403,17 @@ impl<'a> SpriteRenderer<'a> {
     }
 }
 
-/// Масштаб координаты/горячей точки: `value * zoom / 64` (64 — 1:1).
+/// Scale of a coordinate/hot spot: `value * zoom / 64` (64 — 1:1).
 fn scale_pixels(value: i32, zoom: u32) -> i32 {
     ((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32
 }
 
-/// Масштаб длины (минимум 1 пиксель, чтобы спрайт не исчезал).
+/// Scale of a length (minimum 1 pixel so that the sprite does not disappear).
 fn scale_length(value: u16, zoom: u32) -> i32 {
     (((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32).max(1)
 }
 
-/// Координата источника для destination-пикселя при nearest-neighbour.
+/// Source coordinate for a destination pixel under nearest-neighbour.
 fn source_coordinate(destination: i32, zoom: u32, source_len: i32) -> i32 {
     let source = (i64::from(destination) * 64 / i64::from(zoom.max(1))) as i32;
     source.min(source_len.saturating_sub(1)).max(0)
@@ -425,7 +425,7 @@ mod tests {
     use crate::palette::{Palette, PALETTE_BYTES};
     use max_assets::sprite::{decode_shadow, decode_sprite};
 
-    /// Палитра, у которой 8-битный цвет = `((index % 64) * 4, ...)`.
+    /// Palette whose 8-bit color is `((index % 64) * 4, ...)`.
     fn ramp_palette() -> Palette {
         let mut bytes = vec![0u8; PALETTE_BYTES];
 
@@ -440,7 +440,7 @@ mod tests {
         Palette::from_color_pal(&bytes).unwrap()
     }
 
-    /// Собирает тело из одного кадра; `rows` — готовые закодированные строки.
+    /// Assembles a body from one frame; `rows` are ready encoded rows.
     fn build_sprite(width: u16, height: u16, hotx: i16, hoty: i16, rows: Vec<Vec<u8>>) -> Vec<u8> {
         assert_eq!(rows.len(), height as usize);
 
@@ -465,7 +465,7 @@ mod tests {
         out
     }
 
-    /// Спрайт 3×2: строка 0 — два пикселя `1, 2` со skip 1; строка 1 — пиксель `3`.
+    /// 3×2 sprite: row 0 — two pixels `1, 2` with skip 1; row 1 — pixel `3`.
     fn sample_sprite() -> Vec<u8> {
         build_sprite(
             3,
@@ -492,15 +492,15 @@ mod tests {
 
         assert_eq!(buffer.width(), 3);
         assert_eq!(buffer.height(), 2);
-        // Строка 0: (0,0) прозрачен, (1,0) = 1, (2,0) = 2.
+        // Row 0: (0,0) is transparent, (1,0) = 1, (2,0) = 2.
         assert_eq!(buffer.get(0, 0), Some(Rgba::TRANSPARENT));
         assert_eq!(buffer.get(1, 0), Some(palette.rgba(1)));
         assert_eq!(buffer.get(2, 0), Some(palette.rgba(2)));
-        // Строка 1: (0,1) = 3, остальные прозрачны.
+        // Row 1: (0,1) = 3, the rest is transparent.
         assert_eq!(buffer.get(0, 1), Some(palette.rgba(3)));
         assert_eq!(buffer.get(1, 1), Some(Rgba::TRANSPARENT));
 
-        // В буфере 8×8 якорь (4,4) при hot (1,1) -> левый верхний угол (3,3).
+        // In an 8×8 buffer, anchor (4,4) with hot (1,1) -> top-left corner (3,3).
         let mut target = RgbaBuffer::new(8, 8);
         let stats = renderer.draw_frame(&mut target, frame, (4, 4));
 
@@ -525,7 +525,7 @@ mod tests {
     fn command_slots_are_recoloured_by_team_lut() {
         let palette = ramp_palette();
         let brightness = BrightnessLut::build(&palette);
-        // Индекс 34 — командный слот 32–39.
+        // Index 34 is team slot 32–39.
         let body = build_sprite(2, 1, 0, 0, vec![vec![0, 2, 34, 35, 0xFF]]);
         let sheet = decode_sprite(&body).unwrap();
         let frame = sheet.frame(0).unwrap();
@@ -543,17 +543,17 @@ mod tests {
             FULL_BRIGHTNESS_LEVEL,
         );
 
-        // Красная команда: 34 -> 58, 35 -> 59.
+        // Red team: 34 -> 58, 35 -> 59.
         assert_eq!(red.color_for(34), palette.rgba(58));
         assert_eq!(red.color_for(35), palette.rgba(59));
-        // Зелёная: слоты 32–39 — родные индексы, перекраски нет.
+        // Green: slots 32–39 are native indices, no recolor.
         assert_eq!(green.color_for(34), palette.rgba(34));
         assert_eq!(green.color_for(35), palette.rgba(35));
 
         let red_buffer = red.render_frame(frame);
         let green_buffer = green.render_frame(frame);
 
-        // Красная: 34 -> 58, 35 -> 59; зелёная — без перекраски.
+        // Red: 34 -> 58, 35 -> 59; green — no recolor.
         assert_eq!(red_buffer.get(0, 0), Some(palette.rgba(58)));
         assert_eq!(red_buffer.get(1, 0), Some(palette.rgba(59)));
         assert_eq!(green_buffer.get(0, 0), Some(palette.rgba(34)));
@@ -579,14 +579,14 @@ mod tests {
         let bright_buffer = full.render_frame(frame);
         let dim_buffer = dim.render_frame(frame);
 
-        // Индекс 1 при уровне 5 уходит в более тёмный цвет палитры.
+        // Index 1 at level 5 goes to a darker palette color.
         assert_eq!(bright_buffer.get(1, 0), Some(palette.rgba(1)));
         assert_eq!(
             dim_buffer.get(1, 0),
             Some(palette.rgba(brightness.map(5, 1)))
         );
         assert_ne!(bright_buffer.get(1, 0), dim_buffer.get(1, 0));
-        // Полная яркость — identity.
+        // Full brightness is the identity.
         assert_eq!(brightness.map(FULL_BRIGHTNESS_LEVEL, 1), 1);
     }
 
@@ -605,7 +605,7 @@ mod tests {
         let sheet = decode_sprite(&body).unwrap();
         let frame = sheet.frame(0).unwrap();
 
-        // 1:1 — 2×2, горячая точка (1,1) в якоре.
+        // 1:1 — 2×2, hot spot (1,1) at the anchor.
         let mut native = RgbaBuffer::filled(16, 16, Rgba::TRANSPARENT);
         renderer.draw_frame_scaled(&mut native, frame, (8, 8), 64);
         assert_eq!(native.get(7, 7), Some(palette.rgba(1)));
@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(native.get(7, 8), Some(palette.rgba(1)));
         assert_eq!(native.get(8, 8), Some(palette.rgba(2)));
 
-        // 2× — каждый пиксель блока 2×2, горячая точка тоже ×2.
+        // 2× — every pixel of the 2×2 block, the hot spot is ×2 as well.
         let mut zoomed = RgbaBuffer::filled(24, 24, Rgba::TRANSPARENT);
         renderer.draw_frame_scaled(&mut zoomed, frame, (12, 12), 128);
         for y in 10..14 {
@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(zoomed.get(10, 10), Some(palette.rgba(1)));
         assert_eq!(zoomed.get(13, 13), Some(palette.rgba(2)));
 
-        // 1/2 — один пиксель, в него попадает левый верхний источник.
+        // 1/2 — one pixel, the top-left source pixel lands in it.
         let mut half = RgbaBuffer::filled(16, 16, Rgba::TRANSPARENT);
         renderer.draw_frame_scaled(&mut half, frame, (8, 8), 32);
         assert_eq!(half.get(8, 8), Some(palette.rgba(1)));
@@ -638,7 +638,7 @@ mod tests {
         let brightness = BrightnessLut::build(&palette);
         let renderer = renderer(&palette, &brightness);
 
-        // Тень 4×1: {1, 2} -> затемняются x = 1, 2.
+        // Shadow 4×1: {1, 2} -> x = 1, 2 are darkened.
         let body = build_sprite(4, 1, 0, 0, vec![vec![1, 2, 0xFF]]);
         let shadow = decode_shadow(&body).unwrap();
         let frame = shadow.frame(0).unwrap();
@@ -654,12 +654,12 @@ mod tests {
                 clipped: 0
             }
         );
-        // Уровень 5: 210 -> 150, 140 -> 100, 70 -> 50.
+        // Level 5: 210 -> 150, 140 -> 100, 70 -> 50.
         assert_eq!(target.get(0, 0), Some(base));
         assert_eq!(target.get(1, 0), Some(base.darken(5)));
         assert_eq!(target.get(2, 0), Some(base.darken(5)));
         assert_eq!(target.get(3, 0), Some(base));
-        // Вторая строка не затронута: у тени height = 1.
+        // The second row is unaffected: the shadow has height = 1.
         assert_eq!(target.get(1, 1), Some(base));
         assert_eq!(base.darken(5), Rgba::rgb(150, 100, 50));
     }
@@ -683,7 +683,7 @@ mod tests {
         );
 
         assert_eq!(stats.drawn, 3);
-        // Пиксель 1: сначала затемнён (тень), потом перекрыт спрайтом (индекс 9).
+        // Pixel 1: first darkened (shadow), then covered by the sprite (index 9).
         assert_eq!(target.get(0, 0), Some(palette.rgba(9)));
         assert_eq!(target.get(1, 0), Some(Rgba::rgb(255, 255, 255).darken(5)));
     }
@@ -697,8 +697,8 @@ mod tests {
         let renderer = renderer(&palette, &brightness);
 
         let mut target = RgbaBuffer::new(2, 1);
-        // Якорь (1,1) при hot (1,1) -> кадр начинается в (0,0), но высота
-        // буфера всего 1 пиксель: пиксели (2,0) и (0,1) кадра отсекаются.
+        // Anchor (1,1) with hot (1,1) -> the frame starts at (0,0), but the height
+        // of the buffer is only 1 pixel: pixels (2,0) and (0,1) of the frame are cut off.
         let stats = renderer.draw_frame(&mut target, frame, (1, 1));
 
         assert_eq!(

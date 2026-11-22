@@ -1,42 +1,42 @@
-//! RGBA-буфер кадра — единственный формат, в котором `max_render` отдаёт
-//! готовую картинку наружу (SDL-слой только выводит его на экран).
+//! The frame RGBA buffer — the only format in which `max_render` hands
+//! the finished picture outside (the SDL layer only outputs it to the screen).
 //!
-//! Буфер простой: `width * height` пикселей по 4 байта (RGBA8), row-major,
-//! без выравнивания строк. Все операции — чистые функции над `&mut RgbaBuffer`,
-//! поэтому отрисовка тестируется без окна и без SDL.
+//! The buffer is simple: `width * height` pixels of 4 bytes (RGBA8), row-major,
+//! without row alignment. All operations are pure functions over `&mut RgbaBuffer`,
+//! so rendering is tested without a window and without SDL.
 
-/// Байт на пиксель (RGBA8).
+/// Bytes per pixel (RGBA8).
 pub const BYTES_PER_PIXEL: usize = 4;
 
-/// Цвет пикселя в RGBA8.
+/// Pixel color in RGBA8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Rgba {
-    /// Красный канал.
+    /// Red channel.
     pub r: u8,
-    /// Зелёный канал.
+    /// Green channel.
     pub g: u8,
-    /// Синий канал.
+    /// Blue channel.
     pub b: u8,
-    /// Альфа: `0` — прозрачность, `255` — непрозрачный.
+    /// Alpha: `0` — transparent, `255` — opaque.
     pub a: u8,
 }
 
 impl Rgba {
-    /// Полностью прозрачный пиксель (фон кадра).
+    /// Fully transparent pixel (frame background).
     pub const TRANSPARENT: Self = Self {
         r: 0,
         g: 0,
         b: 0,
         a: 0,
     };
-    /// Непрозрачный чёрный.
+    /// Opaque black.
     pub const BLACK: Self = Self {
         r: 0,
         g: 0,
         b: 0,
         a: 255,
     };
-    /// Непрозрачный белый.
+    /// Opaque white.
     pub const WHITE: Self = Self {
         r: 255,
         g: 255,
@@ -44,19 +44,19 @@ impl Rgba {
         a: 255,
     };
 
-    /// Непрозрачный цвет из компонентов.
+    /// Opaque color from components.
     #[inline]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 
-    /// Цвет из массива `[r, g, b]` (альфа — непрозрачная).
+    /// Color from the `[r, g, b]` array (alpha is opaque).
     #[inline]
     pub const fn from_rgb(rgb: [u8; 3]) -> Self {
         Self::rgb(rgb[0], rgb[1], rgb[2])
     }
 
-    /// Цвет из массива `[r, g, b, a]`.
+    /// Color from the `[r, g, b, a]` array.
     #[inline]
     pub const fn from_rgba(rgba: [u8; 4]) -> Self {
         Self {
@@ -67,29 +67,29 @@ impl Rgba {
         }
     }
 
-    /// Массив `[r, g, b, a]`.
+    /// The `[r, g, b, a]` array.
     #[inline]
     pub const fn to_rgba(self) -> [u8; 4] {
         [self.r, self.g, self.b, self.a]
     }
 
-    /// Пиксель непрозрачен.
+    /// The pixel is opaque.
     #[inline]
     pub const fn is_opaque(self) -> bool {
         self.a == 255
     }
 
-    /// Пиксель полностью прозрачен.
+    /// The pixel is fully transparent.
     #[inline]
     pub const fn is_transparent(self) -> bool {
         self.a == 0
     }
 
-    /// Затемнение по формуле таблиц яркости `world.cpp:513-530` (§6.3 spw.md):
-    /// `c' = c * (level * 32) / 224`, `level` 0..=7 (7 — без изменений).
+    /// Darkening by the formula of the brightness tables `world.cpp:513-530` (§6.3 spw.md):
+    /// `c' = c * (level * 32) / 224`, `level` 0..=7 (7 — unchanged).
     ///
-    /// Оригинал применяет LUT «индекс палитры -> индекс палитры», но здесь
-    /// карта уже в RGBA, поэтому та же арифметика применяется к каналам.
+    /// The original applies the "palette index -> palette index" LUT, but here
+    /// the map is already in RGBA, so the same arithmetic is applied to the channels.
     pub fn darken(self, level: u8) -> Self {
         let level = u32::from(level.min(7));
         let factor = level * 32;
@@ -103,7 +103,7 @@ impl Rgba {
         }
     }
 
-    /// Линейное смешивание с `other`: `weight` — вес `other` в 0..=255.
+    /// Linear blending with `other`: `weight` is the weight of `other` in 0..=255.
     pub fn mix(self, other: Self, weight: u8) -> Self {
         let weight = u32::from(weight);
         let rest = 255 - weight;
@@ -118,21 +118,21 @@ impl Rgba {
     }
 }
 
-/// Прямоугольная область в пикселях экрана/буфера: `(ulx, uly, width, height)`.
+/// Rectangular area in screen/buffer pixels: `(ulx, uly, width, height)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PixelRect {
-    /// Левый верхний угол по x.
+    /// Top-left corner along x.
     pub ulx: i32,
-    /// Левый верхний угол по y.
+    /// Top-left corner along y.
     pub uly: i32,
-    /// Ширина в пикселях.
+    /// Width in pixels.
     pub width: i32,
-    /// Высота в пикселях.
+    /// Height in pixels.
     pub height: i32,
 }
 
 impl PixelRect {
-    /// Прямоугольник по углу и размеру.
+    /// Rectangle from a corner and a size.
     #[inline]
     pub const fn new(ulx: i32, uly: i32, width: i32, height: i32) -> Self {
         Self {
@@ -143,7 +143,7 @@ impl PixelRect {
         }
     }
 
-    /// Прямоугольник по двум углам.
+    /// Rectangle from two corners.
     #[inline]
     pub const fn from_corners(ulx: i32, uly: i32, lrx: i32, lry: i32) -> Self {
         Self {
@@ -154,31 +154,31 @@ impl PixelRect {
         }
     }
 
-    /// Правый нижний угол по x (исключающий).
+    /// Bottom-right corner along x (exclusive).
     #[inline]
     pub const fn lrx(self) -> i32 {
         self.ulx + self.width
     }
 
-    /// Правый нижний угол по y (исключающий).
+    /// Bottom-right corner along y (exclusive).
     #[inline]
     pub const fn lry(self) -> i32 {
         self.uly + self.height
     }
 
-    /// Прямоугольник пуст (нулевая или отрицательная площадь).
+    /// The rectangle is empty (zero or negative area).
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.width <= 0 || self.height <= 0
     }
 
-    /// Точка внутри прямоугольника.
+    /// The point is inside the rectangle.
     #[inline]
     pub const fn contains(self, x: i32, y: i32) -> bool {
         x >= self.ulx && y >= self.uly && x < self.lrx() && y < self.lry()
     }
 
-    /// Пересечение с другим прямоугольником (`None`, если пусто).
+    /// Intersection with another rectangle (`None` if empty).
     pub fn intersect(self, other: Self) -> Option<Self> {
         let ulx = self.ulx.max(other.ulx);
         let uly = self.uly.max(other.uly);
@@ -193,11 +193,11 @@ impl PixelRect {
     }
 }
 
-/// RGBA8-буфер кадра.
+/// Frame buffer in RGBA8.
 ///
-/// Пиксель `(x, y)` лежит по смещению `(y * width + x) * 4`; начало координат —
-/// левый верхний угол. Операции с координатами вне буфера не паникуют:
-/// [`RgbaBuffer::set`] возвращает `false`, [`RgbaBuffer::get`] — `None`.
+/// Pixel `(x, y)` lies at the offset `(y * width + x) * 4`; the origin is the
+/// top-left corner. Operations with coordinates outside the buffer do not panic:
+/// [`RgbaBuffer::set`] returns `false`, [`RgbaBuffer::get`] returns `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RgbaBuffer {
     width: u32,
@@ -206,7 +206,7 @@ pub struct RgbaBuffer {
 }
 
 impl RgbaBuffer {
-    /// Буфер заданного размера, заполненный прозрачным цветом.
+    /// Buffer of the given size filled with the transparent color.
     pub fn new(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -215,7 +215,7 @@ impl RgbaBuffer {
         }
     }
 
-    /// Буфер заданного размера, заполненный цветом `color`.
+    /// Buffer of the given size filled with the color `color`.
     pub fn filled(width: u32, height: u32, color: Rgba) -> Self {
         let mut buffer = Self::new(width, height);
 
@@ -223,7 +223,7 @@ impl RgbaBuffer {
         buffer
     }
 
-    /// Буфер из готовых байтов; `None`, если длина не `width * height * 4`.
+    /// Buffer from ready bytes; `None` if the length is not `width * height * 4`.
     pub fn from_pixels(width: u32, height: u32, pixels: Vec<u8>) -> Option<Self> {
         if pixels.len() == width as usize * height as usize * BYTES_PER_PIXEL {
             Some(Self {
@@ -236,61 +236,61 @@ impl RgbaBuffer {
         }
     }
 
-    /// Ширина в пикселях.
+    /// Width in pixels.
     #[inline]
     pub const fn width(&self) -> u32 {
         self.width
     }
 
-    /// Высота в пикселях.
+    /// Height in pixels.
     #[inline]
     pub const fn height(&self) -> u32 {
         self.height
     }
 
-    /// Размер строки в байтах (`width * 4`).
+    /// Row size in bytes (`width * 4`).
     #[inline]
     pub const fn stride(&self) -> usize {
         self.width as usize * BYTES_PER_PIXEL
     }
 
-    /// Число пикселей.
+    /// Number of pixels.
     #[inline]
     pub const fn len(&self) -> usize {
         self.width as usize * self.height as usize
     }
 
-    /// Буфер без пикселей.
+    /// Buffer without pixels.
     #[inline]
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Прямоугольник всего буфера.
+    /// Rectangle of the whole buffer.
     #[inline]
     pub const fn bounds(&self) -> PixelRect {
         PixelRect::new(0, 0, self.width as i32, self.height as i32)
     }
 
-    /// Байты кадра (`width * height * 4`), row-major.
+    /// Frame bytes (`width * height * 4`), row-major.
     #[inline]
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
 
-    /// Байты кадра для изменения.
+    /// Frame bytes for modification.
     #[inline]
     pub fn pixels_mut(&mut self) -> &mut [u8] {
         &mut self.pixels
     }
 
-    /// Байты кадра во владение (например, для `Texture::update` в SDL).
+    /// Frame bytes by value (e.g. for `Texture::update` in SDL).
     #[inline]
     pub fn into_pixels(self) -> Vec<u8> {
         self.pixels
     }
 
-    /// Цвет пикселя; `None` вне буфера.
+    /// Pixel color; `None` outside the buffer.
     pub fn get(&self, x: i32, y: i32) -> Option<Rgba> {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return None;
@@ -306,7 +306,7 @@ impl RgbaBuffer {
         ]))
     }
 
-    /// Устанавливает цвет пикселя; `false`, если точка вне буфера.
+    /// Sets the pixel color; `false` if the point is outside the buffer.
     pub fn set(&mut self, x: i32, y: i32, color: Rgba) -> bool {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return false;
@@ -319,7 +319,7 @@ impl RgbaBuffer {
         true
     }
 
-    /// Заливает весь буфер цветом.
+    /// Fills the whole buffer with a color.
     pub fn fill(&mut self, color: Rgba) {
         let rgba = color.to_rgba();
 
@@ -328,10 +328,10 @@ impl RgbaBuffer {
         }
     }
 
-    /// Заливает прямоугольник; возвращает число закрашенных пикселей.
+    /// Fills a rectangle; returns the number of filled pixels.
     ///
-    /// Область обрезается по границам буфера, поэтому частично видимый
-    /// прямоугольник безопасен.
+    /// The area is clipped by the buffer bounds, so a partially visible
+    /// rectangle is safe.
     pub fn fill_rect(&mut self, rect: PixelRect, color: Rgba) -> u32 {
         let Some(clipped) = rect.intersect(self.bounds()) else {
             return 0;
@@ -350,9 +350,9 @@ impl RgbaBuffer {
         painted
     }
 
-    /// Меняет цвет уже нарисованного пикселя (для теней): вне буфера — игнор.
+    /// Changes the color of an already drawn pixel (for shadows): outside the buffer it is ignored.
     ///
-    /// Возвращает `true`, если пиксель был в буфере и изменён.
+    /// Returns `true` if the pixel was inside the buffer and was modified.
     pub fn modify(&mut self, x: i32, y: i32, change: impl FnOnce(Rgba) -> Rgba) -> bool {
         match self.get(x, y) {
             Some(color) => self.set(x, y, change(color)),
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(buffer.get(2, 1), None);
         assert_eq!(buffer.get(-1, 0), None);
 
-        // Смещение пикселя (1, 1) = (1*2 + 1) * 4.
+        // Pixel offset of (1, 1) = (1*2 + 1) * 4.
         assert_eq!(&buffer.pixels()[12..16], &[255, 0, 0, 255]);
     }
 
@@ -432,15 +432,15 @@ mod tests {
     fn darken_and_mix_match_the_documented_formula() {
         let grey = Rgba::rgb(224, 112, 0);
 
-        // level 7 (full brightness) ничего не меняет.
+        // level 7 (full brightness) changes nothing.
         assert_eq!(grey.darken(7), grey);
         // level 5 = 160/224 = 5/7 -> 160, 80, 0.
         assert_eq!(grey.darken(5), Rgba::rgb(160, 80, 0));
-        // level 0 — чёрный.
+        // level 0 — black.
         assert_eq!(grey.darken(0), Rgba::rgb(0, 0, 0));
-        // Уровень выше 7 клампится.
+        // A level above 7 is clamped.
         assert_eq!(grey.darken(200), grey);
-        // Альфа не меняется.
+        // Alpha does not change.
         assert_eq!(Rgba::from_rgba([10, 20, 30, 0]).darken(3).a, 0);
 
         assert_eq!(Rgba::BLACK.mix(Rgba::WHITE, 255), Rgba::WHITE);

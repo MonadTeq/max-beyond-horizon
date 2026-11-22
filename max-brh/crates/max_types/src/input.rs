@@ -1,54 +1,54 @@
-//! Входная модель команд — пакеты протокола как чистые данные.
+//! Command input model — protocol packets as pure data.
 //!
-//! Оракул: `max-cpp-port/src/remote.cpp` (обработчики `Remote_ReceiveNetPacket_*`
-//! и процессоры приказов `Remote_OrderProcessor{0..5}_Read`), `max-brh-docs/protocol.md`
-//! §8.4 (форматы полей на проводе) и DESIGN.md §2.4.
+//! Oracle: `max-cpp-port/src/remote.cpp` (handlers `Remote_ReceiveNetPacket_*`
+//! and order processors `Remote_OrderProcessor{0..5}_Read`), `max-brh-docs/protocol.md`
+//! §8.4 (wire field formats) and DESIGN.md §2.4.
 //!
-//! Сетевое кодирование (ENet, little-endian, `NetPacket`) — **не здесь**: это
-//! `max_net`/`max_app`. `max_core` получает уже разобранные команды и применяет
-//! их к `GameState` (`max_core::game`) в порядке поступления
-//! (`max_core::events`). Поэтому все структуры модуля — plain data: их можно
-//! строить напрямую из тестов, из max_net и из скриптов-реплеев (DESIGN §8.2).
+//! Network encoding (ENet, little-endian, `NetPacket`) is **not here**: that is
+//! `max_net`/`max_app`. `max_core` receives already parsed commands and applies
+//! them to `GameState` (`max_core::game`) in arrival order
+//! (`max_core::events`). Therefore all structures of the module are plain data: they can be
+//! built directly from tests, from max_net and from replay scripts (DESIGN §8.2).
 //!
-//! ## Процессоры пакета 08
+//! ## Packet 08 processors
 //!
-//! Как и в C++, формат payload'а выбирается по *новому* приказу юнита
-//! (`Remote_OrderProcessors[unit->GetOrder()]`), процессоры вложены:
-//! `P3 ⊃ P2 ⊃ P1`, `P4 ⊃ P3`, `P5 ⊃ P3`; [`OrderPayload`] повторяет вложенность
-//! полями-структурами, чтобы сериализация на стороне сети шла в том же порядке
-//! байт, что и в C++ (`Remote_OrderProcessor2_Read` сначала вызывает
-//! `Remote_OrderProcessor1_Read` и т.д.).
+//! As in C++, the payload format is chosen by the unit's *new* order
+//! (`Remote_OrderProcessors[unit->GetOrder()]`), the processors are nested:
+//! `P3 ⊃ P2 ⊃ P1`, `P4 ⊃ P3`, `P5 ⊃ P3`; [`OrderPayload`] mirrors the nesting
+//! with struct fields so that serialization on the network side follows the same byte
+//! order as in C++ (`Remote_OrderProcessor2_Read` first calls
+//! `Remote_OrderProcessor1_Read`, and so on).
 //!
-//! ## Расхождения с C++-портом (зафиксированы осознанно)
+//! ## Divergences from the C++ port (recorded deliberately)
 //!
-//! * Пакет **41** в C++-порте несёт только `unit_id` и `mode` (см.
-//!   `Remote_SendNetPacket_41`), а `max-brh-docs/protocol.md` §8.4 описывает ещё
-//!   `grid_x/grid_y/speed/group_speed/shots/move_fraction`. В
-//!   [`Packet41MoveFinished`] эти поля есть (протокол — контракт с max_net), но
-//!   применяются только если отличаются от уже известного состояния; см.
+//! * Packet **41** in the C++ port carries only `unit_id` and `mode` (see
+//!   `Remote_SendNetPacket_41`), while `max-brh-docs/protocol.md` §8.4 also describes
+//!   `grid_x/grid_y/speed/group_speed/shots/move_fraction`. In
+//!   [`Packet41MoveFinished`] these fields exist (the protocol is a contract with max_net), but
+//!   they are applied only if they differ from the already known state; see
 //!   `max_core::events::apply_command`.
-//! * Пакет **38** в C++-порте не несёт `grid_x/grid_y`, а `max-brh-docs/protocol.md`
-//!   §8.4 их описывает; поле оставлено в структуре для совместимости и
-//!   применяется как «текущая клетка владельца» (C++: `Remote_RelocateUnit`).
-//! * Пакет **53** (итоги комплексов) в C++-порте не реализован вовсе; в Rust —
-//!   данные + применение (DESIGN §2.4 указал его как часть входной модели).
+//! * Packet **38** in the C++ port does not carry `grid_x/grid_y`, while `max-brh-docs/protocol.md`
+//!   §8.4 describes them; the field is kept in the structure for compatibility and
+//!   is applied as "the current cell of the owner" (C++: `Remote_RelocateUnit`).
+//! * Packet **53** (complex totals) is not implemented in the C++ port at all; in Rust there are
+//!   data + application (DESIGN §2.4 listed it as part of the input model).
 
 use crate::enums::{PlayMode, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::{PathStep, Point};
 use crate::team::TeamId;
 
-/// Размер массива команд в сетевых структурах (`TRANSPORT_MAX_TEAM_COUNT`).
+/// Size of the command array in network structures (`TRANSPORT_MAX_TEAM_COUNT`).
 pub const MAX_TEAM_COUNT: usize = 4;
 
-/// Число атрибутов, которые несут пакеты апгрейдов 10/20 (13 значений
-/// `u16` в фиксированном порядке, `max-brh-docs/protocol.md` §8.4).
+/// Number of attributes carried by upgrade packets 10/20 (13 `u16`
+/// values in a fixed order, `max-brh-docs/protocol.md` §8.4).
 pub const UPGRADE_VALUE_COUNT: usize = 13;
 
-/// Уровень процессора payload'а пакета 08 (`Remote_OrderProcessor{0..5}`).
+/// Processor level of the packet 08 payload (`Remote_OrderProcessor{0..5}`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum PayloadLevel {
-    /// `ORDER_17` — пусто (`Remote_OrderProcessor0_Read`).
+    /// `ORDER_17` — empty (`Remote_OrderProcessor0_Read`).
     Empty = 0,
     /// `P1`: order/state/prior/disabled_reaction_fire.
     P1 = 1,
@@ -63,7 +63,7 @@ pub enum PayloadLevel {
 }
 
 impl PayloadLevel {
-    /// Уровень процессора для приказа — точная копия `switch` из
+    /// Processor level for an order — an exact copy of the `switch` from
     /// `Remote_Init` (`remote.cpp:661-724`).
     pub const fn for_order(order: UnitOrder) -> Self {
         use UnitOrder::*;
@@ -73,12 +73,12 @@ impl PayloadLevel {
             // P1
             PowerOn | PowerOff | Explode | Sentry | Land | TakeOff | Load | Idle | HaltBuilding
             | AwaitScaling | AwaitTapePositioning | LayMine | HaltBuilding2 => Self::P1,
-            // P4 (содержит P3)
+            // P4 (contains P3)
             Transform | Build | Clear | Disable => Self::P4,
             // P3
             Await | Move | Fire | Activate | Transfer | AwaitStealUnit | AwaitDisableUnit | MoveToUnit
             | MoveToAttack => Self::P3,
-            // P5 (содержит P3)
+            // P5 (contains P3)
             NewAllocate => Self::P5,
             // P2
             Unload | Repair | Reload | Upgrade => Self::P2,
@@ -86,43 +86,43 @@ impl PayloadLevel {
     }
 }
 
-/// Общие поля всех процессоров, кроме `P0` — C++ `Remote_OrderProcessor1_Read`.
+/// Common fields of all processors except `P0` — C++ `Remote_OrderProcessor1_Read`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PayloadP1 {
-    /// Новый приказ (`< ORDER_COUNT_MAX`, иначе пакет отвергается).
+    /// New order (`< ORDER_COUNT_MAX`, otherwise the packet is rejected).
     pub order: UnitOrder,
-    /// Новое состояние приказа.
+    /// New order state.
     pub state: UnitOrderState,
-    /// Отложенный приказ (`< ORDER_COUNT_MAX`).
+    /// Queued order (`< ORDER_COUNT_MAX`).
     pub prior_order: UnitOrder,
-    /// Отложенное состояние.
+    /// Queued state.
     pub prior_state: UnitOrderState,
-    /// Ответный огонь выключен (`bool` на проводе).
+    /// Return fire disabled (`bool` on the wire).
     pub disabled_reaction_fire: bool,
 }
 
-/// `P2` — C++ `Remote_OrderProcessor2_Read`: `P1` + родитель и опыт.
+/// `P2` — C++ `Remote_OrderProcessor2_Read`: `P1` + parent and experience.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PayloadP2 {
-    /// Поля `P1`.
+    /// Fields of `P1`.
     pub p1: PayloadP1,
-    /// `parent_unit_id` (на проводе `u32`, 0 = нет родителя); в модели —
+    /// `parent_unit_id` (`u32` on the wire, 0 = no parent); in the model —
     /// `Option<UnitId>`.
     pub parent_unit: Option<crate::unit::UnitId>,
     /// `experience i16`.
     pub experience: i16,
 }
 
-/// `P3` — C++ `Remote_OrderProcessor3_Read`: `P2` + цели и груз.
+/// `P3` — C++ `Remote_OrderProcessor3_Read`: `P2` + targets and cargo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PayloadP3 {
-    /// Поля `P2`.
+    /// Fields of `P2`.
     pub p2: PayloadP2,
-    /// `move_to_grid_x/y` (C++ runtime-поля, в V70 — один `target_grid`).
+    /// `move_to_grid_x/y` (C++ runtime fields, in V70 a single `target_grid`).
     pub move_to: Point,
     /// `fire_on_grid_x/y`.
     pub fire_on: Point,
-    /// `enemy_unit_id` (0 = нет).
+    /// `enemy_unit_id` (0 = none).
     pub enemy_unit: Option<crate::unit::UnitId>,
     /// `transfer_cargo i16`.
     pub transfer_cargo: i16,
@@ -130,10 +130,10 @@ pub struct PayloadP3 {
     pub stealth_dice_roll: u8,
 }
 
-/// `P4` — C++ `Remote_OrderProcessor4_Read`: `P3` + поля постройки.
+/// `P4` — C++ `Remote_OrderProcessor4_Read`: `P3` + build fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayloadP4 {
-    /// Поля `P3`.
+    /// Fields of `P3`.
     pub p3: PayloadP3,
     /// `repeat_build` (`bool`).
     pub repeat_build: bool,
@@ -141,14 +141,14 @@ pub struct PayloadP4 {
     pub build_time: u8,
     /// `build_rate u16`.
     pub build_rate: u16,
-    /// Очередь постройки (`unit_count u32` + `unit_count × ResourceID u16`).
+    /// Build queue (`unit_count u32` + `unit_count × ResourceID u16`).
     pub build_list: Vec<UnitType>,
 }
 
-/// `P5` — C++ `Remote_OrderProcessor5_Read`: `P3` + уровни добычи.
+/// `P5` — C++ `Remote_OrderProcessor5_Read`: `P3` + harvest rates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PayloadP5 {
-    /// Поля `P3`.
+    /// Fields of `P3`.
     pub p3: PayloadP3,
     /// `total_mining u8`.
     pub total_mining: u8,
@@ -160,10 +160,10 @@ pub struct PayloadP5 {
     pub gold_mining: u8,
 }
 
-/// Payload пакета 08 (один из шести процессоров).
+/// Payload of packet 08 (one of the six processors).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderPayload {
-    /// `P0`: `ORDER_17` — пусто.
+    /// `P0`: `ORDER_17` — empty.
     Empty,
     /// `P1`.
     P1(PayloadP1),
@@ -178,7 +178,7 @@ pub enum OrderPayload {
 }
 
 impl OrderPayload {
-    /// Уровень процессора этого payload'а.
+    /// Processor level of this payload.
     pub const fn level(&self) -> PayloadLevel {
         match self {
             Self::Empty => PayloadLevel::Empty,
@@ -190,7 +190,7 @@ impl OrderPayload {
         }
     }
 
-    /// Общие поля `P1`, если они есть у процессора.
+    /// Common fields of `P1`, if the processor has them.
     pub const fn p1(&self) -> Option<&PayloadP1> {
         match self {
             Self::Empty => None,
@@ -202,34 +202,34 @@ impl OrderPayload {
         }
     }
 
-    /// Новый приказ (если payload его несёт).
+    /// New order (if the payload carries one).
     pub fn order(&self) -> Option<UnitOrder> {
         self.p1().map(|p1| p1.order)
     }
 
-    /// Проверка «процессор соответствует приказу» — как в C++: формат payload'а
-    /// выбирается по новому приказу юнита (`Remote_ReceiveNetPacket_08`), поэтому
-    /// несовпадение уровня и приказа считается malformed-пакетом.
+    /// Check that "the processor matches the order" — as in C++: the payload format
+    /// is chosen by the unit's new order (`Remote_ReceiveNetPacket_08`), so
+    /// a mismatch between the level and the order is treated as a malformed packet.
     pub fn matches_order(&self, order: UnitOrder) -> bool {
         self.level() == PayloadLevel::for_order(order) && self.order() == Some(order)
     }
 }
 
-/// Пакет **08** — приказ юниту заказа 08 (`C→S multicast`).
+/// Packet **08** — order to a unit of order 08 (`C→S multicast`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet08Order {
     /// `unit_id u16`.
     pub unit: crate::unit::UnitId,
-    /// Payload процессора.
+    /// Processor payload.
     pub payload: OrderPayload,
 }
 
-/// Данные пути в пакете 38.
+/// Path data in packet 38.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MovePathData {
-    /// Наземный путь: `steps_count × PathStep { i8, i8 }`.
+    /// Ground path: `steps_count × PathStep { i8, i8 }`.
     Ground(Vec<PathStep>),
-    /// Воздушный путь (шагов ровно 1): линейный отрезок в пикселях.
+    /// Air path (exactly 1 step): a straight segment in pixels.
     Air {
         /// `end_x i16`.
         end_x: i16,
@@ -241,7 +241,7 @@ pub enum MovePathData {
         distance_y: i32,
         /// `euclidean_distance i16`.
         euclidean_distance: i16,
-        /// `speed u16` (остаток хода на момент отправки).
+        /// `speed u16` (movement remaining at the moment of sending).
         speed: u16,
         /// `move_fraction u8`.
         move_fraction: u8,
@@ -250,37 +250,37 @@ pub enum MovePathData {
     },
 }
 
-/// Пакет **38** — движение с готовым путём (владелец пути рассылает его пирам).
+/// Packet **38** — movement with a ready path (the path owner broadcasts it to peers).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet38Move {
     /// `unit_id u16`.
     pub unit: crate::unit::UnitId,
-    /// `order u8` (новый приказ).
+    /// `order u8` (new order).
     pub order: UnitOrder,
     /// `order_state u8`.
     pub state: UnitOrderState,
-    /// `grid_x/grid_y` — клетка владельца на момент отправки (перемещение
-    /// юнита у получателя, `Remote_RelocateUnit`).
+    /// `grid_x/grid_y` — the owner's cell at the moment of sending (relocation
+    /// of the unit at the receiver, `Remote_RelocateUnit`).
     pub grid: Point,
     /// `move_to_grid_x/y`.
     pub move_to: Point,
     /// `group_speed u16`.
     pub group_speed: u16,
-    /// Путь (`steps_count`; 0 — пути нет).
+    /// Path (`steps_count`; 0 — no path).
     pub path: Option<MovePathData>,
 }
 
-/// Пакет **41** — завершение движения (`BlockedOnPathRequest` у получателя).
+/// Packet **41** — movement finished (`BlockedOnPathRequest` at the receiver).
 ///
-/// В C++-порте передаются только `unit_id` + `mode`; остальные поля — из
-/// `max-brh-docs/protocol.md` §8.4 (см. шапку модуля). Они `Option`, чтобы отправитель
-/// мог собрать «портовую» (короткую) форму пакета: `None` = поле не передано и
-/// не применяется.
+/// In the C++ port only `unit_id` + `mode` are transmitted; the other fields are from
+/// `max-brh-docs/protocol.md` §8.4 (see the module header). They are `Option` so that the sender
+/// can build the "port" (short) form of the packet: `None` = the field is not transmitted and
+/// is not applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet41MoveFinished {
     /// `unit_id u16`.
     pub unit: crate::unit::UnitId,
-    /// `mode u8(bool)` — «реакции после движения» (`MoveFinished(mode)`).
+    /// `mode u8(bool)` — "reactions after movement" (`MoveFinished(mode)`).
     pub mode: bool,
     /// `grid_x i16`.
     pub grid: Option<Point>,
@@ -295,7 +295,7 @@ pub struct Packet41MoveFinished {
 }
 
 impl Packet41MoveFinished {
-    /// Короткая форма C++-порта: только `unit_id` и `mode`.
+    /// Short form of the C++ port: only `unit_id` and `mode`.
     pub const fn port_form(unit: crate::unit::UnitId, mode: bool) -> Self {
         Self {
             unit,
@@ -309,21 +309,21 @@ impl Packet41MoveFinished {
     }
 }
 
-/// Пакет **50** — аварийный стоп юнита (создаёт `UnitEventEmergencyStop`).
+/// Packet **50** — emergency unit stop (creates `UnitEventEmergencyStop`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet50StopUnit {
     /// `unit_id u16`.
     pub unit: crate::unit::UnitId,
 }
 
-/// Пакет **06** — команда закончила ход.
+/// Packet **06** — the team has finished its turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet06FinishedTurn {
     /// `team u16`.
     pub team: TeamId,
 }
 
-/// Пакет **52** — барьер конца хода (`turn index` команды).
+/// Packet **52** — end-of-turn barrier (the team's `turn index`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet52EndTurnBarrier {
     /// `team u16`.
@@ -332,7 +332,7 @@ pub struct Packet52EndTurnBarrier {
     pub counter: u8,
 }
 
-/// Пакет **45** — CRC-барьер (номер следующего хода + CRC16 команды).
+/// Packet **45** — CRC barrier (number of the next turn + the team's CRC16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet45CrcBarrier {
     /// `team u16`.
@@ -343,7 +343,7 @@ pub struct Packet45CrcBarrier {
     pub crc16: u16,
 }
 
-/// Пакет **00** — барьер начала хода (покадровый счётчик команды).
+/// Packet **00** — start-of-turn barrier (the team's frame counter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet00TurnBarrier {
     /// `team u16`.
@@ -352,16 +352,16 @@ pub struct Packet00TurnBarrier {
     pub counter: u8,
 }
 
-/// Пакет **01** — покадровый барьер (real-time pacing).
+/// Packet **01** — per-frame barrier (real-time pacing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet01FrameBarrier {
     /// `team u16`.
     pub team: TeamId,
-    /// `counter u8` (6 бит).
+    /// `counter u8` (6 bits).
     pub counter: u8,
 }
 
-/// Пакет **18** — чат в игре.
+/// Packet **18** — in-game chat.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet18Chat {
     /// `sender_team u16`.
@@ -370,14 +370,14 @@ pub struct Packet18Chat {
     pub message: String,
 }
 
-/// Пакет **11** — приказ комплексу (поля `Complex::WritePacket`).
+/// Packet **11** — order to a complex (fields of `Complex::WritePacket`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet11ComplexOrder {
     /// `team u16`.
     pub team: TeamId,
     /// `complex_id u16`.
     pub complex_id: u16,
-    /// `raw i16` (C++/провод: `material`).
+    /// `raw i16` (C++/wire: `material`).
     pub raw: i16,
     /// `fuel i16`.
     pub fuel: i16,
@@ -391,50 +391,50 @@ pub struct Packet11ComplexOrder {
     pub buildings: i16,
 }
 
-/// Итоги одного комплекса в пакете 53.
+/// Totals of one complex in packet 53.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ComplexSummaryEntry {
     /// `complex_id u16`.
     pub complex_id: u16,
-    /// Шесть полей `i16` в порядке пакета 11/53
-    /// (`raw, fuel, gold, power, workers, buildings`; C++-порядок
+    /// Six `i16` fields in packet 11/53 order
+    /// (`raw, fuel, gold, power, workers, buildings`; C++ order
     /// `material, fuel, …`, `raw` ≡ `material`).
     pub values: [i16; 6],
 }
 
-/// Пакет **53** — итоги комплексов команды на начало хода.
+/// Packet **53** — totals of the team's complexes at the start of the turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet53ComplexSummary {
     /// `team u16`.
     pub team: TeamId,
     /// `turn i32`.
     pub turn: i32,
-    /// `complex_count u16` + записи.
+    /// `complex_count u16` + records.
     pub complexes: Vec<ComplexSummaryEntry>,
 }
 
-/// Пакет **10** — апгрейд типа юнита команды.
+/// Packet **10** — upgrade of a unit type of the team.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet10UpgradeUnitType {
     /// `team u16`.
     pub team: TeamId,
     /// `unit_type u16` (`ResourceID`).
     pub unit_type: UnitType,
-    /// 13 значений в порядке `turns, hits, armor, attack, speed, range, rounds,
+    /// 13 values in the order `turns, hits, armor, attack, speed, range, rounds,
     /// move_and_fire, scan, storage, ammo, attack_radius, agent_adjust`.
     pub values: [u16; UPGRADE_VALUE_COUNT],
 }
 
-/// Пакет **20** — апгрейд конкретного юнита.
+/// Packet **20** — upgrade of a specific unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet20UpgradeUnit {
     /// `unit_id u16`.
     pub unit: crate::unit::UnitId,
-    /// 13 значений (порядок как в пакете 10).
+    /// 13 values (order as in packet 10).
     pub values: [u16; UPGRADE_VALUE_COUNT],
 }
 
-/// Пакет **43** — переименование юнита.
+/// Packet **43** — unit rename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet43Rename {
     /// `unit_id u16`.
@@ -443,14 +443,14 @@ pub struct Packet43Rename {
     pub name: String,
 }
 
-/// Пакет **13** — seed RNG (единственная точка сидирования симуляции).
+/// Packet **13** — RNG seed (the only seeding point of the simulation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet13Seed {
     /// `rng_seed u32`.
     pub seed: u32,
 }
 
-/// Пакет **14** — высадка юнита (quick build / deployment).
+/// Packet **14** — unit landing (quick build / deployment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet14DeployUnit {
     /// `team u16`.
@@ -461,7 +461,7 @@ pub struct Packet14DeployUnit {
     pub grid: Point,
 }
 
-/// Снабжение миссии — запись пакета 12.
+/// Mission supply — record of packet 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MissionSupplyEntry {
     /// `unit_type u16`.
@@ -470,7 +470,7 @@ pub struct MissionSupplyEntry {
     pub cargo: u16,
 }
 
-/// Пакет **12** — выбор точки высадки и снабжение миссии.
+/// Packet **12** — landing point selection and mission supply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet12MissionSupply {
     /// `team u16`.
@@ -481,7 +481,7 @@ pub struct Packet12MissionSupply {
     pub start_gold: u16,
     /// `team_gold u16`.
     pub team_gold: u16,
-    /// `unit_count u32` + записи.
+    /// `unit_count u32` + records.
     pub units: Vec<MissionSupplyEntry>,
     /// `gold_spent_on_upgrades u32`.
     pub gold_spent_on_upgrades: u32,
@@ -491,52 +491,52 @@ pub struct Packet12MissionSupply {
     pub proximity_alert_ack: u8,
 }
 
-/// Идентификатор типа пакета (`max-brh-docs/protocol.md` §8.4, номера после
+/// Packet type identifier (`max-brh-docs/protocol.md` §8.4, numbers after
 /// `TRANSPORT_APPL_PACKET_ID`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum PacketKind {
-    /// Барьер начала хода.
+    /// Start-of-turn barrier.
     BarrierTurn = 0x00,
-    /// Покадровый барьер.
+    /// Per-frame barrier.
     BarrierFrame = 0x01,
-    /// Конец хода команды.
+    /// End of the team's turn.
     FinishedTurn = 0x06,
-    /// Приказ юниту.
+    /// Order to a unit.
     OrderUnit = 0x08,
-    /// Апгрейд типа юнита.
+    /// Unit type upgrade.
     UpgradeUnitType = 0x0A,
-    /// Приказ комплексу.
+    /// Order to a complex.
     ComplexOrder = 0x0B,
-    /// Точка высадки и снабжение миссии.
+    /// Landing point and mission supply.
     MissionSupply = 0x0C,
     /// Seed RNG.
     Seed = 0x0D,
-    /// Высадка юнита.
+    /// Unit landing.
     DeployUnit = 0x0E,
-    /// Чат.
+    /// Chat.
     Chat = 0x12,
-    /// Апгрейд конкретного юнита.
+    /// Upgrade of a specific unit.
     UpgradeUnit = 0x14,
-    /// Движение с путём.
+    /// Movement with a path.
     MoveWithPath = 0x26,
-    /// Завершение движения.
+    /// Movement finished.
     MoveFinished = 0x29,
-    /// Переименование.
+    /// Rename.
     Rename = 0x2B,
-    /// CRC-барьер.
+    /// CRC barrier.
     CrcBarrier = 0x2D,
-    /// Аварийный стоп.
+    /// Emergency stop.
     StopUnit = 0x32,
-    /// Барьер конца хода.
+    /// End-of-turn barrier.
     EndTurnBarrier = 0x34,
-    /// Итоги комплексов.
+    /// Complex totals.
     ComplexSummary = 0x35,
 }
 
-/// Одна входная команда — результат разбора одного APPL-пакета.
+/// One input command — the result of parsing a single APPL packet.
 ///
-/// Применение — `max_core::events::apply_command`, строго в порядке получения.
+/// Application — `max_core::events::apply_command`, strictly in order of receipt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// 08.
@@ -578,7 +578,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// Тип пакета команды.
+    /// Command packet type.
     pub const fn kind(&self) -> PacketKind {
         match self {
             Self::Order(_) => PacketKind::OrderUnit,
@@ -602,11 +602,11 @@ impl Command {
         }
     }
 
-    /// Влияет ли команда на игровую симуляцию (а не только на барьеры/UI).
+    /// Whether the command affects the game simulation (and not just barriers/UI).
     ///
-    /// Используется тестами детерминизма и диагностикой: барьерные пакеты
-    /// (00/01/45/52) — это факты сети для продвижения фаз, они не меняют
-    /// состояние юнитов.
+    /// Used by determinism tests and diagnostics: barrier packets
+    /// (00/01/45/52) are network facts for advancing phases, they do not change
+    /// the state of units.
     pub const fn affects_simulation(&self) -> bool {
         !matches!(
             self,
@@ -619,28 +619,28 @@ impl Command {
     }
 }
 
-/// Проверка `Remote_IsValidTeamIndex` (`remote.cpp`: `entity_id <
-/// PLAYER_TEAM_MAX`), но без ALIEN-слота: сетевые пакеты адресуются только
-/// игровым командам 0..3.
+/// Check `Remote_IsValidTeamIndex` (`remote.cpp`: `entity_id <
+/// PLAYER_TEAM_MAX`), but without the ALIEN slot: network packets are addressed only to
+/// game teams 0..3.
 pub fn is_valid_team_index(team: TeamId) -> bool {
     (team.0 as usize) < MAX_TEAM_COUNT
 }
 
-/// Проверка диапазона приказа (`order < ORDER_COUNT_MAX`, включая prior).
+/// Order range check (`order < ORDER_COUNT_MAX`, including prior).
 ///
-/// В C++ приказ на проводе — сырой `u8`, и приёмник отвергает значения
-/// `>= ORDER_COUNT_MAX` (`remote.cpp:394`). В Rust-модели приказ —
-/// `#[repr(u8)]`-enum, поэтому значение вне диапазона существовать не может;
-/// функция сохранена как явная точка паритета с проверкой C++.
+/// In C++ the order on the wire is a raw `u8`, and the receiver rejects values
+/// `>= ORDER_COUNT_MAX` (`remote.cpp:394`). In the Rust model the order is a
+/// `#[repr(u8)]` enum, so a value out of range cannot exist;
+/// the function is kept as an explicit parity point with the C++ check.
 pub fn is_valid_order(order: UnitOrder) -> bool {
     (order as u8) < crate::enums::ORDER_COUNT_MAX
 }
 
-/// Режим игры, при котором весь ход одной команды обрабатывается до конца
+/// Game mode in which the whole turn of one team is processed to the end
 /// (`PLAY_MODE_TURN_BASED`).
 pub const PLAY_MODE_TURN_BASED: PlayMode = PlayMode::TurnBased;
 
-/// Режим одновременных ходов (`PLAY_MODE_SIMULTANEOUS_MOVES`).
+/// Simultaneous turns mode (`PLAY_MODE_SIMULTANEOUS_MOVES`).
 pub const PLAY_MODE_SIMULTANEOUS_MOVES: PlayMode = PlayMode::SimultaneousMoves;
 
 #[cfg(test)]
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn processor_levels_match_cpp_init_table() {
         use UnitOrder::*;
-        // Точная копия switch из Remote_Init (remote.cpp:661-724).
+        // Exact copy of the switch from Remote_Init (remote.cpp:661-724).
         assert_eq!(PayloadLevel::for_order(Order17), PayloadLevel::Empty);
         for order in [
             PowerOn,
@@ -721,7 +721,7 @@ mod tests {
         for order in [Unload, Repair, Reload, Upgrade] {
             assert_eq!(PayloadLevel::for_order(order), PayloadLevel::P2, "{order:?}");
         }
-        // Все 32 приказа распределены (нет забытых вариантов).
+        // All 32 orders are distributed (no forgotten variants).
         for order in UnitOrder::ALL {
             let _ = PayloadLevel::for_order(*order);
         }

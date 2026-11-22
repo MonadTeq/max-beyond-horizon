@@ -1,11 +1,11 @@
-//! Курсоры мыши M.A.X. — `Cursor_Descriptor` из `MAX.RES`.
+//! M.A.X. mouse cursors — `Cursor_Descriptor` from `MAX.RES`.
 //!
-//! Оракул — `max-cpp-port/src/cursor.cpp` (`Cursor_Init`). В C++ курсор
-//! грузится как **simple image** (`ImageSimpleHeader`) и используется так:
+//! The oracle is `max-cpp-port/src/cursor.cpp` (`Cursor_Init`). In C++ the cursor
+//! is loaded as a **simple image** (`ImageSimpleHeader`) and used as follows:
 //!
 //! ```cpp
 //! struct ImageSimpleHeader* sprite = ResourceManager_LoadResource(id);
-//! cursor->data       = &sprite->transparent_color;  // offset 8 в файле
+//! cursor->data       = &sprite->transparent_color;  // offset 8 in the file
 //! cursor->width      = sprite->width;
 //! cursor->height     = sprite->height;
 //! cursor->ulx        = sprite->ulx;                 // hotspot x
@@ -17,30 +17,30 @@
 //! }
 //! ```
 //!
-//! То есть отдельного `u16 frame_count` в файле нет: кадры анимации уложены
-//! вертикально, а число кадров выводится из отношения высоты к ширине. Байт с
-//! offset 8 — прозрачный индекс (он же первый пиксель кадра), пиксели кадра —
-//! `width * height * frame_count` индексов палитры.
+//! There is no separate `u16 frame_count` in the file: the animation frames are stacked
+//! vertically, and the number of frames is derived from the ratio of height to width. The byte at
+//! offset 8 is the transparent index (it is also the first pixel of a frame), the frame pixels are
+//! `width * height * frame_count` palette indices.
 //!
-//! Проверка по реальному `MAX.RES` (все размеры сходятся без остатка):
+//! Check against the real `MAX.RES` (all sizes divide evenly):
 //!
-//! | тег | заголовок | кадры | байт |
+//! | tag | header | frames | bytes |
 //! |---|---|---|---|
 //! | `HIDDNPTR` | 1×1, hotspot (0,0) | 1 | 9 |
 //! | `HANDPTR` | 18×18, hotspot (0,1) | 1 | 332 |
 //! | `ARROW_N` | 16×16, hotspot (7,1) | 1 | 264 |
 //! | `ENMY_PTR` | 37×33, hotspot (18,13) | 1 | 1 229 |
-//! | `PTR_PATH` | 23×230, hotspot (13,13) | 10 по 23×23 | 5 298 |
+//! | `PTR_PATH` | 23×230, hotspot (13,13) | 10 × 23×23 | 5 298 |
 
 use std::fmt;
 
 use crate::res::{ResArchive, ResError};
 
-/// Сколько курсоров грузит оригинал (`CURSOR_CURSOR_COUNT`).
+/// How many cursors the original loads (`CURSOR_CURSOR_COUNT`).
 pub const CURSOR_COUNT: usize = 30;
 
-/// Таблица ресурсов курсоров — точный порядок `Cursor_ResourceLut` из
-/// `cursor.cpp:55-58` (индекс = `CursorId`).
+/// Cursor resource table — the exact order of `Cursor_ResourceLut` from
+/// `cursor.cpp:55-58` (index = `CursorId`).
 pub const CURSOR_RESOURCES: [&str; CURSOR_COUNT] = [
     "HIDDNPTR", "HANDPTR", "ARROW_N", "ARROW_NE", "ARROW_E", "ARROW_SE", "ARROW_S", "ARROW_SW",
     "ARROW_W", "ARROW_NW", "MAP_PTR", "MINI_PTR", "FRND_FIX", "FRND_XFR", "FRND_FUE", "PTR_RLD",
@@ -48,31 +48,31 @@ pub const CURSOR_RESOURCES: [&str; CURSOR_COUNT] = [
     "ACTVTPTR", "MAP_PTR", "STEALPTR", "DISBLPTR", "PTR_PATH", "PTR_HELP",
 ];
 
-/// Размер `ImageSimpleHeader` в файле (8 байт полей; 9-й байт — первый пиксель).
+/// Size of `ImageSimpleHeader` in the file (8 bytes of fields; the 9th byte is the first pixel).
 pub const CURSOR_HEADER: usize = 8;
 
-/// Ошибка разбора курсора.
+/// Cursor parsing error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorError {
-    /// Данных меньше 8-байтного заголовка.
+    /// Less data than the 8-byte header.
     TooShort {
-        /// Фактическая длина ресурса.
+        /// Actual length of the resource.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Ширина/высота неположительны.
+    /// Width/height are not positive.
     BadSize {
-        /// Ширина из заголовка.
+        /// Width from the header.
         width: i32,
-        /// Высота из заголовка.
+        /// Height from the header.
         height: i32,
     },
-    /// Пикселей меньше, чем `width * frame_height * frame_count`.
+    /// Fewer pixels than `width * frame_height * frame_count`.
     Truncated {
-        /// Нужно байт (заголовок + пиксели).
+        /// Bytes needed (header + pixels).
         needed: usize,
-        /// Фактическая длина.
+        /// Actual length.
         got: usize,
     },
 }
@@ -96,26 +96,26 @@ impl fmt::Display for CursorError {
 
 impl std::error::Error for CursorError {}
 
-/// Разобранный `Cursor_Descriptor`.
+/// Parsed `Cursor_Descriptor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorDescriptor {
-    /// Ширина одного кадра.
+    /// Width of one frame.
     pub width: i32,
-    /// Высота одного кадра.
+    /// Height of one frame.
     pub height: i32,
-    /// Горячая точка (hotspot) по x — `ulx` заголовка.
+    /// Hotspot along x — the `ulx` of the header.
     pub hot_x: i32,
-    /// Горячая точка (hotspot) по y — `uly` заголовка.
+    /// Hotspot along y — the `uly` of the header.
     pub hot_y: i32,
-    /// Число кадров анимации (1 у статичных курсоров).
+    /// Number of animation frames (1 for static cursors).
     pub frame_count: u16,
-    /// Прозрачный индекс (первый байт пикселей, `ImageSimpleHeader.transparent_color`).
+    /// Transparent index (first byte of the pixels, `ImageSimpleHeader.transparent_color`).
     pub transparent: u8,
     pixels: Vec<u8>,
 }
 
 impl CursorDescriptor {
-    /// Разбирает тело ресурса курсора.
+    /// Parses the body of a cursor resource.
     pub fn decode(bytes: &[u8]) -> Result<Self, CursorError> {
         if bytes.len() < CURSOR_HEADER {
             return Err(CursorError::TooShort {
@@ -138,8 +138,8 @@ impl CursorDescriptor {
 
         if width < height {
             // C++: `frame_count = height / width; height /= frame_count;` —
-            // деление целочисленное. У `MINI_PTR` (15×16) получается 1 кадр
-            // высотой 16, хотя высота и не кратна ширине.
+            // the division is integer. For `MINI_PTR` (15×16) this yields 1 frame
+            // of height 16, even though the height is not a multiple of the width.
             frame_count = u16::try_from(height / width).unwrap_or(1);
             frame_height = height / i32::from(frame_count);
         }
@@ -167,12 +167,12 @@ impl CursorDescriptor {
         })
     }
 
-    /// Число пикселей одного кадра.
+    /// Number of pixels in one frame.
     pub fn frame_pixels(&self) -> usize {
         self.width as usize * self.height as usize
     }
 
-    /// Пиксели кадра (`None`, если индекс кадра вне диапазона).
+    /// Frame pixels (`None` if the frame index is out of range).
     pub fn frame(&self, index: usize) -> Option<&[u8]> {
         if index >= usize::from(self.frame_count) {
             return None;
@@ -184,7 +184,7 @@ impl CursorDescriptor {
         self.pixels.get(start..end)
     }
 
-    /// Индекс палитры в кадре; `None` за границей кадра.
+    /// Palette index within a frame; `None` beyond the frame boundary.
     pub fn pixel(&self, frame: usize, x: u32, y: u32) -> Option<u8> {
         if x >= self.width as u32 || y >= self.height as u32 {
             return None;
@@ -195,28 +195,28 @@ impl CursorDescriptor {
         frame.get(y as usize * self.width as usize + x as usize).copied()
     }
 
-    /// Все пиксели (кадры подряд, row-major).
+    /// All pixels (frames in sequence, row-major).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
 
-    /// Курсор анимированный (больше одного кадра).
+    /// The cursor is animated (more than one frame).
     pub fn is_animated(&self) -> bool {
         self.frame_count > 1
     }
 }
 
-/// Набор курсоров в порядке [`CURSOR_RESOURCES`].
+/// Set of cursors in [`CURSOR_RESOURCES`] order.
 #[derive(Debug, Clone, Default)]
 pub struct CursorSet {
     slots: Vec<Option<CursorDescriptor>>,
 }
 
 impl CursorSet {
-    /// Грузит все курсоры, которые есть и разбираются в архиве.
+    /// Loads all cursors that are present and parseable in the archive.
     ///
-    /// Отсутствующий/битый курсор — просто `None` в слоте: `Cursor_Init` в C++
-    /// тоже пропускает ресурсы, которые не загрузились.
+    /// A missing/corrupt cursor is simply `None` in the slot: `Cursor_Init` in C++
+    /// also skips resources that failed to load.
     pub fn load(archive: &ResArchive) -> Self {
         let mut slots = Vec::with_capacity(CURSOR_COUNT);
 
@@ -232,17 +232,17 @@ impl CursorSet {
         Self { slots }
     }
 
-    /// Курсор по индексу (`CursorId`).
+    /// Cursor by index (`CursorId`).
     pub fn get(&self, index: usize) -> Option<&CursorDescriptor> {
         self.slots.get(index).and_then(Option::as_ref)
     }
 
-    /// Сколько курсоров загрузилось.
+    /// How many cursors were loaded.
     pub fn loaded(&self) -> usize {
         self.slots.iter().filter(|slot| slot.is_some()).count()
     }
 
-    /// Индексы незагруженных курсоров (для отчёта/предупреждений).
+    /// Indices of the cursors that were not loaded (for a report/warnings).
     pub fn missing(&self) -> Vec<&'static str> {
         self.slots
             .iter()
@@ -252,7 +252,7 @@ impl CursorSet {
             .collect()
     }
 
-    /// Разбирает ошибку чтения ресурса (для отчёта).
+    /// Parses a resource read error (for the report).
     pub fn read_error(archive: &ResArchive, name: &str) -> Option<ResError> {
         archive.read(name).err()
     }
@@ -262,7 +262,7 @@ impl CursorSet {
 mod tests {
     use super::*;
 
-    /// Собирает курсор: заголовок + кадры.
+    /// Assembles a cursor: header + frames.
     fn build(width: i16, height: i16, hot_x: i16, hot_y: i16, frames: &[&[u8]]) -> Vec<u8> {
         let mut bytes = Vec::new();
 
@@ -322,13 +322,13 @@ mod tests {
             Err(CursorError::BadSize { .. })
         ));
 
-        // Высота 5 при ширине 2: C++ даёт 2 кадра по 2 строки (деление
-        // нацело), а не ошибку.
+        // Height 5 with width 2: C++ yields 2 frames of 2 rows each (integer
+        // division), not an error.
         let bytes = build(2, 5, 0, 0, &[&[7u8; 8]]);
         let cursor = CursorDescriptor::decode(&bytes).expect("MINI_PTR-подобный курсор");
         assert_eq!((cursor.frame_count, cursor.height), (2, 2));
 
-        // Заголовок просит 4×4 пикселя, а их нет.
+        // The header asks for 4×4 pixels, but they are not there.
         assert!(matches!(
             CursorDescriptor::decode(&build(4, 4, 0, 0, &[&[0u8; 3]])),
             Err(CursorError::Truncated { .. })
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(cursors.loaded(), CURSOR_COUNT, "в MAX.RES 30 курсоров");
         assert!(cursors.missing().is_empty());
 
-        // Значения из cursor.cpp/MAX.RES (см. таблицу в шапке модуля).
+        // Values from cursor.cpp/MAX.RES (see the table in the module header).
         let hand = cursors.get(1).expect("HANDPTR");
         assert_eq!((hand.width, hand.height), (18, 18));
         assert_eq!((hand.hot_x, hand.hot_y), (0, 1));
@@ -372,7 +372,7 @@ mod tests {
         let hidden = cursors.get(0).expect("HIDDNPTR");
         assert_eq!((hidden.width, hidden.height), (1, 1));
 
-        // Каждый кадр каждого курсора имеет ровно width*height пикселей.
+        // Every frame of every cursor has exactly width*height pixels.
         for index in 0..CURSOR_COUNT {
             let cursor = cursors.get(index).expect(CURSOR_RESOURCES[index]);
 

@@ -1,36 +1,36 @@
-//! max_types — общие доменные и протокольные типы M.A.X. (Infrastructure).
+//! max_types — common domain and protocol types of M.A.X. (Infrastructure).
 //!
-//! Крейт выделен на Ф5.2 (решение владельца, вариант «б»: `PLAN-refactor.md`
-//! §3.3) как общий нижний слой, от которого зависят `max_core` (Application),
-//! `max_net` (Infrastructure) и `max_assets` (Infrastructure). Это снимает
-//! формальное нарушение правила 5 (`max_assets → max_core`,
-//! `max_net → max_core`) для **чистых** типов.
+//! The crate was carved out in Phase 5.2 (owner's decision, option "b": `PLAN-refactor.md`
+//! §3.3) as a shared lower layer on which `max_core` (Application),
+//! `max_net` (Infrastructure) and `max_assets` (Infrastructure) depend. This removes
+//! the formal violation of rule 5 (`max_assets → max_core`,
+//! `max_net → max_core`) for **pure** types.
 //!
-//! ## Что здесь лежит
+//! ## What lives here
 //!
-//! * [`enums`] — все перечисления/битовые маски C++ с точными `#[repr]`,
-//!   дискриминантами и `TryFrom`-преобразованиями; `UnitType` (93 типа);
-//! * [`geo`] — `Point`, `PathStep`, `Direction`, `DIRECTION_OFFSETS`, размеры
-//!   карты;
+//! * [`enums`] — all C++ enumerations/bit masks with exact `#[repr]`,
+//!   discriminants and `TryFrom` conversions; `UnitType` (93 types);
+//! * [`geo`] — `Point`, `PathStep`, `Direction`, `DIRECTION_OFFSETS`, map
+//!   dimensions;
 //! * [`map`] — `SurfaceMap`, `ResourceMapEntry`, `ResourceMap`, `Map`;
-//! * [`team`] — листовые типы команд: `TeamId`, `TeamKind`, `Team`,
+//! * [`team`] — leaf team types: `TeamId`, `TeamKind`, `Team`,
 //!   `ResearchTopicInfo`, `Complex`, `Cargo`;
-//! * [`unit`] — `UnitId` (16-битный id с командой в старших битах) и
+//! * [`unit`] — `UnitId` (16-bit id with the team in the high bits) and
 //!   `UnitListKind`;
-//! * [`input`] — протокольные DTO входящих пакетов (`Command` и payload'ы);
-//! * [`events`] — DTO авторитетного состояния команды (пакет 54);
-//! * [`victory`] — `MissionCategory` (категория миссии).
+//! * [`input`] — protocol DTOs of incoming packets (`Command` and payloads);
+//! * [`events`] — DTOs of the authoritative team state (packet 54);
+//! * [`victory`] — `MissionCategory` (mission category).
 //!
-//! ## Чего здесь быть не должно
+//! ## What must not be here
 //!
-//! Типы, которые читают данные `max_core` (`UnitValues`, таблица
-//! `UNIT_TYPE_PROPERTIES`, `TeamInfo`/`TeamUnits`, `UnitInfo`) остаются в
-//! `max_core`; методы `UnitType`, читающие эти данные, живут в extension-типаже
-//! `max_core::UnitTypeClassify` (sealed), чтобы правило сироты соблюдалось.
+//! Types that read `max_core` data (`UnitValues`, the
+//! `UNIT_TYPE_PROPERTIES` table, `TeamInfo`/`TeamUnits`, `UnitInfo`) stay in
+//! `max_core`; `UnitType` methods that read that data live in the extension trait
+//! `max_core::UnitTypeClassify` (sealed), so that the orphan rule holds.
 //!
-//! Принцип релокации (правило 2): типы перенесены **verbatim** — `#[repr]`,
-//! дискриминанты, порядок полей, derive и значения битов не менялись, поэтому
-//! CRC/детерминизм/V70 не затрагиваются.
+//! Relocation principle (rule 2): the types were moved **verbatim** — `#[repr]`,
+//! discriminants, field order, derives and bit values were not changed, so
+//! CRC/determinism/V70 are unaffected.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::float_arithmetic)]
@@ -44,9 +44,9 @@ pub mod team;
 pub mod unit;
 pub mod victory;
 
-/// Количество игровых типов юнитов (`UNIT_END` from `resourcetable.hpp`, 93).
+/// Number of game unit types (`UNIT_END` from `resourcetable.hpp`, 93).
 ///
-/// Живёт в нижнем слое, потому что это размер доменных массивов по типам
-/// (`UnitValues[UNIT_COUNT]`, счётчики команды, пакеты апгрейдов) — нужен и
-/// `max_core`, и `max_net`, и `max_assets`.
+/// It lives in the lower layer because it is the size of the domain arrays per type
+/// (`UnitValues[UNIT_COUNT]`, team counters, upgrade packets) — needed by
+/// `max_core`, `max_net` and `max_assets`.
 pub const UNIT_COUNT: usize = enums::UNIT_END as usize;

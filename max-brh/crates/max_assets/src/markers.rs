@@ -1,30 +1,30 @@
-//! Маркеры ресурсов на карте — `RAWMSK*`/`FUELMK*`/`GOLDMK*` и малые
-//! `SMRWMK*`/`SMFLMK*`/`SMGDMK*` из `MAX.RES`.
+//! Resource markers on the map — `RAWMSK*`/`FUELMK*`/`GOLDMK*` and the small
+//! `SMRWMK*`/`SMFLMK*`/`SMGDMK*` from `MAX.RES`.
 //!
-//! Оракул — `max-cpp-port/src/survey.cpp` (`Survey_RenderMarker`):
+//! Oracle — `max-cpp-port/src/survey.cpp` (`Survey_RenderMarker`):
 //!
 //! ```cpp
 //! resource_value = min(material_type & CARGO_MASK, 16);
-//! if (Gfx_ZoomLevel > 16) marker = RAWMSK0 + resource_value;   // большие 62×62
-//! else                    marker = SMRWMK1 + resource_value - 1; // малые 14×16
+//! if (Gfx_ZoomLevel > 16) marker = RAWMSK0 + resource_value;   // large 62×62
+//! else                    marker = SMRWMK1 + resource_value - 1; // small 14×16
 //! ```
 //!
-//! Большие маркеры — simple image с hotspot `(31,31)` (центр клетки), малые —
-//! `(7,8)`. При зуме не 1:1 C++ масштабирует картинку (`WindowManager_
-//! RescaleSimpleImage`), это делает рендер. `I_RAW`/`I_FUEL`/`I_GOLD` — иконки
-//! интерфейса (статистика/меню), а **не** маркеры карты; здесь они лежат только
-//! запасным вариантом, если спрайт-маркер отсутствует в архиве.
+//! Large markers are simple images with hotspot `(31,31)` (center of the cell), small ones —
+//! `(7,8)`. At a zoom other than 1:1 C++ scales the picture (`WindowManager_
+//! RescaleSimpleImage`), the renderer does that. `I_RAW`/`I_FUEL`/`I_GOLD` are interface
+//! icons (statistics/menu), and **not** map markers; here they are kept only
+//! as a fallback if the sprite marker is missing from the archive.
 
 use crate::image::{ImageError, SimpleImage};
 use crate::res::ResArchive;
 use max_types::map::ResourceKind;
 
-/// Больших маркеров на каждый тип: `*MK0..*MK16` (0 — пустая клетка).
+/// Large markers per type: `*MK0..*MK16` (0 — an empty cell).
 pub const BIG_MARKER_COUNT: usize = 17;
-/// Малых маркеров на каждый тип: `SM*MK1..SM*MK16`.
+/// Small markers per type: `SM*MK1..SM*MK16`.
 pub const SMALL_MARKER_COUNT: usize = 16;
 
-/// Индексы типов ресурсов в таблицах маркеров.
+/// Indices of the resource types in the marker tables.
 const RAW: usize = 0;
 const FUEL: usize = 1;
 const GOLD: usize = 2;
@@ -37,18 +37,18 @@ fn kind_index(kind: ResourceKind) -> usize {
     }
 }
 
-/// Загруженные маркеры ресурсов.
+/// Loaded resource markers.
 #[derive(Debug, Clone, Default)]
 pub struct ResourceMarkers {
     big: [Vec<SimpleImage>; 3],
     small: [Vec<SimpleImage>; 3],
-    /// `I_RAW`/`I_FUEL`/`I_GOLD` — fallback, если маркеров нет.
+    /// `I_RAW`/`I_FUEL`/`I_GOLD` — fallback if there are no markers.
     icons: [Option<SimpleImage>; 3],
     loaded: usize,
 }
 
 impl ResourceMarkers {
-    /// Грузит все маркеры, которые есть в архиве.
+    /// Loads all markers present in the archive.
     pub fn load(archive: &ResArchive) -> Self {
         let read = |name: &str| -> Option<SimpleImage> {
             archive
@@ -84,22 +84,22 @@ impl ResourceMarkers {
         markers
     }
 
-    /// Сколько картинок маркеров загрузилось.
+    /// How many marker images were loaded.
     pub fn loaded(&self) -> usize {
         self.loaded
     }
 
-    /// Большой маркер для количества `amount` (C++: `min(amount, 16)`).
+    /// Large marker for the amount `amount` (C++: `min(amount, 16)`).
     pub fn big(&self, kind: ResourceKind, amount: u8) -> Option<&SimpleImage> {
         let amount = usize::from(amount.min(16));
         let table = &self.big[kind_index(kind)];
 
-        // Если в архиве нет части кадров, ближайший меньший индекс — разумный
-        // fallback (в эталонном MAX.RES есть все 17).
+        // If part of the frames is missing from the archive, the nearest smaller index is a reasonable
+        // fallback (the reference MAX.RES has all 17).
         table.get(amount).or_else(|| table.first())
     }
 
-    /// Малый маркер для количества `amount` (C++: кадр `amount - 1`, 1..=16).
+    /// Small marker for the amount `amount` (C++: frame `amount - 1`, 1..=16).
     pub fn small(&self, kind: ResourceKind, amount: u8) -> Option<&SimpleImage> {
         let amount = amount.clamp(1, 16);
         let table = &self.small[kind_index(kind)];
@@ -108,18 +108,18 @@ impl ResourceMarkers {
         table.get(index).or_else(|| table.first())
     }
 
-    /// Иконка интерфейса `I_*` (fallback).
+    /// `I_*` interface icon (fallback).
     pub fn icon(&self, kind: ResourceKind) -> Option<&SimpleImage> {
         self.icons[kind_index(kind)].as_ref()
     }
 
-    /// Есть ли хоть один маркер/иконка для карты.
+    /// Whether there is at least one marker/icon for the map.
     pub fn is_ready(&self) -> bool {
         self.loaded > 0 || self.icons.iter().any(Option::is_some)
     }
 }
 
-/// Разбирает одну картинку маркера (для тестов/отчётов).
+/// Parses one marker image (for tests/reports).
 pub fn decode_marker(bytes: &[u8]) -> Result<SimpleImage, ImageError> {
     SimpleImage::decode(bytes)
 }
@@ -167,7 +167,7 @@ mod tests {
             assert!(icon.width > 0 && icon.height > 0);
         }
 
-        // Количество сверх 16 клампится, как `min(material_type & CARGO_MASK, 16)`.
+        // An amount above 16 is clamped, like `min(material_type & CARGO_MASK, 16)`.
         assert_eq!(
             markers.big(ResourceKind::Raw, 31).map(|image| image.width),
             markers.big(ResourceKind::Raw, 16).map(|image| image.width)

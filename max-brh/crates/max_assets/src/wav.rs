@@ -1,24 +1,24 @@
-//! RIFF/WAVE-звуки M.A.X. (`*.SPW` в каталоге игры).
+//! RIFF/WAVE sounds of M.A.X. (`*.SPW` in the game directory).
 //!
-//! Все 272 файла `*.SPW` из `max-original/` — обычные WAV-файлы: PCM,
-//! 22050 Гц, моно, 16 бит (`max-original-dasm/formats/spw.md` §1, §8.5).
-//! Расширение `.SPW` — след переименования WAV на поздних тиражах; никакой
-//! собственной структуры у формата нет, поэтому парсер — обычный RIFF-обход
-//! чанков.
+//! All 272 `*.SPW` files from `max-original/` are ordinary WAV files: PCM,
+//! 22050 Hz, mono, 16 bits (`max-original-dasm/formats/spw.md` §1, §8.5).
+//! The `.SPW` extension is a trace of the WAV renaming in later print runs; the format has no
+//! structure of its own, so the parser is an ordinary RIFF chunk
+//! walk.
 //!
-//! Поддерживается то, что реально встречается в игре (и минимально полезно):
+//! Supported is what actually occurs in the game (and is minimally useful):
 //!
-//! * контейнер `RIFF`/`WAVE`;
-//! * чанк `fmt ` с `wFormatTag == 1` (PCM), 1–2 канала, 16 бит;
-//! * чанк `data`; остальные чанки (`smpl`, `fact`, `LIST`, …) пропускаются;
-//! * нечётный размер чанка — с паддинг-байтом (стандартное правило RIFF).
+//! * the `RIFF`/`WAVE` container;
+//! * the `fmt ` chunk with `wFormatTag == 1` (PCM), 1–2 channels, 16 bits;
+//! * the `data` chunk; the other chunks (`smpl`, `fact`, `LIST`, …) are skipped;
+//! * an odd chunk size — with a padding byte (the standard RIFF rule).
 //!
-//! Сэмплы возвращаются как `Vec<i16>` в **interleaved**-порядке: для стерео
-//! `[L0, R0, L1, R1, …]`. Число кадров — [`WavClip::frames`].
+//! Samples are returned as `Vec<i16>` in **interleaved** order: for stereo
+//! `[L0, R0, L1, R1, …]`. The number of frames is [`WavClip::frames`].
 //!
-//! Ошибки формата возвращаются значениями; паник на битых данных нет. Размер
-//! `data`-чанка, не кратный `block_align`, не ошибка: хвост обрезается (как
-//! поступил бы любой проигрыватель).
+//! Format errors are returned as values; there are no panics on corrupt data. A
+//! `data` chunk size that is not a multiple of `block_align` is not an error: the tail is trimmed
+//! (as any player would do).
 
 use std::fmt;
 use std::fs;
@@ -26,33 +26,33 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Минимальная длина RIFF-заголовка (`RIFF` + size + `WAVE`).
+/// Minimum RIFF header length (`RIFF` + size + `WAVE`).
 pub const RIFF_HEADER_SIZE: usize = 12;
-/// Минимальная длина чанка `fmt ` для PCM (поля до `wBitsPerSample`).
+/// Minimum `fmt ` chunk length for PCM (fields up to `wBitsPerSample`).
 pub const PCM_FMT_MIN_SIZE: usize = 16;
-/// Размер одного сэмпла PCM16.
+/// Size of one PCM16 sample.
 pub const SAMPLE_BYTES: usize = 2;
-/// `wFormatTag` для несжатого PCM.
+/// `wFormatTag` for uncompressed PCM.
 pub const WAVE_FORMAT_PCM: u16 = 1;
 
-/// Разобранный WAV-файл (PCM16).
+/// Parsed WAV file (PCM16).
 #[derive(Clone, PartialEq, Eq)]
 pub struct WavClip {
-    /// Частота дискретизации, Гц (у звуков M.A.X. — 22050).
+    /// Sample rate, Hz (for M.A.X. sounds — 22050).
     pub sample_rate: u32,
-    /// Число каналов (1 — моно, 2 — стерео).
+    /// Number of channels (1 — mono, 2 — stereo).
     pub channels: u16,
-    /// Сэмплы PCM16 в interleaved-порядке.
+    /// PCM16 samples in interleaved order.
     pub samples: Vec<i16>,
 }
 
 impl WavClip {
-    /// Разбирает WAV из байтов.
+    /// Parses a WAV from bytes.
     ///
-    /// # Ошибки
+    /// # Errors
     ///
-    /// [`WavError`] — если это не RIFF/WAVE, нет `fmt `/`data`, формат не
-    /// PCM16 или файл обрезан. Неизвестные чанки игнорируются.
+    /// [`WavError`] — if this is not RIFF/WAVE, `fmt `/`data` is missing, the format is not
+    /// PCM16, or the file is truncated. Unknown chunks are ignored.
     pub fn parse(bytes: &[u8]) -> Result<Self, WavError> {
         if bytes.len() < RIFF_HEADER_SIZE {
             return Err(WavError::TooShort {
@@ -79,7 +79,7 @@ impl WavClip {
         let mut data: Option<(usize, usize)> = None;
         let mut pos = RIFF_HEADER_SIZE;
 
-        // RIFF-чанки: id[4] + u32 size + тело + паддинг до чётного размера.
+        // RIFF chunks: id[4] + u32 size + body + padding to an even size.
         while pos + 8 <= bytes.len() {
             let mut id = [0u8; 4];
             id.copy_from_slice(&bytes[pos..pos + 4]);
@@ -118,8 +118,8 @@ impl WavClip {
                 _ => {}
             }
 
-            // Нечётный размер дополняется одним байтом; на конце файла
-            // паддинга может не быть — тогда цикл просто завершится.
+            // An odd size is padded with one byte; at the end of the file
+            // the padding may be absent — then the loop simply ends.
             pos = body_end + (size as usize & 1);
         }
 
@@ -133,8 +133,8 @@ impl WavClip {
             samples.push(i16::from_le_bytes([pair[0], pair[1]]));
         }
 
-        // Хвост, не составивший целый кадр, отбрасываем (битые/склеенные
-        // файлы), чтобы interleaved-поток всегда был согласован с каналами.
+        // A tail that does not form a whole frame is discarded (corrupt/glued
+        // files), so that the interleaved stream is always consistent with the channels.
         let channels = usize::from(fmt.channels);
         let frames = samples.len() / channels;
         samples.truncate(frames * channels);
@@ -146,7 +146,7 @@ impl WavClip {
         })
     }
 
-    /// Читает и разбирает WAV-файл.
+    /// Reads and parses a WAV file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, WavError> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|source| WavError::Io {
@@ -157,7 +157,7 @@ impl WavClip {
         Self::parse(&bytes)
     }
 
-    /// Число кадров (сэмплов на канал).
+    /// Number of frames (samples per channel).
     pub fn frames(&self) -> usize {
         if self.channels == 0 {
             0
@@ -166,7 +166,7 @@ impl WavClip {
         }
     }
 
-    /// Длительность клипа.
+    /// Duration of the clip.
     pub fn duration(&self) -> Duration {
         if self.sample_rate == 0 {
             Duration::ZERO
@@ -175,7 +175,7 @@ impl WavClip {
         }
     }
 
-    /// Клип без сэмплов.
+    /// Clip without samples.
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
@@ -192,7 +192,7 @@ impl fmt::Debug for WavClip {
     }
 }
 
-/// Поля чанка `fmt `, нужные для PCM16.
+/// `fmt ` chunk fields needed for PCM16.
 #[derive(Debug, Clone, Copy)]
 struct FmtChunk {
     channels: u16,
@@ -200,7 +200,7 @@ struct FmtChunk {
     block_align: u16,
 }
 
-/// Разбирает `fmt ` и проверяет, что это PCM16 моно/стерео.
+/// Parses `fmt ` and checks that it is PCM16 mono/stereo.
 fn parse_fmt(body: &[u8], chunk_offset: usize) -> Result<FmtChunk, WavError> {
     if body.len() < PCM_FMT_MIN_SIZE {
         return Err(WavError::ShortFmt {
@@ -244,91 +244,91 @@ fn parse_fmt(body: &[u8], chunk_offset: usize) -> Result<FmtChunk, WavError> {
     })
 }
 
-/// Ошибка разбора/чтения WAV.
+/// WAV parse/read error.
 #[derive(Debug)]
 pub enum WavError {
-    /// Не удалось прочитать файл.
+    /// Failed to read the file.
     Io {
-        /// Путь, который читался.
+        /// The path that was being read.
         path: PathBuf,
-        /// Причина от ОС.
+        /// Reason from the OS.
         source: io::Error,
     },
-    /// Файл короче RIFF-заголовка.
+    /// The file is shorter than the RIFF header.
     TooShort {
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Первые 4 байта — не `"RIFF"`.
+    /// The first 4 bytes are not `"RIFF"`.
     BadRiff {
-        /// Фактическая сигнатура.
+        /// Actual signature.
         found: [u8; 4],
     },
-    /// Байты 8..12 — не `"WAVE"`.
+    /// Bytes 8..12 are not `"WAVE"`.
     BadWave {
-        /// Фактическая сигнатура.
+        /// Actual signature.
         found: [u8; 4],
     },
-    /// Нет чанка `fmt `.
+    /// No `fmt ` chunk.
     MissingFmt,
-    /// Нет чанка `data`.
+    /// No `data` chunk.
     MissingData,
-    /// Размер `fmt ` меньше 16 байт.
+    /// The `fmt ` size is less than 16 bytes.
     ShortFmt {
-        /// Фактическая длина тела чанка.
+        /// Actual chunk body length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Чанк выходит за конец файла.
+    /// The chunk extends beyond the end of the file.
     TruncatedChunk {
-        /// Идентификатор чанка.
+        /// Chunk identifier.
         id: [u8; 4],
-        /// Смещение заголовка чанка.
+        /// Offset of the chunk header.
         offset: usize,
-        /// Размер тела из заголовка.
+        /// Body size from the header.
         size: u32,
-        /// Фактическая длина файла.
+        /// Actual file length.
         len: usize,
     },
-    /// `body_start + size` переполняет `usize` (битый размер).
+    /// `body_start + size` overflows `usize` (corrupt size).
     ChunkOverflow {
-        /// Идентификатор чанка.
+        /// Chunk identifier.
         id: [u8; 4],
-        /// Смещение заголовка чанка.
+        /// Offset of the chunk header.
         offset: usize,
-        /// Размер тела из заголовка.
+        /// Body size from the header.
         size: u32,
     },
-    /// `wFormatTag` — не PCM.
+    /// `wFormatTag` is not PCM.
     UnsupportedFormat {
-        /// Код формата из `fmt `.
+        /// Format code from `fmt `.
         format: u16,
     },
-    /// Число каналов не 1 и не 2.
+    /// The number of channels is neither 1 nor 2.
     UnsupportedChannels {
-        /// Число каналов из `fmt `.
+        /// Number of channels from `fmt `.
         channels: u16,
     },
-    /// Биты на сэмпл — не 16.
+    /// Bits per sample are not 16.
     UnsupportedBits {
-        /// `wBitsPerSample` из `fmt `.
+        /// `wBitsPerSample` from `fmt `.
         bits: u16,
     },
-    /// Частота дискретизации равна нулю.
+    /// The sample rate is zero.
     BadSampleRate {
-        /// Значение из `fmt `.
+        /// Value from `fmt `.
         sample_rate: u32,
     },
-    /// `block_align` не совпадает с `channels * 2`.
+    /// `block_align` does not match `channels * 2`.
     BadBlockAlign {
-        /// Значение из `fmt `.
+        /// Value from `fmt `.
         block_align: u16,
-        /// Ожидаемое значение.
+        /// Expected value.
         expected: u16,
-        /// Смещение чанка `fmt ` (для диагностики).
+        /// Offset of the `fmt ` chunk (for diagnostics).
         chunk_offset: usize,
     },
 }
@@ -408,7 +408,7 @@ impl std::error::Error for WavError {
 mod tests {
     use super::*;
 
-    /// Собирает WAV PCM16 из сэмплов (mono/stereo).
+    /// Builds a PCM16 WAV from samples (mono/stereo).
     fn build_wav(channels: u16, sample_rate: u32, samples: &[i16]) -> Vec<u8> {
         let data_len = samples.len() * SAMPLE_BYTES;
         let block_align = channels * 2;
@@ -452,16 +452,16 @@ mod tests {
     #[test]
     fn skips_unknown_odd_and_trailing_chunks() {
         let mut wav = build_wav(1, 22050, &[7, 8]);
-        // Вставляем "junk" (3 байта + паддинг) после WAVE и "smpl" в конец:
-        // обход обязан учитывать нечётный размер и не придираться к чужим чанкам.
+        // Insert "junk" (3 bytes + padding) after WAVE and "smpl" at the end:
+        // the walk must account for the odd size and not be picky about foreign chunks.
         let mut junk = Vec::new();
         junk.extend_from_slice(b"junk");
         junk.extend_from_slice(&3u32.to_le_bytes());
         junk.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0x00]);
 
         wav.splice(12..12, junk);
-        // RIFF size не пересчитываем: парсер следует чанкам, а не заголовку
-        // (в реальных файлах размер бывает неточным).
+        // We do not recompute the RIFF size: the parser follows the chunks, not the header
+        // (in real files the size is sometimes inaccurate).
         wav.extend_from_slice(b"smpl");
         wav.extend_from_slice(&60u32.to_le_bytes());
         wav.extend_from_slice(&[0u8; 60]);
@@ -473,9 +473,9 @@ mod tests {
 
     #[test]
     fn truncates_data_to_whole_frames() {
-        // Стерео с «половинкой» кадра: 3 сэмпла вместо 4.
+        // Stereo with a "half" frame: 3 samples instead of 4.
         let mut wav = build_wav(2, 22050, &[1, 2, 3, 4]);
-        // data начинается с 44: 6 байт = 3 сэмпла, последний кадр неполный.
+        // data starts at 44: 6 bytes = 3 samples, the last frame is incomplete.
         wav.truncate(wav.len() - 2);
         wav[40..44].copy_from_slice(&6u32.to_le_bytes());
 
@@ -501,7 +501,7 @@ mod tests {
         ));
 
         let wav = build_wav(1, 22050, &[1]);
-        // Нет data.
+        // No data.
         let mut no_data = wav.clone();
         no_data[36..40].copy_from_slice(b"junk");
         assert!(matches!(
@@ -509,12 +509,12 @@ mod tests {
             Err(WavError::MissingData)
         ));
 
-        // Нет fmt.
+        // No fmt.
         let mut no_fmt = wav.clone();
         no_fmt[12..16].copy_from_slice(b"junk");
         assert!(matches!(WavClip::parse(&no_fmt), Err(WavError::MissingFmt)));
 
-        // Обрезанный data-чанк.
+        // Truncated data chunk.
         let mut truncated = wav.clone();
         truncated.truncate(truncated.len() - 1);
         assert!(matches!(
@@ -522,7 +522,7 @@ mod tests {
             Err(WavError::TruncatedChunk { .. })
         ));
 
-        // 8 бит.
+        // 8 bits.
         let mut eight_bit = wav.clone();
         eight_bit[34..36].copy_from_slice(&8u16.to_le_bytes());
         assert!(matches!(
@@ -530,7 +530,7 @@ mod tests {
             Err(WavError::UnsupportedBits { bits: 8 })
         ));
 
-        // 3 канала и неверный block_align.
+        // 3 channels and a wrong block_align.
         let mut three_channels = wav.clone();
         three_channels[22..24].copy_from_slice(&3u16.to_le_bytes());
         assert!(matches!(
@@ -545,7 +545,7 @@ mod tests {
             Err(WavError::BadBlockAlign { .. })
         ));
 
-        // Не-PCM (IEEE float).
+        // Non-PCM (IEEE float).
         let mut float = wav.clone();
         float[20..22].copy_from_slice(&3u16.to_le_bytes());
         assert!(matches!(
@@ -553,7 +553,7 @@ mod tests {
             Err(WavError::UnsupportedFormat { format: 3 })
         ));
 
-        // Нулевая частота.
+        // Zero sample rate.
         let mut zero_rate = wav;
         zero_rate[24..28].copy_from_slice(&0u32.to_le_bytes());
         assert!(matches!(
@@ -562,10 +562,10 @@ mod tests {
         ));
     }
 
-    /// Реальный звук игры: фикстура `max-original/KBUY0.SPW` (2 604 байта).
+    /// A real game sound: the `max-original/KBUY0.SPW` fixture (2 604 bytes).
     ///
-    /// Путь включается на этапе компиляции: файл лежит в репозитории, поэтому
-    /// тест не зависит от текущего каталога и не «тихо пропускается».
+    /// The path is baked in at compile time: the file lies in the repository, so the
+    /// test does not depend on the current directory and is not silently skipped.
     #[test]
     fn parses_real_kbuy0_spw() {
         const KBUY0: &[u8] = include_bytes!(concat!(
@@ -583,11 +583,11 @@ mod tests {
         assert!((clip.duration().as_secs_f64() - 1280.0 / 22050.0).abs() < 1e-9);
     }
 
-    /// Все 272 `*.SPW` каталога игры — PCM16 22050 Гц моно (`spw.md` §8.5).
+    /// All 272 `*.SPW` of the game directory are PCM16 22050 Hz mono (`spw.md` §8.5).
     ///
-    /// Тест читает каталог, а не отдельный файл: так ловится любое расхождение
-    /// реальных данных с допущениями парсера. Если каталога нет (сборка без
-    /// игровых данных), проверка пропускается.
+    /// The test reads the directory rather than a single file: this catches any discrepancy
+    /// of the real data with the parser's assumptions. If the directory is absent (a build without
+    /// game data), the check is skipped.
     #[test]
     fn all_real_spw_files_are_pcm16_22050_mono() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");

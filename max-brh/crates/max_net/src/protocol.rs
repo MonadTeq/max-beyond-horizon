@@ -1,8 +1,8 @@
-//! JSON-события лобби Horizon (`max_lobby:*`), общие для WS-канала.
+//! Horizon lobby JSON events (`max_lobby:*`), shared by the WS channel.
 
 use serde::{Deserialize, Serialize};
 
-/// Обёртка запроса клиента: маршрутизируется как `namespace:event`.
+/// Client request wrapper: routed as `namespace:event`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientEvent<T> {
     pub namespace: String,
@@ -10,7 +10,7 @@ pub struct ClientEvent<T> {
     pub data: T,
 }
 
-/// Ответ лобби: `{"event": "...", ...}`.
+/// Lobby response: `{"event": "...", ...}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LobbyEvent {
@@ -28,7 +28,7 @@ pub enum LobbyEvent {
     Unknown,
 }
 
-/// Игра в списке лобби.
+/// A game in the lobby list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameListing {
     pub id: String,
@@ -41,7 +41,7 @@ pub struct GameListing {
     pub password_protected: bool,
 }
 
-/// Запрос входа в игру.
+/// Request to join a game.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JoinRequest {
     pub game_id: String,

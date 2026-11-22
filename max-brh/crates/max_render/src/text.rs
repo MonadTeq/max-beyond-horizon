@@ -1,23 +1,23 @@
-//! Текст UI: встроенный 8×8 ASCII bitmap-шрифт (fallback) и оригинальные
-//! растровые шрифты GNW (модуль [`gnw`]).
+//! UI text: the built-in 8×8 ASCII bitmap font (fallback) and the original
+//! GNW raster fonts (module [`gnw`]).
 //!
-//! * [`draw_text`]/[`draw_text_line`]/[`wrap_text`] — моноширинный 8×8 на 128
-//!   символов ASCII (U+0000…U+007F). Общественное достояние: [font8x8][]
-//!   Daniel Hepper (на основе IBM VGA / Marcel Sondaar). Используется, пока
-//!   нет данных игры или для служебных сообщений.
-//! * [`gnw`] — `GnwFont`, `GnwFontId::{Font1,Font2,Font5}` и
-//!   [`draw_text_gnw`]/[`draw_text_gnw_shadowed`]: оригинальные `.FON`
-//!   (`FONT1.FON`/`FONT2.FON`/`FONT5.FON`), метрики и тень/обводка как в
-//!   C++-порте (`Text_TextLine`). Это шрифт игрового окна: подписи кнопок,
-//!   статистика, таймер, координаты.
+//! * [`draw_text`]/[`draw_text_line`]/[`wrap_text`] — monospaced 8×8 over 128
+//!   ASCII characters (U+0000…U+007F). Public domain: [font8x8][]
+//!   Daniel Hepper (based on IBM VGA / Marcel Sondaar). Used while there is
+//!   no game data or for service messages.
+//! * [`gnw`] — `GnwFont`, `GnwFontId::{Font1,Font2,Font5}` and
+//!   [`draw_text_gnw`]/[`draw_text_gnw_shadowed`]: the original `.FON`
+//!   (`FONT1.FON`/`FONT2.FON`/`FONT5.FON`), metrics and shadow/outline as in the
+//!   C++ port (`Text_TextLine`). This is the game window font: button labels,
+//!   statistics, timer, coordinates.
 //!
 //! [font8x8]: https://github.com/dhepper/font8x8
 //!
-//! # Переносы
+//! # Wrapping
 //!
-//! [`draw_text`] переносит строки по правому краю буфера, [`draw_text_wrapped`]
-//! — по явной ширине. Перенос мягкий: по словам, а слишком длинное слово
-//! режется по символам. Явный `\n` всегда начинает новую строку.
+//! [`draw_text`] wraps lines at the right edge of the buffer, [`draw_text_wrapped`]
+//! — at an explicit width. The wrap is soft: by words, and an over-long word
+//! is cut by characters. An explicit `\n` always starts a new line.
 //!
 //! ```
 //! use max_render::buffer::{Rgba, RgbaBuffer};
@@ -38,16 +38,16 @@ pub use gnw::{
     GnwFont, GnwFontError, GnwFontId, GnwGlyph,
 };
 
-/// Ширина одного глифа в пикселях.
+/// Width of one glyph in pixels.
 pub const GLYPH_WIDTH: i32 = 8;
-/// Высота одного глифа в пикселях.
+/// Height of one glyph in pixels.
 pub const GLYPH_HEIGHT: i32 = 8;
-/// Сколько символов покрывает встроенная таблица (ASCII, U+0000…U+007F).
+/// How many characters the built-in table covers (ASCII, U+0000…U+007F).
 pub const ASCII_CHARS: usize = 128;
-/// Символ, которым заменяется всё вне ASCII.
+/// The character that replaces everything outside ASCII.
 pub const FALLBACK_GLYPH: char = '?';
 
-/// Таблица 8×8 для ASCII U+0000…U+007F.
+/// The 8×8 table for ASCII U+0000…U+007F.
 ///
 /// Public Domain: font8x8 by Daniel Hepper (IBM VGA / Marcel Sondaar).
 pub const FONT_8X8: [[u8; 8]; ASCII_CHARS] = [
@@ -181,10 +181,10 @@ pub const FONT_8X8: [[u8; 8]; ASCII_CHARS] = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // U+007F
 ];
 
-/// Строки глифа `ch`; вне ASCII — [`FALLBACK_GLYPH`].
+/// Rows of the glyph `ch`; outside ASCII — [`FALLBACK_GLYPH`].
 ///
-/// Бит 0 — левый пиксель строки, бит 7 — правый; строки идут сверху вниз
-/// (конвенция font8x8 / VGA: `0x7F` у 'E' — сплошная верхняя строка).
+/// Bit 0 is the left pixel of the row, bit 7 the right one; rows go top to bottom
+/// (font8x8 / VGA convention: `0x7F` of 'E' is a solid top row).
 #[inline]
 pub fn glyph(ch: char) -> &'static [u8; 8] {
     let code = ch as usize;
@@ -196,39 +196,39 @@ pub fn glyph(ch: char) -> &'static [u8; 8] {
     }
 }
 
-/// Размер нарисованного текста в пикселях.
+/// Size of the drawn text in pixels.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TextMetrics {
-    /// Ширина самой длинной строки в пикселях.
+    /// Width of the longest line in pixels.
     pub width: i32,
-    /// Высота всех строк (`lines * 8`).
+    /// Height of all lines (`lines * 8`).
     pub height: i32,
-    /// Сколько строк получилось после переносов.
+    /// How many lines resulted from wrapping.
     pub lines: u32,
 }
 
-/// Ширина одного символа (моноширинный шрифт).
+/// Width of one character (monospaced font).
 #[inline]
 pub const fn char_width() -> i32 {
     GLYPH_WIDTH
 }
 
-/// Ширина строки в пикселях: по 8 на каждый `char` (включая не-ASCII).
+/// Line width in pixels: 8 per `char` (including non-ASCII).
 #[inline]
 pub fn line_width(text: &str) -> i32 {
     text.chars().count() as i32 * GLYPH_WIDTH
 }
 
-/// Высота `lines` строк текста.
+/// Height of `lines` lines of text.
 #[inline]
 pub const fn text_height(lines: usize) -> i32 {
     lines as i32 * GLYPH_HEIGHT
 }
 
-/// Разбивает текст на строки по ширине `max_width` (в пикселях).
+/// Splits the text into lines by the width `max_width` (in pixels).
 ///
-/// Явные `\n` сохраняются; слова переносятся целиком, а слово длиннее строки
-/// режется на куски. Ширина меньше одного глифа даёт пустой список строк.
+/// Explicit `\n` are preserved; words are wrapped whole, and a word longer than the line
+/// is cut into pieces. A width smaller than one glyph yields an empty list of lines.
 pub fn wrap_text(text: &str, max_width: i32) -> Vec<String> {
     let max_chars = (max_width.max(0) / GLYPH_WIDTH) as usize;
 
@@ -245,7 +245,7 @@ pub fn wrap_text(text: &str, max_width: i32) -> Vec<String> {
     lines
 }
 
-/// Переносит одну логическую строку (без `\n`).
+/// Wraps one logical line (without `\n`).
 fn wrap_line(line: &str, max_chars: usize, out: &mut Vec<String>) {
     let start_len = out.len();
     let mut current = String::new();
@@ -293,15 +293,15 @@ fn wrap_line(line: &str, max_chars: usize, out: &mut Vec<String>) {
     if !current.is_empty() {
         out.push(current);
     } else if out.len() == start_len {
-        // Пустая строка или строка из одних пробелов — сохраняем как пустую.
+        // An empty line or a line of spaces only — kept as empty.
         out.push(String::new());
     }
 }
 
-/// Рисует одну строку без переносов, обрезая её по границам буфера.
+/// Draws one line without wrapping, clipping it at the buffer bounds.
 ///
-/// Возвращает ширину строки в пикселях (`line_width(text)`), даже если часть
-/// текста не попала в буфер.
+/// Returns the line width in pixels (`line_width(text)`) even if part of
+/// the text did not fit into the buffer.
 pub fn draw_text_line(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color: Rgba) -> i32 {
     let mut pen_x = x;
 
@@ -324,8 +324,8 @@ pub fn draw_text_line(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color
             }
 
             for column in 0..GLYPH_WIDTH {
-                // Бит 0 — левый пиксель (font8x8/VGA), иначе весь текст
-                // рисуется зеркально: 'N' → 'И', 'e' → 'ǝ', 't' → 'ʇ'.
+                // Bit 0 is the left pixel (font8x8/VGA), otherwise the whole text
+                // is drawn mirrored: 'N' → 'И', 'e' → 'ǝ', 't' → 'ʇ'.
                 if bits & (0x01 << column) == 0 {
                     continue;
                 }
@@ -340,10 +340,10 @@ pub fn draw_text_line(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color
     line_width(text)
 }
 
-/// Рисует текст с переносами по ширине `max_width`.
+/// Draws text with wrapping by the width `max_width`.
 ///
-/// Возвращает фактические размеры нарисованного блока; вне буфера рисование
-/// обрезается (без паник и без выхода за пределы `RgbaBuffer`).
+/// Returns the actual dimensions of the drawn block; outside the buffer drawing
+/// is clipped (no panics and no going beyond `RgbaBuffer`).
 pub fn draw_text_wrapped(
     buffer: &mut RgbaBuffer,
     x: i32,
@@ -371,11 +371,11 @@ pub fn draw_text_wrapped(
     }
 }
 
-/// Рисует текст с переносами по правому краю буфера.
+/// Draws text with wrapping at the right edge of the buffer.
 ///
-/// Это основной вариант для UI: `max_width` считается как
-/// `buffer.width() - x`, поэтому текст всегда укладывается в кадр, а всё, что
-/// выходит за границы, обрезается.
+/// This is the main variant for the UI: `max_width` is computed as
+/// `buffer.width() - x`, so the text always fits into the frame, and everything that
+/// goes beyond the bounds is clipped.
 pub fn draw_text(buffer: &mut RgbaBuffer, x: i32, y: i32, text: &str, color: Rgba) -> TextMetrics {
     let max_width = buffer.width() as i32 - x;
 
@@ -432,27 +432,27 @@ mod tests {
         assert_eq!(metrics.height, 16);
         assert_eq!(metrics.width, 24, "ширина — самая длинная строка");
         assert!(painted_pixels(&buffer) > 0);
-        // 'A' (0x0C = биты 2 и 3) — в первой строке пиксели (2, 0) и (3, 0).
+        // 'A' (0x0C = bits 2 and 3) — pixels (2, 0) and (3, 0) in the first row.
         assert_eq!(buffer.get(2, 0), Some(Rgba::WHITE));
         assert_eq!(buffer.get(3, 0), Some(Rgba::WHITE));
-        // 'D' — уже во второй строке (D = 0x1F, 0x36, …).
+        // 'D' — already in the second row (D = 0x1F, 0x36, …).
         assert_eq!(buffer.get(3, 8), Some(Rgba::WHITE));
         assert_eq!(buffer.get(24, 0), None, "за правым краем буфера");
     }
 
-    /// Ориентация глифов: бит 0 — левый пиксель. Регрессия этого места давала
-    /// зеркальный текст во всём UI ('N' → 'И', 'e' → 'ǝ').
+    /// Glyph orientation: bit 0 is the left pixel. A regression here produced
+    /// mirrored text across the whole UI ('N' → 'И', 'e' → 'ǝ').
     #[test]
     fn glyph_bits_are_lsb_first() {
         let mut buffer = RgbaBuffer::new(8, 8);
-        // 'E' = 0x7F в верхней строке → пиксели 0..=6, правый (7) пустой.
+        // 'E' = 0x7F in the top row → pixels 0..=6, the right one (7) is empty.
         draw_text_line(&mut buffer, 0, 0, "E", Rgba::WHITE);
 
         assert_eq!(buffer.get(0, 0), Some(Rgba::WHITE), "бит 0 — левый пиксель");
         assert_eq!(buffer.get(6, 0), Some(Rgba::WHITE));
         assert_ne!(buffer.get(7, 0), Some(Rgba::WHITE), "бит 7 — правый");
 
-        // 't' (0x08 = бит 3): ножка слева от центра, а не справа.
+        // 't' (0x08 = bit 3): the stem is left of center, not right.
         let mut buffer = RgbaBuffer::new(8, 8);
         draw_text_line(&mut buffer, 0, 0, "t", Rgba::WHITE);
         assert_eq!(

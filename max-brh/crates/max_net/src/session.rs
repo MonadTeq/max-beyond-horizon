@@ -19,11 +19,11 @@
 //! every [`SessionConfig::service_tick`] (10 ms, matching the C++ client),
 //! so the async runtime is never blocked inside the C library.
 //!
-//! Зависимость от max_core намеренная (read-only проекция симуляции в провод,
-//! пакеты 23/45/53/54) — см. max-brh-docs/development/PLAN-refactor.md Ф5.3 /
-//! architect-rules.md. НЕ добавлять новые вызовы max_core без пересмотра
-//! решения. Вызов apply_* или мутация GameState из max_net аннулирует это
-//! решение.
+//! The dependency on max_core is intentional (read-only projection of the
+//! simulation onto the wire, packets 23/45/53/54) — see
+//! max-brh-docs/development/PLAN-refactor.md §5.3 /
+//! architect-rules.md. Do NOT add new max_core calls without revisiting the
+//! decision. Calling apply_* or mutating GameState from max_net voids it.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -710,17 +710,17 @@ pub fn payload_team(packet: &Packet) -> Option<TeamId> {
     }
 }
 
-/// Должен ли `Send`/`SendUntracked` зарегистрировать пакет в
+/// Should `Send`/`SendUntracked` register the packet in
 /// [`BarrierTracker`]?
 ///
-/// `SendUntracked` — это `tracked = false`: повтор уже отслеживаемого барьера
-/// не создаёт вторую запись (иначе каждый ретрансмит добавлял бы новую и
-/// число параллельных повторов росло бы неограниченно).
+/// `SendUntracked` is `tracked = false`: repeating an already tracked barrier
+/// does not create a second entry (otherwise every retransmit would add a new
+/// one and the number of concurrent repeats would grow without bound).
 fn records_barrier(tracked: bool, packet: &Packet) -> bool {
     tracked && is_tracked_barrier(packet)
 }
 
-/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+/// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
 ///
 /// Builds the packet 45 CRC barrier from the authoritative local state.
 ///
@@ -739,7 +739,7 @@ pub fn crc_barrier_for(
     }))
 }
 
-/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+/// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
 ///
 /// Builds packet 53 — the owner's complex totals at the start of a turn.
 ///
@@ -805,8 +805,8 @@ impl SessionHandle {
     /// Encodes and queues a packet **without** registering it for session
     /// retransmission.
     ///
-    /// Это путь для повторов: пакет, уже стоящий в трекере сессии, не должен
-    /// добавлять в него ещё одну запись при каждом ретрансмите.
+    /// This is the retransmit path: a packet already present in the session tracker
+    /// must not add another entry to it on every retransmit.
     pub async fn send_untracked(&self, packet: Packet) -> Result<(), SessionError> {
         packet.encode()?;
         self.commands
@@ -982,10 +982,10 @@ mod tests {
         ))));
     }
 
-    /// Повтор барьера через `SendUntracked` не создаёт вторую запись трекера.
+    /// Repeating a barrier through `SendUntracked` does not create a second tracker entry.
     ///
-    /// Старый путь (`SessionCommand::Send` на каждый ретрансмит) добавлял по
-    /// записи на повтор — число параллельных повторов росло без ограничения.
+    /// The old path (`SessionCommand::Send` on every retransmit) added one
+    /// entry per repeat — the number of concurrent repeats grew without bound.
     #[test]
     fn untracked_repeat_keeps_a_single_tracker_entry() {
         let now = Instant::now();
@@ -1002,10 +1002,10 @@ mod tests {
             "SendUntracked не должен трекать повтор"
         );
 
-        // Ровно то, что делает `SessionCommand::SendUntracked`: только отправка.
+        // Exactly what `SessionCommand::SendUntracked` does: send only.
         assert_eq!(tracker.len(), 1, "повтор не добавил запись");
 
-        // А повтор через Send добавил бы ещё одну — это и был двойной трекинг.
+        // Whereas a repeat through Send would add one more — that was the double tracking.
         assert!(records_barrier(true, &packet));
         tracker.track(packet, now);
         assert_eq!(tracker.len(), 2);
@@ -1084,10 +1084,10 @@ mod tests {
         assert_eq!(ip_addr(Ipv4Addr::LOCALHOST).to_string(), "127.0.0.1");
     }
 
-    /// Команда барьера берётся из поля `team` payload'а, а не из отправителя.
+    /// The barrier command is taken from the payload's `team` field, not from the sender.
     ///
-    /// Релейная копия приходит от сервера (`Remote_GetSenderTeam` → -1 у
-    /// C++-клиента), поэтому единственный источник команды — байты пакета.
+    /// The relayed copy comes from the server (`Remote_GetSenderTeam` → -1 at the
+    /// C++ client), so the only source of the command is the packet bytes.
     #[test]
     fn barrier_team_comes_from_the_payload_team_field() {
         let frame = [
@@ -1104,19 +1104,19 @@ mod tests {
         let packet = Packet::decode(&frame).expect("decode 45");
         assert_eq!(payload_team(&packet), Some(TeamId(3)));
 
-        // У 06 и 53 тоже есть поле team.
+        // Packets 06 and 53 also have a team field.
         let frame = [0x56, 0x01, 0x00];
         let packet = Packet::decode(&frame).expect("decode 06");
         assert_eq!(payload_team(&packet), Some(TeamId(1)));
     }
 
-    /// Регрессия: ENet опрашивается, даже когда приложение непрерывно шлёт.
+    /// Regression: ENet is polled even while the application sends continuously.
     ///
-    /// Старый `select!` создавал `sleep(tick)` заново на каждой итерации, и
-    /// поток исходящих 01 (каждые несколько миллисекунд) не давал таймеру
-    /// сработать: `pump` не вызывался, релейные 00/52/45 лежали в сокете до
-    /// 30-секундного таймаута барьера. Тест поднимает настоящий ENet-сервер,
-    /// шлёт релейный 00 и одновременно забивает канал команд.
+    /// The old `select!` re-created `sleep(tick)` on every iteration, and
+    /// the stream of outgoing 01 (every few milliseconds) kept the timer from
+    /// firing: `pump` was not called, and relayed 00/52/45 sat in the socket until
+    /// the 30-second barrier timeout. The test brings up a real ENet server,
+    /// sends a relayed 00 and simultaneously floods the command channel.
     #[test]
     fn appl_frames_are_pumped_while_outgoing_commands_flood() {
         let port = {
@@ -1156,8 +1156,8 @@ mod tests {
                         host.send(peer, CHANNEL_TP, &hello).expect("send hello");
                         host.flush();
 
-                        // Держим канал занятым: клиент в это время забивает
-                        // исходящую очередь 01-кадрами.
+                        // Keep the channel busy: meanwhile the client floods
+                        // the outgoing queue with 01 frames.
                         let until = std::time::Instant::now() + Duration::from_secs(3);
                         while std::time::Instant::now() < until {
                             host.send(peer, CHANNEL_APPL, &relayed_00)

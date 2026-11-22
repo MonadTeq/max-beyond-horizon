@@ -1,27 +1,27 @@
-//! max_assets — чтение ресурсов оригинальной игры.
+//! max_assets — reading the resources of the original game.
 //!
-//! Форматы (задокументированы в `max-original-dasm/formats/`):
-//! - RES/PATCHES — архивы игровых данных (заголовок, индекс, записи) —
-//!   модуль [`res`];
-//! - WRL — карты планет (миникарта, tile-id, тайлы, палитра, pass-таблица) —
-//!   модуль [`wrl`];
-//! - спрайты — мультикадровые RLE-спрайты `COMMTWR`…`WALDO` и тени `S_*`
-//!   из MAX.RES — модуль [`sprite`];
-//! - картинки интерфейса — `FRAMEPIC`/`PANELTOP`/`PANELBTM`/`MNUBTN*`
-//!   (`ImageSimpleHeader`/`ImageBigHeader`) — модуль [`image`];
-//! - курсоры мыши — `Cursor_Descriptor` (simple image + кадры анимации) —
-//!   модуль [`cursor`];
-//! - маркеры ресурсов на карте — `RAWMSK*`/`FUELMK*`/`GOLDMK*` — модуль
+//! Formats (documented in `max-original-dasm/formats/`):
+//! - RES/PATCHES — game data archives (header, index, records) —
+//!   module [`res`];
+//! - WRL — planet maps (minimap, tile-id, tiles, palette, pass table) —
+//!   module [`wrl`];
+//! - sprites — multi-frame RLE sprites `COMMTWR`…`WALDO` and shadows `S_*`
+//!   from MAX.RES — module [`sprite`];
+//! - interface images — `FRAMEPIC`/`PANELTOP`/`PANELBTM`/`MNUBTN*`
+//!   (`ImageSimpleHeader`/`ImageBigHeader`) — module [`image`];
+//! - mouse cursors — `Cursor_Descriptor` (simple image + animation frames) —
+//!   module [`cursor`];
+//! - resource markers on the map — `RAWMSK*`/`FUELMK*`/`GOLDMK*` — module
 //!   [`markers`];
-//! - звуки — RIFF/WAVE `*.SPW` (PCM16) рядом с `MAX.RES` — модуль [`wav`];
-//! - FLC — анимации Autodesk FLIC (`F_*`-ресурсы MAX.RES — ссылки на
-//!   `*.FLC`-файлы рядом с архивом) — модуль [`flic`];
-//! - MVE — видео Interplay (`INTROFLC` → `maxint.mve`) — модуль [`mve`];
-//! - SCE/MPS — миссии; FON — шрифты; MSC — музыка (пока не разбирается).
+//! - sounds — RIFF/WAVE `*.SPW` (PCM16) next to `MAX.RES` — module [`wav`];
+//! - FLC — Autodesk FLIC animations (`F_*` resources of MAX.RES — references to
+//!   `*.FLC` files next to the archive) — module [`flic`];
+//! - MVE — Interplay video (`INTROFLC` → `maxint.mve`) — module [`mve`];
+//! - SCE/MPS — missions; FON — fonts; MSC — music (not parsed yet).
 //!
-//! Крейт парсит байты в структурированные данные; рендер-специфику не содержит.
-//! Ошибки формата возвращаются значениями ([`ResError`], [`WrlError`],
-//! [`SpriteError`], [`FlicError`]), паники на битых данных нет.
+//! The crate parses bytes into structured data; it contains no render specifics.
+//! Format errors are returned as values ([`ResError`], [`WrlError`],
+//! [`SpriteError`], [`FlicError`]); there are no panics on corrupt data.
 
 #![forbid(unsafe_code)]
 
@@ -65,10 +65,10 @@ pub use wrl::{
     WRL_SIGNATURE,
 };
 
-/// Разбирает RES-архив из байтов и проверяет его структуру.
+/// Parses a RES archive from bytes and validates its structure.
 ///
-/// Совместимая обёртка над [`ResArchive::parse`] (раньше здесь была заглушка).
-/// Для доступа к записям используйте [`ResArchive`] напрямую.
+/// Compatible wrapper over [`ResArchive::parse`] (there used to be a stub here).
+/// Use [`ResArchive`] directly to access the records.
 pub fn parse_res(data: &[u8]) -> anyhow::Result<()> {
     ResArchive::parse(data)?;
 

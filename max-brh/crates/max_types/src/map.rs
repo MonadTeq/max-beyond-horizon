@@ -1,24 +1,24 @@
-//! Карта мира: поверхность (проходимость) и ресурсы/видимость по тайлам.
+//! World map: surface (passability) and resources/visibility per tile.
 //!
-//! Порт структур оракула `max-cpp-port/src`:
-//! * `SurfaceMap` — `uint8_t[112*112]` из `World::LoadTilesAndMetadata()`
-//!   (`world.cpp`, «Load pass table and build surface map»): байт на клетку,
-//!   значение — битовая маска [`Surface`] (`SURFACE_TYPE_*`, `enums.hpp`);
+//! Port of the oracle structures `max-cpp-port/src`:
+//! * `SurfaceMap` — `uint8_t[112*112]` from `World::LoadTilesAndMetadata()`
+//!   (`world.cpp`, "Load pass table and build surface map"): one byte per cell,
+//!   the value is the [`Surface`] bit mask (`SURFACE_TYPE_*`, `enums.hpp`);
 //! * `ResourceManager_CargoMap` — `uint16_t[112*112]` (`resource_manager.hpp`),
-//!   он же `short GridResourceMapEntry[112][112]` из state-model.md §3.10:
-//!   битфилд «количество (0–4) | тип (5–7) | видимость команд (10–13)».
+//!   it is also `short GridResourceMapEntry[112][112]` from state-model.md §3.10:
+//!   the bitfield "amount (0–4) | type (5–7) | team visibility (10–13)".
 //!
-//! Инварианты раскладки взяты из state-model.md §3.10 и §7.3:
-//! * биты 0–4 (`0x001F`) — количество ресурса (0..=15 по маске; игра пишет до 16);
-//! * биты 5–7 (`0x00E0`) — ровно один бит типа (`CARGO_FUEL`/`CARGO_GOLD`/
-//!   `CARGO_MATERIALS`), 0 — пустой тайл;
-//! * биты 10–13 (`0x3C00`) — разведанность командой `i` в бите `i`
-//!   (save.md объявляет маску `0x1C00`, но она не накрывает красных —
-//!   фактическая маска `0x3C00`, DESIGN.md риск 5 / state-model §7.3).
+//! The layout invariants are taken from state-model.md §3.10 and §7.3:
+//! * bits 0–4 (`0x001F`) — resource amount (0..=15 by the mask; the game writes up to 16);
+//! * bits 5–7 (`0x00E0`) — exactly one type bit (`CARGO_FUEL`/`CARGO_GOLD`/
+//!   `CARGO_MATERIALS`), 0 — an empty tile;
+//! * bits 10–13 (`0x3C00`) — surveyed by team `i` in bit `i`
+//!   (save.md declares the mask `0x1C00`, but it does not cover the reds —
+//!   the actual mask is `0x3C00`, DESIGN.md risk 5 / state-model §7.3).
 //!
-//! Модуль не делает I/O: и поверхность, и ресурсы — обычные массивы фиксированного
-//! размера [`MAP_TILES`], которые заполняет `max_core::setup` (генерация партии)
-//! или загрузчик сейвов (`max_core::save`, вне этого крейта).
+//! The module does not do I/O: both the surface and the resources are ordinary
+//! fixed-size arrays [`MAP_TILES`] filled by `max_core::setup` (match generation)
+//! or by the save loader (`max_core::save`, outside this crate).
 
 use core::fmt;
 
@@ -29,26 +29,26 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::enums::{Surface, CARGO_FUEL, CARGO_GOLD, CARGO_MASK, CARGO_MATERIALS};
 use crate::geo::{MAP_HEIGHT, MAP_TILES, MAP_WIDTH};
 
-/// Размеры карты в тайлах — каркасный `map::MapSize` (`Point` в C++).
+/// Map dimensions in tiles — skeleton `map::MapSize` (`Point` in C++).
 ///
-/// В M.A.X. размер берётся из `.wrl`-файла планеты; для штатных планет — 112×112
+/// In M.A.X. the size is taken from the planet's `.wrl` file; for the stock planets it is 112×112
 /// ([`crate::geo::MAP_SIZE`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MapSize {
-    /// Ширина в тайлах.
+    /// Width in tiles.
     pub width: i16,
-    /// Высота в тайлах.
+    /// Height in tiles.
     pub height: i16,
 }
 
 impl MapSize {
-    /// Штатный размер карты (`MAP_SIZE`).
+    /// Stock map size (`MAP_SIZE`).
     pub const STANDARD: Self = Self {
         width: MAP_WIDTH,
         height: MAP_HEIGHT,
     };
 
-    /// Количество тайлов (`width * height`).
+    /// Number of tiles (`width * height`).
     #[inline]
     pub const fn tiles(self) -> usize {
         self.width as usize * self.height as usize
@@ -63,32 +63,32 @@ impl Default for MapSize {
 }
 
 // ---------------------------------------------------------------------------
-// Ресурсы: CARGO_* и ResourceMapEntry
+// Resources: CARGO_* and ResourceMapEntry
 // ---------------------------------------------------------------------------
 
-/// Маска количества ресурса — биты 0–4 (`RESOURCE_AMOUNT_MASK`).
+/// Resource amount mask — bits 0–4 (`RESOURCE_AMOUNT_MASK`).
 pub const RESOURCE_AMOUNT_MASK: u16 = CARGO_MASK as u16; // 0x001F
-/// Маска типа ресурса — биты 5–7 (`RESOURCE_TYPE_MASK`).
+/// Resource type mask — bits 5–7 (`RESOURCE_TYPE_MASK`).
 pub const RESOURCE_TYPE_MASK: u16 = (CARGO_FUEL | CARGO_GOLD | CARGO_MATERIALS) as u16; // 0x00E0
-/// Сдвиг битов видимости команд.
+/// Bit shift of the team visibility.
 pub const TEAM_VISIBILITY_SHIFT: u16 = 10;
-/// Маска видимости всех четырёх играбельных команд (`0x3C00`, см. §7.3).
+/// Visibility mask of all four playable teams (`0x3C00`, see §7.3).
 pub const TEAM_VISIBILITY_MASK: u16 = 0x3C00;
-/// Маска видимости из save.md (`0x1C00`, не накрывает красных — оставлена для
-/// сверки с V70).
+/// Visibility mask from save.md (`0x1C00`, does not cover the reds — kept for
+/// comparison with V70).
 pub const TEAM_VISIBILITY_MASK_SAVE: u16 = 0x1C00;
-/// Количество играбельных команд, у которых есть бит разведанности.
+/// Number of playable teams that have a survey bit.
 pub const VISIBILITY_TEAM_COUNT: u8 = 4;
 
-/// Бит команды в разведанности ресурсов — `hash_team_id` C++
-/// (`enums.hpp:40-43`): `HASH_TEAM_RED = 0x2000` (бит 13),
+/// Team bit in the resource survey — C++ `hash_team_id`
+/// (`enums.hpp:40-43`): `HASH_TEAM_RED = 0x2000` (bit 13),
 /// `GREEN = 0x1000` (12), `BLUE = 0x0800` (11), `GRAY = 0x0400` (10).
 ///
-/// Порядок **обратный** номеру команды: в `ResourceManager_CargoMap` красные
-/// помечают старшим битом маски `0x3C00`. Именно так `Survey_SurveyArea`
-/// (`survey.cpp:116`) пишет `CargoMap |= team_units->hash_team_id`, а
-/// `Survey_RenderMarkers` (`survey.cpp:143-150`) читает `CargoMap & mask`.
-/// Возвращает маску **внутри** 4-битного поля [`visibility`]
+/// The order is **reverse** to the team number: in `ResourceManager_CargoMap`
+/// the reds are marked by the highest bit of the mask `0x3C00`. This is exactly how
+/// `Survey_SurveyArea` (`survey.cpp:116`) writes `CargoMap |= team_units->hash_team_id`,
+/// and `Survey_RenderMarkers` (`survey.cpp:143-150`) reads `CargoMap & mask`.
+/// Returns the mask **inside** the 4-bit field [`visibility`]
 /// ([`ResourceMapEntry::visibility`]).
 #[inline]
 pub const fn team_visibility_bit(team: u8) -> u8 {
@@ -99,33 +99,33 @@ pub const fn team_visibility_bit(team: u8) -> u8 {
     }
 }
 
-/// Тип ресурса — биты 5–7 `GridResourceMapEntry` (`CARGO_*` в `enums.hpp`).
+/// Resource type — bits 5–7 of `GridResourceMapEntry` (`CARGO_*` in `enums.hpp`).
 ///
-/// Порядок вариантов сохранён из каркаса (`Raw`, `Fuel`, `Gold`); значения —
-/// фактические биты типа в `ResourceManager_CargoMap`, чтобы конверсия
-/// «битфилд ⇄ enum» была без таблиц.
+/// The order of variants is kept from the skeleton (`Raw`, `Fuel`, `Gold`); the values are
+/// the actual type bits in `ResourceManager_CargoMap`, so that the
+/// "bitfield ⇄ enum" conversion needs no tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum ResourceKind {
-    /// Материалы — `CARGO_MATERIALS` (0x80).
+    /// Materials — `CARGO_MATERIALS` (0x80).
     Raw = CARGO_MATERIALS as u16,
-    /// Топливо — `CARGO_FUEL` (0x20).
+    /// Fuel — `CARGO_FUEL` (0x20).
     Fuel = CARGO_FUEL as u16,
-    /// Золото — `CARGO_GOLD` (0x40).
+    /// Gold — `CARGO_GOLD` (0x40).
     Gold = CARGO_GOLD as u16,
 }
 
 impl ResourceKind {
-    /// Все типы в порядке C++ (`CARGO_MATERIALS`, `CARGO_FUEL`, `CARGO_GOLD`).
+    /// All types in C++ order (`CARGO_MATERIALS`, `CARGO_FUEL`, `CARGO_GOLD`).
     pub const ALL: [Self; 3] = [Self::Raw, Self::Fuel, Self::Gold];
 
-    /// Биты типа в `GridResourceMapEntry`.
+    /// Type bits in `GridResourceMapEntry`.
     #[inline]
     pub const fn cargo_bits(self) -> u16 {
         self as u16
     }
 
-    /// Декодирует биты типа (5–7); `None`, если не установлен ровно один бит.
+    /// Decodes the type bits (5–7); `None` if exactly one bit is not set.
     #[inline]
     pub const fn from_cargo_bits(bits: u16) -> Option<Self> {
         let type_bits = bits & RESOURCE_TYPE_MASK;
@@ -142,25 +142,25 @@ impl ResourceKind {
     }
 }
 
-/// Один тайл карты ресурсов — `short GridResourceMapEntry` (`uint16_t`).
+/// One tile of the resource map — `short GridResourceMapEntry` (`uint16_t`).
 ///
-/// Битфилд, а не структура полей: раскладка обязана совпадать с
-/// `ResourceManager_CargoMap` побайтово (state-model.md §3.10).
+/// A bitfield rather than a struct of fields: the layout must match
+/// `ResourceManager_CargoMap` byte for byte (state-model.md §3.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ResourceMapEntry(u16);
 
 impl ResourceMapEntry {
-    /// Пустой тайл (`CARGO_MATERIALS` не установлен, количество 0).
+    /// Empty tile (`CARGO_MATERIALS` not set, amount 0).
     pub const NONE: Self = Self(0);
 
-    /// Создаёт запись из сырого битфилда (как `CargoMap[...]`).
+    /// Creates an entry from a raw bitfield (as `CargoMap[...]`).
     #[inline]
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)
     }
 
-    /// Создаёт запись из полей; `amount` маскируется `0x1F`, `visibility` — `0x0F`.
+    /// Creates an entry from fields; `amount` is masked with `0x1F`, `visibility` with `0x0F`.
     #[inline]
     pub const fn new(amount: u8, kind: Option<ResourceKind>, visibility: u8) -> Self {
         let mut bits = (amount as u16) & RESOURCE_AMOUNT_MASK;
@@ -174,38 +174,38 @@ impl ResourceMapEntry {
         Self(bits)
     }
 
-    /// Сырой битфилд (для дампов/сейвов).
+    /// Raw bitfield (for dumps/saves).
     #[inline]
     pub const fn bits(self) -> u16 {
         self.0
     }
 
-    /// Количество ресурса — биты 0–4 (`& 0x1F`, как в `resource_allocator.cpp`).
+    /// Resource amount — bits 0–4 (`& 0x1F`, as in `resource_allocator.cpp`).
     #[inline]
     pub const fn amount(self) -> u8 {
         (self.0 & RESOURCE_AMOUNT_MASK) as u8
     }
 
-    /// Тип ресурса — биты 5–7; `None`, если тип не установлен.
+    /// Resource type — bits 5–7; `None` if the type is not set.
     #[inline]
     pub const fn resource_type(self) -> Option<ResourceKind> {
         ResourceKind::from_cargo_bits(self.0)
     }
 
-    /// Разведанность: биты 10–13, порядок — как `HASH_TEAM_*` C++ (см.
-    /// [`team_visibility_bit`]): RED — старший бит (13), GRAY — младший (10).
+    /// Survey: bits 10–13, order as in C++ `HASH_TEAM_*` (see
+    /// [`team_visibility_bit`]): RED is the highest bit (13), GRAY the lowest (10).
     #[inline]
     pub const fn visibility(self) -> u8 {
         ((self.0 & TEAM_VISIBILITY_MASK) >> TEAM_VISIBILITY_SHIFT) as u8
     }
 
-    /// Установлена ли разведанность команды `team` (0..=3).
+    /// Whether team `team` (0..=3) has surveyed the tile.
     #[inline]
     pub const fn is_visible_to(self, team: u8) -> bool {
         team < VISIBILITY_TEAM_COUNT && (self.visibility() & team_visibility_bit(team)) != 0
     }
 
-    /// Копия записи с добавленным знанием команды `team` (порт
+    /// A copy of the entry with the knowledge of team `team` added (port of
     /// `ResourceManager_CargoMap[...] |= hash_team_id`, `survey.cpp:116`).
     #[inline]
     pub const fn with_team_visible(self, team: u8) -> Self {
@@ -216,19 +216,19 @@ impl ResourceMapEntry {
         Self(self.0 | ((team_visibility_bit(team) as u16) << TEAM_VISIBILITY_SHIFT))
     }
 
-    /// Пустой тайл (ни типа, ни количества, ни разведанности).
+    /// Empty tile (no type, no amount, no survey).
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// Копия записи с другим количеством (биты 0–4).
+    /// A copy of the entry with a different amount (bits 0–4).
     #[inline]
     pub const fn with_amount(self, amount: u8) -> Self {
         Self((self.0 & !RESOURCE_AMOUNT_MASK) | ((amount as u16) & RESOURCE_AMOUNT_MASK))
     }
 
-    /// Копия записи с другим типом (биты 5–7 перезаписываются).
+    /// A copy of the entry with a different type (bits 5–7 are overwritten).
     #[inline]
     pub const fn with_kind(self, kind: Option<ResourceKind>) -> Self {
         let type_bits = match kind {
@@ -239,7 +239,7 @@ impl ResourceMapEntry {
         Self((self.0 & !RESOURCE_TYPE_MASK) | type_bits)
     }
 
-    /// Копия записи с другой разведанностью (биты 10–13).
+    /// A copy of the entry with a different survey (bits 10–13).
     #[inline]
     pub const fn with_visibility(self, visibility: u8) -> Self {
         Self(
@@ -259,17 +259,17 @@ impl fmt::Display for ResourceMapEntry {
 // SurfaceMap
 // ---------------------------------------------------------------------------
 
-/// Карта проходимости — `SurfaceMap` (байт на клетку, [`MAP_TILES`] тайлов).
+/// Passability map — `SurfaceMap` (one byte per cell, [`MAP_TILES`] tiles).
 ///
-/// Индексация — как во всём C++-порте: `index = y * width + x`.
+/// Indexing as throughout the C++ port: `index = y * width + x`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SurfaceMap {
-    /// Байты поверхности в порядке `y * MAP_WIDTH + x`.
+    /// Surface bytes in the order `y * MAP_WIDTH + x`.
     tiles: [Surface; MAP_TILES],
 }
 
 impl SurfaceMap {
-    /// Пустая карта (все тайлы [`Surface::NONE`]).
+    /// Empty map (all tiles [`Surface::NONE`]).
     #[inline]
     pub const fn new() -> Self {
         Self {
@@ -277,25 +277,25 @@ impl SurfaceMap {
         }
     }
 
-    /// Карта из готового массива байтов (`World::GetSurfaceMap()`).
+    /// Map from a ready byte array (`World::GetSurfaceMap()`).
     #[inline]
     pub const fn from_tiles(tiles: [Surface; MAP_TILES]) -> Self {
         Self { tiles }
     }
 
-    /// Все тайлы (порядок `y * MAP_WIDTH + x`).
+    /// All tiles (order `y * MAP_WIDTH + x`).
     #[inline]
     pub fn tiles(&self) -> &[Surface; MAP_TILES] {
         &self.tiles
     }
 
-    /// Изменяемый доступ ко всем тайлам.
+    /// Mutable access to all tiles.
     #[inline]
     pub fn tiles_mut(&mut self) -> &mut [Surface; MAP_TILES] {
         &mut self.tiles
     }
 
-    /// Индекс тайла `(x, y)` или `None` вне карты.
+    /// Tile index `(x, y)` or `None` outside the map.
     #[inline]
     pub fn index(x: i16, y: i16) -> Option<usize> {
         if x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT {
@@ -305,7 +305,7 @@ impl SurfaceMap {
         }
     }
 
-    /// Поверхность тайла; вне карты — [`Surface::NONE`] (как `World::GetSurfaceType`).
+    /// Tile surface; outside the map — [`Surface::NONE`] (as `World::GetSurfaceType`).
     #[inline]
     pub fn get(&self, x: i16, y: i16) -> Surface {
         match Self::index(x, y) {
@@ -314,7 +314,7 @@ impl SurfaceMap {
         }
     }
 
-    /// Записывает поверхность тайла; `false`, если координаты вне карты.
+    /// Writes the tile surface; `false` if the coordinates are outside the map.
     #[inline]
     pub fn set(&mut self, x: i16, y: i16, surface: Surface) -> bool {
         match Self::index(x, y) {
@@ -327,7 +327,7 @@ impl SurfaceMap {
         }
     }
 
-    /// Сырые байты карты (дамп эталонных векторов, сейв V70).
+    /// Raw map bytes (dump of reference vectors, V70 save).
     #[inline]
     pub fn to_bytes(&self) -> [u8; MAP_TILES] {
         let mut bytes = [0u8; MAP_TILES];
@@ -349,7 +349,7 @@ impl Default for SurfaceMap {
 
 impl fmt::Debug for SurfaceMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Полный дамп 112×112 в Debug нечитаем; показываем гистограмму.
+        // A full 112×112 dump is unreadable in Debug; show a histogram instead.
         let mut counts = [0usize; 16];
 
         for tile in &self.tiles {
@@ -407,15 +407,15 @@ impl<'de> Deserialize<'de> for SurfaceMap {
 // ResourceMap
 // ---------------------------------------------------------------------------
 
-/// Карта ресурсов — `ResourceManager_CargoMap` (`uint16_t[MAP_TILES]`).
+/// Resource map — `ResourceManager_CargoMap` (`uint16_t[MAP_TILES]`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ResourceMap {
-    /// Битфилды ресурсов в порядке `y * MAP_WIDTH + x`.
+    /// Resource bitfields in the order `y * MAP_WIDTH + x`.
     tiles: [ResourceMapEntry; MAP_TILES],
 }
 
 impl ResourceMap {
-    /// Пустая карта (все тайлы [`ResourceMapEntry::NONE`]).
+    /// Empty map (all tiles [`ResourceMapEntry::NONE`]).
     #[inline]
     pub const fn new() -> Self {
         Self {
@@ -423,31 +423,31 @@ impl ResourceMap {
         }
     }
 
-    /// Карта из готового массива записей.
+    /// Map from a ready array of entries.
     #[inline]
     pub const fn from_tiles(tiles: [ResourceMapEntry; MAP_TILES]) -> Self {
         Self { tiles }
     }
 
-    /// Все тайлы (порядок `y * MAP_WIDTH + x`).
+    /// All tiles (order `y * MAP_WIDTH + x`).
     #[inline]
     pub fn tiles(&self) -> &[ResourceMapEntry; MAP_TILES] {
         &self.tiles
     }
 
-    /// Изменяемый доступ ко всем тайлам.
+    /// Mutable access to all tiles.
     #[inline]
     pub fn tiles_mut(&mut self) -> &mut [ResourceMapEntry; MAP_TILES] {
         &mut self.tiles
     }
 
-    /// Индекс тайла `(x, y)` или `None` вне карты.
+    /// Tile index `(x, y)` or `None` outside the map.
     #[inline]
     pub fn index(x: i16, y: i16) -> Option<usize> {
         SurfaceMap::index(x, y)
     }
 
-    /// Запись тайла; вне карты — [`ResourceMapEntry::NONE`].
+    /// Tile entry; outside the map — [`ResourceMapEntry::NONE`].
     #[inline]
     pub fn get(&self, x: i16, y: i16) -> ResourceMapEntry {
         match Self::index(x, y) {
@@ -456,7 +456,7 @@ impl ResourceMap {
         }
     }
 
-    /// Записывает тайл; `false`, если координаты вне карты.
+    /// Writes the tile; `false` if the coordinates are outside the map.
     #[inline]
     pub fn set(&mut self, x: i16, y: i16, entry: ResourceMapEntry) -> bool {
         match Self::index(x, y) {
@@ -469,22 +469,22 @@ impl ResourceMap {
         }
     }
 
-    /// Сырой битфилд тайла по индексу (`ResourceManager_CargoMap[index]`).
+    /// Raw tile bitfield by index (`ResourceManager_CargoMap[index]`).
     ///
-    /// Генерация ресурсов (`resource_allocator.cpp`) работает с плоским индексом
-    /// `y * MAP_WIDTH + x`, поэтому индексный доступ — часть контракта.
+    /// Resource generation (`resource_allocator.cpp`) works with the flat index
+    /// `y * MAP_WIDTH + x`, so indexed access is part of the contract.
     #[inline]
     pub fn bits_at(&self, index: usize) -> u16 {
         self.tiles[index].bits()
     }
 
-    /// Записывает сырой битфилд по индексу (`CargoMap[index] = value`).
+    /// Writes the raw bitfield by index (`CargoMap[index] = value`).
     #[inline]
     pub fn set_bits_at(&mut self, index: usize, bits: u16) {
         self.tiles[index] = ResourceMapEntry::from_bits(bits);
     }
 
-    /// Количество ресурсов каждого типа (для property-тестов и отладки).
+    /// Number of resources of each type (for property tests and debugging).
     pub fn counts(&self) -> ResourceCounts {
         let mut counts = ResourceCounts::default();
 
@@ -512,7 +512,7 @@ impl ResourceMap {
         counts
     }
 
-    /// Сырые байты карты в little-endian (дамп эталонных векторов, `short`V70).
+    /// Raw map bytes in little-endian (dump of reference vectors, `short`V70).
     #[inline]
     pub fn to_le_bytes(&self) -> [u8; MAP_TILES * 2] {
         let mut bytes = [0u8; MAP_TILES * 2];
@@ -581,20 +581,20 @@ impl<'de> Deserialize<'de> for ResourceMap {
     }
 }
 
-/// Сводка по ресурсам карты (`ResourceMap::counts`).
+/// Summary of the map resources (`ResourceMap::counts`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResourceCounts {
-    /// Тайлов с материалами.
+    /// Tiles with materials.
     pub raw_tiles: u32,
-    /// Суммарное количество материалов.
+    /// Total amount of materials.
     pub raw_amount: u32,
-    /// Тайлов с топливом.
+    /// Tiles with fuel.
     pub fuel_tiles: u32,
-    /// Суммарное количество топлива.
+    /// Total amount of fuel.
     pub fuel_amount: u32,
-    /// Тайлов с золотом.
+    /// Tiles with gold.
     pub gold_tiles: u32,
-    /// Суммарное количество золота.
+    /// Total amount of gold.
     pub gold_amount: u32,
 }
 
@@ -602,19 +602,19 @@ pub struct ResourceCounts {
 // Map
 // ---------------------------------------------------------------------------
 
-/// Карта партии: размер + поверхность + ресурсы.
+/// Match map: size + surface + resources.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Map {
-    /// Размер карты (по `.wrl`-файлу планеты; штатно 112×112).
+    /// Map size (from the planet's `.wrl` file; 112×112 as standard).
     pub size: MapSize,
-    /// Проходимость по тайлам.
+    /// Passability per tile.
     pub surface: SurfaceMap,
-    /// Ресурсы и разведка по тайлам.
+    /// Resources and survey per tile.
     pub resources: ResourceMap,
 }
 
 impl Map {
-    /// Пустая карта штатного размера.
+    /// Empty map of the stock size.
     #[inline]
     pub const fn new() -> Self {
         Self {
@@ -624,7 +624,7 @@ impl Map {
         }
     }
 
-    /// Карта из поверхности и ресурсов.
+    /// Map from surface and resources.
     #[inline]
     pub const fn from_parts(surface: SurfaceMap, resources: ResourceMap) -> Self {
         Self {
@@ -634,7 +634,7 @@ impl Map {
         }
     }
 
-    /// Индекс тайла `(x, y)` или `None` вне карты.
+    /// Tile index `(x, y)` or `None` outside the map.
     #[inline]
     pub fn index(&self, x: i16, y: i16) -> Option<usize> {
         if x < 0 || y < 0 || x >= self.size.width || y >= self.size.height {
@@ -644,7 +644,7 @@ impl Map {
         }
     }
 
-    /// Поверхность тайла; вне карты — [`Surface::NONE`].
+    /// Tile surface; outside the map — [`Surface::NONE`].
     #[inline]
     pub fn surface_at(&self, x: i16, y: i16) -> Surface {
         match self.index(x, y) {
@@ -653,7 +653,7 @@ impl Map {
         }
     }
 
-    /// Запись ресурсов тайла; вне карты — [`ResourceMapEntry::NONE`].
+    /// Tile resource entry; outside the map — [`ResourceMapEntry::NONE`].
     #[inline]
     pub fn resource_at(&self, x: i16, y: i16) -> ResourceMapEntry {
         match self.index(x, y) {
@@ -671,7 +671,7 @@ impl Default for Map {
 }
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -691,9 +691,9 @@ mod tests {
 
     #[test]
     fn resource_entry_layout_matches_save_example() {
-        // Пример из state-model.md §3.10 / save.md: 0x208C = 12 материалов,
-        // разведано только красными. Красные — `HASH_TEAM_RED = 0x2000`
-        // (бит 13), т.е. `visibility() == 0b1000` — так пишет
+        // Example from the state-model.md §3.10 / save.md: 0x208C = 12 materials,
+        // surveyed only by the reds. The reds are `HASH_TEAM_RED = 0x2000`
+        // (bit 13), i.e. `visibility() == 0b1000` — that is how
         // `Survey_SurveyArea` (`survey.cpp:116`).
         let entry = ResourceMapEntry::new(12, Some(ResourceKind::Raw), 0b1000);
 
@@ -727,7 +727,7 @@ mod tests {
             assert_eq!(entry.amount(), 0x0F);
         }
 
-        // Два бита типа одновременно — невалидный тайл, тип не декодируется.
+        // Two type bits at once — an invalid tile, the type is not decoded.
         let invalid = ResourceMapEntry::from_bits(CARGO_FUEL as u16 | CARGO_GOLD as u16);
         assert_eq!(invalid.resource_type(), None);
 
@@ -739,8 +739,8 @@ mod tests {
             assert_eq!(entry.resource_type(), None);
             assert!(entry.is_visible_to(team));
 
-            // `hash_team_id` C++: красные — старший бит поля (13), серые —
-            // младший (10).
+            // C++ `hash_team_id`: the reds are the highest bit of the field (13), the grays
+            // the lowest (10).
             assert_eq!(
                 entry.bits(),
                 match team {
@@ -753,7 +753,7 @@ mod tests {
             );
         }
 
-        // Знание добавляется без потери количества/типа и без дублей.
+        // Knowledge is added without losing the amount/type and without duplicates.
         let entry = ResourceMapEntry::new(7, Some(ResourceKind::Gold), 0).with_team_visible(0);
         assert_eq!(entry.amount(), 7);
         assert_eq!(entry.resource_type(), Some(ResourceKind::Gold));
@@ -766,7 +766,7 @@ mod tests {
         );
         assert!(entry.with_team_visible(1).is_visible_to(1));
 
-        // Бит 14/15 в маску видимости не входят.
+        // Bits 14/15 are not part of the visibility mask.
         assert_eq!(ResourceMapEntry::from_bits(0xC000).visibility(), 0);
     }
 
@@ -860,9 +860,9 @@ mod tests {
 
     #[test]
     fn serde_impls_are_available_for_map_types() {
-        // Сериализация — ручная (массивы на 12544 элемента не поддержаны
-        // derive-макросом serde); проверяем, что impl'ы объявлены и пригодны
-        // как trait-object.
+        // Serialization is manual (arrays of 12544 elements are not supported
+        // by the serde derive macro); we check that the impls are declared and usable
+        // as a trait object.
         fn assert_serialize<T: Serialize>() {}
         fn assert_deserialize<T: for<'de> Deserialize<'de>>() {}
 

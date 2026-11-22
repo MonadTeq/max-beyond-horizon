@@ -1,23 +1,23 @@
-//! Чистые UI-примитивы для экранов клиента: прямоугольники, кнопки, поля
-//! ввода, списки и вертикальная раскладка.
+//! Pure UI primitives for the client's screens: rectangles, buttons, input
+//! fields, lists and vertical layout.
 //!
-//! Здесь нет ни SDL, ни игровой логики: [`render_ui`] рисует [`UiState`] в
-//! [`RgbaBuffer`], поэтому любой экран (меню, лобби, форма) тестируется
-//! headless-тестом — достаточно буфера нужного размера.
+//! There is neither SDL nor game logic here: [`render_ui`] draws [`UiState`] into
+//! [`RgbaBuffer`], so any screen (menu, lobby, form) is tested by a
+//! headless test — a buffer of the required size is enough.
 //!
-//! Термины:
+//! Terms:
 //!
-//! * [`Rect`] — прямоугольник в пикселях экрана, правый/нижний край
-//!   исключающие;
-//! * [`Button`] — кнопка с подписью и признаком `enabled`; выключенная кнопка
-//!   не попадает в [`hit_test`];
-//! * [`TextBox`] — однострочное поле (значение + подпись + подсказка);
-//! * [`ListBox`] — список строк с выбором и прокруткой;
-//! * [`UiState`] — виджеты + hover/focus + тема; [`render_ui`] рисует фон,
-//!   кнопки, рамки, выделение и текст.
+//! * [`Rect`] — a rectangle in screen pixels, the right/bottom edges are
+//!   exclusive;
+//! * [`Button`] — a button with a caption and an `enabled` flag; a disabled button
+//!   is not included in [`hit_test`];
+//! * [`TextBox`] — a single-line field (value + label + hint);
+//! * [`ListBox`] — a list of strings with selection and scrolling;
+//! * [`UiState`] — widgets + hover/focus + theme; [`render_ui`] draws the background,
+//!   buttons, frames, selection and text.
 //!
-//! Шрифт — встроенный 8×8 из [`crate::text`], поэтому UI не зависит от
-//! `PATCHES.RES` и работает до загрузки данных игры.
+//! The font is the built-in 8×8 from [`crate::text`], so the UI does not depend on
+//! `PATCHES.RES` and works before the game data is loaded.
 //!
 //! ```
 //! use max_render::buffer::RgbaBuffer;
@@ -35,41 +35,41 @@
 use crate::buffer::{PixelRect, Rgba, RgbaBuffer};
 use crate::text::{draw_text_line, GLYPH_HEIGHT, GLYPH_WIDTH};
 
-/// Точка в пикселях экрана.
+/// A point in screen pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Point {
-    /// Координата по x.
+    /// Coordinate along x.
     pub x: i32,
-    /// Координата по y.
+    /// Coordinate along y.
     pub y: i32,
 }
 
 impl Point {
-    /// Точка `(x, y)`.
+    /// Point `(x, y)`.
     #[inline]
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
 }
 
-/// Прямоугольник в пикселях экрана: левый верхний угол + размер.
+/// A rectangle in screen pixels: top-left corner + size.
 ///
-/// Правый (`right`) и нижний (`bottom`) края исключающие — как у
-/// [`PixelRect`], поэтому соседние прямоугольники не перекрываются.
+/// The right (`right`) and bottom (`bottom`) edges are exclusive — as with
+/// [`PixelRect`], so neighboring rectangles do not overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Rect {
-    /// Левый край.
+    /// Left edge.
     pub x: i32,
-    /// Верхний край.
+    /// Top edge.
     pub y: i32,
-    /// Ширина (может быть 0).
+    /// Width (may be 0).
     pub width: i32,
-    /// Высота (может быть 0).
+    /// Height (may be 0).
     pub height: i32,
 }
 
 impl Rect {
-    /// Прямоугольник по углу и размеру.
+    /// Rectangle from a corner and a size.
     #[inline]
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
         Self {
@@ -80,7 +80,7 @@ impl Rect {
         }
     }
 
-    /// Прямоугольник по двум углам (в любом порядке).
+    /// Rectangle from two corners (in any order).
     #[inline]
     pub fn from_corners(x0: i32, y0: i32, x1: i32, y1: i32) -> Self {
         Self {
@@ -91,25 +91,25 @@ impl Rect {
         }
     }
 
-    /// Правый край (исключающий).
+    /// Right edge (exclusive).
     #[inline]
     pub const fn right(self) -> i32 {
         self.x + self.width
     }
 
-    /// Нижний край (исключающий).
+    /// Bottom edge (exclusive).
     #[inline]
     pub const fn bottom(self) -> i32 {
         self.y + self.height
     }
 
-    /// Площадь нулевая или отрицательная.
+    /// The area is zero or negative.
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.width <= 0 || self.height <= 0
     }
 
-    /// Точка внутри прямоугольника (края не входят).
+    /// The point is inside the rectangle (the edges are not included).
     #[inline]
     pub const fn contains(self, point: Point) -> bool {
         point.x >= self.x
@@ -118,13 +118,13 @@ impl Rect {
             && point.y < self.bottom()
     }
 
-    /// Центр прямоугольника.
+    /// Center of the rectangle.
     #[inline]
     pub const fn center(self) -> Point {
         Point::new(self.x + self.width / 2, self.y + self.height / 2)
     }
 
-    /// Уменьшает прямоугольник на `dx`/`dy` с каждой стороны.
+    /// Shrinks the rectangle by `dx`/`dy` on each side.
     #[inline]
     pub fn inset(self, dx: i32, dy: i32) -> Self {
         Self {
@@ -135,7 +135,7 @@ impl Rect {
         }
     }
 
-    /// Пересечение (пустое — `None`).
+    /// Intersection (empty — `None`).
     pub fn intersect(self, other: Self) -> Option<Self> {
         let x0 = self.x.max(other.x);
         let y0 = self.y.max(other.y);
@@ -152,19 +152,19 @@ impl From<Rect> for PixelRect {
     }
 }
 
-/// Кнопка с подписью.
+/// A button with a caption.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Button {
-    /// Текст на кнопке.
+    /// Text on the button.
     pub label: String,
-    /// Область кнопки.
+    /// Area of the button.
     pub rect: Rect,
-    /// Выключенная кнопка не нажимается и рисуется серой.
+    /// A disabled button cannot be pressed and is drawn gray.
     pub enabled: bool,
 }
 
 impl Button {
-    /// Включённая кнопка.
+    /// Enabled button.
     pub fn new(label: impl Into<String>, rect: Rect) -> Self {
         Self {
             label: label.into(),
@@ -173,38 +173,38 @@ impl Button {
         }
     }
 
-    /// Выключает/включает кнопку.
+    /// Disables/enables the button.
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// Попадание точки в активную кнопку.
+    /// Whether the point hits the enabled button.
     pub fn hit_test(&self, point: Point) -> bool {
         self.enabled && self.rect.contains(point)
     }
 }
 
-/// Однострочное поле ввода.
+/// Single-line input field.
 ///
-/// Курсор всегда в конце: для каркаса UI этого достаточно, а ввод с клавиатуры
-/// сводится к [`TextBox::push_char`] / [`TextBox::backspace`].
+/// The cursor is always at the end: that is enough for the UI skeleton, and keyboard
+/// input reduces to [`TextBox::push_char`] / [`TextBox::backspace`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextBox {
-    /// Подпись поля (рисуется как `label: value`).
+    /// Field label (drawn as `label: value`).
     pub label: String,
-    /// Введённое значение.
+    /// Entered value.
     pub text: String,
-    /// Подсказка, когда значение пустое.
+    /// Hint when the value is empty.
     pub placeholder: String,
-    /// Область поля.
+    /// Area of the field.
     pub rect: Rect,
-    /// Максимум символов.
+    /// Maximum number of characters.
     pub max_chars: usize,
 }
 
 impl TextBox {
-    /// Пустое поле с подписью и областью.
+    /// Empty field with a label and an area.
     pub fn new(label: impl Into<String>, rect: Rect) -> Self {
         Self {
             label: label.into(),
@@ -215,7 +215,7 @@ impl TextBox {
         }
     }
 
-    /// Поле с готовым значением и подсказкой.
+    /// Field with a ready value and a hint.
     pub fn with_value(
         label: impl Into<String>,
         value: impl Into<String>,
@@ -231,23 +231,23 @@ impl TextBox {
         }
     }
 
-    /// Ограничивает число символов.
+    /// Limits the number of characters.
     pub fn with_max_chars(mut self, max_chars: usize) -> Self {
         self.max_chars = max_chars;
         self
     }
 
-    /// Текущее значение.
+    /// Current value.
     pub fn value(&self) -> &str {
         &self.text
     }
 
-    /// Устанавливает значение (с обрезкой по `max_chars`).
+    /// Sets the value (truncated by `max_chars`).
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.text = value.into().chars().take(self.max_chars).collect();
     }
 
-    /// Добавляет печатный ASCII-символ; `false`, если символ не принят.
+    /// Appends a printable ASCII character; `false` if the character was not accepted.
     pub fn push_char(&mut self, ch: char) -> bool {
         if !(ch.is_ascii_graphic() || ch == ' ') {
             return false;
@@ -260,39 +260,39 @@ impl TextBox {
         true
     }
 
-    /// Удаляет последний символ; `false`, если поле уже пустое.
+    /// Removes the last character; `false` if the field is already empty.
     pub fn backspace(&mut self) -> bool {
         self.text.pop().is_some()
     }
 
-    /// Очищает поле.
+    /// Clears the field.
     pub fn clear(&mut self) {
         self.text.clear();
     }
 
-    /// Попадание точки в поле.
+    /// Whether the point hits the field.
     pub fn hit_test(&self, point: Point) -> bool {
         self.rect.contains(point)
     }
 }
 
-/// Список строк с выбором и вертикальной прокруткой.
+/// A list of strings with selection and vertical scrolling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListBox {
-    /// Строки списка.
+    /// Lines of the list.
     pub items: Vec<String>,
-    /// Область списка.
+    /// Area of the list.
     pub rect: Rect,
-    /// Выбранный индекс (может быть за пределами видимой части).
+    /// Selected index (may be outside the visible part).
     pub selected: Option<usize>,
-    /// Первая видимая строка.
+    /// First visible line.
     pub scroll: usize,
-    /// Высота строки в пикселях.
+    /// Line height in pixels.
     pub row_height: i32,
 }
 
 impl ListBox {
-    /// Пустой список со строкой 14 px.
+    /// Empty list with a 14 px line.
     pub fn new(rect: Rect) -> Self {
         Self {
             items: Vec::new(),
@@ -303,7 +303,7 @@ impl ListBox {
         }
     }
 
-    /// Список с готовыми строками.
+    /// List with ready lines.
     pub fn with_items(rect: Rect, items: Vec<String>) -> Self {
         let mut list = Self::new(rect);
         list.items = items;
@@ -311,7 +311,7 @@ impl ListBox {
         list
     }
 
-    /// Сколько строк влезает в видимую часть.
+    /// How many lines fit into the visible part.
     pub fn visible_rows(&self) -> usize {
         if self.row_height <= 0 || self.rect.height <= 0 {
             0
@@ -320,7 +320,7 @@ impl ListBox {
         }
     }
 
-    /// Выбирает строку с прокруткой к ней.
+    /// Selects a line, scrolling to it.
     pub fn select(&mut self, index: usize) {
         if self.items.is_empty() {
             self.selected = None;
@@ -333,7 +333,7 @@ impl ListBox {
         self.ensure_visible();
     }
 
-    /// Сдвигает выбор (с зажимом по границам, без перехода по кругу).
+    /// Moves the selection (clamped at the bounds, without wrapping around).
     pub fn select_next(&mut self, delta: isize) {
         if self.items.is_empty() {
             self.selected = None;
@@ -345,7 +345,7 @@ impl ListBox {
         self.select(next);
     }
 
-    /// Прокручивает так, чтобы выбранная строка была видна.
+    /// Scrolls so that the selected line is visible.
     pub fn ensure_visible(&mut self) {
         let Some(selected) = self.selected else {
             self.scroll = 0;
@@ -362,7 +362,7 @@ impl ListBox {
         self.scroll = self.scroll.min(self.items.len().saturating_sub(1));
     }
 
-    /// Строка под точкой (с учётом прокрутки).
+    /// The line under the point (taking scrolling into account).
     pub fn row_at(&self, point: Point) -> Option<usize> {
         if !self.rect.contains(point) || self.row_height <= 0 {
             return None;
@@ -374,25 +374,25 @@ impl ListBox {
         (row < self.visible_rows() && index < self.items.len()).then_some(index)
     }
 
-    /// Попадание точки в список.
+    /// Whether the point hits the list.
     pub fn hit_test(&self, point: Point) -> bool {
         self.rect.contains(point)
     }
 }
 
-/// Текстовая метка (заголовок, статус, подсказка).
+/// Text label (heading, status, hint).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Label {
-    /// Текст.
+    /// Text.
     pub text: String,
-    /// Область (текст выравнивается по левому краю и центру по вертикали).
+    /// Area (the text is aligned to the left and centered vertically).
     pub rect: Rect,
-    /// Свой цвет; `None` — цвет темы [`UiTheme::text`].
+    /// Custom color; `None` — the theme color [`UiTheme::text`].
     pub color: Option<Rgba>,
 }
 
 impl Label {
-    /// Метка с текстом и областью.
+    /// Label with text and an area.
     pub fn new(text: impl Into<String>, rect: Rect) -> Self {
         Self {
             text: text.into(),
@@ -401,7 +401,7 @@ impl Label {
         }
     }
 
-    /// Метка явного цвета.
+    /// Label of an explicit color.
     pub fn colored(text: impl Into<String>, rect: Rect, color: Rgba) -> Self {
         Self {
             text: text.into(),
@@ -411,21 +411,21 @@ impl Label {
     }
 }
 
-/// Виджет экрана.
+/// Screen widget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Widget {
-    /// Кнопка.
+    /// Button.
     Button(Button),
-    /// Поле ввода.
+    /// Input field.
     TextBox(TextBox),
-    /// Список.
+    /// List.
     ListBox(ListBox),
-    /// Текстовая метка.
+    /// Text label.
     Label(Label),
 }
 
 impl Widget {
-    /// Область виджета.
+    /// Area of the widget.
     pub fn rect(&self) -> Rect {
         match self {
             Self::Button(widget) => widget.rect,
@@ -435,7 +435,7 @@ impl Widget {
         }
     }
 
-    /// Меняет область виджета (используется [`layout`]).
+    /// Changes the area of the widget (used by [`layout`]).
     pub fn set_rect(&mut self, rect: Rect) {
         match self {
             Self::Button(widget) => widget.rect = rect,
@@ -445,12 +445,12 @@ impl Widget {
         }
     }
 
-    /// Может ли виджет принимать фокус/клик.
+    /// Whether the widget can receive focus/clicks.
     pub fn is_interactive(&self) -> bool {
         !matches!(self, Self::Label(_))
     }
 
-    /// Включён ли виджет (только у кнопки есть `enabled`).
+    /// Whether the widget is enabled (only a button has `enabled`).
     pub fn is_enabled(&self) -> bool {
         match self {
             Self::Button(button) => button.enabled,
@@ -458,7 +458,7 @@ impl Widget {
         }
     }
 
-    /// Попадание точки в кликабельную часть виджета.
+    /// Whether the point hits the clickable part of the widget.
     pub fn hit_test(&self, point: Point) -> bool {
         match self {
             Self::Button(button) => button.hit_test(point),
@@ -469,30 +469,30 @@ impl Widget {
     }
 }
 
-/// Цвета UI. Тёмная палитра в духе оригинального M.A.X.
+/// UI colors. A dark palette in the spirit of the original M.A.X.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UiTheme {
-    /// Фон экрана; `TRANSPARENT` — не заливать (например, поверх карты).
+    /// Screen background; `TRANSPARENT` — do not fill (e.g. over the map).
     pub background: Rgba,
-    /// Фон полей и списков.
+    /// Background of fields and lists.
     pub panel: Rgba,
-    /// Обычная кнопка.
+    /// Normal button.
     pub button: Rgba,
-    /// Кнопка под курсором/в фокусе.
+    /// Button under the cursor/in focus.
     pub button_hover: Rgba,
-    /// Выключенная кнопка.
+    /// Disabled button.
     pub button_disabled: Rgba,
-    /// Обычная рамка.
+    /// Normal frame.
     pub border: Rgba,
-    /// Рамка фокуса.
+    /// Focus frame.
     pub accent: Rgba,
-    /// Основной текст.
+    /// Main text.
     pub text: Rgba,
-    /// Текст подсказки/выключенного элемента.
+    /// Text of a hint/disabled element.
     pub text_disabled: Rgba,
-    /// Фон выбранной строки списка.
+    /// Background of the selected list line.
     pub selection: Rgba,
-    /// Текст выбранной строки.
+    /// Text of the selected line.
     pub selection_text: Rgba,
 }
 
@@ -514,20 +514,20 @@ impl Default for UiTheme {
     }
 }
 
-/// Состояние UI: виджеты, наведение, фокус и тема.
+/// UI state: widgets, hover, focus and theme.
 ///
-/// `hover`/`focus` — индексы в [`UiState::widgets`]. [`hit_test`] сам
-/// пропускает метки и выключенные кнопки, поэтому наведение можно хранить
-/// как `mouse.and_then(|point| ui.hit_test(point))`.
+/// `hover`/`focus` are indices into [`UiState::widgets`]. [`hit_test`] itself
+/// skips labels and disabled buttons, so hover can be stored
+/// as `mouse.and_then(|point| ui.hit_test(point))`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiState {
-    /// Виджеты в порядке отрисовки (последний — сверху для hit-test).
+    /// Widgets in drawing order (the last one is on top for hit-test).
     pub widgets: Vec<Widget>,
-    /// Индекс виджета под курсором.
+    /// Index of the widget under the cursor.
     pub hover: Option<usize>,
-    /// Индекс виджета в фокусе.
+    /// Index of the widget in focus.
     pub focus: Option<usize>,
-    /// Цвета.
+    /// Colors.
     pub theme: UiTheme,
 }
 
@@ -543,7 +543,7 @@ impl Default for UiState {
 }
 
 impl UiState {
-    /// UI с виджетами и темой по умолчанию.
+    /// UI with widgets and the default theme.
     pub fn new(widgets: Vec<Widget>) -> Self {
         Self {
             widgets,
@@ -551,7 +551,7 @@ impl UiState {
         }
     }
 
-    /// UI с явной темой.
+    /// UI with an explicit theme.
     pub fn with_theme(widgets: Vec<Widget>, theme: UiTheme) -> Self {
         Self {
             widgets,
@@ -561,7 +561,7 @@ impl UiState {
         }
     }
 
-    /// Верхний кликабельный виджет под точкой.
+    /// Topmost clickable widget under the point.
     pub fn hit_test(&self, point: Point) -> Option<usize> {
         self.widgets
             .iter()
@@ -571,12 +571,12 @@ impl UiState {
             .map(|(index, _)| index)
     }
 
-    /// Пересчитывает `hover` по позиции курсора.
+    /// Recomputes `hover` from the cursor position.
     pub fn set_hover(&mut self, mouse: Option<Point>) {
         self.hover = mouse.and_then(|point| self.hit_test(point));
     }
 
-    /// Кнопка по индексу.
+    /// Button by index.
     pub fn button(&self, index: usize) -> Option<&Button> {
         match self.widgets.get(index) {
             Some(Widget::Button(button)) => Some(button),
@@ -584,7 +584,7 @@ impl UiState {
         }
     }
 
-    /// Изменяемая кнопка по индексу.
+    /// Mutable button by index.
     pub fn button_mut(&mut self, index: usize) -> Option<&mut Button> {
         match self.widgets.get_mut(index) {
             Some(Widget::Button(button)) => Some(button),
@@ -592,7 +592,7 @@ impl UiState {
         }
     }
 
-    /// Список по индексу.
+    /// List by index.
     pub fn list_box(&self, index: usize) -> Option<&ListBox> {
         match self.widgets.get(index) {
             Some(Widget::ListBox(list)) => Some(list),
@@ -600,7 +600,7 @@ impl UiState {
         }
     }
 
-    /// Изменяемый список по индексу.
+    /// Mutable list by index.
     pub fn list_box_mut(&mut self, index: usize) -> Option<&mut ListBox> {
         match self.widgets.get_mut(index) {
             Some(Widget::ListBox(list)) => Some(list),
@@ -608,7 +608,7 @@ impl UiState {
         }
     }
 
-    /// Поле ввода по индексу.
+    /// Input field by index.
     pub fn text_box(&self, index: usize) -> Option<&TextBox> {
         match self.widgets.get(index) {
             Some(Widget::TextBox(text_box)) => Some(text_box),
@@ -616,7 +616,7 @@ impl UiState {
         }
     }
 
-    /// Изменяемое поле ввода по индексу.
+    /// Mutable input field by index.
     pub fn text_box_mut(&mut self, index: usize) -> Option<&mut TextBox> {
         match self.widgets.get_mut(index) {
             Some(Widget::TextBox(text_box)) => Some(text_box),
@@ -625,15 +625,15 @@ impl UiState {
     }
 }
 
-/// Верхний кликабельный виджет под точкой (свободная функция).
+/// Topmost clickable widget under the point (free function).
 pub fn hit_test(ui: &UiState, point: Point) -> Option<usize> {
     ui.hit_test(point)
 }
 
-/// Вертикальная раскладка: прямоугольники сверху вниз внутри `area`.
+/// Vertical layout: rectangles top to bottom inside `area`.
 ///
-/// `heights` — высоты элементов, `gap` — зазор между ними. Возвращает столько
-/// же прямоугольников, сколько высот передано; ширина — ширина `area`.
+/// `heights` are the element heights, `gap` is the spacing between them. Returns as many
+/// rectangles as heights were passed; the width is the width of `area`.
 pub fn layout(area: Rect, heights: &[i32], gap: i32) -> Vec<Rect> {
     let gap = gap.max(0);
     let mut y = area.y;
@@ -649,13 +649,13 @@ pub fn layout(area: Rect, heights: &[i32], gap: i32) -> Vec<Rect> {
         .collect()
 }
 
-/// Вертикальная раскладка одинаковых элементов.
+/// Vertical layout of equal elements.
 pub fn layout_uniform(area: Rect, count: usize, item_height: i32, gap: i32) -> Vec<Rect> {
     layout(area, &vec![item_height.max(0); count], gap)
 }
 
 impl UiState {
-    /// Раскладывает все виджеты вертикально (меняет их `rect`).
+    /// Lays out all widgets vertically (changes their `rect`).
     pub fn layout_vertical(&mut self, area: Rect, item_height: i32, gap: i32) {
         let rects = layout_uniform(area, self.widgets.len(), item_height, gap);
 
@@ -665,10 +665,10 @@ impl UiState {
     }
 }
 
-/// Рисует UI в буфер.
+/// Draws the UI into the buffer.
 ///
-/// Сначала заливает фон (если тема не прозрачная), затем по порядку рисует
-/// метки, поля, списки и кнопки: фон → рамка → выделение → текст.
+/// First fills the background (if the theme is not transparent), then draws in order
+/// the labels, fields, lists and buttons: background → frame → selection → text.
 pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
     let theme = ui.theme;
 
@@ -807,7 +807,7 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
     }
 }
 
-/// Рисует рамку толщиной 1 px по краям прямоугольника.
+/// Draws a 1 px frame along the edges of the rectangle.
 fn stroke_rect(buffer: &mut RgbaBuffer, rect: Rect, color: Rgba) {
     if rect.is_empty() {
         return;
@@ -825,7 +825,7 @@ fn stroke_rect(buffer: &mut RgbaBuffer, rect: Rect, color: Rgba) {
     );
 }
 
-/// Обрезает строку до `max_chars` символов (шрифт моноширинный).
+/// Truncates the string to `max_chars` characters (the font is monospaced).
 fn fit_text(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         text.to_string()

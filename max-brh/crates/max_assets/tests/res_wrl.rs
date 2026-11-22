@@ -1,13 +1,13 @@
-//! Интеграционные тесты `max_assets` на реальных фикстурах.
+//! Integration tests of `max_assets` on real fixtures.
 //!
-//! Фикстуры (`tests/data/`):
-//! * `PATCHES.RES` — копия `assets/PATCHES.RES` (84 записи, §6 `formats/res.md`);
-//! * `INTROSUB.bin`, `SC_D0002.bin` — ресурсы, выгруженные эталонным
+//! Fixtures (`tests/data/`):
+//! * `PATCHES.RES` — a copy of `assets/PATCHES.RES` (84 records, §6 `formats/res.md`);
+//! * `INTROSUB.bin`, `SC_D0002.bin` — resources dumped by the reference
 //!   `max-original-dasm/tools/res_parser.py`;
-//! * `CRATER_3.WRL` — самая маленькая карта из `max-original/*.WRL`
-//!   (669 349 байт, `tile_count = 154`);
-//! * `crater_3_surface.txt` — `surface_map` этой карты, выгруженная
-//!   `max-original-dasm/tools/wrl_parser.py dump-surface` (bit-в-bit эталон).
+//! * `CRATER_3.WRL` — the smallest map from `max-original/*.WRL`
+//!   (669 349 bytes, `tile_count = 154`);
+//! * `crater_3_surface.txt` — the `surface_map` of this map, dumped by
+//!   `max-original-dasm/tools/wrl_parser.py dump-surface` (bit-for-bit reference).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use max_types::geo::MAP_TILES;
 use max_types::map::MapSize;
 
 // ---------------------------------------------------------------------------
-// Фикстуры и эталоны
+// Fixtures and references
 // ---------------------------------------------------------------------------
 
 fn data_path(name: &str) -> PathBuf {
@@ -33,7 +33,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
     fs::read(data_path(name)).unwrap_or_else(|error| panic!("не читается {name}: {error}"))
 }
 
-/// Читает `crater_3_surface.txt` эталонного Python-парсера в плоский `W*H`.
+/// Reads `crater_3_surface.txt` of the reference Python parser into a flat `W*H`.
 fn read_surface_reference() -> Vec<u8> {
     let text = fs::read_to_string(data_path("crater_3_surface.txt")).unwrap();
     let mut flat = Vec::with_capacity(MAP_TILES);
@@ -99,8 +99,8 @@ fn patches_res_lists_84_entries_with_documented_offsets() {
     assert_eq!(last.offset, 0x000B_37B8);
     assert_eq!(last.size, 61_431);
 
-    // Инварианты §1.2: данные идут вплотную с 0x0C, последняя запись
-    // заканчивается ровно на начале таблицы.
+    // Invariants of §1.2: the data follow contiguously from 0x0C, the last record
+    // ends exactly at the start of the table.
     let mut expected_offset = FIRST_DATA_OFFSET;
 
     for entry in archive.list() {
@@ -130,7 +130,7 @@ fn patches_res_read_matches_python_parser_dumps() {
     assert_eq!(sc_d0002.len(), 345);
     assert_eq!(archive.read("SC_D0002").unwrap(), sc_d0002.as_slice());
 
-    // FONT_1 — TrueType: sfnt-версия 0x00010000 + numTables 0x000E.
+    // FONT_1 is TrueType: sfnt version 0x00010000 + numTables 0x000E.
     let font = archive.read("FONT_1").unwrap();
 
     assert_eq!(font.len(), 31_896);
@@ -196,13 +196,13 @@ fn res_rejects_bad_signature_and_truncated_files() {
         other => panic!("ожидалась BadSignature, получено {other:?}"),
     }
 
-    // Половина файла: таблица (offset = 0xC27AF) уже не помещается.
+    // Half of the file: the table (offset = 0xC27AF) no longer fits.
     match ResArchive::parse(&bytes[..bytes.len() / 2]) {
         Err(ResError::TableOutOfBounds { .. }) => {}
         other => panic!("ожидалась TableOutOfBounds, получено {other:?}"),
     }
 
-    // Обрезан ровно перед таблицей — заголовок цел, таблица на 0 байт.
+    // Truncated exactly before the table — the header is intact, the table is 0 bytes.
     let mut zero_table = bytes[..HEADER_SIZE].to_vec();
     zero_table[4..8].copy_from_slice(&(HEADER_SIZE as u32).to_le_bytes());
     zero_table[8..12].copy_from_slice(&0u32.to_le_bytes());
@@ -252,7 +252,7 @@ fn crater3_header_sections_and_raw_data() {
     assert_eq!(*map.offsets(), expected_offsets);
     assert_eq!(map.offsets().end, map.file_size());
 
-    // §1: size = 38 411 + 4 097 * tile_count для 112×112.
+    // §1: size = 38 411 + 4 097 * tile_count for 112×112.
     assert_eq!(map.file_size(), 38_411 + 4_097 * map.tile_count() as usize);
 
     assert_eq!(
@@ -323,7 +323,7 @@ fn crater3_surface_map_matches_python_reference_bit_for_bit() {
         );
     }
 
-    // Гистограмма §3.1 для CRATER_3: LAND=2292, WATER=9429, COAST=753, AIR=70.
+    // Histogram of §3.1 for CRATER_3: LAND=2292, WATER=9429, COAST=753, AIR=70.
     let mut histogram = [0usize; 4];
 
     for tile in surface.tiles() {
@@ -340,11 +340,11 @@ fn crater3_surface_map_matches_python_reference_bit_for_bit() {
 
     assert_eq!(histogram, [2_292, 9_429, 753, 70]);
 
-    // Паритет с формулой C++ (`world.cpp:382-409`), записанной здесь независимо
-    // от крейтов: pass-таблица разворачивается в поверхность, tile-id клетки
-    // индексируют её. Раньше это сверялось с `max_core::setup::derive_surface_map`;
-    // после Ф5.2 у max_assets нет зависимости от max_core, поэтому эталонная
-    // формула продублирована в тесте (плюс остаётся сверка с Python-дампом выше).
+    // Parity with the C++ formula (`world.cpp:382-409`), written here independently
+    // of the crates: the pass table is unfolded into the surface, and the cell tile-id
+    // indexes it. It used to be checked against `max_core::setup::derive_surface_map`;
+    // after §5.2 max_assets has no dependency on max_core, so the reference
+    // formula is duplicated in the test (plus the comparison with the Python dump above remains).
     const PASS_DATA: [u8; 4] = [0x01, 0x02, 0x04, 0x08]; // LAND, WATER, COAST, AIR
     let mut derived = Vec::with_capacity(MAP_TILES);
 
@@ -383,7 +383,7 @@ fn wrl_open_and_parse_are_identical() {
 fn wrl_accepts_dmo_signature_and_rejects_broken_files() {
     let bytes = read_fixture("CRATER_3.WRL");
 
-    // SNOW_1.WRL — известное исключение "DMO" (§1.1): файл валиден.
+    // SNOW_1.WRL — the known "DMO" exception (§1.1): the file is valid.
     let mut dmo = bytes.clone();
     dmo[0..3].copy_from_slice(b"DMO");
 
@@ -407,7 +407,7 @@ fn wrl_accepts_dmo_signature_and_rejects_broken_files() {
         other => panic!("ожидалась BadSignature, получено {other:?}"),
     }
 
-    // Обрезанный файл: нет даже заголовка / нет секций / нет pass-таблицы.
+    // Truncated file: no header at all / no sections / no pass table.
     assert!(matches!(
         WrlMap::parse(&bytes[..2]),
         Err(WrlError::TooShort { .. })
@@ -445,7 +445,7 @@ fn wrl_never_panics_on_truncated_prefixes() {
         );
     }
 
-    // Случайные короткие срезы в середине данных тоже не паникуют.
+    // Random short slices in the middle of the data do not panic either.
     for len in [100usize, 1_000, 12_553, 37_642, 669_000] {
         let _ = WrlMap::parse(&bytes[..len]);
     }

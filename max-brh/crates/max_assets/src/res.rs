@@ -1,30 +1,30 @@
-//! RES / PATCHES.RES — архивы ресурсов M.A.X.
+//! RES / PATCHES.RES — M.A.X. resource archives.
 //!
-//! Формат описан в `max-original-dasm/formats/res.md`:
+//! The format is described in `max-original-dasm/formats/res.md`:
 //!
 //! ```text
-//! +0x00  "RES0"                  — сигнатура (4 байта, без NUL)
-//! +0x04  u32 LE table_offset     — смещение таблицы записей
-//! +0x08  u32 LE table_size       — размер таблицы в байтах (кратен 16)
-//! +0x0C  данные ресурсов подряд  — без сжатия и выравнивания
-//! ...    res_index[table_size/16]— 16-байтные записи таблицы
+//! +0x00  "RES0"                  — signature (4 bytes, no NUL)
+//! +0x04  u32 LE table_offset     — offset of the record table
+//! +0x08  u32 LE table_size       — table size in bytes (a multiple of 16)
+//! +0x0C  resource data in sequence — without compression or alignment
+//! ...    res_index[table_size/16]— 16-byte table records
 //! ```
 //!
-//! Запись таблицы: `tag[8]` (C-строка: всё после первого `0x00` — мусор) +
+//! Table record: `tag[8]` (C string: everything after the first `0x00` is garbage) +
 //! `u32 LE data_offset` + `u32 LE data_size`.
 //!
-//! Особенности, унаследованные от эталонного загрузчика (`formats/res.md` §7):
-//! * тег читается как C-строка в фиксированном 8-байтном поле и обрезается по
-//!   первому NUL (`"ILOGO\0TM"` — это `"ILOGO"`); тег ровно из 8 байт допустим;
-//! * таблица читается строго `table_offset..table_offset + table_size`: за ней
-//!   в PATCHES.RES лежат 16 байт мусора (обрывок 85-й записи, §1.4);
-//! * при дубликатах тега выигрывает первая запись (как в оригинальном
-//!   загрузчике, §3);
-//! * полезная нагрузка непрозрачна: контейнер её не сжимает и не разбирает.
+//! Peculiarities inherited from the reference loader (`formats/res.md` §7):
+//! * the tag is read as a C string in a fixed 8-byte field and cut at the
+//!   first NUL (`"ILOGO\0TM"` is `"ILOGO"`); a tag of exactly 8 bytes is valid;
+//! * the table is read strictly `table_offset..table_offset + table_size`: after it
+//!   PATCHES.RES has 16 bytes of garbage (a fragment of the 85th record, §1.4);
+//! * with duplicate tags the first record wins (as in the original
+//!   loader, §3);
+//! * the payload is opaque: the container neither compresses nor parses it.
 //!
-//! Парсер не паникует на битых данных: структурные ошибки возвращаются как
-//! [`ResError`], а некритичные расхождения (например, запись, заходящая за
-//! начало таблицы) собираются в [`ResArchive::warnings`].
+//! The parser does not panic on corrupt data: structural errors are returned as
+//! [`ResError`], and non-critical discrepancies (e.g. a record extending past
+//! the start of the table) are collected in [`ResArchive::warnings`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -32,102 +32,102 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Сигнатура заголовка RES (`"RES0"`), 4 байта без NUL.
+/// RES header signature (`"RES0"`), 4 bytes without NUL.
 pub const RES_SIGNATURE: [u8; 4] = *b"RES0";
-/// Размер заголовка (`sizeof(res_header)`).
+/// Header size (`sizeof(res_header)`).
 pub const HEADER_SIZE: usize = 12;
-/// Размер записи таблицы (`sizeof(res_index)`).
+/// Table record size (`sizeof(res_index)`).
 pub const ENTRY_SIZE: usize = 16;
-/// Длина поля тега в записи.
+/// Length of the tag field in a record.
 pub const TAG_LEN: usize = 8;
-/// Смещение данных первого ресурса: сразу после заголовка (§1.1).
+/// Offset of the first resource's data: right after the header (§1.1).
 pub const FIRST_DATA_OFFSET: u32 = HEADER_SIZE as u32;
 
-/// Одна запись таблицы ресурсов.
+/// One resource table record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResEntry {
-    /// Порядковый номер записи в таблице (0-based).
+    /// Ordinal number of the record in the table (0-based).
     pub index: usize,
-    /// Тег как C-строка: 8 байт поля, обрезанные по первому NUL.
+    /// Tag as a C string: 8 bytes of the field, cut at the first NUL.
     pub name: String,
-    /// Смещение данных от начала файла.
+    /// Offset of the data from the start of the file.
     pub offset: u32,
-    /// Размер данных в байтах.
+    /// Data size in bytes.
     pub size: u32,
 }
 
 impl ResEntry {
-    /// Конец данных записи (`offset + size`) как `u64` — без переполнения.
+    /// End of the record data (`offset + size`) as `u64` — without overflow.
     #[inline]
     pub fn end(&self) -> u64 {
         u64::from(self.offset) + u64::from(self.size)
     }
 
-    /// Пустая запись (`data_size == 0`).
+    /// Empty record (`data_size == 0`).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
 
-    /// Размер данных в байтах как `usize`.
+    /// Data size in bytes as `usize`.
     #[inline]
     pub fn len(&self) -> usize {
         self.size as usize
     }
 }
 
-/// Ошибка разбора/чтения RES-архива.
+/// RES archive parse/read error.
 #[derive(Debug)]
 pub enum ResError {
-    /// Не удалось прочитать файл целиком.
+    /// Failed to read the file entirely.
     Io {
-        /// Путь, который читался.
+        /// The path that was being read.
         path: PathBuf,
-        /// Причина от ОС.
+        /// Reason from the OS.
         source: io::Error,
     },
-    /// Файл короче 12-байтного заголовка.
+    /// The file is shorter than the 12-byte header.
     TooShort {
-        /// Фактическая длина файла.
+        /// Actual file length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Первые 4 байта — не `"RES0"`.
+    /// The first 4 bytes are not `"RES0"`.
     BadSignature {
-        /// Фактическая сигнатура.
+        /// Actual signature.
         found: [u8; 4],
     },
-    /// Таблица начинается раньше конца заголовка.
+    /// The table starts before the end of the header.
     TableBeforeHeader {
-        /// Смещение таблицы из заголовка.
+        /// Table offset from the header.
         offset: u32,
     },
-    /// Таблица выходит за конец файла.
+    /// The table extends beyond the end of the file.
     TableOutOfBounds {
-        /// Смещение таблицы из заголовка.
+        /// Table offset from the header.
         offset: u32,
-        /// Размер таблицы из заголовка.
+        /// Table size from the header.
         size: u32,
-        /// Фактическая длина файла.
+        /// Actual file length.
         file_len: usize,
     },
-    /// Данные записи выходят за конец файла.
+    /// The record data extends beyond the end of the file.
     ResourceOutOfBounds {
-        /// Порядковый номер записи.
+        /// Ordinal number of the record.
         index: usize,
-        /// Тег записи.
+        /// Record tag.
         name: String,
-        /// Смещение данных.
+        /// Data offset.
         offset: u32,
-        /// Размер данных.
+        /// Data size.
         size: u32,
-        /// Фактическая длина файла.
+        /// Actual file length.
         file_len: usize,
     },
-    /// Ресурс с таким тегом не найден.
+    /// No resource with such a tag was found.
     NotFound {
-        /// Искомый тег.
+        /// The tag being searched for.
         name: String,
     },
 }
@@ -182,28 +182,28 @@ impl std::error::Error for ResError {
     }
 }
 
-/// Разобранный RES-архив.
+/// Parsed RES archive.
 ///
-/// Байты файла хранятся целиком, поэтому [`ResArchive::read`] возвращает срез
-/// без копирования, а [`ResArchive::extract_all`] — уже собственные `Vec<u8>`.
+/// The file bytes are stored whole, so [`ResArchive::read`] returns a slice
+/// without copying, while [`ResArchive::extract_all`] returns its own `Vec<u8>`.
 #[derive(Clone)]
 pub struct ResArchive {
     data: Vec<u8>,
     table_offset: u32,
     table_size: u32,
     entries: Vec<ResEntry>,
-    /// Тег -> индекс первой записи с этим тегом (дубликаты не перезаписывают).
+    /// Tag -> index of the first record with that tag (duplicates do not overwrite).
     by_name: BTreeMap<String, usize>,
     warnings: Vec<String>,
 }
 
 impl ResArchive {
-    /// Разбирает архив из байтов (копирует срез во владение).
+    /// Parses the archive from bytes (copies the slice into ownership).
     pub fn parse(data: &[u8]) -> Result<Self, ResError> {
         Self::from_vec(data.to_vec())
     }
 
-    /// Разбирает архив из уже имеющегося `Vec<u8>` (без копирования данных).
+    /// Parses the archive from an existing `Vec<u8>` (without copying the data).
     pub fn from_vec(data: Vec<u8>) -> Result<Self, ResError> {
         let file_len = data.len();
 
@@ -253,7 +253,7 @@ impl ResArchive {
         let mut entries = Vec::with_capacity(count);
         let mut by_name = BTreeMap::new();
 
-        // Таблица гарантированно лежит внутри файла, читаем ровно count записей.
+        // The table is guaranteed to lie inside the file, so read exactly count records.
         for i in 0..count {
             let pos = table_start + i * ENTRY_SIZE;
             let tag_raw = &data[pos..pos + TAG_LEN];
@@ -273,8 +273,8 @@ impl ResArchive {
                 size,
             };
 
-            // Мягкие проверки, как в эталонном Python-парсере: реальные файлы
-            // им удовлетворяют, а «странный» архив всё равно можно осмотреть.
+            // Soft checks, like in the reference Python parser: real files
+            // satisfy them, and a "strange" archive can still be inspected.
             let end = entry.end();
             if end > file_len as u64 {
                 warnings.push(format!(
@@ -303,7 +303,7 @@ impl ResArchive {
         })
     }
 
-    /// Читает и разбирает архив из файла.
+    /// Reads and parses the archive from a file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ResError> {
         let path = path.as_ref();
         let data = fs::read(path).map_err(|source| ResError::Io {
@@ -314,69 +314,69 @@ impl ResArchive {
         Self::from_vec(data)
     }
 
-    /// Сырые байты файла целиком.
+    /// Raw bytes of the whole file.
     #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
-    /// Длина файла в байтах.
+    /// File length in bytes.
     #[inline]
     pub fn file_size(&self) -> usize {
         self.data.len()
     }
 
-    /// Смещение таблицы записей из заголовка.
+    /// Offset of the record table from the header.
     #[inline]
     pub fn table_offset(&self) -> u32 {
         self.table_offset
     }
 
-    /// Размер таблицы записей из заголовка (в байтах).
+    /// Size of the record table from the header (in bytes).
     #[inline]
     pub fn table_size(&self) -> u32 {
         self.table_size
     }
 
-    /// Все записи таблицы в файловом порядке (включая дубликаты тегов).
+    /// All table records in file order (including duplicate tags).
     #[inline]
     pub fn list(&self) -> &[ResEntry] {
         &self.entries
     }
 
-    /// Количество записей таблицы.
+    /// Number of table records.
     #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// В таблице нет записей.
+    /// The table has no records.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// Первая запись с данным тегом (дубликаты разрешаются «первый выигрывает»).
+    /// The first record with the given tag (duplicates resolve as "first wins").
     #[inline]
     pub fn entry(&self, name: &str) -> Option<&ResEntry> {
         self.by_name.get(name).map(|&index| &self.entries[index])
     }
 
-    /// Имя файла из тела ресурса-ссылки (`TANK1` → `"tank1.spw"`).
+    /// File name from the body of a reference resource (`TANK1` → `"tank1.spw"`).
     ///
-    /// В MAX.RES лежат 721 такая ссылка (`max-original-dasm/formats/spw.md`
-    /// §1): тело ресурса — ASCIIZ-имя файла рядом с `MAX.RES`. Для обычных
-    /// ресурсов (спрайты, карты) возвращается [`None`].
+    /// MAX.RES contains 721 such references (`max-original-dasm/formats/spw.md`
+    /// §1): the resource body is the ASCIIZ name of a file next to `MAX.RES`. For ordinary
+    /// resources (sprites, maps) [`None`] is returned.
     pub fn file_reference(&self, name: &str) -> Option<&str> {
         let bytes = self.read(name).ok()?;
 
         parse_file_ref(bytes)
     }
 
-    /// Байты ресурса по тегу.
+    /// Resource bytes by tag.
     ///
-    /// Тег сравнивается как C-строка (без учёта мусора после NUL), но с учётом
-    /// регистра — как в эталонном парсере.
+    /// The tag is compared as a C string (ignoring garbage after the NUL), but case-
+    /// sensitively, as in the reference parser.
     pub fn read(&self, name: &str) -> Result<&[u8], ResError> {
         let index = *self.by_name.get(name).ok_or_else(|| ResError::NotFound {
             name: name.to_owned(),
@@ -385,10 +385,10 @@ impl ResArchive {
         self.read_entry(index)
     }
 
-    /// Распаковывает все ресурсы в память: тег -> байты.
+    /// Unpacks all resources into memory: tag -> bytes.
     ///
-    /// Дубликаты тегов пропускаются (первая запись выигрывает, как в
-    /// оригинальном загрузчике). Порядок ключей — отсортированный (`BTreeMap`).
+    /// Duplicate tags are skipped (the first record wins, as in the
+    /// original loader). The key order is sorted (`BTreeMap`).
     pub fn extract_all(&self) -> Result<BTreeMap<String, Vec<u8>>, ResError> {
         let mut out = BTreeMap::new();
 
@@ -403,14 +403,14 @@ impl ResArchive {
         Ok(out)
     }
 
-    /// Некритичные расхождения с форматом (пусто для эталонных файлов).
+    /// Non-critical discrepancies with the format (empty for reference files).
     #[inline]
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
 
     fn read_entry(&self, index: usize) -> Result<&[u8], ResError> {
-        // `index` приходит только из `entries`, поэтому запись существует.
+        // `index` comes only from `entries`, so the record exists.
         let entry = &self.entries[index];
         let start = entry.offset as usize;
         let end = start
@@ -442,11 +442,11 @@ impl fmt::Debug for ResArchive {
     }
 }
 
-/// Декодирует 8-байтное поле тега как C-строку в Latin-1.
+/// Decodes the 8-byte tag field as a C string in Latin-1.
 ///
-/// Байты после первого NUL — мусор утилиты сборки патча (`"ILOGO\0TM"`).
-/// Latin-1 выбран потому же, что и в эталонном Python-парсере: так любой байт
-/// превращается в символ без потерь и без ошибок UTF-8.
+/// Bytes after the first NUL are garbage from the patch build utility (`"ILOGO\0TM"`).
+/// Latin-1 was chosen for the same reason as in the reference Python parser: this way any byte
+/// turns into a character losslessly and without UTF-8 errors.
 fn decode_tag(raw: &[u8]) -> String {
     raw.iter()
         .take_while(|&&byte| byte != 0)
@@ -454,13 +454,13 @@ fn decode_tag(raw: &[u8]) -> String {
         .collect()
 }
 
-/// Имя файла из тела ресурса-ссылки: ASCIIZ без пути.
+/// File name from the body of a reference resource: ASCIIZ without a path.
 ///
-/// Ресурсы-ссылки (`TANK1` → `"tank1.spw\0"`, `SNOW_1` → `"snow_1.w\0"`)
-/// хранят в теле обычную C-строку. Возвращается срез **без** завершающего NUL
-/// и только если имя безопасно для склейки с каталогом: ASCII-буквы/цифры,
-/// `.`, `_`, `-`, без `/`, `\`, `:` и `..`. Всё остальное (спрайт, карта,
-/// битые байты) — [`None`], чтобы вызывающий не принял данные за имя файла.
+/// Reference resources (`TANK1` → `"tank1.spw\0"`, `SNOW_1` → `"snow_1.w\0"`)
+/// store an ordinary C string in the body. A slice is returned **without** the trailing NUL
+/// and only if the name is safe to join with a directory: ASCII letters/digits,
+/// `.`, `_`, `-`, without `/`, `\`, `:` and `..`. Everything else (a sprite, a map,
+/// corrupt bytes) — [`None`], so that the caller does not mistake data for a file name.
 pub fn parse_file_ref(bytes: &[u8]) -> Option<&str> {
     let end = bytes
         .iter()
@@ -481,8 +481,8 @@ pub fn parse_file_ref(bytes: &[u8]) -> Option<&str> {
 
     let name = std::str::from_utf8(name).ok()?;
 
-    // `..` и абсолютные пути (двоеточие) отсекаются проверкой выше, но
-    // страхуемся явно: имя склеивается с каталогом игры.
+    // `..` and absolute paths (a colon) are cut off by the check above, but
+    // we take explicit precautions: the name is joined with the game directory.
     if name.contains("..") {
         return None;
     }
@@ -494,7 +494,7 @@ pub fn parse_file_ref(bytes: &[u8]) -> Option<&str> {
 mod tests {
     use super::*;
 
-    /// Собирает минимальный валидный архив из пар (тег, данные).
+    /// Builds a minimal valid archive from (tag, data) pairs.
     fn build_archive(items: &[(&str, &[u8])]) -> Vec<u8> {
         let mut data = Vec::new();
         let mut table = Vec::new();
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn eight_byte_and_nul_padded_tags_decode_as_c_strings() {
         let bytes = build_archive(&[("ABCDEFGH", b"x")]);
-        // Второй архив: тег с NUL и мусором после него.
+        // Second archive: a tag with a NUL and garbage after it.
         let mut with_garbage = build_archive(&[("ILOGO", b"y")]);
         let table_start = u32::from_le_bytes([
             with_garbage[4],
@@ -571,7 +571,7 @@ mod tests {
         let mut bytes = build_archive(&[("A", b"1")]);
         let table_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
 
-        // Приписываем 3 «лишних» байта к таблице: count = size / 16.
+        // Append 3 "extra" bytes to the table: count = size / 16.
         bytes[8..12].copy_from_slice(&(table_size + 3).to_le_bytes());
         bytes.extend_from_slice(&[0u8; 3]);
 
@@ -596,7 +596,7 @@ mod tests {
             Err(ResError::BadSignature { .. })
         ));
 
-        // Таблица за концом файла.
+        // The table is beyond the end of the file.
         let mut bytes = build_archive(&[("A", b"1")]);
         bytes[4..8].copy_from_slice(&0xFFFF_0000u32.to_le_bytes());
         assert!(matches!(
@@ -610,7 +610,7 @@ mod tests {
         let mut bytes = build_archive(&[("A", b"1")]);
         let table_start = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
 
-        // data_size = u32::MAX для единственной записи.
+        // data_size = u32::MAX for the single record.
         bytes[table_start + 12..table_start + 16].copy_from_slice(&u32::MAX.to_le_bytes());
 
         let archive = ResArchive::parse(&bytes).unwrap();
@@ -658,10 +658,10 @@ mod tests {
         assert_eq!(parse_file_ref(b"snow_1.w\0garbage"), Some("snow_1.w"));
     }
 
-    /// Реальный `MAX.RES`: сотни ASCIIZ-ссылок на `*.spw` и другие файлы.
+    /// Real `MAX.RES`: hundreds of ASCIIZ references to `*.spw` and other files.
     ///
-    /// Проверка ловит расхождение с форматом (`spw.md` §1: 607 ссылок на
-    /// `.spw`, 721 всего). Если игровых данных нет, тест пропускается.
+    /// The check catches a discrepancy with the format (`spw.md` §1: 607 references to
+    /// `.spw`, 721 in total). If the game data is absent, the test is skipped.
     #[test]
     fn real_max_res_exposes_ascii_file_references() {
         let path =
@@ -684,7 +684,7 @@ mod tests {
         let mut other = 0usize;
 
         for entry in archive.list() {
-            // Ссылки крошечные; спрайты/карты отбрасываем до чтения.
+            // The references are tiny; sprites/maps are discarded before reading.
             if entry.size == 0 || entry.size > 64 {
                 continue;
             }

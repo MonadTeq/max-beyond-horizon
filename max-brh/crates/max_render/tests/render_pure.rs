@@ -1,16 +1,16 @@
-//! Интеграционные тесты чистой части `max_render` на эталонных данных.
+//! Integration tests of the pure part of `max_render` on reference data.
 //!
-//! Фикстуры:
-//! * `tests/data/COLOR.PAL` — копия `max-original/COLOR.PAL`;
-//! * `tests/data/palette_ref.txt` — эталон из
-//!   `max-brh/tools/gen_sprite_reference.py`: 8-битные значения палитры и LUT
-//!   пяти команд (по `Color_SetSystemPaletteEntry` и
+//! Fixtures:
+//! * `tests/data/COLOR.PAL` — a copy of `max-original/COLOR.PAL`;
+//! * `tests/data/palette_ref.txt` — the reference from
+//!   `max-brh/tools/gen_sprite_reference.py`: 8-bit palette values and the LUT of
+//!   five teams (per `Color_SetSystemPaletteEntry` and
 //!   `ResourceManager_BuildColorTables`);
-//! * спрайты `TANK`/`S_TANK` — тела RES из `max_assets/tests/data`, декодер
-//!   которых уже сверен с Python-эталоном (`max_assets/tests/sprite_res.rs`).
+//! * the `TANK`/`S_TANK` sprites — RES bodies from `max_assets/tests/data`, whose
+//!   decoder has already been checked against the Python reference (`max_assets/tests/sprite_res.rs`).
 //!
-//! Тест проверяет связку целиком: эталонный байт спрайта -> декодер ->
-//! палитра/командная LUT -> RGBA-буфер, без SDL.
+//! The test checks the whole chain: reference sprite byte -> decoder ->
+//! palette/team LUT -> RGBA buffer, without SDL.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -32,7 +32,7 @@ use max_render::sprite_atlas::SpriteRenderer;
 use max_render::viewport::Viewport;
 
 // ---------------------------------------------------------------------------
-// Фикстуры
+// Fixtures
 // ---------------------------------------------------------------------------
 
 fn render_data(name: &str) -> PathBuf {
@@ -42,7 +42,7 @@ fn render_data(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Спрайты лежат в фикстурах `max_assets` — общий эталон для двух крейтов.
+/// The sprites live in the `max_assets` fixtures — a shared reference for the two crates.
 fn assets_data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -56,7 +56,7 @@ fn read(path: PathBuf) -> Vec<u8> {
     fs::read(&path).unwrap_or_else(|error| panic!("не читается {}: {error}", path.display()))
 }
 
-/// Эталон палитры и командных LUT из Python-генератора.
+/// Palette and team LUT reference from the Python generator.
 struct PaletteReference {
     rgb: [[u8; 3]; PALETTE_SIZE],
     teams: BTreeMap<String, [u8; PALETTE_SIZE]>,
@@ -121,7 +121,7 @@ fn s_tank_bytes() -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Палитра
+// Palette
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -146,7 +146,7 @@ fn real_color_pal_matches_the_reference_dump() {
         );
     }
 
-    // 6-битный цвет — ровно четвёртая часть 8-битного.
+    // A 6-bit color is exactly a quarter of the 8-bit one.
     for index in 0..PALETTE_SIZE {
         let raw = palette.raw(index as u8);
         let rgb = palette.rgb(index as u8);
@@ -181,7 +181,7 @@ fn brightness_tables_are_built_from_the_real_palette() {
     let palette = loaded_palette();
     let brightness = BrightnessLut::build(&palette);
 
-    // Полная яркость — identity на всех 256 индексах.
+    // Full brightness is the identity on all 256 indices.
     for index in 0..PALETTE_SIZE {
         assert_eq!(
             brightness.map(FULL_BRIGHTNESS_LEVEL, index as u8),
@@ -189,7 +189,7 @@ fn brightness_tables_are_built_from_the_real_palette() {
         );
     }
 
-    // Уровень тени меняет палитру: это не identity и не чёрный экран.
+    // The shadow level changes the palette: it is neither the identity nor a black screen.
     let shadow = brightness.level(SHADOW_BRIGHTNESS_LEVEL);
     let changed = (0..PALETTE_SIZE)
         .filter(|&index| shadow[index] != index as u8)
@@ -200,7 +200,7 @@ fn brightness_tables_are_built_from_the_real_palette() {
 }
 
 // ---------------------------------------------------------------------------
-// Спрайты
+// Sprites
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -227,11 +227,11 @@ fn real_tank_frame_renders_with_palette_and_command_colours() {
     let red_buffer = red.render_frame(frame);
     let green_buffer = green.render_frame(frame);
 
-    // Размер буфера кадра = размер кадра (44×45), прозрачный фон.
+    // The frame buffer size equals the frame size (44×45), transparent background.
     assert_eq!((red_buffer.width(), red_buffer.height()), (44, 45));
     assert_eq!(red_buffer.get(0, 0), Some(Rgba::TRANSPARENT));
 
-    // Строка 0 §3.1: x = 4 -> индекс 0xCF (207), x = 8 -> 0xF0 (240).
+    // Row 0 of §3.1: x = 4 -> index 0xCF (207), x = 8 -> 0xF0 (240).
     assert_eq!(
         red_buffer.get(4, 0),
         Some(Rgba::from_rgb(reference.rgb[0xCF]))
@@ -241,8 +241,8 @@ fn real_tank_frame_renders_with_palette_and_command_colours() {
         Some(Rgba::from_rgb(reference.rgb[0xF0]))
     );
 
-    // Строка 8 дампа: x = 10 -> индекс 0x22 (34), это командный слот 32–39.
-    // Красная команда перекрашивает его в 58, зелёная оставляет 34.
+    // Row 8 of the dump: x = 10 -> index 0x22 (34), which is team slot 32–39.
+    // The red team recolors it to 58, the green one leaves 34.
     assert_eq!(
         red_buffer.get(10, 8),
         Some(Rgba::from_rgb(reference.rgb[58]))
@@ -253,7 +253,7 @@ fn real_tank_frame_renders_with_palette_and_command_colours() {
     );
     assert_ne!(red_buffer.get(10, 8), green_buffer.get(10, 8));
 
-    // Непрозрачных пикселей ровно столько, сколько в кадре.
+    // There are exactly as many opaque pixels as in the frame.
     let opaque = frame.opaque_pixels();
 
     assert_eq!(
@@ -281,7 +281,7 @@ fn real_tank_frame_is_positioned_by_its_hot_spot() {
     assert_eq!(stats.drawn, frame.opaque_pixels() as u32);
     assert_eq!(stats.clipped, 0);
 
-    // Горячая точка (20,23): кадр начинается в (80,77).
+    // Hot spot (20,23): the frame starts at (80,77).
     let (ulx, uly) = (100 - 20, 100 - 23);
 
     assert_eq!(
@@ -310,8 +310,8 @@ fn real_shadow_darkens_the_map_under_the_unit() {
     assert_eq!(stats.drawn, frame.darkened_pixels() as u32);
     assert_eq!(stats.clipped, 0);
 
-    // Горячая точка (20,23): кадр тени начинается в (12,9).
-    // Строка 0: {4,5} -> x = 16..=20 затемнены, x = 21 — нет.
+    // Hot spot (20,23): the shadow frame starts at (12,9).
+    // Row 0: {4,5} -> x = 16..=20 are darkened, x = 21 is not.
     let ulx = 32 - 20;
     let uly = 32 - 23;
 
@@ -328,10 +328,10 @@ fn real_shadow_darkens_the_map_under_the_unit() {
 }
 
 // ---------------------------------------------------------------------------
-// Карта
+// Map
 // ---------------------------------------------------------------------------
 
-/// Карта с разными поверхностями и ресурсами в известных клетках.
+/// A map with different surfaces and resources in known cells.
 fn sample_map() -> Map {
     let mut surface = SurfaceMap::new();
     let mut resources = ResourceMap::new();
@@ -372,11 +372,11 @@ fn map_tiles_show_surface_and_resource() {
     assert_eq!(air.get(0, 0), Some(style.air));
     assert_eq!(air.get(32, 32), Some(style.gold));
 
-    // Клетка без ресурса: только поверхность и паттерн.
+    // A cell without a resource: only the surface and the pattern.
     let plain = render_tile(&map, (4, 1), TILE_PIXELS, &style).unwrap();
 
     assert_eq!(plain.get(0, 0), Some(style.land));
-    // (32, 32) — ячейка (4, 4): чётная, значит база без затемнения.
+    // (32, 32) — cell (4, 4): even, so the base without darkening.
     assert_eq!(plain.get(32, 32), Some(style.land));
 }
 
@@ -391,9 +391,9 @@ fn map_view_fills_the_whole_screen_with_visible_tiles() {
     let painted = render_map_into(&mut screen, &map, &viewport, &style);
 
     assert_eq!(painted, range.count() as u32);
-    // Клетка (52,53) рисуется в (0,0): там суша (ресурсы только в (1..=3,1)).
+    // Cell (52,53) is drawn at (0,0): there is land there (resources only in (1..=3,1)).
     assert_eq!(screen.get(0, 0), Some(style.land));
-    // Углы экрана тоже покрыты картой — фон «неизвестно» не виден.
+    // The screen corners are also covered by the map — the "unknown" background is not visible.
     for corner in [(0, 0), (511, 0), (0, 383), (511, 383)] {
         assert_ne!(
             screen.get(corner.0, corner.1),
@@ -410,7 +410,7 @@ fn tile_rendering_clips_and_reports_area() {
     let map = sample_map();
     let mut buffer = RgbaBuffer::new(32, 32);
 
-    // Клетка 64×64 в буфер 32×32: половина пикселей вне буфера.
+    // Cell 64×64 into a 32×32 buffer: half of the pixels are outside the buffer.
     let rect = max_render::buffer::PixelRect::new(0, 0, TILE_PIXELS, TILE_PIXELS);
     let painted = render_tile_into(&mut buffer, &map, (10, 10), rect, &style);
 
@@ -420,7 +420,7 @@ fn tile_rendering_clips_and_reports_area() {
 
 #[test]
 fn wrl_map_renders_through_the_same_pipeline() {
-    // CRATER_3.WRL — эталонная карта из фикстур max_assets (tile_count = 154).
+    // CRATER_3.WRL — the reference map from the max_assets fixtures (tile_count = 154).
     let bytes = read(assets_data("CRATER_3.WRL"));
     let wrl = WrlMap::parse(&bytes).unwrap();
     let map = map_from_wrl(&wrl);
@@ -432,7 +432,7 @@ fn wrl_map_renders_through_the_same_pipeline() {
     );
     assert_eq!(map.surface.tiles(), wrl.surface_map().tiles());
 
-    // На карте есть суша: находим клетку и рисуем её тайл.
+    // The map has land: find a cell and draw its tile.
     let (grid_x, grid_y) = (0..map.size.height)
         .flat_map(|y| (0..map.size.width).map(move |x| (x, y)))
         .find(|&(x, y)| map.surface_at(x, y).contains(Surface::LAND))
@@ -440,8 +440,8 @@ fn wrl_map_renders_through_the_same_pipeline() {
 
     let tile = render_tile(&map, (grid_x, grid_y), TILE_PIXELS, &style).unwrap();
 
-    // Ресурсов в WRL-карте нет, поэтому (0,0) клетки — чистый цвет суши
-    // (ячейка (0,0) паттерна всегда без затемнения).
+    // There are no resources in the WRL map, so the cells of (0,0) are the pure land color
+    // (the cell (0,0) of the pattern is always without darkening).
     assert_eq!(tile.get(0, 0), Some(style.land));
     assert_eq!(tile.get(32, 32), Some(style.land));
 }

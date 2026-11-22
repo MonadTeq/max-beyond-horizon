@@ -1,34 +1,34 @@
-//! Настоящие тайлы поверхности из `.WRL` (то, что рисует оригинал).
+//! Real surface tiles from `.WRL` (what the original draws).
 //!
-//! В `max_render::map_render` тайл — процедурная заглушка: базовый цвет
-//! поверхности + шахматный узор (это видно как «непонятно что» вместо земли).
-//! Оригинал (и C++-порт, `Gfx_DecodeMapTile`) берёт **пиксели тайла** из карты:
-//! `.WRL` хранит `tile_ids: u16[W*H]`, `tile_count` и буфер `tile_count × 64×64`
-//! индексов палитры плюс саму палитру 256×RGB — всё это уже разбирает
-//! [`max_assets::wrl::WrlMap`], но рендер его не использовал.
+//! In `max_render::map_render` a tile is a procedural placeholder: the base color
+//! of the surface + a checkerboard pattern (this shows up as "some nonsense" instead of ground).
+//! The original (and the C++ port, `Gfx_DecodeMapTile`) takes the **tile pixels** from the map:
+//! `.WRL` stores `tile_ids: u16[W*H]`, `tile_count` and a buffer of `tile_count × 64×64`
+//! palette indices plus the 256×RGB palette itself — all of this is already parsed by
+//! [`max_assets::wrl::WrlMap`], but the renderer did not use it.
 //!
-//! Здесь — [`TerrainAtlas`] (палитра + тайлы + карта id) и блит видимой части
-//! карты в [`RgbaBuffer`] с учётом зума/камеры [`Viewport`]. Масштабирование —
-//! nearest-neighbour, как `Gfx_ZoomLevel` в оригинале.
+//! Here — [`TerrainAtlas`] (palette + tiles + id map) and blitting of the visible part of
+//! the map into [`RgbaBuffer`] taking the zoom/camera [`Viewport`] into account. Scaling is
+//! nearest-neighbour, like `Gfx_ZoomLevel` in the original.
 //!
-//! Палитра `.WRL` может быть 6-битной (VGA, значения `0..=63`) — такие каналы
-//! растягиваются на весь диапазон, иначе карта выглядела бы почти чёрной.
+//! The `.WRL` palette may be 6-bit (VGA, values `0..=63`) — such channels
+//! are stretched to the full range, otherwise the map would look almost black.
 
 use max_assets::wrl::{WrlMap, PALETTE_COLORS, PALETTE_STRIDE, TILE_PIXELS, TILE_SIZE};
 
 use crate::buffer::{Rgba, RgbaBuffer};
 use crate::viewport::Viewport;
 
-/// Палитра `.WRL` в RGBA (индекс → цвет).
+/// `.WRL` palette in RGBA (index → color).
 pub type PaletteRgba = [[u8; 4]; PALETTE_COLORS];
 
-/// Тайлы поверхности планеты: палитра + пиксели тайлов + карта `tile_id`.
+/// Planet surface tiles: palette + tile pixels + the `tile_id` map.
 #[derive(Clone, PartialEq, Eq)]
 pub struct TerrainAtlas {
     palette: PaletteRgba,
-    /// `tile_count × TILE_PIXELS` индексов палитры (по 1 байту на пиксель).
+    /// `tile_count × TILE_PIXELS` palette indices (1 byte per pixel).
     tiles: Vec<u8>,
-    /// `W*H` идентификаторов тайлов (row-major).
+    /// `W*H` tile identifiers (row-major).
     tile_ids: Vec<u16>,
     tile_count: u16,
     width: i16,
@@ -36,7 +36,7 @@ pub struct TerrainAtlas {
 }
 
 impl TerrainAtlas {
-    /// Собирает атлас из разобранной карты `.WRL`.
+    /// Builds the atlas from a parsed `.WRL` map.
     pub fn from_wrl(wrl: &WrlMap) -> Self {
         Self {
             palette: palette_from_wrl(wrl.palette()),
@@ -48,27 +48,27 @@ impl TerrainAtlas {
         }
     }
 
-    /// Палитра атласа.
+    /// Palette of the atlas.
     pub fn palette(&self) -> &PaletteRgba {
         &self.palette
     }
 
-    /// Размер карты в клетках.
+    /// Map size in cells.
     pub fn size(&self) -> (i16, i16) {
         (self.width, self.height)
     }
 
-    /// Число уникальных тайлов.
+    /// Number of unique tiles.
     pub fn tile_count(&self) -> u16 {
         self.tile_count
     }
 
-    /// `true`, если тайлов нет (рисовать нечего).
+    /// `true` if there are no tiles (nothing to draw).
     pub fn is_empty(&self) -> bool {
         self.tile_count == 0 || self.tiles.is_empty() || self.tile_ids.is_empty()
     }
 
-    /// Пиксель тайла по координатам внутри тайла (0..64).
+    /// Tile pixel by coordinates inside the tile (0..64).
     pub fn tile_pixel(&self, tile_id: u16, x: u32, y: u32) -> Option<Rgba> {
         if tile_id >= self.tile_count || x as usize >= TILE_SIZE || y as usize >= TILE_SIZE {
             return None;
@@ -81,7 +81,7 @@ impl TerrainAtlas {
         Some(Rgba::rgb(entry[0], entry[1], entry[2]))
     }
 
-    /// `tile_id` клетки карты.
+    /// `tile_id` of a map cell.
     pub fn tile_id_at(&self, grid_x: i16, grid_y: i16) -> Option<u16> {
         if grid_x < 0 || grid_y < 0 || grid_x >= self.width || grid_y >= self.height {
             return None;
@@ -92,7 +92,7 @@ impl TerrainAtlas {
         self.tile_ids.get(index).copied()
     }
 
-    /// Рисует видимые клетки карты в `dst`; возвращает число клеток.
+    /// Draws the visible map cells into `dst`; returns the number of cells.
     pub fn render_into(&self, dst: &mut RgbaBuffer, viewport: &Viewport) -> u32 {
         if self.is_empty() {
             return 0;
@@ -115,7 +115,7 @@ impl TerrainAtlas {
         painted
     }
 
-    /// Рисует одну клетку в прямоугольник `rect` (учитывает зум растяжением).
+    /// Draws one cell into the `rect` rectangle (takes the zoom into account by stretching).
     pub fn render_tile_into(
         &self,
         dst: &mut RgbaBuffer,
@@ -139,8 +139,8 @@ impl TerrainAtlas {
             return 0;
         };
 
-        // Карты координат пикселей считаем один раз на клетку: `rect` может быть
-        // меньше/больше 64 (зум), а внутри клетки масштаб одинаковый.
+        // Pixel coordinate maps are computed once per cell: `rect` may be
+        // smaller/larger than 64 (zoom), while inside the cell the scale is the same.
         let rows: Vec<usize> = (0..rect.height as usize)
             .map(|local_y| (local_y * TILE_SIZE / rect.height as usize) * TILE_SIZE)
             .collect();
@@ -168,20 +168,20 @@ impl TerrainAtlas {
         painted
     }
 
-    /// Рисует клетку выборкой **ровно как `Gfx_DecodeMapTile`** оригинала
-    /// (`gfx.cpp:125-210`) — это нужно для экрана высадки (зум 4), где C++
-    /// сводит 64×64 тайл к 4×4 пикселям.
+    /// Draws a cell by sampling **exactly like `Gfx_DecodeMapTile`** of the original
+    /// (`gfx.cpp:125-210`) — this is needed for the landing screen (zoom 4), where C++
+    /// reduces a 64×64 tile to 4×4 pixels.
     ///
-    /// Отличие от [`TerrainAtlas::render_tile_into`]: там каждый экранный
-    /// пиксель берёт начало равного блока (`x * 64 / width`), а оригинал
-    /// растягивает тайл по краям:
+    /// The difference from [`TerrainAtlas::render_tile_into`]: there each screen
+    /// pixel takes the start of an equal block (`x * 64 / width`), while the original
+    /// stretches the tile at the edges:
     ///
     /// ```text
     /// factor = ((64 - 1) << 16) / (size - 1) + 8;
     /// source = (i * factor) >> 16;          // size = 4 -> 0, 21, 42, 63
     /// ```
     ///
-    /// При `size == 64` обе формулы дают тождественную выборку.
+    /// With `size == 64` both formulas give an identical sample.
     pub fn render_tile_cpp_into(
         &self,
         dst: &mut RgbaBuffer,
@@ -231,10 +231,10 @@ impl TerrainAtlas {
     }
 }
 
-/// Смещения исходных пикселей тайла для `size` экранных пикселей —
-/// дословно `map_tile_zoom_factor` из `Gfx_DecodeMapTile` (`gfx.cpp:128`).
+/// Offsets of the source tile pixels for `size` screen pixels —
+/// verbatim `map_tile_zoom_factor` from `Gfx_DecodeMapTile` (`gfx.cpp:128`).
 ///
-/// `size == 1` — единственный пиксель тайла (C++ делил бы на ноль).
+/// `size == 1` — the single tile pixel (C++ would divide by zero).
 pub fn cpp_tile_sample_offsets(size: i32) -> Vec<usize> {
     let size = size.max(1) as usize;
 
@@ -259,7 +259,7 @@ impl std::fmt::Debug for TerrainAtlas {
     }
 }
 
-/// Палитра `.WRL` (768 байт RGB) в RGBA, с растяжением 6-битных каналов.
+/// `.WRL` palette (768 bytes RGB) in RGBA, with stretching of the 6-bit channels.
 pub fn palette_from_wrl(raw: &[u8]) -> PaletteRgba {
     let mut palette = [[0u8, 0, 0, 255]; PALETTE_COLORS];
     let usable = raw.len().min(PALETTE_COLORS * PALETTE_STRIDE);
@@ -268,7 +268,7 @@ pub fn palette_from_wrl(raw: &[u8]) -> PaletteRgba {
         return palette;
     }
 
-    // VGA-палитры хранят 6 бит на канал; если весь файл в 0..=63 — растягиваем.
+    // VGA palettes store 6 bits per channel; if the whole file is in 0..=63 — stretch.
     let six_bit = raw[..usable].iter().copied().max().unwrap_or(0) <= 63;
 
     for (index, entry) in palette.iter_mut().enumerate() {
@@ -336,7 +336,7 @@ mod tests {
         palette[3] = [10, 20, 30, 255];
 
         let mut tiles = vec![0u8; TILE_PIXELS];
-        tiles[0] = 3; // (0,0) тайла
+        tiles[0] = 3; // (0,0) of the tile
         tiles[TILE_SIZE + 5] = 3; // (5,1)
 
         let atlas = atlas_with_one_tile(tiles, palette);
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn cpp_sampling_matches_gfx_decode_map_tile() {
         // `map_tile_zoom_factor = ((64-1)<<16)/(size-1) + 8`;
-        // источник = `(i*factor)>>16` (`gfx.cpp:128,196`).
+        // source = `(i*factor)>>16` (`gfx.cpp:128,196`).
         assert_eq!(cpp_tile_sample_offsets(4), vec![0, 21, 42, 63]);
         assert_eq!(
             cpp_tile_sample_offsets(8),

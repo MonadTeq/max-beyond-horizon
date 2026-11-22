@@ -1,16 +1,16 @@
-//! FLC-ресурсы `MAX.RES` на реальных данных: все 71 `flc-ref` записи.
+//! FLC resources of `MAX.RES` on real data: all 71 `flc-ref` records.
 //!
-//! * `MAX.RES` содержит 71 запись-ссылку (`flc-ref` в `max-brh-assets/images/manifest.csv`):
-//!   тело записи — ASCIIZ-имя `*.FLC`-файла рядом с архивом (как `*.SPW`-ссылки,
+//! * `MAX.RES` contains 71 reference records (`flc-ref` in `max-brh-assets/images/manifest.csv`):
+//!   the record body is the ASCIIZ name of a `*.FLC` file next to the archive (like the `*.SPW` references,
 //!   `max-original-dasm/formats/spw.md` §1);
-//! * `manifest.csv` фиксирует `index/offset/size/ref` этих записей — тест
-//!   проверяет, что разбор архива не разошёлся с манифестом;
-//! * каждый файл разбирается [`Flic::parse`] и декодируется целиком
-//!   ([`Flic::decode_all`]): размеры, число кадров, детерминизм, отсутствие
-//!   паник на реальных данных.
+//! * `manifest.csv` fixes the `index/offset/size/ref` of these records — the test
+//!   checks that the archive parsing has not diverged from the manifest;
+//! * every file is parsed by [`Flic::parse`] and decoded entirely
+//!   ([`Flic::decode_all`]): dimensions, frame count, determinism, absence of
+//!   panics on real data.
 //!
-//! Тест пропускается (с сообщением в stderr), если `max-original/` нет — так
-//! `cargo test` работает и без игровых данных.
+//! The test is skipped (with a message on stderr) if `max-original/` is absent — so
+//! `cargo test` works without the game data as well.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -30,7 +30,7 @@ fn data_dir() -> PathBuf {
     repo_root().join("max-original")
 }
 
-/// Имена файлов каталога в нижнем регистре → реальный путь.
+/// Names of the directory files in lowercase → the real path.
 fn file_index() -> BTreeSet<String> {
     fs::read_dir(data_dir())
         .map(|entries| {
@@ -158,7 +158,7 @@ fn max_res_has_71_flc_reference_records() {
         );
     }
 
-    // Имена записей уникальны и совпадают с набором из SC_UNITS.
+    // The record names are unique and match the set from SC_UNITS.
     let names: BTreeSet<&str> = references.iter().map(|(name, ..)| name.as_str()).collect();
 
     assert_eq!(
@@ -235,7 +235,7 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
         let path = if path.is_file() {
             path
         } else {
-            // Windows не различает регистр, но данные в репозитории — в верхнем.
+            // Windows is case-insensitive, but the data in the repository is uppercase.
             data_dir().join(reference.to_ascii_uppercase())
         };
 
@@ -250,7 +250,7 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
         let flic = Flic::parse(&bytes)
             .unwrap_or_else(|error| panic!("{} ({reference}): {error}", entry.name));
 
-        // Заголовок: все ресурсы MAX.RES — 8-битные 128×N FLC.
+        // Header: all MAX.RES resources are 8-bit 128×N FLC.
         assert_eq!(flic.header().kind, max_assets::flic::FLC_MAGIC);
         assert_eq!(flic.width(), 128, "{}: ширина", entry.name);
         assert!(
@@ -279,7 +279,7 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
             flic.speed_ms()
         );
 
-        // Кадры идут подряд от `oframe1` и не выходят за файл.
+        // The frames follow `oframe1` in sequence and do not go beyond the file.
         let spans = flic.frame_spans();
         let mut expected_offset = flic.header().first_frame as usize;
 
@@ -299,7 +299,7 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
             entry.name
         );
 
-        // Декодирование всех кадров: без паник и с валидным размером.
+        // Decoding of all frames: without panics and with a valid size.
         let frames = flic
             .decode_all()
             .unwrap_or_else(|error| panic!("{}: {error}", entry.name));
@@ -316,7 +316,7 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
             assert_eq!(frame.pixels.len(), flic.width() * flic.height());
         }
 
-        // Детерминизм: повторное декодирование с нуля совпадает с первым.
+        // Determinism: re-decoding from scratch matches the first one.
         assert_eq!(
             flic.decode_frame(flic.frame_count() - 1).unwrap(),
             *frames.last().unwrap(),
@@ -327,16 +327,16 @@ fn all_71_flc_resources_parse_and_decode_every_frame() {
         if flic.is_animated() {
             animated += 1;
 
-            // Анимированный FLC действительно меняется: хотя бы один кадр
-            // отличается от первого (иначе анимация была бы пустой).
+            // An animated FLC really changes: at least one frame
+            // differs from the first (otherwise the animation would be empty).
             assert!(
                 frames.iter().any(|frame| frame.pixels != frames[0].pixels),
                 "{}: все кадры одинаковые",
                 entry.name
             );
 
-            // Проигрыватель проходит те же кадры, что и `decode_all`
-            // (до первого зацикливания).
+            // The player goes through the same frames as `decode_all`
+            // (up to the first loop-back).
             let mut player = FlicPlayer::new(&flic).unwrap();
 
             for (index, frame) in frames.iter().enumerate() {

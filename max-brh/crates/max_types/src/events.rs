@@ -1,11 +1,11 @@
-//! DTO авторитетного состояния команды (пакет 54) — чистые данные.
+//! DTO of authoritative team state (packet 54) — pure data.
 //!
-//! Здесь только протокольные структуры, не читающие данных симуляции:
-//! [`UnitStatePacket`], [`TeamStateSyncTail`], [`StateSyncPacket`]. Их
-//! применение (`apply_unit_state`, `apply_state_sync`) остаётся в
-//! `max_core::events`, потому что работает с `GameState`.
+//! Only protocol structures that do not read simulation data:
+//! [`UnitStatePacket`], [`TeamStateSyncTail`], [`StateSyncPacket`]. Their
+//! application (`apply_unit_state`, `apply_state_sync`) stays in
+//! `max_core::events`, because it works with `GameState`.
 //!
-//! Оракул: `max-cpp-port/src/remote.cpp` (`Remote_SendUnitStates`,
+//! Oracle: `max-cpp-port/src/remote.cpp` (`Remote_SendUnitStates`,
 //! `Remote_ReceiveNetPacket_54`, `Remote_ApplyUnitState`),
 //! `max-brh-docs/protocol.md` §8.5.
 
@@ -15,90 +15,90 @@ use crate::unit::UnitId;
 use crate::UNIT_COUNT;
 
 // ---------------------------------------------------------------------------
-// 54 — авторитетное состояние команды (P23-запись + хвост экономики)
+// 54 — authoritative team state (P23 record + economy tail)
 // ---------------------------------------------------------------------------
 
-/// Каноническое состояние юнита — `struct Packet23Data` (`max-brh-docs/protocol.md`
-/// §8.5); используется пакетами 23 и 54.
+/// Canonical unit state — `struct Packet23Data` (`max-brh-docs/protocol.md`
+/// §8.5); used by packets 23 and 54.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct UnitStatePacket {
-    /// Текущий приказ (`UnitOrderType`, сырой `u8`).
+    /// Current order (`UnitOrderType`, raw `u8`).
     pub orders: u8,
-    /// Состояние приказа (`UnitOrderStateType`, сырой `u8`).
+    /// Order state (`UnitOrderStateType`, raw `u8`).
     pub state: u8,
-    /// Отложенный приказ.
+    /// Queued order.
     pub prior_orders: u8,
-    /// Состояние отложенного приказа.
+    /// Queued order state.
     pub prior_state: u8,
-    /// Ответный огонь запрещён.
+    /// Return fire is forbidden.
     pub disabled_reaction_fire: bool,
-    /// Родительский юнит (`0` — нет).
+    /// Parent unit (`0` — none).
     pub parent_unit_id: u16,
-    /// Опыт.
+    /// Experience.
     pub experience: i16,
-    /// Точка движения X.
+    /// Move point X.
     pub move_to_grid_x: i16,
-    /// Точка движения Y.
+    /// Move point Y.
     pub move_to_grid_y: i16,
-    /// Цель огня X.
+    /// Fire target X.
     pub fire_on_grid_x: i16,
-    /// Цель огня Y.
+    /// Fire target Y.
     pub fire_on_grid_y: i16,
-    /// Юнит-цель (`0` — нет).
+    /// Target unit (`0` — none).
     pub enemy_unit_id: u16,
-    /// Перегружаемый груз.
+    /// Reloadable cargo.
     pub transfer_cargo: i16,
-    /// Бросок маскировки.
+    /// Camouflage roll.
     pub stealth_dice_roll: u8,
-    /// Добыча: всего.
+    /// Harvest: total.
     pub total_mining: u8,
-    /// Добыча материалов.
+    /// Materials harvested.
     pub raw_mining: u8,
-    /// Добыча топлива.
+    /// Fuel harvested.
     pub fuel_mining: u8,
-    /// Добыча золота.
+    /// Gold harvested.
     pub gold_mining: u8,
-    /// Таймер постройки.
+    /// Build timer.
     pub build_time: u8,
-    /// Темп постройки.
+    /// Build rate.
     pub build_rate: u16,
-    /// Тип юнита (`ResourceID`).
+    /// Unit type (`ResourceID`).
     pub unit_type: u16,
-    /// `UnitInfo::unit_id` (номер в команде, один байт).
+    /// `UnitInfo::unit_id` (index within the team, one byte).
     pub unit_id: u8,
-    /// Клетка X.
+    /// Cell X.
     pub grid_x: i16,
-    /// Клетка Y.
+    /// Cell Y.
     pub grid_y: i16,
-    /// Команда.
+    /// Team.
     pub team: u8,
-    /// Хиты.
+    /// Hits.
     pub hits: u16,
-    /// Скорость.
+    /// Speed.
     pub speed: u16,
-    /// Выстрелы.
+    /// Shots.
     pub shots: u8,
-    /// Груз в хранилище.
+    /// Cargo in storage.
     pub storage: i16,
-    /// Боезапас.
+    /// Ammo.
     pub ammo: u8,
 }
 
-/// Хвост последнего чанка пакета 54 — экономика команды на момент проверки.
+/// Tail of the last chunk of packet 54 — team economy at the moment of the check.
 ///
-/// Поля повторяют `Remote_SendUnitStates`/`Remote_ReceiveNetPacket_54`
+/// The fields mirror `Remote_SendUnitStates`/`Remote_ReceiveNetPacket_54`
 /// (`remote.cpp:4368-4373`, `4601-4648`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamStateSyncTail {
-    /// Кредиты команды (`TeamUnits::gold`).
+    /// Team credits (`TeamUnits::gold`).
     pub gold: u32,
-    /// Золото, потраченное на апгрейды.
+    /// Gold spent on upgrades.
     pub gold_spent_on_upgrades: u32,
-    /// Прогресс восьми тем исследований.
+    /// Progress of the eight research topics.
     pub research: [ResearchTopicInfo; RESEARCH_TOPIC_COUNT],
-    /// Счётчик созданных объектов.
+    /// Counter of created objects.
     pub number_of_objects_created: u16,
-    /// Счётчики имён по типам (`uint32_t[UNIT_END]`).
+    /// Name counters by type (`uint32_t[UNIT_END]`).
     pub unit_counters: [u32; UNIT_COUNT],
 }
 
@@ -114,17 +114,17 @@ impl Default for TeamStateSyncTail {
     }
 }
 
-/// Разобранный пакет 54 в терминах модели (`max_core`, без зависимости от `max_net`).
+/// Decoded packet 54 in model terms (`max_core`, without a `max_net` dependency).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSyncPacket {
-    /// Команда-владелец состояния.
+    /// Team that owns the state.
     pub team: TeamId,
-    /// Номер проверки (отличает раунды).
+    /// Check number (distinguishes rounds).
     pub sync_index: u8,
-    /// Последний чанк команды (несёт [`TeamStateSyncTail`]).
+    /// Last chunk of the team (carries [`TeamStateSyncTail`]).
     pub is_last: bool,
-    /// Юниты чанка в порядке владельца.
+    /// Units of the chunk in owner order.
     pub units: Vec<(UnitId, UnitStatePacket)>,
-    /// Хвост экономики; обязателен при `is_last`.
+    /// Economy tail; required when `is_last`.
     pub tail: Option<TeamStateSyncTail>,
 }

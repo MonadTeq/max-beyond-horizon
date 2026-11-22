@@ -23,19 +23,19 @@ pub const UNIT_END: usize = 93;
 pub const GAME_OPTION_COUNT: usize = 38;
 /// `NetPacket::MaximumArrayCount` used by packet 54 (`count` is `u16`).
 pub const MAX_SYNC_UNITS: usize = MAX_VECTOR_LEN;
-/// Сколько юнитов C++ кладёт в один пакет 54 (`Remote_SendUnitStates`,
+/// How many units C++ puts into one packet 54 (`Remote_SendUnitStates`,
 /// `remote.cpp:4334`: `units_per_packet = 32`).
 ///
-/// Rust режет чанки мельче: [`super::MAX_PACKET_SIZE`] (1440) жёстко проверяется
-/// кодеком, а 32 юнита — это `7 + 32×47 = 1511` байт без хвоста и `1989` с ним.
-/// C++-отправитель такой пакет отдаёт ENet на фрагментацию; Rust-декодер же
-/// отверг бы его как oversize, поэтому [`state_sync_for`] использует
-/// [`MAX_UNITS_PER_CHUNK`]/[`MAX_UNITS_LAST_CHUNK`]. Формат 54 от размера чанка
-/// не зависит: получатель принимает любой `count <= MAX_SYNC_UNITS`.
+/// Rust cuts chunks smaller: [`super::MAX_PACKET_SIZE`] (1440) is hard-checked
+/// by the codec, and 32 units are `7 + 32×47 = 1511` bytes without the tail and `1989` with it.
+/// The C++ sender hands such a packet to ENet for fragmentation; the Rust decoder
+/// would reject it as oversize, so [`state_sync_for`] uses
+/// [`MAX_UNITS_PER_CHUNK`]/[`MAX_UNITS_LAST_CHUNK`]. Format 54 does not depend
+/// on chunk size: the receiver accepts any `count <= MAX_SYNC_UNITS`.
 pub const STATE_SYNC_UNITS_PER_PACKET: usize = 32;
-/// Максимум юнитов в неполном чанке: `(1440 - 7) / 47 = 30`.
+/// Maximum units in a non-final chunk: `(1440 - 7) / 47 = 30`.
 const MAX_UNITS_PER_CHUNK: usize = 30;
-/// Максимум юнитов в последнем чанке: хвост — 478 байт,
+/// Maximum units in the last chunk: the tail is 478 bytes,
 /// `(1440 - 7 - 478) / 47 = 20`.
 const MAX_UNITS_LAST_CHUNK: usize = 20;
 
@@ -458,16 +458,16 @@ pub fn encode_save_request(packet: &SaveRequest, w: &mut Writer) -> WireResult<(
 }
 
 // ---------------------------------------------------------------------------
-// Мост в max_core: применение 54 и сборка собственного состояния
+// Bridge to max_core: applying 54 and assembling own state
 // ---------------------------------------------------------------------------
 
 impl UnitState {
-    /// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+    /// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
     ///
-    /// Собирает `Packet23Data` из авторитетного юнита.
+    /// Builds `Packet23Data` from the authoritative unit.
     ///
-    /// Порядок значений — `Remote_CreateNetPacket_23` (`remote.cpp`), точки
-    /// движения/огня берутся из `OrderData` (`UnitInfo::move_to_grid_*` в C++).
+    /// The order of values follows `Remote_CreateNetPacket_23` (`remote.cpp`); the move and fire
+    /// points are taken from `OrderData` (`UnitInfo::move_to_grid_*` in C++).
     pub fn from_unit(state: &max_core::game::GameState, unit: &UnitInfo) -> Self {
         let order = state.order_data(unit.id);
 
@@ -505,7 +505,7 @@ impl UnitState {
         }
     }
 
-    /// Канонический вид для [`max_core::events::apply_unit_state`].
+    /// Canonical form for [`max_core::events::apply_unit_state`].
     pub fn to_core(&self) -> max_types::events::UnitStatePacket {
         max_types::events::UnitStatePacket {
             orders: self.orders,
@@ -543,10 +543,10 @@ impl UnitState {
 }
 
 impl StateSyncTail {
-    /// Канонический вид для [`max_core::events::apply_state_sync`].
+    /// Canonical form for [`max_core::events::apply_state_sync`].
     ///
-    /// `i32` на проводе и `u32` в `max_core` — одни и те же биты (C++ кладёт
-    /// `int32_t` в `uint32_t`/`memcpy`), поэтому конверсия — приведение типа.
+    /// `i32` on the wire and `u32` in `max_core` are the same bits (C++ puts
+    /// `int32_t` into `uint32_t`/`memcpy`), so the conversion is a type cast.
     pub fn to_core(&self) -> max_types::events::TeamStateSyncTail {
         let mut research = [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT];
         for (destination, source) in research.iter_mut().zip(self.research.iter()) {
@@ -573,7 +573,7 @@ impl StateSyncTail {
 }
 
 impl StateSync {
-    /// Канонический вид для [`max_core::events::apply_state_sync`].
+    /// Canonical form for [`max_core::events::apply_state_sync`].
     pub fn to_core(&self) -> max_types::events::StateSyncPacket {
         max_types::events::StateSyncPacket {
             team: self.team,
@@ -589,14 +589,14 @@ impl StateSync {
     }
 }
 
-/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+/// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
 ///
-/// Собирает пакеты 54 с авторитетным состоянием юнитов команды.
+/// Builds packets 54 with the authoritative state of the team's units.
 ///
-/// Порт `Remote_SendUnitStates` (`remote.cpp:4333-4381`): юниты в порядке
-/// четырёх списков (`GroundCover → MobileLandSea → Stationary → MobileAir`),
-/// не более [`STATE_SYNC_UNITS_PER_PACKET`] на пакет, хвост экономики — только
-/// в последнем чанке. Для пустой команды возвращается один пакет с `is_last`.
+/// Port of `Remote_SendUnitStates` (`remote.cpp:4333-4381`): units in the order of the
+/// four lists (`GroundCover → MobileLandSea → Stationary → MobileAir`),
+/// at most [`STATE_SYNC_UNITS_PER_PACKET`] per packet, and the economy tail only
+/// in the last chunk. For an empty team a single packet with `is_last` is returned.
 pub fn state_sync_for(
     state: &max_core::game::GameState,
     team: TeamId,
@@ -649,11 +649,11 @@ pub fn state_sync_for(
     packets
 }
 
-/// Разбивает юнитов на чанки 54 с учётом [`super::MAX_PACKET_SIZE`].
+/// Splits units into chunks 54 within [`super::MAX_PACKET_SIZE`].
 ///
-/// Неполный чанк — до 30 юнитов, последний — до 20 (в нём ещё хвост 478 байт).
-/// Если жадная нарезка оставляет последний чанк больше 20, он разделяется на
-/// `(n − 20, 20)`, чтобы ни один кадр не превысил транспортный лимит.
+/// A non-final chunk holds up to 30 units, the last one up to 20 (it also carries the 478-byte tail).
+/// If greedy slicing leaves the last chunk larger than 20, it is split into
+/// `(n − 20, 20)` so that no frame exceeds the transport limit.
 fn chunk_sizes(total: usize) -> Vec<usize> {
     if total == 0 {
         return vec![0];
@@ -678,9 +678,9 @@ fn chunk_sizes(total: usize) -> Vec<usize> {
     sizes
 }
 
-/// Read-only projection: sim → wire. Не вызывает apply_*, не мутирует GameState.
+/// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
 ///
-/// Хвост пакета 54 (экономика команды) из `TeamInfo`/`TeamUnits`.
+/// The tail of packet 54 (team economy) from `TeamInfo`/`TeamUnits`.
 fn state_sync_tail(state: &max_core::game::GameState, team: TeamId) -> StateSyncTail {
     let info = &state.teams[team.0 as usize];
     let team_units = &state.team_units[team.0 as usize];
@@ -753,7 +753,7 @@ mod tests {
                 .expect("tank");
             ids.push(id);
         }
-        // Юнит другой команды не должен попасть в 54 команды GREEN.
+        // A unit of another team must not end up in GREEN's 54.
         state
             .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(50, 50), 0)
             .expect("red tank");
@@ -784,7 +784,7 @@ mod tests {
         assert!(!first.is_last);
         assert_eq!(first.units.len(), 30);
         assert!(first.tail.is_none());
-        // `MobileLandSea` — `PushFront`, поэтому порядок обратный порядку спавна.
+        // `MobileLandSea` uses `PushFront`, so the order is the reverse of spawn order.
         assert_eq!(first.units[0].0, ids[39]);
         assert_eq!(first.units[0].1.orders, UnitOrder::Sentry as u8);
         assert_eq!(first.units[0].1.team, TeamId::GREEN.0);
@@ -822,7 +822,7 @@ mod tests {
         assert!(packets[0].units.is_empty());
         assert!(packets[0].tail.is_some());
 
-        // Round-trip: пустой last-чанк кодируется и декодируется без потерь.
+        // Round-trip: an empty last chunk encodes and decodes without loss.
         let bytes = super::super::Packet::StateSync(packets[0].clone())
             .encode()
             .expect("encode empty 54");
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn state_sync_packets_fit_the_transport_limit() {
-        // 100 юнитов: неполные чанки по 30, последний — 478-байтный хвост.
+        // 100 units: non-final chunks of 30, the last one carries the 478-byte tail.
         let (state, _) = state_with_green_units(100);
         let packets = state_sync_for(&state, TeamId::GREEN, 1);
 

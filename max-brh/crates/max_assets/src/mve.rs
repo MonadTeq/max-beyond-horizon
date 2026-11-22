@@ -1,58 +1,58 @@
-//! Декодер видео Interplay MVE (`INTROFLC` → `maxint.mve`).
+//! Interplay MVE video decoder (`INTROFLC` → `maxint.mve`).
 //!
-//! Формат — контейнер Interplay MVE (M.A.X. играет интро через
-//! `movie_run(INTROFLC, …)` → `mvelib32.c`). Разбор:
+//! Format — the Interplay MVE container (M.A.X. plays the intro through
+//! `movie_run(INTROFLC, …)` → `mvelib32.c`). Layout:
 //!
 //! ```text
-//! файл: 20-байтная подпись "Interplay MVE File\x1A\0",
+//! file: 20-byte signature "Interplay MVE File\x1A\0",
 //!       u16 magic 0x001A, u16 version 0x0100, u16 checksum
 //!       (checksum == !version + 0x1234);
-//! далее записи (chunk): u16 payload_size, u16 type
+//! then records (chunk): u16 payload_size, u16 type
 //!       type 0 init_audio, 1 audio_only, 2 init_video, 3 video,
 //!       4 shutdown, 5 end;
-//! внутри записи — поток опкодов: u16 size, u8 opcode, u8 version, data.
+//! inside a record — an opcode stream: u16 size, u8 opcode, u8 version, data.
 //! ```
 //!
-//! Поддержаны опкоды, нужные интро: `CREATE_TIMER` (2), `INIT_VIDEO_BUFFERS`
+//! The opcodes needed by the intro are supported: `CREATE_TIMER` (2), `INIT_VIDEO_BUFFERS`
 //! (5), `SET_PALETTE` (12), `SET_DECODING_MAP` (15), `VIDEO_DATA_11` (17),
-//! аудио/неизвестные опкоды пропускаются. Видео — 8-битные индексированные
-//! кадры, нарезанные на блоки 8×8; карта декодирования — по нибблу на блок
-//! (младший ниббл — левый блок, старший — правый). Кодек блоков — точный порт
-//! `nfPkDecomp` из `max-cpp-port/src/mvelib32.c` (0x0 — копия прошлого кадра,
-//! 0x1 — позапрошлого, 0x2/0x3 — векторы движения, 0x4/0x5 — копия с малым
-//! сдвигом, 0x7…0xF — шаблоны 2/4/16/64 цветов, 0x6 в ресурсах M.A.X. не
-//! встречается и оставлен no-op, как в FFmpeg). Флаг `flags & 1` кадра
-//! переключает двойной буфер (как `nfAdvance`), поэтому кадр N полностью
-//! определяется кадрами N−1/N−2 — декодер детерминирован.
+//! audio/unknown opcodes are skipped. Video is 8-bit indexed
+//! frames sliced into 8×8 blocks; the decoding map is one nibble per block
+//! (the low nibble is the left block, the high one the right). The block codec is an exact port of
+//! `nfPkDecomp` from `max-cpp-port/src/mvelib32.c` (0x0 — copy of the previous frame,
+//! 0x1 — of the one before, 0x2/0x3 — motion vectors, 0x4/0x5 — copy with a small
+//! shift, 0x7…0xF — patterns of 2/4/16/64 colors, 0x6 does not occur in M.A.X.
+//! resources and is left a no-op, as in FFmpeg). The frame's `flags & 1` flag
+//! toggles double buffering (like `nfAdvance`), so frame N is fully
+//! determined by frames N−1/N−2 — the decoder is deterministic.
 //!
-//! Аудио не декодируется: звуковые опкоды читаются и пропускаются (как и
-//! `sndAdd` без аудиодрайвера). Субтитры `INTROSUB` тоже не накладываются —
-//! это отдельный слой `moviesubtitle.cpp`.
+//! Audio is not decoded: sound opcodes are read and skipped (as is
+//! `sndAdd` without an audio driver). The `INTROSUB` subtitles are not overlaid either —
+//! that is a separate layer, `moviesubtitle.cpp`.
 //!
-//! Проверка: `tests/mve_assets.rs` сверяет метаданные реального `MAXINT.MVE`
-//! (432×320, 4391 кадр, 15 FPS) и FNV-1a хеши кадров 0/50/100 с эталоном,
-//! снятым C-обвязкой над `nfPkDecomp` оракула.
+//! Verification: `tests/mve_assets.rs` checks the metadata of the real `MAXINT.MVE`
+//! (432×320, 4391 frames, 15 FPS) and the FNV-1a hashes of frames 0/50/100 against a reference
+//! captured by a C harness over the oracle's `nfPkDecomp`.
 
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Подпись файла (19 байт; в файле за ней идёт NUL).
+/// File signature (19 bytes; in the file it is followed by NUL).
 pub const MVE_SIGNATURE: &[u8; 19] = b"Interplay MVE File\x1a";
-/// Размер заголовка файла: подпись + magic + version + checksum.
+/// File header size: signature + magic + version + checksum.
 pub const FILE_HEADER_SIZE: usize = 26;
-/// Размер заголовка опкода: `u16 size`, `u8 opcode`, `u8 version`.
+/// Opcode header size: `u16 size`, `u8 opcode`, `u8 version`.
 pub const OPCODE_HEADER_SIZE: usize = 4;
-/// Заголовок видео-опкода `VIDEO_DATA_11`: 7 × `u16` (unused×2, x, y, w, h, flags).
+/// Header of the `VIDEO_DATA_11` video opcode: 7 × `u16` (unused×2, x, y, w, h, flags).
 pub const VIDEO_HEADER_SIZE: usize = 14;
-/// Сколько цветов в палитре.
+/// How many colors are in the palette.
 pub const PALETTE_SIZE: usize = 256;
-/// Задержка кадра по умолчанию (15 FPS), если `CREATE_TIMER` не встретился.
+/// Default frame delay (15 FPS) if `CREATE_TIMER` was not encountered.
 pub const DEFAULT_FRAME_DELAY_US: u32 = 66_667;
-/// Блок кодека: 8×8 пикселей.
+/// Codec block: 8×8 pixels.
 pub const BLOCK_SIZE: usize = 8;
 
-/// Тип записи контейнера.
+/// Container record type.
 const CHUNK_INIT_AUDIO: u16 = 0;
 const CHUNK_AUDIO_ONLY: u16 = 1;
 const CHUNK_INIT_VIDEO: u16 = 2;
@@ -60,7 +60,7 @@ const CHUNK_VIDEO: u16 = 3;
 const CHUNK_SHUTDOWN: u16 = 4;
 const CHUNK_END: u16 = 5;
 
-/// Опкоды.
+/// Opcodes.
 const OP_END_OF_STREAM: u8 = 0x00;
 const OP_END_OF_CHUNK: u8 = 0x01;
 const OP_CREATE_TIMER: u8 = 0x02;
@@ -72,93 +72,93 @@ const OP_VIDEO_DATA_10: u8 = 0x10;
 const OP_VIDEO_DATA_11: u8 = 0x11;
 
 // ---------------------------------------------------------------------------
-// Ошибки
+// Errors
 // ---------------------------------------------------------------------------
 
-/// Ошибка разбора/декодирования MVE.
+/// MVE parse/decoding error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MveError {
-    /// Файл короче заголовка.
+    /// The file is shorter than the header.
     TooShort {
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
-        /// Минимально необходимая.
+        /// Minimum required.
         needed: usize,
     },
-    /// Нет подписи `Interplay MVE File`.
+    /// No `Interplay MVE File` signature.
     BadSignature,
-    /// Magic/version/checksum не совпали.
+    /// Magic/version/checksum did not match.
     BadHeader,
-    /// Запись контейнера выходит за конец файла.
+    /// A container record extends beyond the end of the file.
     TruncatedChunk {
-        /// Смещение записи.
+        /// Record offset.
         offset: usize,
-        /// Требуемый конец.
+        /// Required end.
         needed: usize,
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
     },
-    /// Опкод выходит за конец записи.
+    /// An opcode extends beyond the end of the record.
     TruncatedOpcode {
-        /// Смещение опкода.
+        /// Opcode offset.
         offset: usize,
-        /// Требуемый конец.
+        /// Required end.
         needed: usize,
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
     },
-    /// Первый видео-опкод встретился до карты декодирования.
+    /// The first video opcode appeared before the decoding map.
     MissingDecodingMap {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
     },
-    /// Размеры/координаты кадра не помещаются в буфер.
+    /// The frame dimensions/coordinates do not fit into the buffer.
     BadFrameRect {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Смещение по x (в пикселях).
+        /// x offset (in pixels).
         x: u16,
-        /// Смещение по y (в пикселях).
+        /// y offset (in pixels).
         y: u16,
-        /// Ширина (в пикселях).
+        /// Width (in pixels).
         width: u16,
-        /// Высота (в пикселях).
+        /// Height (in pixels).
         height: u16,
     },
-    /// Карта декодирования короче `width*height/2` байт.
+    /// The decoding map is shorter than `width*height/2` bytes.
     BadDecodingMap {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
     },
-    /// Видео-опкод короче 14-байтного заголовка.
+    /// The video opcode is shorter than the 14-byte header.
     TruncatedVideoHeader {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
     },
-    /// Поток блока обрывается.
+    /// The block stream is cut off.
     TruncatedVideo {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
     },
-    /// Формат видео `0x06`/`0x10` не поддержан (в ресурсах M.A.X. — `0x11`).
+    /// Video format `0x06`/`0x10` is not supported (M.A.X. resources use `0x11`).
     UnsupportedVideoFormat {
-        /// Формат опкода.
+        /// Opcode format.
         format: u8,
     },
-    /// Неизвестный код блока (в ресурсах не встречается).
+    /// Unknown block code (does not occur in the resources).
     UnsupportedBlock {
-        /// Индекс кадра.
+        /// Frame index.
         frame: usize,
-        /// Код блока.
+        /// Block code.
         opcode: u8,
     },
-    /// В файле нет видео (нет `INIT_VIDEO_BUFFERS`/`VIDEO_DATA`).
+    /// There is no video in the file (no `INIT_VIDEO_BUFFERS`/`VIDEO_DATA`).
     NoVideo,
 }
 
@@ -225,26 +225,26 @@ impl fmt::Display for MveError {
 impl std::error::Error for MveError {}
 
 // ---------------------------------------------------------------------------
-// Метаданные
+// Metadata
 // ---------------------------------------------------------------------------
 
-/// Паспорт MVE-файла.
+/// MVE file passport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MveInfo {
-    /// Ширина кадра в пикселях (`width_blocks * 8`).
+    /// Frame width in pixels (`width_blocks * 8`).
     pub width: u16,
-    /// Высота кадра в пикселях (`height_blocks * fqty * 8`).
+    /// Frame height in pixels (`height_blocks * fqty * 8`).
     pub height: u16,
-    /// Число видео-кадров (`VIDEO_DATA_11`).
+    /// Number of video frames (`VIDEO_DATA_11`).
     pub frame_count: usize,
-    /// Длительность кадра в микросекундах (`rate * divider`).
+    /// Frame duration in microseconds (`rate * divider`).
     pub frame_delay_us: u32,
-    /// Формат видео (в `maxint.mve` — `0x11`).
+    /// Video format (`0x11` in `maxint.mve`).
     pub video_format: u8,
 }
 
 impl MveInfo {
-    /// Длительность кадра в секундах.
+    /// Frame duration in seconds.
     pub fn frame_delay_seconds(&self) -> f32 {
         if self.frame_delay_us == 0 {
             DEFAULT_FRAME_DELAY_US as f32 / 1_000_000.0
@@ -253,21 +253,21 @@ impl MveInfo {
         }
     }
 
-    /// Кадров в секунду (для логов/тестов).
+    /// Frames per second (for logs/tests).
     pub fn frames_per_second(&self) -> f32 {
         1.0 / self.frame_delay_seconds()
     }
 }
 
 // ---------------------------------------------------------------------------
-// Разбор файла
+// File parsing
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
 struct PaletteUpdate {
     start: u16,
     count: u16,
-    /// Абсолютное смещение 3·count байт 6-битной палитры.
+    /// Absolute offset of 3·count bytes of the 6-bit palette.
     offset: usize,
 }
 
@@ -302,18 +302,18 @@ struct Inner {
     info: MveInfo,
 }
 
-/// Разобранный MVE-файл: метаданные + индексированные кадры.
+/// Parsed MVE file: metadata + indexed frames.
 ///
-/// Сам файл (`Arc<[u8]>`) разделяется между клонами и декодерами; кадры
-/// декодируются по требованию [`MveDecoder`], поэтому 71 МБ `maxint.mve` не
-/// превращаются в 600 МБ распакованных кадров.
+/// The file itself (`Arc<[u8]>`) is shared between clones and decoders; frames
+/// are decoded on demand by [`MveDecoder`], so the 71 MB of `maxint.mve` do not
+/// turn into 600 MB of decompressed frames.
 #[derive(Debug, Clone)]
 pub struct Mve {
     inner: Arc<Inner>,
 }
 
 impl Mve {
-    /// Читает и разбирает MVE-файл.
+    /// Reads and parses an MVE file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, MveError> {
         let bytes = std::fs::read(path.as_ref()).map_err(|_| MveError::TooShort {
             len: 0,
@@ -323,7 +323,7 @@ impl Mve {
         Self::parse(bytes)
     }
 
-    /// Разбирает MVE из байтов.
+    /// Parses MVE from bytes.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, MveError> {
         if bytes.len() < FILE_HEADER_SIZE {
             return Err(MveError::TooShort {
@@ -387,7 +387,7 @@ impl Mve {
                 kind,
                 CHUNK_INIT_AUDIO | CHUNK_AUDIO_ONLY | CHUNK_INIT_VIDEO | CHUNK_VIDEO
             ) {
-                // Неизвестный тип записи: пропускаем целиком (как FFmpeg CHUNK_BAD).
+                // Unknown record type: skip it entirely (like FFmpeg CHUNK_BAD).
                 offset = payload_end;
                 continue;
             }
@@ -481,8 +481,8 @@ impl Mve {
 
                         if opcode != OP_VIDEO_DATA_11 {
                             video_format = opcode;
-                            // Форматы 0x10/0x06 в ресурсах M.A.X. не встречаются.
-                            // Запоминаем кадр, чтобы сообщить об ошибке при декодировании.
+                            // Formats 0x10/0x06 do not occur in M.A.X. resources.
+                            // Remember the frame to report an error during decoding.
                             let (map_offset, map_len) = map.unwrap_or((data_start, 0));
                             events.push(Event::Frame(FrameSpec {
                                 map_offset,
@@ -546,13 +546,13 @@ impl Mve {
         })
     }
 
-    /// Метаданные файла.
+    /// File metadata.
     pub fn info(&self) -> MveInfo {
         self.inner.info
     }
 
-    /// Создаёт декодер с нулевыми кадрами и начальной палитрой
-    /// (`movie_init_palette`: всё чёрное, индекс 255 = 50/50/50).
+    /// Creates a decoder with zeroed frames and the initial palette
+    /// (`movie_init_palette`: all black, index 255 = 50/50/50).
     pub fn decoder(&self) -> MveDecoder {
         let width = usize::from(self.inner.info.width);
         let height = usize::from(self.inner.info.height);
@@ -591,49 +591,49 @@ fn parse_frame_header(data: &[u8], offset: usize) -> FrameHeader {
 }
 
 // ---------------------------------------------------------------------------
-// Декодер кадров
+// Frame decoder
 // ---------------------------------------------------------------------------
 
-/// Покадровый декодер MVE.
+/// Frame-by-frame MVE decoder.
 ///
-/// Кадры дельта-кодированы, поэтому их нужно декодировать последовательно от
-/// нулевого. `next_frame()` возвращает индексированный кадр
-/// (`width * height` байт) и продвигается вперёд; палитра — [`Self::palette`].
+/// The frames are delta-encoded, so they must be decoded sequentially from
+/// zero. `next_frame()` returns an indexed frame
+/// (`width * height` bytes) and advances; the palette is [`Self::palette`].
 #[derive(Debug, Clone)]
 pub struct MveDecoder {
     inner: Arc<Inner>,
     event: usize,
     frame_index: usize,
-    /// Буфер, в который пишется текущий кадр.
+    /// Buffer the current frame is written into.
     cur: Vec<u8>,
-    /// Предыдущий показанный кадр (для копирования блоков).
+    /// The previously shown frame (for copying blocks).
     prv: Vec<u8>,
     palette: [[u8; 3]; PALETTE_SIZE],
     finished: bool,
 }
 
 impl MveDecoder {
-    /// Метаданные.
+    /// Metadata.
     pub fn info(&self) -> MveInfo {
         self.inner.info
     }
 
-    /// Текущая палитра (8-битные компоненты; обновляется опкодами `SET_PALETTE`).
+    /// Current palette (8-bit components; updated by `SET_PALETTE` opcodes).
     pub fn palette(&self) -> &[[u8; 3]; PALETTE_SIZE] {
         &self.palette
     }
 
-    /// Сколько кадров уже декодировано.
+    /// How many frames have already been decoded.
     pub fn frame_index(&self) -> usize {
         self.frame_index
     }
 
-    /// Декодер дошёл до конца файла.
+    /// The decoder reached the end of the file.
     pub fn is_finished(&self) -> bool {
         self.finished
     }
 
-    /// Декодирует следующий кадр. `Ok(None)` — файл закончился.
+    /// Decodes the next frame. `Ok(None)` — the file has ended.
     pub fn next_frame(&mut self) -> Result<Option<&[u8]>, MveError> {
         loop {
             if self.event >= self.inner.events.len() {
@@ -675,7 +675,7 @@ impl MveDecoder {
                 break;
             }
 
-            // 6-битная VGA-палитра → 8-битные компоненты, как `movie_cb_set_palette`.
+            // 6-bit VGA palette -> 8-bit components, like `movie_cb_set_palette`.
             self.palette[color] = [
                 data[offset].saturating_mul(4),
                 data[offset + 1].saturating_mul(4),
@@ -789,7 +789,7 @@ impl MveDecoder {
     }
 }
 
-/// Курсор по сжатому потоку блоков кадра.
+/// Cursor over the compressed block stream of a frame.
 struct VideoCursor<'a> {
     data: &'a [u8],
     pos: usize,
@@ -842,21 +842,21 @@ fn decode_block(
 ) -> Result<(), MveError> {
     let dst = block_offset(header, block_x, block_y, stride);
 
-    // Шаблонные блоки 0x7…0xA портированы из `nfFillPattern*` оракула
-    // (таблицы `nf_pk_lut_4/5/6`), иначе порядок пар в некоторых ветках
-    // отличается от `nfPkDecomp` на пару пикселей.
+    // Pattern blocks 0x7…0xA are ported from the oracle's `nfFillPattern*`
+    // (tables `nf_pk_lut_4/5/6`), otherwise the order of pairs in some branches
+    // differs from `nfPkDecomp` by a couple of pixels.
     if (0x7..=0xA).contains(&opcode) {
         return decode_pattern_block(opcode, frame, dst, stride, cur, cursor, pattern);
     }
 
     match opcode {
-        // Копия блока из предыдущего кадра.
+        // Copy of a block from the previous frame.
         0x0 => {
             copy_block(cur, dst, prv, dst as isize, stride);
         }
-        // Блок остаётся из позапрошлого кадра (двойной буфер уже содержит его).
+        // The block remains from the frame before (the double buffer already contains it).
         0x1 => {}
-        // Вектор движения из позапрошлого кадра (положительный).
+        // Motion vector from the frame before (positive).
         0x2 => {
             let byte = cursor.byte()?;
             let (dx, dy) = motion_vector(byte);
@@ -864,7 +864,7 @@ fn decode_block(
 
             copy_within_block(cur, dst, src, stride);
         }
-        // Вектор движения из текущего кадра (отрицательный).
+        // Motion vector from the current frame (negative).
         0x3 => {
             let byte = cursor.byte()?;
             let (dx, dy) = motion_vector(byte);
@@ -872,7 +872,7 @@ fn decode_block(
 
             copy_within_block(cur, dst, src, stride);
         }
-        // Копия из предыдущего кадра со сдвигом −8..7 по обеим осям.
+        // Copy from the previous frame with a shift of −8..7 on both axes.
         0x4 => {
             let byte = cursor.byte()?;
             let dx = isize::from(byte & 0x0F) - 8;
@@ -881,7 +881,7 @@ fn decode_block(
 
             copy_block(cur, dst, prv, src, stride);
         }
-        // Копия из предыдущего кадра с расширенным диапазоном (i8, i8).
+        // Copy from the previous frame with an extended range (i8, i8).
         0x5 => {
             let dx = cursor.byte()? as i8 as isize;
             let dy = cursor.byte()? as i8 as isize;
@@ -889,7 +889,7 @@ fn decode_block(
 
             copy_block(cur, dst, prv, src, stride);
         }
-        // В M.A.X. не встречается; FFmpeg тоже не трогает буфер.
+        // Does not occur in M.A.X.; FFmpeg does not touch the buffer either.
         0x6 => {}
         0xB => {
             let block = cursor.block()?;
@@ -1035,7 +1035,7 @@ const NF_PK_LUT_6: [u32; 256] = [
     0xE1C3E5C5, 0xE1C7E5C5, 0xE1C1E5C5, 0xE1C5E5C5, 0xE5C3E5C5, 0xE5C7E5C5, 0xE5C1E5C5, 0xE5C5E5C5,
 ];
 
-/// Скрэтч шаблонных блоков: `map1/map2` как в `nfPkDecomp` (на кадр).
+/// Scratch of pattern blocks: `map1/map2` as in `nfPkDecomp` (per frame).
 struct PatternScratch {
     map1: [u8; 512],
     map2: [u32; 256],
@@ -1050,7 +1050,7 @@ impl PatternScratch {
     }
 }
 
-/// Точный порт шаблонных ветвей `nfPkDecomp` (коды блоков 0x7…0xA).
+/// Exact port of the pattern branches of `nfPkDecomp` (block codes 0x7…0xA).
 fn decode_pattern_block(
     opcode: u8,
     _frame: usize,
@@ -1065,8 +1065,8 @@ fn decode_pattern_block(
     let mut buffer = [0u8; 64];
     buffer[..take].copy_from_slice(&cursor.data[cursor.pos..cursor.pos + take]);
 
-    // Код 0xA — построчный порт `nfPkDecomp` (в нём важна каждая
-    // корректировка `dst`, а не только итоговая картинка блока).
+    // Code 0xA — a row-by-row port of `nfPkDecomp` (in it every
+    // adjustment of `dst` matters, not just the final picture of the block).
     if opcode == 0xA {
         let result = write_case_10(
             cur,
@@ -1077,7 +1077,7 @@ fn decode_pattern_block(
             stride,
         );
 
-        // Ветка `src[0] > src[1]` (A) читает 24 байта, иначе (B) — 32.
+        // The `src[0] > src[1]` branch (A) reads 24 bytes, otherwise (B) — 32.
         let consumed = if buffer[0] > buffer[1] { 24 } else { 32 };
 
         cursor.pos = (cursor.pos + consumed).min(cursor.data.len());
@@ -1353,7 +1353,7 @@ fn decode_pattern_block(
                         );
                     }
                 } else {
-                    // Левая половина — полные 8-пиксельные строки.
+                    // The left half — full 8-pixel rows.
                     for i in 0..4 {
                         fill_pattern12(
                             cur,
@@ -1373,7 +1373,7 @@ fn decode_pattern_block(
                         );
                     }
 
-                    // Правая половина — 4-пиксельные слова поверх правых колонок.
+                    // The right half — 4-pixel words over the right columns.
                     set_colors4(&mut pattern.map2, &src[12..16]);
 
                     for i in 0..4 {
@@ -1501,7 +1501,7 @@ fn decode_pattern_block(
     Ok(())
 }
 
-/// `nfFillPattern`: 2-цветный шаблон (`run` итераций по 1/2 строки).
+/// `nfFillPattern`: 2-color pattern (`run` iterations of 1/2 rows).
 #[allow(clippy::too_many_arguments)]
 fn fill_pattern(
     buf: &mut [u8],
@@ -1576,7 +1576,7 @@ fn fill_pattern(
     }
 }
 
-/// `nfFillPattern11`: 4-цветный шаблон, заполняет `map1`.
+/// `nfFillPattern11`: 4-color pattern, fills `map1`.
 fn fill_pattern11(src: &[u8], map1: &mut [u8], map2: &mut [u32], stride: usize, mode: usize) {
     for i in 0..stride {
         let mut value = NF_PK_LUT_6[usize::from(src[4 + i])];
@@ -1598,7 +1598,7 @@ fn fill_pattern11(src: &[u8], map1: &mut [u8], map2: &mut [u32], stride: usize, 
     map2[0xE7] = u32::from(src[1]);
 }
 
-/// `nfFillPattern12`: 4-цветная строка/две строки по `map1`.
+/// `nfFillPattern12`: a 4-color row/two rows over `map1`.
 fn fill_pattern12(
     buf: &mut [u8],
     dst: usize,
@@ -1638,7 +1638,7 @@ fn fill_pattern12(
     }
 }
 
-/// Одно 32-битное слово (4 пикселя) из `map1/map2` (ветка 0xA).
+/// One 32-bit word (4 pixels) from `map1/map2` (branch 0xA).
 fn put_lut6_word(buf: &mut [u8], dst: usize, map1: &[u8], map2: &[u32], index: usize) {
     let at = |offset: usize| -> u32 { map2[usize::from(map1[index + offset])] };
     let word = (at(0) << 16) | (at(1) << 24) | at(2) | (at(3) << 8);
@@ -1652,11 +1652,11 @@ fn put_u32(buf: &mut [u8], offset: usize, value: u32) {
     }
 }
 
-/// Точный построчный порт ветки `case 10` из `nfPkDecomp`.
+/// Exact row-by-row port of the `case 10` branch of `nfPkDecomp`.
 ///
-/// В отличие от остальных шаблонов здесь важна не только картинка 8×8, но и
-/// порядок записи/сдвиги `dst`: ветка сначала пишет полные строки, а затем
-/// накладывает правую половину. Повторяем C-код дословно.
+/// Unlike the other patterns, here not only the 8×8 picture matters but also
+/// the write order/shifts of `dst`: the branch first writes full rows and then
+/// overlays the right half. We repeat the C code verbatim.
 fn write_case_10(
     cur: &mut [u8],
     dst: &mut usize,
@@ -1809,7 +1809,7 @@ fn set_colors4(map2: &mut [u32; 256], src: &[u8]) {
     map2[0xE7] = u32::from(src[1]);
 }
 
-/// Смещение блока в буфере кадра.
+/// Offset of a block in the frame buffer.
 #[inline]
 fn block_offset(header: &FrameHeader, block_x: usize, block_y: usize, stride: usize) -> usize {
     let x = usize::from(header.x) + block_x * BLOCK_SIZE;
@@ -1818,10 +1818,10 @@ fn block_offset(header: &FrameHeader, block_x: usize, block_y: usize, stride: us
     y * stride + x
 }
 
-/// Расшифровка байта вектора движения (`nf_pk_lut_3`): (dx, dy).
+/// Decoding of a motion vector byte (`nf_pk_lut_3`): (dx, dy).
 ///
-/// Таблица оракула раскладывается в ту же формулу, что и в FFmpeg:
-/// `B < 56` — положительный вектор `(8 + B % 7, B / 7)`, иначе —
+/// The oracle table unfolds into the same formula as in FFmpeg:
+/// `B < 56` — positive vector `(8 + B % 7, B / 7)`, otherwise —
 /// `(-14 + (B - 56) % 29, 8 + (B - 56) / 29)`.
 #[inline]
 fn motion_vector(byte: u8) -> (isize, isize) {
@@ -1834,7 +1834,7 @@ fn motion_vector(byte: u8) -> (isize, isize) {
     }
 }
 
-/// Копирует 8×8 из `src` по линейному смещению `src_offset` в `dst` по `dst_offset`.
+/// Copies 8×8 from `src` at the linear offset `src_offset` into `dst` at `dst_offset`.
 fn copy_block(dst: &mut [u8], dst_offset: usize, src: &[u8], src_offset: isize, stride: usize) {
     let mut block = [0u8; 64];
 
@@ -1853,7 +1853,7 @@ fn copy_block(dst: &mut [u8], dst_offset: usize, src: &[u8], src_offset: isize, 
     write_block(dst, dst_offset, stride, &block);
 }
 
-/// Копирует 8×8 внутри одного буфера (чтение во временный блок).
+/// Copies 8×8 inside one buffer (reading into a temporary block).
 fn copy_within_block(dst: &mut [u8], dst_offset: usize, src_offset: isize, stride: usize) {
     let mut block = [0u8; 64];
 
@@ -1883,7 +1883,7 @@ fn write_block(dst: &mut [u8], dst_offset: usize, stride: usize, block: &[u8; 64
 }
 
 // ---------------------------------------------------------------------------
-// Тесты
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1955,7 +1955,7 @@ mod tests {
             assert_eq!(frame.len(), 432 * 320);
 
             if index == 0 {
-                // Первый кадр — тёмно-синий фон (индекс 4), не чёрный.
+                // The first frame is a dark blue background (index 4), not black.
                 assert!(frame.iter().any(|&pixel| pixel != 0));
                 assert!(frame.iter().all(|&pixel| pixel == 4));
             }
@@ -1971,10 +1971,10 @@ mod tests {
             "кадры 0/50/100 должны совпасть с эталоном nfPkDecomp"
         );
 
-        // Первая палитра (`SET_PALETTE` в init-записи): индекс 4 — (4,0,4);
-        // 255 остаётся 50/50/50 (`movie_init_palette`). Палитры меняются по
-        // ходу фильма (13 `SET_PALETTE` в разных местах), поэтому здесь
-        // проверяется именно палитра первых кадров.
+        // The first palette (`SET_PALETTE` in the init record): index 4 — (4,0,4);
+        // 255 stays 50/50/50 (`movie_init_palette`). Palettes change over
+        // the course of the movie (13 `SET_PALETTE` in different places), so here
+        // the palette of the first frames is what is checked.
         assert_eq!(decoder.palette()[4], [4, 0, 4]);
         assert_eq!(decoder.palette()[255], [50, 50, 50]);
         assert_eq!(decoder.frame_index(), 101);
@@ -1988,9 +1988,9 @@ mod tests {
             return;
         }
 
-        // Полный проход по 4391 кадрам — быстрая проверка индексации/финала
-        // (без проверки пикселей каждого кадра): декодер не падает и выдаёт
-        // ровно `frame_count` кадров.
+        // A full pass over 4391 frames — a quick check of indexing/finale
+        // (without checking the pixels of each frame): the decoder does not crash and yields
+        // exactly `frame_count` frames.
         let mve = Mve::open(&path).unwrap();
         let mut decoder = mve.decoder();
         let mut count = 0usize;
@@ -2001,7 +2001,7 @@ mod tests {
 
         assert_eq!(count, mve.info().frame_count);
         assert!(decoder.is_finished());
-        // К концу фильма применены все 13 `SET_PALETTE`: индекс 4 — (0,4,44).
+        // By the end of the movie all 13 `SET_PALETTE` are applied: index 4 — (0,4,44).
         assert_eq!(decoder.palette()[4], [0, 4, 44]);
     }
 }

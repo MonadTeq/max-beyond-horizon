@@ -1,35 +1,35 @@
-//! max_render — рендер мира M.A.X.: палитра, спрайты, тайлы карты, камера.
+//! max_render — rendering of the M.A.X. world: palette, sprites, map tiles, camera.
 //!
-//! Крейт разделён на две части:
+//! The crate is split into two parts:
 //!
-//! * **чистая** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
-//!   [`viewport`], [`text`], [`ui`]: только данные и целочисленная арифметика,
-//!   никакого SDL и файлового I/O (кроме загрузки `COLOR.PAL`). Всё
-//!   тестируется без окна — это основной, всегда собираемый слой.
-//! * **SDL-слой** — [`sdl_window`] под feature `sdl`: окно, вывод
-//!   [`RgbaBuffer`] на экран и очередь событий. Без фичи модуль не собирается
-//!   и зависимость `sdl3` не тянется.
+//! * **pure** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
+//!   [`viewport`], [`text`], [`ui`]: only data and integer arithmetic,
+//!   no SDL and no file I/O (except loading `COLOR.PAL`). Everything is
+//!   tested without a window — this is the main, always buildable layer.
+//! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
+//!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
+//!   and the `sdl3` dependency is not pulled in.
 //!
-//! Соответствие оригиналу (`max-original-dasm/formats/spw.md`):
+//! Correspondence with the original (`max-original-dasm/formats/spw.md`):
 //!
-//! * палитра `COLOR.PAL` — 256 × RGB по 6 бит, в 8 бит умножается на 4 (§6.1);
-//! * командные слоты 32–39 и 48–63 перекрашиваются LUT команды (§6.2);
-//! * яркость — 7 уровней плюс identity, тень — уровень 5 (§6.3);
-//! * спрайт рисуется как `палитра[яркость[команда[индекс]]]`, прозрачные
-//!   пиксели не пишутся, тень затемняет уже нарисованную карту (§5.2, §4.3);
-//! * позиция спрайта — `anchor - hot` (§5.1), порядок юнитов — по `y` (§5.4).
+//! * the `COLOR.PAL` palette — 256 × RGB at 6 bits, scaled to 8 bits by multiplying by 4 (§6.1);
+//! * team slots 32–39 and 48–63 are recolored by the team LUT (§6.2);
+//! * brightness — 7 levels plus identity, shadow — level 5 (§6.3);
+//! * a sprite is drawn as `palette[brightness[team[index]]]`, transparent
+//!   pixels are not written, the shadow darkens the already drawn map (§5.2, §4.3);
+//! * sprite position — `anchor - hot` (§5.1), unit order — by `y` (§5.4).
 //!
-//! Запуск с окном (SDL3):
+//! Running with a window (SDL3):
 //!
 //! ```text
-//! # системный SDL3 (dev-пакет) — обычный путь:
+//! # system SDL3 (dev package) — the usual path:
 //! cargo run -p max_render --features sdl --example window
-//! # без системного SDL3: собрать его из исходников (нужен cmake):
+//! # without a system SDL3: build it from source (cmake required):
 //! cargo run -p max_render --features sdl-from-source --example window
 //! ```
 //!
-//! Пример `examples/window.rs` рисует карту и спрайт из `COLOR.PAL`/`TANK`
-//! (если рядом с рабочим каталогом есть `max-original/MAX.RES`).
+//! The `examples/window.rs` example draws a map and a sprite from `COLOR.PAL`/`TANK`
+//! (if `max-original/MAX.RES` is next to the working directory).
 
 #![forbid(unsafe_code)]
 
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn pure_render_smoke() {
-        // Палитра из 768 байт + рендер одного пикселя в буфер без SDL.
+        // Palette of 768 bytes + rendering of one pixel into the buffer without SDL.
         let bytes = [7u8; PALETTE_BYTES];
         let palette = Palette::from_color_pal(&bytes).unwrap();
         let brightness = BrightnessLut::build(&palette);

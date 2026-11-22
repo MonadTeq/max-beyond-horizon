@@ -1,82 +1,82 @@
-//! Шрифты GNW оригинала: `GNW_TEXT_FONT_1/2/5` из `FONT1.FON`/`FONT2.FON`/
+//! GNW fonts of the original: `GNW_TEXT_FONT_1/2/5` from `FONT1.FON`/`FONT2.FON`/
 //! `FONT5.FON`.
 //!
-//! # Откуда данные
+//! # Where the data comes from
 //!
-//! C++-порт рисует текст через FreeType из TTF-ресурсов `FONT_1`/`FONT_2`/
-//! `FONT_5` (`PATCHES.RES`), а те TTF были сконвертированы из **растровых
-//! шрифтов GNW** `FONT1.FON`/`FONT2.FON`/`FONT5.FON` (файлы рядом с `MAX.RES`).
-//! Оригинальная игра рисовала именно эти битмапы. Проверено инструментом
-//! [`tools/font_vectors`](../../../../tools/font_vectors): для ASCII оба пути
-//! (FreeType по TTF и декодер `.FON`) дают **побайтово одинаковые** битмапы
-//! строк `M.A.X.`, `Hits 15/15`, `End Turn`, `SURVEY STATUS COLORS`, `044-034`
-//! для всех трёх шрифтов.
+//! The C++ port draws text through FreeType from the TTF resources `FONT_1`/`FONT_2`/
+//! `FONT_5` (`PATCHES.RES`), and those TTFs were converted from the **GNW raster
+//! fonts** `FONT1.FON`/`FONT2.FON`/`FONT5.FON` (files next to `MAX.RES`).
+//! The original game drew exactly these bitmaps. Verified with the tool
+//! [`tools/font_vectors`](../../../../tools/font_vectors): for ASCII both paths
+//! (FreeType over the TTF and the `.FON` decoder) give **byte-identical** bitmaps
+//! of the strings `M.A.X.`, `Hits 15/15`, `End Turn`, `SURVEY STATUS COLORS`, `044-034`
+//! for all three fonts.
 //!
-//! # Формат `.FON` (GNW)
+//! # The `.FON` (GNW) format
 //!
 //! ```text
 //! +0x00  u32 version        (0x00000100)
-//! +0x04  u32 height         16 / 9 / 10 — высота ячейки глифа
+//! +0x04  u32 height         16 / 9 / 10 — glyph cell height
 //! +0x08  u32                0
-//! +0x0C  u8[16]             подпись/резерв (0xFF,0xFF,0xF0,0x05,…)
-//! +0x1C  255 × { u32 width; u32 offset }   глифы символов 1…255
-//! +0x81C (2068)            битмапы: строки по ceil(width/8) байт, MSB-first,
-//!                          бит 1 = «чернила»; offset — от начала этой зоны
+//! +0x0C  u8[16]             signature/reserved (0xFF,0xFF,0xF0,0x05,…)
+//! +0x1C  255 × { u32 width; u32 offset }   glyphs of characters 1…255
+//! +0x81C (2068)            bitmaps: rows of ceil(width/8) bytes, MSB-first,
+//!                          bit 1 = "ink"; offset — from the start of this zone
 //! ```
 //!
-//! Глиф символа 0 — пустой, шириной 0, лежит в первых `height` байтах зоны
-//! битмапов (поэтому первый `offset` равен `height`). Сумма размеров глифов
-//! равна длине файла — декодер проверяет это и не паникует на битых данных.
+//! The glyph of character 0 is empty, of width 0, and lies in the first `height` bytes of the
+//! bitmap zone (so the first `offset` equals `height`). The sum of the glyph sizes
+//! equals the file length — the decoder checks this and does not panic on corrupt data.
 //!
-//! # Метрики
+//! # Metrics
 //!
-//! * ширина глифа = `advance` (проверено по `hmtx` TTF: совпадает для всех
-//!   ASCII-символов `FONT_2`/`FONT_5` и для 91 из 95 у `FONT_1`; у `,`/`@`/`Z`/
-//!   `}` расходятся на 1 px — там TTF-хинтинг, см. `vectors.txt`);
-//! * высота строки — `height` (`Text_GetHeight`), межстрочный интервал в
+//! * glyph width = `advance` (verified against the TTF `hmtx`: it matches for all
+//!   ASCII characters of `FONT_2`/`FONT_5` and for 91 of 95 in `FONT_1`; for `,`/`@`/`Z`/
+//!   `}` they differ by 1 px — that is TTF hinting, see `vectors.txt`);
+//! * line height — `height` (`Text_GetHeight`), the line spacing in
 //!   `Text_TextBox` — `height + 1`;
-//! * `Text_TextLine` рисует тень/обводку вправо-вниз: для каждого пикселя
-//!   текста `(x+1, y+1)` красится в `outline`, если там тоже текст, иначе в
-//!   `shadow`. Это воспроизводит [`draw_text_gnw_shadowed`].
+//! * `Text_TextLine` draws the shadow/outline to the right and down: for every pixel
+//!   of the text `(x+1, y+1)` is painted with `outline` if there is text there too, otherwise with
+//!   `shadow`. This reproduces [`draw_text_gnw_shadowed`].
 
 use std::sync::OnceLock;
 
 use crate::buffer::{PixelRect, Rgba, RgbaBuffer};
 
-/// Заголовок `.FON` занимает 28 байт.
+/// The `.FON` header is 28 bytes.
 pub const GNW_HEADER: usize = 28;
-/// Глифов в таблице (символы `1..=255`; нулевой — пустой).
+/// Glyphs in the table (characters `1..=255`; the zero one is empty).
 pub const GNW_GLYPHS: usize = 255;
-/// Размер записи глифа: `width` + `offset`.
+/// Size of a glyph record: `width` + `offset`.
 pub const GNW_RECORD: usize = 8;
-/// Начало зоны битмапов: 28 + 255·8.
+/// Start of the bitmap zone: 28 + 255·8.
 pub const GNW_BITMAP_BASE: usize = GNW_HEADER + GNW_GLYPHS * GNW_RECORD;
-/// Ширина глифа, которым заменяется отсутствующий символ.
+/// Width of the glyph that replaces a missing character.
 pub const GNW_FALLBACK: char = '?';
 
-/// Оригинальный `.FON`, вкомпилированный в `max_render` (из `max-original/`).
+/// The original `.FON` compiled into `max_render` (from `max-original/`).
 const FONT_1_BYTES: &[u8] = include_bytes!("../../data/gnw_font_1.fnt");
-/// Оригинальный `.FON` `FONT2.FON` (9 px, только заглавные).
+/// The original `.FON` `FONT2.FON` (9 px, uppercase only).
 const FONT_2_BYTES: &[u8] = include_bytes!("../../data/gnw_font_2.fnt");
-/// Оригинальный `.FON` `FONT5.FON` (10 px).
+/// The original `.FON` `FONT5.FON` (10 px).
 const FONT_5_BYTES: &[u8] = include_bytes!("../../data/gnw_font_5.fnt");
 
-/// Какой из шрифтов GNW нужен.
+/// Which of the GNW fonts is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GnwFontId {
-    /// `GNW_TEXT_FONT_1` — `FONT1.FON`, 16 px (заголовки/меню).
+    /// `GNW_TEXT_FONT_1` — `FONT1.FON`, 16 px (headings/menus).
     Font1,
-    /// `GNW_TEXT_FONT_2` — `FONT2.FON`, 9 px (подписи кнопок, статистика).
+    /// `GNW_TEXT_FONT_2` — `FONT2.FON`, 9 px (button labels, statistics).
     Font2,
-    /// `GNW_TEXT_FONT_5` — `FONT5.FON`, 10 px (End Turn, счётчики, координаты).
+    /// `GNW_TEXT_FONT_5` — `FONT5.FON`, 10 px (End Turn, counters, coordinates).
     Font5,
 }
 
 impl GnwFontId {
-    /// Все шрифты, которые портированы.
+    /// All fonts that are ported.
     pub const ALL: [Self; 3] = [Self::Font1, Self::Font2, Self::Font5];
 
-    /// Высота ячейки глифа (`Text_GetHeight`).
+    /// Glyph cell height (`Text_GetHeight`).
     pub const fn height(self) -> i32 {
         match self {
             Self::Font1 => 16,
@@ -85,7 +85,7 @@ impl GnwFontId {
         }
     }
 
-    /// Исходные байты `.FON`.
+    /// Source bytes of the `.FON`.
     pub const fn bytes(self) -> &'static [u8] {
         match self {
             Self::Font1 => FONT_1_BYTES,
@@ -94,7 +94,7 @@ impl GnwFontId {
         }
     }
 
-    /// Имя файла оригинала (для диагностики).
+    /// Original file name (for diagnostics).
     pub const fn file_name(self) -> &'static str {
         match self {
             Self::Font1 => "FONT1.FON",
@@ -103,7 +103,7 @@ impl GnwFontId {
         }
     }
 
-    /// Разобранный шрифт (декодируется один раз на процесс).
+    /// Parsed font (decoded once per process).
     pub fn font(self) -> &'static GnwFont {
         static FONT_1: OnceLock<GnwFont> = OnceLock::new();
         static FONT_2: OnceLock<GnwFont> = OnceLock::new();
@@ -123,37 +123,37 @@ impl GnwFontId {
     }
 }
 
-/// Ошибка разбора `.FON`.
+/// `.FON` parsing error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GnwFontError {
-    /// Файл короче заголовка и таблицы глифов.
+    /// The file is shorter than the header and the glyph table.
     TooShort {
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
-        /// Минимально необходимая.
+        /// Minimum required.
         needed: usize,
     },
-    /// Высота шрифта нулевая или неразумная.
+    /// The font height is zero or unreasonable.
     BadHeight {
-        /// Значение из заголовка.
+        /// The value from the header.
         height: u32,
     },
-    /// Запись глифа противоречит последовательной раскладке битмапов.
+    /// A glyph record contradicts the sequential bitmap layout.
     BadRecord {
-        /// Номер глифа (1-based).
+        /// Glyph number (1-based).
         glyph: usize,
-        /// Ширина из записи.
+        /// Width from the record.
         width: u32,
-        /// Смещение из записи.
+        /// Offset from the record.
         offset: u32,
-        /// Ожидаемое смещение.
+        /// Expected offset.
         expected: u32,
     },
-    /// Битмапы выходят за конец файла.
+    /// The bitmaps extend beyond the end of the file.
     Truncated {
-        /// Нужно байт от начала файла.
+        /// Needed bytes from the start of the file.
         needed: usize,
-        /// Есть байт.
+        /// Available bytes.
         len: usize,
     },
 }
@@ -183,22 +183,22 @@ impl std::fmt::Display for GnwFontError {
 
 impl std::error::Error for GnwFontError {}
 
-/// Метрики одного глифа.
+/// Metrics of one glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GnwGlyph {
-    /// Ширина в пикселях (= advance).
+    /// Width in pixels (= advance).
     pub width: u16,
-    /// Высота строки глифа (= высота шрифта).
+    /// Glyph row height (= font height).
     pub height: u16,
-    /// Байт на строку битмапа (`ceil(width/8)`).
+    /// Bytes per bitmap row (`ceil(width/8)`).
     pub stride: u16,
-    /// Смещение битмапа от [`GnwFont::bitmap_base`].
+    /// Bitmap offset from [`GnwFont::bitmap_base`].
     pub offset: u32,
-    /// Размер битмапа (`stride * height`).
+    /// Bitmap size (`stride * height`).
     pub size: u32,
 }
 
-/// Разобранный растровый шрифт GNW.
+/// Parsed GNW raster font.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GnwFont {
     height: u16,
@@ -207,11 +207,11 @@ pub struct GnwFont {
 }
 
 impl GnwFont {
-    /// Разбирает `.FON` GNW.
+    /// Parses a GNW `.FON`.
     ///
-    /// Проверяет, что записи глифов идут подряд (`offset` равен накопленному
-    /// размеру) и что битмапы не выходят за файл. Формат — см. модульную
-    /// документацию.
+    /// Checks that the glyph records are sequential (`offset` equals the accumulated
+    /// size) and that the bitmaps do not extend beyond the file. Format — see the module
+    /// documentation.
     pub fn decode(bytes: &[u8]) -> Result<Self, GnwFontError> {
         if bytes.len() < GNW_BITMAP_BASE {
             return Err(GnwFontError::TooShort {
@@ -226,7 +226,7 @@ impl GnwFont {
         }
 
         let mut glyphs = Vec::with_capacity(GNW_GLYPHS + 1);
-        // Глиф 0 — пустой (в файле он занимает `height` байт в начале зоны).
+        // Glyph 0 is empty (in the file it occupies `height` bytes at the start of the zone).
         glyphs.push(GnwGlyph {
             width: 0,
             height: height as u16,
@@ -288,27 +288,27 @@ impl GnwFont {
         })
     }
 
-    /// Высота ячейки глифа (`Text_GetHeight`).
+    /// Glyph cell height (`Text_GetHeight`).
     pub fn height(&self) -> i32 {
         i32::from(self.height)
     }
 
-    /// Межстрочный интервал оригинала (`Text_TextBox`/`Text_TextLine`: height+1).
+    /// Line spacing of the original (`Text_TextBox`/`Text_TextLine`: height+1).
     pub fn line_height(&self) -> i32 {
         i32::from(self.height) + 1
     }
 
-    /// Число глифов в таблице (256, включая пустой нулевой).
+    /// Number of glyphs in the table (256, including the empty zero one).
     pub fn glyph_count(&self) -> usize {
         self.glyphs.len()
     }
 
-    /// Начало зоны битмапов (для тестов/диагностики).
+    /// Start of the bitmap zone (for tests/diagnostics).
     pub fn bitmap_base(&self) -> usize {
         GNW_BITMAP_BASE
     }
 
-    /// Метрики символа; вне Latin-1 — глиф [`GNW_FALLBACK`].
+    /// Metrics of a character; outside Latin-1 — the [`GNW_FALLBACK`] glyph.
     pub fn glyph(&self, ch: char) -> GnwGlyph {
         let code = ch as usize;
         let index = if code <= GNW_GLYPHS {
@@ -320,14 +320,14 @@ impl GnwFont {
         self.glyphs[index]
     }
 
-    /// Битмап символа (строки по `stride` байт, MSB-first).
+    /// Bitmap of a character (rows of `stride` bytes, MSB-first).
     pub fn glyph_bitmap(&self, ch: char) -> &[u8] {
         let glyph = self.glyph(ch);
         let start = glyph.offset as usize;
         &self.bitmap[start..start + glyph.size as usize]
     }
 
-    /// Пиксель глифа (`true` — «чернила»).
+    /// Glyph pixel (`true` — "ink").
     pub fn glyph_ink(&self, ch: char, x: i32, y: i32) -> bool {
         let glyph = self.glyph(ch);
 
@@ -341,21 +341,21 @@ impl GnwFont {
         byte & (0x80 >> (x as usize % 8)) != 0
     }
 
-    /// Ширина символа (advance).
+    /// Character width (advance).
     pub fn char_width(&self, ch: char) -> i32 {
         i32::from(self.glyph(ch).width)
     }
 
-    /// Ширина строки в пикселях (`Text_GetWidth`).
+    /// Line width in pixels (`Text_GetWidth`).
     pub fn text_width(&self, text: &str) -> i32 {
         text.chars().map(|ch| self.char_width(ch)).sum()
     }
 }
 
-/// Рисует строку шрифтом GNW в `(x, y)` (левый верх ячейки).
+/// Draws a line with the GNW font at `(x, y)` (top-left of the cell).
 ///
-/// Возвращает ширину строки в пикселях. Рисование обрезается границами
-/// буфера; вне Latin-1 используется `?`.
+/// Returns the line width in pixels. Drawing is clipped by the bounds of the
+/// buffer; outside Latin-1 `?` is used.
 pub fn draw_text_gnw(
     buffer: &mut RgbaBuffer,
     x: i32,
@@ -372,7 +372,7 @@ pub fn draw_text_gnw(
         let width = i32::from(glyph.width);
 
         if pen_x >= buffer.width() as i32 {
-            // Пен только растёт вправо: дальше ничего не будет видно.
+            // The pen only moves right: nothing further will be visible.
             break;
         }
 
@@ -402,12 +402,12 @@ pub fn draw_text_gnw(
     font.text_width(text)
 }
 
-/// То же, что [`draw_text_gnw`], но с тенью/обводкой как `Text_TextLine`.
+/// The same as [`draw_text_gnw`], but with a shadow/outline like `Text_TextLine`.
 ///
-/// Для каждого «чернильного» пикселя `(x, y)` оригинал красит `(x+1, y+1)`:
-/// `outline`, если там тоже текст, иначе `shadow`. Порядок обхода — снизу
-/// вверх, поэтому ранее перекрашенный пиксель уже не считается текстом (как
-/// в C++, где цикл читает и пишет один буфер).
+/// For every "ink" pixel `(x, y)` the original paints `(x+1, y+1)`:
+/// `outline` if there is text there too, otherwise `shadow`. The traversal order is bottom
+/// to top, so an already repainted pixel no longer counts as text (as
+/// in C++, where the loop reads and writes one buffer).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_gnw_shadowed(
     buffer: &mut RgbaBuffer,
@@ -423,7 +423,7 @@ pub fn draw_text_gnw_shadowed(
     let height = font.height() + 1;
     let stride = width.max(1) as usize;
 
-    // 0 — пусто, 1 — base, 2 — outline, 3 — shadow.
+    // 0 — empty, 1 — base, 2 — outline, 3 — shadow.
     let mut mask = vec![0u8; stride * height.max(1) as usize];
     let mut pen_x = 0i32;
 
@@ -487,10 +487,10 @@ pub fn draw_text_gnw_shadowed(
     font.text_width(text)
 }
 
-/// Рисует одну строку по центру прямоугольника (как `Text_TextBox` с
+/// Draws one line centered in the rectangle (like `Text_TextBox` with
 /// `horizontal_align`, `vertical_align`).
 ///
-/// Возвращает нарисованную ширину строки.
+/// Returns the drawn width of the line.
 pub fn draw_text_gnw_centered(
     buffer: &mut RgbaBuffer,
     rect: PixelRect,
@@ -505,7 +505,7 @@ pub fn draw_text_gnw_centered(
     draw_text_gnw(buffer, x, y, font, text, color)
 }
 
-/// Центрированная строка с тенью (`Text_TextLine` + `Button::SetCaption`).
+/// Centered line with a shadow (`Text_TextLine` + `Button::SetCaption`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_gnw_centered_shadowed(
     buffer: &mut RgbaBuffer,
@@ -527,7 +527,7 @@ pub fn draw_text_gnw_centered_shadowed(
 mod tests {
     use super::*;
 
-    /// Разбор эталонных рендеров, сгенерированных C++-инструментом.
+    /// Parsing of reference renders generated by the C++ tool.
     fn reference_render() -> Vec<(&'static str, String, usize, Vec<&'static str>)> {
         let text = include_str!("../../../../tools/font_vectors/render.txt");
         let mut out = Vec::new();
@@ -589,7 +589,7 @@ mod tests {
         let font1 = GnwFontId::Font1.font();
         let font5 = GnwFontId::Font5.font();
 
-        // Ширины из FONT1.FON/vectors.txt (совпадают с hmtx TTF).
+        // Widths from FONT1.FON/vectors.txt (matching the TTF hmtx).
         assert_eq!(font1.char_width('A'), 13);
         assert_eq!(font1.char_width('B'), 10);
         assert_eq!(font1.char_width('M'), 13);
@@ -621,14 +621,14 @@ mod tests {
         let font = GnwFontId::Font2.font();
         let upper = font.glyph_bitmap('A').to_vec();
 
-        // FONT2.FON хранит в нижнем регистре те же заглавные глифы.
+        // FONT2.FON stores the same uppercase glyphs in the lowercase range.
         assert_eq!(font.glyph_bitmap('a'), upper.as_slice());
         assert_eq!(font.glyph('a').width, font.glyph('A').width);
     }
 
-    /// Сильный тест: каждая строка, отрисованная нашим декодером, совпадает
-    /// пиксель-в-пиксель с эталоном C++-инструмента (FreeType-путь порта,
-    /// который, в свою очередь, совпал с `.FON`).
+    /// Strong test: every line rendered by our decoder matches
+    /// pixel for pixel the reference of the C++ tool (the FreeType path of the port,
+    /// which in turn matched the `.FON`).
     #[test]
     fn rendering_matches_the_cpp_reference_bitmaps() {
         let references = reference_render();
@@ -656,8 +656,8 @@ mod tests {
         }
     }
 
-    /// Декодер встроенных шрифтов совпадает с независимым разбором реальных
-    /// `FONT*.FON` (если данные игры есть рядом с репозиторием).
+    /// The decoder of the built-in fonts matches an independent parse of the real
+    /// `FONT*.FON` (if the game data is present next to the repository).
     #[test]
     fn embedded_fonts_match_the_original_files() {
         for id in GnwFontId::ALL {

@@ -1,30 +1,30 @@
-//! Палитра M.A.X. и таблицы перекраски.
+//! The M.A.X. palette and recolor tables.
 //!
-//! Источники (`max-original-dasm/formats/spw.md` §6, оракул
+//! Sources (`max-original-dasm/formats/spw.md` §6, the oracle
 //! `max-cpp-port/src/{color.cpp,resource_manager.cpp,world.cpp}`):
 //!
-//! * `COLOR.PAL` — 33 536 байт: сначала 256 × RGB по **6 бит** на компонент,
-//!   затем таблица `RGB555 -> ColorIndex` (32 768 байт), которая рендеру не
-//!   нужна. SDL-порт при записи системной палитры умножает компоненты на 4
-//!   (`Color_SetSystemPaletteEntry`), поэтому [`Palette`] сразу хранит 8-битный
-//!   вариант — именно его использует отрисовка.
-//! * Командные (командные цвета команды) слоты палитры — **32–39 и 48–63**
-//!   (24 слота, «заглушки» художника); `ResourceManager_BuildColorTables`
-//!   подменяет их 8 цветами команды циклически (`j & 7`), остальные индексы
-//!   остаются identity — это [`ColorLut`].
-//! * Яркость — 7 уровней затемнения плюс identity для полной яркости
-//!   (§6.3): `rgb' = rgb * (level * 32) / 224`, индекс 31 принудительно равен 31,
-//!   подбор цвета — [`map_color`] (`Color_MapColor`, поиск ближайшего в RGB).
-//!   Уровень 5 — затемнение тени (`Gfx_DecodeShadow`).
-//! * **Палитровые циклы** — `World::InitColorCycles` (`world.cpp:542`) +
-//!   `World::UpdateColorAnimations` (`world.cpp:190`): 11 диапазонов слотов,
-//!   которые вращаются с частотой 2/6/8/9/10 fps. Это и есть «мигание» маяков
-//!   зданий и индикатора дрели в оригинале
-//!   (`max-original-dasm/formats/unit-animation.md` §7.3): кадры спрайта не
-//!   листаются, меняются только цвета слотов DAC. Реализация — [`ColorCycles`]
-//!   (часы) + [`rotate_palette`] (снимок палитры на кадр), см. [`COLOR_CYCLES`].
-//!   `dt = 0` не двигает часы, поэтому палитра остаётся исходной (golden не
-//!   дрейфуют).
+//! * `COLOR.PAL` — 33 536 bytes: first 256 × RGB at **6 bits** per component,
+//!   then the `RGB555 -> ColorIndex` table (32 768 bytes), which the renderer does not
+//!   need. The SDL port multiplies the components by 4 when setting the system palette
+//!   (`Color_SetSystemPaletteEntry`), so [`Palette`] stores the 8-bit variant
+//!   right away — that is exactly what rendering uses.
+//! * The team (team color) slots of the palette are **32–39 and 48–63**
+//!   (24 slots, the artist's "placeholders"); `ResourceManager_BuildColorTables`
+//!   replaces them cyclically with the 8 colors of the team (`j & 7`), the other indices
+//!   stay the identity — that is [`ColorLut`].
+//! * Brightness — 7 darkening levels plus the identity for full brightness
+//!   (§6.3): `rgb' = rgb * (level * 32) / 224`, index 31 is forced to 31,
+//!   color matching — [`map_color`] (`Color_MapColor`, nearest search in RGB).
+//!   Level 5 — shadow darkening (`Gfx_DecodeShadow`).
+//! * **Palette cycles** — `World::InitColorCycles` (`world.cpp:542`) +
+//!   `World::UpdateColorAnimations` (`world.cpp:190`): 11 slot ranges
+//!   that rotate at 2/6/8/9/10 fps. This is the "blinking" of the beacons
+//!   of buildings and of the drill indicator in the original
+//!   (`max-original-dasm/formats/unit-animation.md` §7.3): the sprite frames are not
+//!   flipped, only the colors of the DAC slots change. The implementation is [`ColorCycles`]
+//!   (the clock) + [`rotate_palette`] (the palette snapshot for a frame), see [`COLOR_CYCLES`].
+//!   `dt = 0` does not move the clock, so the palette stays the initial one (the goldens do not
+//!   drift).
 
 use std::fmt;
 use std::fs;
@@ -33,61 +33,61 @@ use std::path::{Path, PathBuf};
 
 use crate::buffer::Rgba;
 
-/// Цветов в палитре (`PALETTE_SIZE`).
+/// Colors in the palette (`PALETTE_SIZE`).
 pub const PALETTE_SIZE: usize = 256;
-/// Каналов на цвет (`PALETTE_STRIDE`).
+/// Channels per color (`PALETTE_STRIDE`).
 pub const PALETTE_STRIDE: usize = 3;
-/// Байт в палитре (`256 * 3`).
+/// Bytes in the palette (`256 * 3`).
 pub const PALETTE_BYTES: usize = PALETTE_SIZE * PALETTE_STRIDE;
-/// Полный размер `COLOR.PAL`: палитра (768) + таблица RGB555 (32 768).
+/// Full size of `COLOR.PAL`: palette (768) + RGB555 table (32 768).
 pub const COLOR_PAL_FILE_SIZE: usize = PALETTE_BYTES + (1 << 15);
-/// Множитель 6-битных компонент палитры в 8-битные (SDL-порт: `r * 4`).
+/// Multiplier of the 6-bit palette components to 8 bits (SDL port: `r * 4`).
 pub const SIX_BIT_SCALE: u8 = 4;
-/// Первый командный слот палитры (32–39).
+/// First team slot of the palette (32–39).
 pub const COMMAND_SLOT_GREEN: u8 = 32;
-/// Второй блок командных слотов (48–63).
+/// Second block of team slots (48–63).
 pub const COMMAND_SLOT_BLUE: u8 = 48;
-/// Сколько слотов подменяется цветами команды: 8 + 16 = 24.
+/// How many slots are replaced with team colors: 8 + 16 = 24.
 pub const COMMAND_SLOT_COUNT: u8 = 24;
-/// Индекс палитры, который яркость принудительно оставляет равным 31 (§6.3).
+/// Palette index that brightness forcibly leaves equal to 31 (§6.3).
 pub const FIXED_BRIGHTNESS_INDEX: u8 = 31;
-/// Уровней яркости в таблице плюс identity-уровень 7.
+/// Brightness levels in the table plus the identity level 7.
 pub const BRIGHTNESS_LEVELS: usize = 8;
-/// Уровень затемнения тени (`BrightnessColorIndexTable[5 * 256]`).
+/// Shadow darkening level (`BrightnessColorIndexTable[5 * 256]`).
 pub const SHADOW_BRIGHTNESS_LEVEL: u8 = 5;
-/// Уровень «без затемнения» (identity-блок 15 в C++-порте).
+/// "No darkening" level (identity block 15 in the C++ port).
 pub const FULL_BRIGHTNESS_LEVEL: u8 = 7;
 
-/// Цвета красной команды (слоты -> реальные индексы).
+/// Red team colors (slots -> real indices).
 pub const TEAM_RED_COLORS: [u8; 8] = [56, 57, 58, 59, 60, 61, 62, 63];
-/// Цвета зелёной команды.
+/// Green team colors.
 pub const TEAM_GREEN_COLORS: [u8; 8] = [32, 33, 34, 35, 36, 37, 38, 39];
-/// Цвета синей команды.
+/// Blue team colors.
 pub const TEAM_BLUE_COLORS: [u8; 8] = [48, 49, 50, 51, 52, 53, 54, 55];
-/// Цвета серой (нейтральной) команды.
+/// Gray (neutral) team colors.
 pub const TEAM_GRAY_COLORS: [u8; 8] = [255, 161, 172, 169, 216, 213, 212, 207];
-/// Цвета брошенной (derelict) техники.
+/// Colors of derelict equipment.
 pub const TEAM_DERELICT_COLORS: [u8; 8] = [216, 215, 214, 213, 212, 211, 210, 209];
 
 // ---------------------------------------------------------------------------
-// Ошибки
+// Errors
 // ---------------------------------------------------------------------------
 
-/// Ошибка загрузки палитры.
+/// Palette loading error.
 #[derive(Debug)]
 pub enum PaletteError {
-    /// Файл/срез короче 768 байт палитры.
+    /// The file/slice is shorter than the 768-byte palette.
     TooShort {
-        /// Фактическая длина.
+        /// Actual length.
         len: usize,
-        /// Минимально необходимая длина.
+        /// Minimum required length.
         needed: usize,
     },
-    /// Файл не читается.
+    /// The file cannot be read.
     Io {
-        /// Путь, который читался.
+        /// The path that was being read.
         path: PathBuf,
-        /// Причина от ОС.
+        /// Reason from the OS.
         source: io::Error,
     },
 }
@@ -116,11 +116,11 @@ impl std::error::Error for PaletteError {
 }
 
 // ---------------------------------------------------------------------------
-// Палитра
+// Palette
 // ---------------------------------------------------------------------------
 
-/// Палитра `COLOR.PAL`: 256 цветов, 6-битные компоненты из файла и 8-битные
-/// для отрисовки (`* 4`, как в SDL-порте).
+/// `COLOR.PAL` palette: 256 colors, 6-bit components from the file and 8-bit
+/// ones for rendering (`* 4`, as in the SDL port).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Palette {
     raw: [[u8; 3]; PALETTE_SIZE],
@@ -128,10 +128,10 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Разбирает начало `COLOR.PAL` (нужны первые 768 байт).
+    /// Parses the beginning of `COLOR.PAL` (the first 768 bytes are needed).
     ///
-    /// Полный файл содержит ещё 32 768 байт таблицы RGB555 — она проверяется
-    /// только на общую длину и в палитру не попадает.
+    /// The full file contains another 32 768 bytes of the RGB555 table — it is checked
+    /// only for the overall length and does not enter the palette.
     pub fn from_color_pal(bytes: &[u8]) -> Result<Self, PaletteError> {
         if bytes.len() < PALETTE_BYTES {
             return Err(PaletteError::TooShort {
@@ -158,8 +158,8 @@ impl Palette {
         Ok(Self { raw, rgb })
     }
 
-    /// Читает палитру из файла `COLOR.PAL` (нужны первые 768 байт; полный
-    /// файл содержит ещё таблицу RGB555).
+    /// Reads the palette from the `COLOR.PAL` file (the first 768 bytes are needed; the full
+    /// file contains the RGB555 table as well).
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PaletteError> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|source| PaletteError::Io {
@@ -170,25 +170,25 @@ impl Palette {
         Self::from_color_pal(&bytes)
     }
 
-    /// Пиксель из 6-битной палитры (`0..=63` на канал).
+    /// Pixel from the 6-bit palette (`0..=63` per channel).
     #[inline]
     pub fn raw(&self, index: u8) -> [u8; 3] {
         self.raw[index as usize]
     }
 
-    /// Пиксель из 8-битной палитры (`raw * 4`).
+    /// Pixel from the 8-bit palette (`raw * 4`).
     #[inline]
     pub fn rgb(&self, index: u8) -> [u8; 3] {
         self.rgb[index as usize]
     }
 
-    /// Непрозрачный цвет палитры.
+    /// Opaque color of the palette.
     #[inline]
     pub fn rgba(&self, index: u8) -> Rgba {
         Rgba::from_rgb(self.rgb(index))
     }
 
-    /// Цвет палитры с заданной альфой.
+    /// Palette color with the given alpha.
     #[inline]
     pub fn rgba_with_alpha(&self, index: u8, alpha: u8) -> Rgba {
         let rgb = self.rgb(index);
@@ -196,19 +196,19 @@ impl Palette {
         Rgba::from_rgba([rgb[0], rgb[1], rgb[2], alpha])
     }
 
-    /// Сырые 6-битные компоненты всей палитры (для [`BrightnessLut`]).
+    /// Raw 6-bit components of the whole palette (for [`BrightnessLut`]).
     #[inline]
     pub fn raw_entries(&self) -> &[[u8; 3]; PALETTE_SIZE] {
         &self.raw
     }
 
-    /// 8-битные компоненты всей палитры.
+    /// 8-bit components of the whole palette.
     #[inline]
     pub fn entries(&self) -> &[[u8; 3]; PALETTE_SIZE] {
         &self.rgb
     }
 
-    /// 8-битная палитра как 768 байт (порядок `r, g, b`).
+    /// The 8-bit palette as 768 bytes (order `r, g, b`).
     pub fn to_rgb_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(PALETTE_BYTES);
 
@@ -219,18 +219,18 @@ impl Palette {
         out
     }
 
-    /// Таблица `RGB555 -> ColorIndex` из `COLOR.PAL` (не нужна рендеру, но
-    /// нужна для полноты формата и проверки размера файла).
+    /// The `RGB555 -> ColorIndex` table from `COLOR.PAL` (not needed by the renderer, but
+    /// needed for format completeness and file size checking).
     pub fn rgb555_table(bytes: &[u8]) -> Option<&[u8]> {
         bytes.get(PALETTE_BYTES..PALETTE_BYTES + (1 << 15))
     }
 
-    /// Палитра из **8-битных** компонент (системная палитра игры).
+    /// Palette of **8-bit** components (the system palette of the game).
     ///
-    /// Оригинал держит DAC 6-битным: `Color_SetSystemPaletteEntry` получает
-    /// уже поделённые на 4 значения (`world.cpp:330`), а SDL-порт при записи
-    /// умножает их на 4. Поэтому здесь компоненты усекаются до 6 бит
-    /// (`rgb & 0xFC`), как и в остальном порте: `raw = rgb / 4`.
+    /// The original keeps the DAC at 6 bits: `Color_SetSystemPaletteEntry` receives
+    /// values already divided by 4 (`world.cpp:330`), and the SDL port multiplies
+    /// them by 4 when setting. Therefore here the components are truncated to 6 bits
+    /// (`rgb & 0xFC`), as in the rest of the port: `raw = rgb / 4`.
     pub fn from_rgb8(bytes: &[u8]) -> Result<Self, PaletteError> {
         if bytes.len() < PALETTE_BYTES {
             return Err(PaletteError::TooShort {
@@ -262,58 +262,58 @@ impl Palette {
         Ok(Self { raw, rgb })
     }
 
-    /// Снимок палитры с применёнными палитровыми циклами ([`rotate_palette`]).
+    /// Palette snapshot with the palette cycles applied ([`rotate_palette`]).
     pub fn rotated(&self, cycles: &ColorCycles) -> Self {
         rotate_palette(self, cycles)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Палитровые циклы (`World::InitColorCycles`)
+// Palette cycles (`World::InitColorCycles`)
 // ---------------------------------------------------------------------------
 
-/// Направление вращения диапазона палитры (`ColorCycleData::rotate_direction`).
+/// Rotation direction of a palette range (`ColorCycleData::rotate_direction`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RotateDirection {
-    /// `0` — «влево»: слот `start` переезжает в `end`, остальные сдвигаются
-    /// на один к началу (`memmove(&start[3], start, …)` в C++).
+    /// `0` — "left": the slot `start` moves to `end`, the others shift
+    /// by one toward the beginning (`memmove(&start[3], start, …)` in C++).
     Left,
-    /// `1` — «вправо»: слот `end` переезжает в `start`.
+    /// `1` — "right": the slot `end` moves to `start`.
     Right,
 }
 
-/// Один палитровый цикл — дословный порт `ColorCycleData` (`world.hpp:44`).
+/// One palette cycle — a verbatim port of `ColorCycleData` (`world.hpp:44`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColorCycle {
-    /// Первый слот диапазона (включительно).
+    /// First slot of the range (inclusive).
     pub start_index: u8,
-    /// Последний слот диапазона (включительно).
+    /// Last slot of the range (inclusive).
     pub end_index: u8,
-    /// Направление вращения.
+    /// Rotation direction.
     pub direction: RotateDirection,
-    /// Миллисекунд между шагами (`TIMER_FPS_TO_MS(fps) = 1000 / fps`).
+    /// Milliseconds between steps (`TIMER_FPS_TO_MS(fps) = 1000 / fps`).
     pub step_ms: u32,
 }
 
 impl ColorCycle {
-    /// Сколько слотов в диапазоне (`end - start + 1`).
+    /// How many slots are in the range (`end - start + 1`).
     pub const fn len(self) -> usize {
         self.end_index as usize - self.start_index as usize + 1
     }
 
-    /// Одиночный слот (`end == start`): C++ крутит у него только зелёный канал.
+    /// Single slot (`end == start`): C++ rotates only its green channel.
     pub const fn is_single_slot(self) -> bool {
         self.start_index == self.end_index
     }
 }
 
-/// Циклы оригинала — построчный порт `World::InitColorCycles`
+/// The original's cycles — a row-by-row port of `World::InitColorCycles`
 /// (`max-cpp-port/src/world.cpp:542-557`).
 ///
-/// `TIMER_FPS_TO_MS(fps) = 1000 / fps`: 9 fps → 111 мс, 6 fps → 166 мс,
-/// 2 fps → 500 мс, 8 fps → 125 мс, 10 fps → 100 мс. Маяки шахты используют
-/// диапазон 13–16 @6 fps (жёлтый → оранжевый → красный → оранжевый,
-/// полный цикл 4 × 166.7 = 666.7 мс), индикатор дрели — 21–24 @6 fps
+/// `TIMER_FPS_TO_MS(fps) = 1000 / fps`: 9 fps → 111 ms, 6 fps → 166 ms,
+/// 2 fps → 500 ms, 8 fps → 125 ms, 10 fps → 100 ms. The mine beacons use
+/// the range 13–16 @6 fps (yellow → orange → red → orange,
+/// full cycle 4 × 166.7 = 666.7 ms), the drill indicator — 21–24 @6 fps
 /// (`unit-animation.md` §7.3).
 pub const COLOR_CYCLES: [ColorCycle; 11] = [
     ColorCycle {
@@ -384,13 +384,13 @@ pub const COLOR_CYCLES: [ColorCycle; 11] = [
     },
 ];
 
-/// Первое значение зелёного канала одиночного слота 31 (`m_color_cycle_step`).
+/// First value of the green channel of single slot 31 (`m_color_cycle_step`).
 pub const SINGLE_SLOT_START: u8 = 63;
 
-/// Значение зелёного канала слота 31 после `steps` шагов.
+/// Value of the green channel of slot 31 after `steps` steps.
 ///
 /// C++ (`world.cpp:222-231`): `if (step <= 7) step = 63; else step /= 2;`
-/// начиная с `m_color_cycle_step = 63` (конструктор `World`). Ряд:
+/// starting from `m_color_cycle_step = 63` (the `World` constructor). The series:
 /// `63 → 31 → 15 → 7 → 63 → …`.
 pub fn single_slot_value(steps: u64) -> u8 {
     let mut value = SINGLE_SLOT_START;
@@ -402,14 +402,14 @@ pub fn single_slot_value(steps: u64) -> u8 {
     value
 }
 
-/// Часы палитровых циклов (только отрисовка; в снапшот/CRC не входят).
+/// Palette cycle clock (render-only; not part of the snapshot/CRC).
 ///
-/// C++ хранит по `time_stamp` на цикл и вращает диапазон, когда
-/// `current_time - time_stamp >= time_limit` (`world.cpp:195-239`). Здесь
-/// накапливается `dt` на цикл и выполняется столько шагов, сколько периодов
-/// уложилось в накопленное время, — тот же темп без накопления ошибки
-/// округления. `dt = 0` (QA/headless) часы не двигает: [`ColorCycles::step_counts`]
-/// остаются нулевыми, палитра — исходной.
+/// C++ keeps a `time_stamp` per cycle and rotates the range when
+/// `current_time - time_stamp >= time_limit` (`world.cpp:195-239`). Here
+/// `dt` accumulates per cycle and as many steps are performed as periods
+/// fit into the accumulated time — the same rate without accumulating rounding
+/// error. `dt = 0` (QA/headless) does not move the clock: [`ColorCycles::step_counts`]
+/// stay zero, the palette — the initial one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColorCycles {
     elapsed_ms: [f64; COLOR_CYCLES.len()],
@@ -423,7 +423,7 @@ impl Default for ColorCycles {
 }
 
 impl ColorCycles {
-    /// Часы в исходном состоянии (все счётчики нулевые).
+    /// Clock in the initial state (all counters zero).
     pub fn new() -> Self {
         Self {
             elapsed_ms: [0.0; COLOR_CYCLES.len()],
@@ -431,12 +431,12 @@ impl ColorCycles {
         }
     }
 
-    /// Сбрасывает часы (`dt = 0`): палитра снова исходная.
+    /// Resets the clock (`dt = 0`): the palette is the initial one again.
     pub fn reset(&mut self) {
         *self = Self::new();
     }
 
-    /// Продвигает часы на `dt_seconds`; `true`, если хотя бы один цикл шагнул.
+    /// Advances the clock by `dt_seconds`; `true` if at least one cycle stepped.
     pub fn advance(&mut self, dt_seconds: f32) -> bool {
         let milliseconds = f64::from(dt_seconds.max(0.0)) * 1000.0;
 
@@ -459,21 +459,21 @@ impl ColorCycles {
         advanced
     }
 
-    /// Сколько шагов сделал каждый цикл (индекс — [`COLOR_CYCLES`]).
+    /// How many steps each cycle made (index — [`COLOR_CYCLES`]).
     pub fn step_counts(&self) -> &[u64; COLOR_CYCLES.len()] {
         &self.steps
     }
 
-    /// Ни один цикл не двигался (палитра равна исходной).
+    /// No cycle moved (the palette equals the initial one).
     pub fn is_static(&self) -> bool {
         self.steps.iter().all(|&steps| steps == 0)
     }
 }
 
-/// Снимок палитры с повёрнутыми диапазонами — порт `UpdateColorAnimations`.
+/// Palette snapshot with the ranges rotated — a port of `UpdateColorAnimations`.
 ///
-/// Вращается 6-битная палитра (`WindowManager_ColorPalette`), 8-битные
-/// компоненты пересчитываются как `raw * 4` (`Color_SetSystemPaletteEntry`).
+/// The 6-bit palette rotates (`WindowManager_ColorPalette`), the 8-bit
+/// components are recomputed as `raw * 4` (`Color_SetSystemPaletteEntry`).
 pub fn rotate_palette(palette: &Palette, cycles: &ColorCycles) -> Palette {
     let mut raw = palette.raw;
 
@@ -502,9 +502,9 @@ pub fn rotate_palette(palette: &Palette, cycles: &ColorCycles) -> Palette {
         let mut range: Vec<[u8; 3]> = raw[start..=end].to_vec();
 
         match cycle.direction {
-            // Вправо: слот `end` переезжает в `start`.
+            // Right: the slot `end` moves to `start`.
             RotateDirection::Right => range.rotate_right(shift),
-            // Влево: слот `start` переезжает в `end`.
+            // Left: the slot `start` moves to `end`.
             RotateDirection::Left => range.rotate_left(shift),
         }
 
@@ -525,26 +525,26 @@ pub fn rotate_palette(palette: &Palette, cycles: &ColorCycles) -> Palette {
 }
 
 // ---------------------------------------------------------------------------
-// Командные цвета
+// Team colors
 // ---------------------------------------------------------------------------
 
-/// Команда (набор командных цветов).
+/// Team (a set of team colors).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TeamColors {
-    /// Красная команда (`PLAYER_TEAM_RED`).
+    /// Red team (`PLAYER_TEAM_RED`).
     Red,
-    /// Зелёная команда.
+    /// Green team.
     Green,
-    /// Синяя команда.
+    /// Blue team.
     Blue,
-    /// Серая (независимая) команда.
+    /// Gray (independent) team.
     Gray,
-    /// Брошенная техника.
+    /// Derelict equipment.
     Derelict,
 }
 
 impl TeamColors {
-    /// Все наборы в порядке C++.
+    /// All sets in C++ order.
     pub const ALL: [Self; 5] = [
         Self::Red,
         Self::Green,
@@ -553,7 +553,7 @@ impl TeamColors {
         Self::Derelict,
     ];
 
-    /// Восемь реальных индексов палитры, подставляемых в командные слоты.
+    /// Eight real palette indices substituted into the team slots.
     #[inline]
     pub const fn colors(self) -> [u8; 8] {
         match self {
@@ -565,7 +565,7 @@ impl TeamColors {
         }
     }
 
-    /// «Кодовое» имя как в C++/эталоне (`red`, `green`, …).
+    /// The "code" name as in C++/the reference (`red`, `green`, …).
     #[inline]
     pub const fn name(self) -> &'static str {
         match self {
@@ -577,23 +577,23 @@ impl TeamColors {
         }
     }
 
-    /// LUT перекраски этой команды (`ResourceManager_BuildColorTables`).
+    /// Recolor LUT of this team (`ResourceManager_BuildColorTables`).
     pub fn lut(self) -> ColorLut {
         ColorLut::for_team(self)
     }
 }
 
-/// LUT «индекс палитры -> индекс палитры»: подмена командных слотов.
+/// "Palette index -> palette index" LUT: substitution of the team slots.
 ///
-/// Построение повторяет C++ дословно: `j = 0`, `k = 32`; для `j == 8`
-/// `k += 8`; затем `lut[k] = colors[j & 7]`, `k += 1`, `j += 1`, пока
-/// `j < 24`. Итог: слоты 32–39 получают цвета 0…7, слоты 48–63 — те же
-/// восемь цветов дважды (48–55 и 56–63).
+/// The construction repeats C++ verbatim: `j = 0`, `k = 32`; for `j == 8`
+/// `k += 8`; then `lut[k] = colors[j & 7]`, `k += 1`, `j += 1`, while
+/// `j < 24`. Result: slots 32–39 get colors 0…7, slots 48–63 — the same
+/// eight colors twice (48–55 and 56–63).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColorLut(pub [u8; PALETTE_SIZE]);
 
 impl ColorLut {
-    /// Identity-LUT (без перекраски).
+    /// Identity LUT (no recolor).
     pub fn identity() -> Self {
         let mut lut = [0u8; PALETTE_SIZE];
 
@@ -604,7 +604,7 @@ impl ColorLut {
         Self(lut)
     }
 
-    /// LUT команды.
+    /// LUT of the team.
     pub fn for_team(team: TeamColors) -> Self {
         let colors = team.colors();
         let mut lut = Self::identity();
@@ -625,19 +625,19 @@ impl ColorLut {
         lut
     }
 
-    /// Индекс после перекраски.
+    /// Index after recoloring.
     #[inline]
     pub fn map(&self, index: u8) -> u8 {
         self.0[index as usize]
     }
 
-    /// Таблица целиком.
+    /// The whole table.
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }
 
-    /// LUT ничего не меняет.
+    /// The LUT changes nothing.
     pub fn is_identity(&self) -> bool {
         self.0
             .iter()
@@ -646,10 +646,10 @@ impl ColorLut {
     }
 }
 
-/// Слоты палитры, которые подменяются командными цветами, в порядке присвоения.
+/// Palette slots that are replaced with team colors, in assignment order.
 ///
-/// Возвращает 24 пары `(слот, позиция цвета в наборе команды)`: сначала
-/// 32–39 (`0..7`), затем 48–63 (`0..7`, `0..7`).
+/// Returns 24 pairs `(slot, position of the color in the team set)`: first
+/// 32–39 (`0..7`), then 48–63 (`0..7`, `0..7`).
 pub fn command_slots() -> [(u8, u8); COMMAND_SLOT_COUNT as usize] {
     let mut slots = [(0u8, 0u8); COMMAND_SLOT_COUNT as usize];
     let mut j = 0usize;
@@ -669,16 +669,16 @@ pub fn command_slots() -> [(u8, u8); COMMAND_SLOT_COUNT as usize] {
 }
 
 // ---------------------------------------------------------------------------
-// Яркость
+// Brightness
 // ---------------------------------------------------------------------------
 
-/// Подбор ближайшего цвета палитры — `Color_MapColor` (`color.cpp`).
+/// Nearest palette color search — `Color_MapColor` (`color.cpp`).
 ///
-/// `full_scan = false` исключает диапазоны индексов 9–31 и 96–127: они
-/// зарезервированы под служебные/командные цвета, и оригинал их не
-/// использует при подборе. Расстояние — сумма квадратов разностей RGB,
-/// сравнение строгое (первый минимум выигрывает), точное совпадение
-/// прерывает поиск.
+/// `full_scan = false` excludes the index ranges 9–31 and 96–127: they
+/// are reserved for service/team colors, and the original does not
+/// use them when matching. The distance is the sum of squared RGB differences,
+/// the comparison is strict (the first minimum wins), an exact match
+/// stops the search.
 pub fn map_color(palette: &[[u8; 3]; PALETTE_SIZE], r: u8, g: u8, b: u8, full_scan: bool) -> u8 {
     let mut color_index = 0u8;
     let mut best_distance = u32::MAX;
@@ -706,19 +706,19 @@ pub fn map_color(palette: &[[u8; 3]; PALETTE_SIZE], r: u8, g: u8, b: u8, full_sc
     color_index
 }
 
-/// Таблицы яркости (§6.3): 8 уровней, каждый — LUT «индекс -> индекс».
+/// Brightness tables (§6.3): 8 levels, each an "index -> index" LUT.
 ///
-/// Уровни 0–6 строятся формулой `rgb' = rgb * (level * 32) / 224` по
-/// **6-битной** палитре (как `World::ApplyPaletteAndTints`), индекс 31
-/// принудительно остаётся 31. Уровень 7 — identity (полная яркость;
-/// в C++-порте это блок 15 таблицы, заполненный identity-значениями).
+/// Levels 0–6 are built by the formula `rgb' = rgb * (level * 32) / 224` over
+/// the **6-bit** palette (like `World::ApplyPaletteAndTints`), index 31
+/// is forcibly kept 31. Level 7 — the identity (full brightness;
+/// in the C++ port this is block 15 of the table, filled with identity values).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrightnessLut {
     levels: [[u8; PALETTE_SIZE]; BRIGHTNESS_LEVELS],
 }
 
 impl BrightnessLut {
-    /// Строит таблицы по палитре (`WindowManager_ColorPalette`).
+    /// Builds the tables from the palette (`WindowManager_ColorPalette`).
     pub fn build(palette: &Palette) -> Self {
         let raw = palette.raw_entries();
         let mut levels = [[0u8; PALETTE_SIZE]; BRIGHTNESS_LEVELS];
@@ -741,7 +741,7 @@ impl BrightnessLut {
             }
         }
 
-        // Уровень полной яркости — identity.
+        // The full brightness level — identity.
         for (index, slot) in levels[BRIGHTNESS_LEVELS - 1].iter_mut().enumerate() {
             *slot = index as u8;
         }
@@ -749,19 +749,19 @@ impl BrightnessLut {
         Self { levels }
     }
 
-    /// LUT уровня `level` (значения выше 7 клампятся к 7).
+    /// LUT of level `level` (values above 7 are clamped to 7).
     #[inline]
     pub fn level(&self, level: u8) -> &[u8; PALETTE_SIZE] {
         &self.levels[usize::from(level.min(7))]
     }
 
-    /// Индекс после применения яркости.
+    /// Index after applying brightness.
     #[inline]
     pub fn map(&self, level: u8, index: u8) -> u8 {
         self.level(level)[index as usize]
     }
 
-    /// Уровень полной яркости.
+    /// Full brightness level.
     pub fn full(&self) -> &[u8; PALETTE_SIZE] {
         self.level(FULL_BRIGHTNESS_LEVEL)
     }
@@ -771,7 +771,7 @@ impl BrightnessLut {
 mod tests {
     use super::*;
 
-    /// Синтетическая палитра с уникальным 6-битным цветом на каждый индекс:
+    /// Synthetic palette with a unique 6-bit color per index:
     /// `(index % 64, (index / 64) * 16, 0)`.
     fn synthetic_palette() -> Palette {
         let mut bytes = vec![0u8; PALETTE_BYTES];
@@ -823,7 +823,7 @@ mod tests {
         assert!(!red.is_identity());
         assert!(ColorLut::identity().is_identity());
 
-        // Слоты 32–39 и 48–63 подменяются, всё остальное — identity.
+        // Slots 32–39 and 48–63 are substituted, everything else is the identity.
         for index in 0..PALETTE_SIZE {
             let in_slots = (32..=39).contains(&index) || (48..=63).contains(&index);
 
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(&green.0[32..40], &TEAM_GREEN_COLORS);
         assert_eq!(&blue.0[48..56], &TEAM_BLUE_COLORS);
         assert_eq!(&gray.0[32..40], &TEAM_GRAY_COLORS);
-        // Слоты 48–63 = восемь цветов дважды.
+        // Slots 48–63 = eight colors twice.
         assert_eq!(&derelict.0[48..56], &TEAM_DERELICT_COLORS);
         assert_eq!(&derelict.0[56..64], &TEAM_DERELICT_COLORS);
     }
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(slots[16], (56, 0));
         assert_eq!(slots[23], (63, 7));
 
-        // Та же нумерация, что в LUT команды.
+        // The same numbering as in the team LUT.
         let lut = ColorLut::for_team(TeamColors::Green);
 
         for (slot, color) in slots {
@@ -878,7 +878,7 @@ mod tests {
             40
         );
 
-        // Цвета индексов 9–31 и 96–127 недостижимы при full_scan = false.
+        // The colors of indices 9–31 and 96–127 are unreachable with full_scan = false.
         for reserved in [9u8, 20, 31, 96, 110, 127] {
             let value = palette.raw(reserved);
             let found = map_color(&palette.raw, value[0], value[1], value[2], false);
@@ -887,7 +887,7 @@ mod tests {
                 !((9..=31).contains(&found) || (96..=127).contains(&found)),
                 "map_color вернул зарезервированный индекс {found}"
             );
-            // С full_scan точное совпадение находится.
+            // With full_scan the exact match is found.
             assert_eq!(
                 map_color(&palette.raw, value[0], value[1], value[2], true),
                 reserved
@@ -908,8 +908,8 @@ mod tests {
             );
         }
 
-        // Уровень 0 — самый тёмный: все цвета, кроме фиксированного индекса 31,
-        // сходятся к чёрному.
+        // Level 0 is the darkest: all colors except the fixed index 31
+        // converge to black.
         for index in 0..PALETTE_SIZE {
             if index == usize::from(FIXED_BRIGHTNESS_INDEX) {
                 continue;
@@ -920,8 +920,8 @@ mod tests {
             assert_eq!(palette.raw(mapped), [0, 0, 0], "уровень 0, индекс {index}");
         }
 
-        // Уровни 0–6 считаются ровно как в `World::ApplyPaletteAndTints`:
-        // rgb' = rgb * (level * 32) / 224, затем `Color_MapColor` без full_scan.
+        // Levels 0–6 are computed exactly as in `World::ApplyPaletteAndTints`:
+        // rgb' = rgb * (level * 32) / 224, then `Color_MapColor` without full_scan.
         let raw = palette.raw_entries();
 
         for level in 0..7u32 {
@@ -949,23 +949,23 @@ mod tests {
             }
         }
 
-        // Уровень 5 (тень) заметно темнее: меняется большинство цветов.
+        // Level 5 (shadow) is noticeably darker: most colors change.
         let changed = (0..PALETTE_SIZE)
             .filter(|&index| brightness.map(SHADOW_BRIGHTNESS_LEVEL, index as u8) != index as u8)
             .count();
 
         assert!(changed > 100, "уровень 5 изменил всего {changed} цветов");
 
-        // Индекс 31 фиксирован на всех уровнях 0–6.
+        // Index 31 is fixed at all levels 0–6.
         for level in 0..=6u8 {
             assert_eq!(brightness.map(level, FIXED_BRIGHTNESS_INDEX), 31);
         }
 
-        // Уровни клампятся.
+        // Levels are clamped.
         assert_eq!(brightness.level(200), brightness.level(7));
     }
 
-    /// Палитра, у которой каждый слот раскрашен по номеру: `(i, 2i, 4i)`.
+    /// Palette where each slot is colored by its number: `(i, 2i, 4i)`.
     fn indexed_palette() -> Palette {
         let mut bytes = vec![0u8; PALETTE_BYTES];
 
@@ -980,7 +980,7 @@ mod tests {
 
     #[test]
     fn color_cycle_table_matches_the_cpp_init_color_cycles() {
-        // Порядок и тайминги — построчно `World::InitColorCycles`
+        // Order and timings — row by row `World::InitColorCycles`
         // (`world.cpp:542-557`); `TIMER_FPS_TO_MS(fps) = 1000 / fps`.
         let table: Vec<(u8, u8, RotateDirection, u32)> = COLOR_CYCLES
             .iter()
@@ -1011,7 +1011,7 @@ mod tests {
             ]
         );
 
-        // Маяки шахты — 6 fps на четырёх слотах: полный цикл 666.7 мс.
+        // The mine beacons — 6 fps on four slots: full cycle 666.7 ms.
         let beacons = COLOR_CYCLES[1];
 
         assert_eq!((beacons.start_index, beacons.end_index), (13, 16));
@@ -1035,11 +1035,11 @@ mod tests {
         let palette = indexed_palette();
         let mut cycles = ColorCycles::new();
 
-        // Меньше самого короткого периода (10 fps = 100 мс) — ни одного шага.
+        // Less than the shortest period (10 fps = 100 ms) — not a single step.
         assert!(!cycles.advance(0.09));
         assert_eq!(rotate_palette(&palette, &cycles), palette);
 
-        // 170 мс — ровно один шаг 6 fps (166 мс): 13..16 сдвигается вправо.
+        // 170 ms — exactly one 6 fps step (166 ms): 13..16 shifts right.
         assert!(cycles.advance(0.08));
         assert_eq!(cycles.step_counts()[1], 1);
         let once = rotate_palette(&palette, &cycles);
@@ -1048,15 +1048,15 @@ mod tests {
         assert_eq!(once.raw(14), palette.raw(13));
         assert_eq!(once.raw(15), palette.raw(14));
         assert_eq!(once.raw(16), palette.raw(15));
-        // Соседние с 13..16 слоты не тронуты (9..12 и 17..20 вращаются своими
-        // циклами 9 fps, 13..16 от них не зависит).
+        // The slots neighboring 13..16 are untouched (9..12 and 17..20 rotate by their own
+        // 9 fps cycles, 13..16 do not depend on them).
         assert_eq!(once.raw(8), palette.raw(8));
         assert_eq!(once.raw(32), palette.raw(32));
-        // 8-битные компоненты пересчитаны как raw * 4.
+        // 8-bit components are recomputed as raw * 4.
         assert_eq!(once.rgb(13), [once.raw(13)[0] * 4, once.raw(13)[1] * 4, once.raw(13)[2] * 4]);
 
-        // Полный цикл (4 шага по 1/6 с) возвращает слоты 13..16 на место
-        // (остальные диапазоны живут своим темпом и тоже двигаются).
+        // A full cycle (4 steps of 1/6 s) returns slots 13..16 to their place
+        // (the other ranges live at their own rate and move as well).
         for _ in 0..3 {
             cycles.advance(1.0 / 6.0);
         }
@@ -1067,7 +1067,7 @@ mod tests {
             assert_eq!(full.raw(index), palette.raw(index), "слот {index}");
         }
 
-        // 5-й шаг = 4 (круг) + 1: слоты 13..16 как после одного шага.
+        // The 5th step = 4 (a full circle) + 1: slots 13..16 as after one step.
         cycles.advance(1.0 / 6.0);
         assert_eq!(cycles.step_counts()[1], 5);
         let after_five = rotate_palette(&palette, &cycles);
@@ -1082,8 +1082,8 @@ mod tests {
         let palette = indexed_palette();
         let mut cycles = ColorCycles::new();
 
-        // 0.5 с: 9..12 @9 fps (4 шага = полный круг), 25..30 @2 fps (1 шаг),
-        // 110..116 @10 fps (5 шагов = полный круг).
+        // 0.5 s: 9..12 @9 fps (4 steps = full circle), 25..30 @2 fps (1 step),
+        // 110..116 @10 fps (5 steps = full circle).
         cycles.advance(0.5);
         let steps = *cycles.step_counts();
 
@@ -1095,15 +1095,15 @@ mod tests {
 
         let rotated = rotate_palette(&palette, &cycles);
 
-        // 9..12 — единственный диапазон с вращением влево; 4 шага = круг.
+        // 9..12 — the only range rotating left; 4 steps = a circle.
         for index in 9..=12 {
             assert_eq!(rotated.raw(index), palette.raw(index));
         }
-        // 25..30 @2 fps сдвинулся на один вправо.
+        // 25..30 @2 fps shifted one to the right.
         assert_eq!(rotated.raw(25), palette.raw(30));
         assert_eq!(rotated.raw(26), palette.raw(25));
 
-        // Другой шаг: 9..12 влево на один слот.
+        // Another step: 9..12 left by one slot.
         let mut left = ColorCycles::new();
         left.advance(1.0 / 9.0);
         let rotated = rotate_palette(&palette, &left);

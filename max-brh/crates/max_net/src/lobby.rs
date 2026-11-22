@@ -1,7 +1,7 @@
-//! WS-клиент к Horizon: запрос/ответ JSON-событий.
+//! WS client to Horizon: request/response of JSON events.
 //!
-//! Минимальная реализация RFC 6455 (маскированные текстовые кадры) — по образцу
-//! C++-клиента (`src/ws_client.cpp`), но асинхронно на tokio.
+//! Minimal RFC 6455 implementation (masked text frames), modeled on the
+//! C++ client (`src/ws_client.cpp`), but asynchronous on tokio.
 
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 
 use crate::protocol::ClientEvent;
 
-/// Одно запрос/ответ-взаимодействие с лобби Horizon.
+/// A single request/response exchange with the Horizon lobby.
 pub async fn query<T: Serialize, R: DeserializeOwned>(
     host: &str,
     port: u16,
@@ -22,7 +22,7 @@ pub async fn query<T: Serialize, R: DeserializeOwned>(
 ) -> Result<R> {
     let mut stream = TcpStream::connect((host, port)).await?;
     tokio::time::timeout(timeout, async {
-        let key = "dGhlIHNhbXBsZSBub25jZQ=="; // фиксированный ключ — как в C++-клиенте
+        let key = "dGhlIHNhbXBsZSBub25jZQ=="; // fixed key, as in the C++ client
         let request_line = format!(
             "GET / HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
         );

@@ -1,21 +1,21 @@
-//! Отрисовка тайла карты в RGBA: поверхность + ресурсы.
+//! Drawing of a map tile into RGBA: surface + resources.
 //!
-//! Полноценные тайлы `.WRL` — это 64×64 пикселя индексов палитры на каждый
-//! tile-id (`max_assets::wrl`), но для клиента достаточно упрощённой схемы,
-//! которая уже даёт читаемую карту:
+//! Full `.WRL` tiles are 64×64 pixels of palette indices per
+//! tile-id (`max_assets::wrl`), but for the client a simplified scheme is enough
+//! that already yields a readable map:
 //!
-//! * база клетки — цвет её поверхности (`LAND`/`WATER`/`COAST`/`AIR`);
-//! * поверх базы — шахматный паттерн (8×8 ячеек), чтобы соседние клетки
-//!   различались без текстур;
-//! * ресурсная точка в центре клетки — цвет по типу ресурса
-//!   (материалы/топливо/золото), если в клетке есть ненулевое количество.
+//! * the cell base is the color of its surface (`LAND`/`WATER`/`COAST`/`AIR`);
+//! * on top of the base is a checkerboard pattern (8×8 cells) so that neighboring cells
+//!   differ without textures;
+//! * a resource dot in the center of the cell — color by resource type
+//!   (materials/fuel/gold), if the cell has a non-zero amount.
 //!
-//! `Surface` — битовая маска, поэтому приоритет такой: `WATER` → `COAST` →
-//! `LAND` → `AIR` → «неизвестно». В штатных картах в клетке ровно один бит
-//! (`pass_table` даёт одно из четырёх значений), так что приоритет важен только
-//! для синтетических/смешанных карт.
+//! `Surface` is a bit mask, so the priority is: `WATER` → `COAST` →
+//! `LAND` → `AIR` → "unknown". In stock maps a cell has exactly one bit
+//! (`pass_table` yields one of four values), so the priority matters only
+//! for synthetic/mixed maps.
 //!
-//! Всё — чистые функции над [`RgbaBuffer`] и [`Map`]: SDL не требуется.
+//! Everything is pure functions over [`RgbaBuffer`] and [`Map`]: SDL is not required.
 
 use max_assets::{ResourceMarkers, SimpleImage, WrlMap};
 use max_core::enums::Surface;
@@ -24,54 +24,54 @@ use max_core::map::{Map, ResourceKind, ResourceMap};
 use crate::buffer::{PixelRect, Rgba, RgbaBuffer};
 use crate::viewport::Viewport;
 
-/// Пикселей карты в клетке (`GFX_MAP_TILE_SIZE`).
+/// Map pixels in a cell (`GFX_MAP_TILE_SIZE`).
 pub const TILE_PIXELS: i32 = 64;
-/// Сколько ячеек паттерна по каждой оси (8×8 на клетку).
+/// How many pattern cells per axis (8×8 per cell).
 pub const PATTERN_CELLS: i32 = 8;
 
-/// Строит [`Map`] из разобранного `.WRL`.
+/// Builds a [`Map`] from a parsed `.WRL`.
 ///
-/// Поверхности берутся по формуле оригинала
+/// The surfaces are taken by the original's formula
 /// `surface[i] = PassData[pass_table[tile_ids[i]]]` (`WrlMap::surface_map`,
-/// §3.1 `formats/wrl.md`); карта ресурсов пустая — в `.WRL` ресурсов нет,
-/// их расставляет генерация партии (`max_core::setup`).
+/// §3.1 of `formats/wrl.md`); the resource map is empty — there are no resources in `.WRL`,
+/// they are placed by match generation (`max_core::setup`).
 ///
-/// Сами пиксели тайлов `.WRL` здесь не используются: упрощённый рендер
-/// рисует цвет поверхности и ресурсную точку (см. модульную документацию).
+/// The `.WRL` tile pixels themselves are not used here: the simplified renderer
+/// draws the surface color and the resource dot (see the module documentation).
 pub fn map_from_wrl(wrl: &WrlMap) -> Map {
     Map::from_parts(wrl.surface_map(), ResourceMap::new())
 }
 
-/// Цвета и параметры упрощённой отрисовки карты.
+/// Colors and parameters of the simplified map rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TileStyle {
-    /// База суши.
+    /// Land base.
     pub land: Rgba,
-    /// База воды.
+    /// Water base.
     pub water: Rgba,
-    /// База побережья.
+    /// Coast base.
     pub coast: Rgba,
-    /// База «только воздух» (обрыв/пропасть).
+    /// "Air only" base (cliff/abyss).
     pub air: Rgba,
-    /// База клетки без поверхности (`Surface::NONE`).
+    /// Base of a cell without a surface (`Surface::NONE`).
     pub unknown: Rgba,
-    /// Ресурс «материалы» (`ResourceKind::Raw`).
+    /// Resource "materials" (`ResourceKind::Raw`).
     pub materials: Rgba,
-    /// Ресурс «топливо».
+    /// Resource "fuel".
     pub fuel: Rgba,
-    /// Ресурс «золото».
+    /// Resource "gold".
     pub gold: Rgba,
-    /// Радиус ресурсной точки в пикселях при масштабе 1:1.
+    /// Radius of the resource dot in pixels at 1:1 scale.
     pub dot_radius: i32,
-    /// Уровень затемнения нечётных ячеек паттерна (0..=7).
+    /// Darkening level of the odd pattern cells (0..=7).
     pub pattern_level: u8,
 }
 
 impl Default for TileStyle {
     fn default() -> Self {
         Self {
-            // Палитра-независимые цвета: карта не обязана совпадать с оригиналом
-            // пиксель-в-пиксель, важно различать поверхности и ресурсы.
+            // Palette-independent colors: the map does not have to match the original
+            // pixel for pixel, it is important to distinguish surfaces and resources.
             land: Rgba::rgb(86, 124, 58),
             water: Rgba::rgb(38, 74, 148),
             coast: Rgba::rgb(198, 186, 122),
@@ -87,7 +87,7 @@ impl Default for TileStyle {
 }
 
 impl TileStyle {
-    /// Цвет базы для поверхности-маски.
+    /// Base color for a surface mask.
     pub fn base_color(&self, surface: Surface) -> Rgba {
         if surface.intersects(Surface::WATER) {
             self.water
@@ -102,7 +102,7 @@ impl TileStyle {
         }
     }
 
-    /// Цвет ресурсной точки.
+    /// Color of the resource dot.
     pub fn resource_color(&self, kind: ResourceKind) -> Rgba {
         match kind {
             ResourceKind::Raw => self.materials,
@@ -112,15 +112,15 @@ impl TileStyle {
     }
 }
 
-/// Цвет базы клетки карты (с учётом её поверхности).
+/// Base color of a map cell (taking its surface into account).
 pub fn tile_base_color(map: &Map, grid_x: i16, grid_y: i16, style: &TileStyle) -> Rgba {
     style.base_color(map.surface_at(grid_x, grid_y))
 }
 
-/// Цвет пикселя клетки внутри её прямоугольника на экране.
+/// Color of a cell pixel inside its rectangle on screen.
 ///
-/// `local_x`/`local_y` — координаты пикселя внутри прямоугольника клетки;
-/// `cell` — размер ячейки паттерна в пикселях (масштабируется вместе с тайлом).
+/// `local_x`/`local_y` are the pixel coordinates inside the cell rectangle;
+/// `cell` is the size of a pattern cell in pixels (scaled together with the tile).
 pub fn tile_pixel_color(
     base: Rgba,
     local_x: i32,
@@ -141,12 +141,12 @@ pub fn tile_pixel_color(
     }
 }
 
-/// Размер ячейки паттерна для прямоугольника клетки заданного размера.
+/// Pattern cell size for a cell rectangle of the given size.
 pub fn pattern_cell_size(tile_size: i32) -> i32 {
     (tile_size / PATTERN_CELLS).max(1)
 }
 
-/// Радиус ресурсной точки для прямоугольника клетки заданного размера.
+/// Resource dot radius for a cell rectangle of the given size.
 pub fn dot_radius_for(tile_size: i32, style: &TileStyle) -> i32 {
     if tile_size <= 0 {
         0
@@ -155,10 +155,10 @@ pub fn dot_radius_for(tile_size: i32, style: &TileStyle) -> i32 {
     }
 }
 
-/// Рисует одну клетку карты в `rect` буфера `dst`.
+/// Draws one map cell into `rect` of the `dst` buffer.
 ///
-/// Возвращает число изменённых пикселей (0 — клетка вне карты или прямоугольник
-/// вне буфера). Ресурсная точка рисуется только при ненулевом количестве.
+/// Returns the number of changed pixels (0 — the cell is outside the map or the rectangle
+/// is outside the buffer). The resource dot is drawn only for a non-zero amount.
 pub fn render_tile_into(
     dst: &mut RgbaBuffer,
     map: &Map,
@@ -208,9 +208,9 @@ pub fn render_tile_into(
     painted
 }
 
-/// Клетка карты в собственный буфер `size × size`.
+/// Map cell into its own `size × size` buffer.
 ///
-/// `None`, если клетка вне карты.
+/// `None` if the cell is outside the map.
 pub fn render_tile(
     map: &Map,
     grid: (i16, i16),
@@ -239,10 +239,10 @@ pub fn render_tile(
     Some(buffer)
 }
 
-/// Рисует все видимые клетки карты в `dst` через камеру.
+/// Draws all visible map cells into `dst` through the camera.
 ///
-/// Возвращает число нарисованных клеток. Буфер не очищается: фон задаёт
-/// вызывающий (обычно — [`TileStyle::unknown`]).
+/// Returns the number of drawn cells. The buffer is not cleared: the background is set by
+/// the caller (usually [`TileStyle::unknown`]).
 pub fn render_map_into(
     dst: &mut RgbaBuffer,
     map: &Map,
@@ -265,11 +265,11 @@ pub fn render_map_into(
     painted
 }
 
-/// Рисует только маркеры ресурсов поверх уже нарисованных тайлов.
+/// Draws only the resource markers on top of already drawn tiles.
 ///
-/// Нужен, когда поверхность рисуется настоящими пикселями из `.WRL`
-/// ([`crate::terrain::TerrainAtlas`]): шахматная заглушка [`TileStyle`] тогда не
-/// нужна, но точки ресурсов должны остаться.
+/// Needed when the surface is drawn with real pixels from `.WRL`
+/// ([`crate::terrain::TerrainAtlas`]): the checkerboard placeholder [`TileStyle`] is then not
+/// needed, but the resource dots must remain.
 pub fn render_resources_into(
     dst: &mut RgbaBuffer,
     map: &Map,
@@ -317,25 +317,25 @@ pub fn render_resources_into(
     painted
 }
 
-/// Рисует маркеры ресурсов из `MAX.RES` (`Survey_RenderMarker`).
+/// Draws resource markers from `MAX.RES` (`Survey_RenderMarker`).
 ///
-/// В отличие от [`render_resources_into`] (цветные точки для упрощённого
-/// рендера без данных игры), здесь используются настоящие картинки
-/// `RAWMSK*`/`FUELMK*`/`GOLDMK*` (при `zoom > 16`) или малые
-/// `SMRWMK*`/`SMFLMK*`/`SMGDMK*` (при `zoom <= 16`). Координаты — центр клетки,
-/// hotspot картинки (`ulx/uly`) — как `WindowManager_DecodeSimpleImage`.
+/// Unlike [`render_resources_into`] (colored dots for the simplified
+/// render without game data), this uses the real images
+/// `RAWMSK*`/`FUELMK*`/`GOLDMK*` (at `zoom > 16`) or the small
+/// `SMRWMK*`/`SMFLMK*`/`SMGDMK*` (at `zoom <= 16`). The coordinates are the center of the cell,
+/// the hotspot of the image (`ulx/uly`) — like `WindowManager_DecodeSimpleImage`.
 ///
-/// `palette` — системная палитра окна (`FRAMEPIC`): маркеры — simple image и
-/// индексируются именно ею, а не палитрой `.WRL`, которой рисуются тайлы.
+/// `palette` is the system palette of the window (`FRAMEPIC`): the markers are simple images and
+/// are indexed precisely by it, not by the `.WRL` palette used to draw the tiles.
 ///
-/// `team`/`max_survey` — маска исследованности (`Survey_RenderMarkers`,
-/// `survey.cpp:137-151`): `mask = GameManager_MaxSurvey ? 0xFFFF : 0` плюс
-/// `hash_team_id` команды. Иконка рисуется только там, где
-/// `ResourceManager_CargoMap & mask`, то есть **разведано** этой командой
-/// (или включён чит `MAXSURVEY`). Плюс C++ требует
+/// `team`/`max_survey` — the survey mask (`Survey_RenderMarkers`,
+/// `survey.cpp:137-151`): `mask = GameManager_MaxSurvey ? 0xFFFF : 0` plus
+/// the team's `hash_team_id`. The icon is drawn only where
+/// `ResourceManager_CargoMap & mask`, that is, **surveyed** by this team
+/// (or the `MAXSURVEY` cheat is enabled). In addition, C++ requires
 /// `Access_GetModifiedSurfaceType(i, j) != SURFACE_TYPE_AIR`.
 ///
-/// Возвращает `(пикселей нарисовано, клеток с иконкой)`.
+/// Returns `(pixels drawn, cells with an icon)`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_resource_icons_into(
     dst: &mut RgbaBuffer,
@@ -368,7 +368,7 @@ pub fn render_resource_icons_into(
             continue;
         };
 
-        // `CargoMap & mask`: бит команды (или 0xFFFF при чите MAXSURVEY).
+        // `CargoMap & mask`: team bit (or 0xFFFF with the MAXSURVEY cheat).
         if !max_survey && !entry.is_visible_to(team) {
             continue;
         }
@@ -380,7 +380,7 @@ pub fn render_resource_icons_into(
 
         let centre = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
-        // C++: `Gfx_ZoomLevel > 16` — большие маркеры, иначе малые.
+        // C++: `Gfx_ZoomLevel > 16` — large markers, otherwise small ones.
         let image = if zoom > 16 {
             markers.big(kind, entry.amount())
         } else {
@@ -388,7 +388,7 @@ pub fn render_resource_icons_into(
         };
 
         if let Some(image) = image {
-            // Масштаб оригинала: большой маркер — `zoom/64`, малый — `zoom/16`.
+            // Scale of the original: large marker — `zoom/64`, small — `zoom/16`.
             let (num, den) = if zoom > 16 { (zoom, 64) } else { (zoom, 16) };
             let drawn = blit_marker(dst, image, palette, centre, num, den);
 
@@ -397,8 +397,8 @@ pub fn render_resource_icons_into(
                 cells += 1;
             }
         } else if let Some(icon) = markers.icon(kind) {
-            // Fallback: иконка интерфейса `I_*` по центру клетки (в оригинале не
-            // используется, но лучше цветной точки).
+            // Fallback: the `I_*` interface icon at the center of the cell (not
+            // used in the original, but better than a colored dot).
             let hotspot = (i32::from(icon.width) / 2, i32::from(icon.height) / 2);
             let drawn = blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1);
 
@@ -412,7 +412,7 @@ pub fn render_resource_icons_into(
     (painted, cells)
 }
 
-/// Блит simple image с hotspot по центру и масштабом `num/den`.
+/// Blit of a simple image with the hotspot at the center and scale `num/den`.
 fn blit_marker(
     dst: &mut RgbaBuffer,
     image: &SimpleImage,
@@ -429,11 +429,11 @@ fn blit_marker(
     blit_marker_at(dst, image, palette, centre, hotspot, num, den)
 }
 
-/// Блит simple image с hotspot из заголовка ресурса
+/// Blit of a simple image with the hotspot from the resource header
 /// (`WindowManager_DecodeSimpleImage`: `top_left = centre - ulx/uly`),
-/// масштабированный `num/den`.
+/// scaled by `num/den`.
 ///
-/// Используется и маркерами ресурсов, и маркерами стройки `BLDMRK1..5`
+/// Used by both resource markers and build markers `BLDMRK1..5`
 /// (`DrawMap_Callback2`, `drawmap.cpp:339`).
 pub fn blit_simple_image(
     dst: &mut RgbaBuffer,
@@ -446,7 +446,7 @@ pub fn blit_simple_image(
     blit_marker(dst, image, palette, centre, num, den)
 }
 
-/// Блит simple image: `top_left = centre - hotspot`, размеры `w*num/den`.
+/// Blit of a simple image: `top_left = centre - hotspot`, sizes `w*num/den`.
 fn blit_marker_at(
     dst: &mut RgbaBuffer,
     image: &SimpleImage,
@@ -488,7 +488,7 @@ fn blit_marker_at(
     painted
 }
 
-/// `(value * num / den)` с округлением к ближайшему.
+/// `(value * num / den)` rounded to the nearest.
 fn scale_round(value: i32, num: i32, den: i32) -> i32 {
     if den == 0 {
         return value;
@@ -502,7 +502,7 @@ mod tests {
     use super::*;
     use max_core::map::{ResourceMap, ResourceMapEntry, SurfaceMap};
 
-    /// Карта, целиком заполненная `surface`.
+    /// A map filled entirely with `surface`.
     fn uniform_map(surface: Surface) -> Map {
         let mut surface_map = SurfaceMap::new();
 
@@ -536,7 +536,7 @@ mod tests {
             }
         }
 
-        // Приоритет для смешанной маски: WATER важнее COAST, COAST важнее LAND.
+        // Priority for a mixed mask: WATER is more important than COAST, COAST than LAND.
         assert_eq!(
             style.base_color(Surface::LAND | Surface::COAST),
             style.coast
@@ -575,15 +575,15 @@ mod tests {
 
         assert_eq!(buffer.width(), 64);
         assert_eq!(buffer.height(), 64);
-        // Ячейка паттерна — 8 пикселей: (0,0) и (8,0) разной чётности.
+        // Pattern cell is 8 pixels: (0,0) and (8,0) have different parity.
         assert_eq!(buffer.get(0, 0), Some(land));
         assert_eq!(buffer.get(7, 0), Some(land));
         assert_eq!(buffer.get(8, 0), Some(land.darken(style.pattern_level)));
         assert_eq!(buffer.get(16, 0), Some(land));
         assert_eq!(buffer.get(8, 8), Some(land));
-        // (63, 63) — ячейка (7, 7): чётная, значит база без затемнения.
+        // (63, 63) — cell (7, 7): even, so the base without darkening.
         assert_eq!(buffer.get(63, 63), Some(land));
-        // (0, 8) — ячейка (0, 1): нечётная, затемнена.
+        // (0, 8) — cell (0, 1): odd, darkened.
         assert_eq!(buffer.get(0, 8), Some(land.darken(style.pattern_level)));
     }
 
@@ -618,7 +618,7 @@ mod tests {
         resources.set(
             52,
             53,
-            // `HASH_TEAM_RED = 0x2000` (бит 13) — разведано красными.
+            // `HASH_TEAM_RED = 0x2000` (bit 13) — surveyed by the reds.
             ResourceMapEntry::new(4, Some(ResourceKind::Gold), 0b1000),
         );
         let map = Map::from_parts(uniform_map(Surface::LAND).surface.clone(), resources);
@@ -662,11 +662,11 @@ mod tests {
         let map = Map::from_parts(map.surface.clone(), resources);
         let buffer = render_tile(&map, (10, 10), TILE_PIXELS, &style).unwrap();
 
-        // Центр клетки — золото, угол — суша (шахматка не важна).
+        // Center of the cell is gold, the corner is land (the checkerboard does not matter).
         assert_eq!(buffer.get(32, 32), Some(style.gold));
         assert_eq!(buffer.get(0, 0), Some(style.land));
 
-        // Нулевое количество ресурса точки не рисует.
+        // A zero resource amount draws no dot.
         let mut empty = ResourceMap::new();
         empty.set(
             10,
@@ -745,13 +745,13 @@ mod tests {
         let painted = render_map_into(&mut buffer, &map, &viewport, &style);
 
         assert_eq!(painted, range.count() as u32);
-        // Клетка (52,53) начинается в (0,0) экрана.
+        // Cell (52,53) starts at (0,0) of the screen.
         assert_eq!(buffer.get(0, 0), Some(style.water));
         assert_eq!(
             buffer.get(63, 0),
             Some(style.water.darken(style.pattern_level))
         );
-        // Правый нижний угол экрана тоже покрыт картой.
+        // The bottom-right corner of the screen is also covered by the map.
         assert_ne!(buffer.get(511, 383), Some(style.unknown));
     }
 }
