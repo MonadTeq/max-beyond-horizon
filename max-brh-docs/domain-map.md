@@ -204,8 +204,96 @@
 
 ## Команды и кланы
 
+Кланы (`TeamClan`): 9 значений = 8 игровых кланов + `Random` (0). «Alien» — это
+**не клан**, а слот команды (`TeamIndex::Alien` / `TeamId::ALIEN`). У всех кланов
+поле `credits` из `SC_CLANS` = 0 (стартовые кредиты задаёт опция «Starting Credit»,
+0–250, а не клан).
+
 | Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
 |---|---|---|---|---|
+| Случайный клан | `TeamClan::Random` | `TEAM_CLAN_RANDOM` (id `"Random"`) | enums.rs:214 / enums.hpp:171 | 0x00; псевдо-выбор — при старте партии заменяется случайным кланом 1–8 (`Randomizer_Generate(8)+1`) |
+| Избранные | `TeamClan::TheChosen` | `TEAM_CLAN_THE_CHOSEN` (id `"Clan A"`) | enums.rs:216 / manual.txt:700 | EN «The Chosen»; авиация |
+| Багровый путь | `TeamClan::CrimsonPath` | `TEAM_CLAN_CRIMSON_PATH` (id `"Clan B"`) | enums.rs:217 / manual.txt:708 | EN «Crimson Path»; флот |
+| Фон Гриффин | `TeamClan::VonGriffin` | `TEAM_CLAN_VON_GRIFFIN` (id `"Clan C"`) | enums.rs:218 / manual.txt:717 | EN «Von Griffin»; разведка/скрытность |
+| Рука Айера | `TeamClan::AyersHand` | `TEAM_CLAN_AYERS_HAND` (id `"Clan D"`) | enums.rs:219 / manual.txt:729 | EN «Ayer’s Hand»; ракетные юниты |
+| Мусаси | `TeamClan::Musashi` | `TEAM_CLAN_MUSASHI` (id `"Clan E"`) | enums.rs:220 / manual.txt:736 | EN «Musashi»; тяжёлая броня |
+| Священная восьмёрка | `TeamClan::SacredEights` | `TEAM_CLAN_SACRED_EIGHTS` (id `"Clan F"`) | enums.rs:221 / manual.txt:745 | EN «Sacred Eight» (ед. ч.); быстрая атака |
+| Семь рыцарей | `TeamClan::SevenKnights` | `TEAM_CLAN_7_KNIGHTS` (id `"Clan G"`) | enums.rs:222 / manual.txt:756 | EN «Seven Knights»; стационарная оборона |
+| Ось | `TeamClan::AxisInc` | `TEAM_CLAN_AXIS_INC` (id `"Clan H"`) | enums.rs:223 / manual.txt:763 | EN «Axis» / «Axis Inc.»; производство |
+
+> Идентификаторы `"Clan A"…"Clan H"` — ключи ресурса `SC_CLANS`
+> (`resource_manager.cpp:90-98`); отображаемые имена кланов хранятся в блоке
+> `name` самого ресурса `SC_CLANS` (зашифрован в `PATCHES.RES`).
+
+### Команды (TeamKind / TeamIndex / Opponent)
+
+| Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
+|---|---|---|---|---|
+| Пусто (нет игрока) | `TeamKind::None` | `TEAM_TYPE_NONE` | enums.rs:146 / enums.hpp:164 | 0; пустой слот команды |
+| Игрок (локальный) | `TeamKind::Player` | `TEAM_TYPE_PLAYER` | enums.rs:147 / enums.hpp:165 | 1; человек за этим клиентом (в hot-seat — любой человек) |
+| Компьютер | `TeamKind::Computer` | `TEAM_TYPE_COMPUTER` | enums.rs:148 / enums.hpp:166 | 2; ИИ симулируется сервером |
+| Удалённый игрок | `TeamKind::Remote` | `TEAM_TYPE_REMOTE` | enums.rs:149 / enums.hpp:167 | 3; другой клиент в сети |
+| Выбывший | `TeamKind::Eliminated` | `TEAM_TYPE_ELIMINATED` | enums.rs:150 / enums.hpp:168 | 4; команда уничтожена |
+| Красная команда | `TeamIndex::Red` / `TeamId::RED` | `PLAYER_TEAM_RED` | enums.rs:170 / enums.hpp:155 | 0x00; бит цвета `HASH_TEAM_RED` 0x2000 |
+| Зелёная команда | `TeamIndex::Green` / `TeamId::GREEN` | `PLAYER_TEAM_GREEN` | enums.rs:171 / enums.hpp:156 | 0x01; `HASH_TEAM_GREEN` 0x1000 |
+| Синяя команда | `TeamIndex::Blue` / `TeamId::BLUE` | `PLAYER_TEAM_BLUE` | enums.rs:172 / enums.hpp:157 | 0x02; `HASH_TEAM_BLUE` 0x800 |
+| Серая команда | `TeamIndex::Gray` / `TeamId::GRAY` | `PLAYER_TEAM_GRAY` | enums.rs:173 / enums.hpp:158 | 0x03; `HASH_TEAM_GRAY` 0x400 |
+| Пришельцы (нейтралы) | `TeamIndex::Alien` / `TeamId::ALIEN` | `PLAYER_TEAM_ALIEN` | enums.rs:174 / enums.hpp:159 | 0x04; псевдо-команда нейтральных/брошенных юнитов; `HASH_TEAM_DERELICT` 0x8000 |
+| (счётчик команд) | `TeamId::MAX` | `PLAYER_TEAM_MAX` | enums.rs:179 / enums.hpp:160 | 5; не команда, а верхняя граница |
+| Новичок (сложность ИИ) | `Opponent::Clueless` | `OPPONENT_TYPE_CLUELESS` | enums.rs:233 / enums.hpp:184 | 0; ИИ: нет продвинутых стратегий, штраф −25 % к стройке/добыче |
+| Ученик | `Opponent::Apprentice` | `OPPONENT_TYPE_APPRENTICE` | enums.rs:234 / enums.hpp:185 | 1; базовый ИИ, без штрафов |
+| Средний | `Opponent::Average` | `OPPONENT_TYPE_AVERAGE` | enums.rs:235 / enums.hpp:186 | 2; продвинутые стратегии |
+| Эксперт | `Opponent::Expert` | `OPPONENT_TYPE_EXPERT` | enums.rs:236 / enums.hpp:187 | 3; умнейший доступный ИИ |
+| Мастер | `Opponent::Master` | `OPPONENT_TYPE_MASTER` | enums.rs:237 / enums.hpp:188 | 4; +25 % к производству и добыче |
+| Бог | `Opponent::God` | `OPPONENT_TYPE_GOD` | enums.rs:238 / enums.hpp:189 | 5; +50 % к производству и добыче |
+
+### Режимы, победа, категории миссий
+
+| Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
+|---|---|---|---|---|
+| Пошаговый режим | `PlayMode::TurnBased` | `PLAY_MODE_TURN_BASED` | enums.rs:248 / enums.hpp:224 | 0; каждый игрок ходит по очереди |
+| Одновременный режим | `PlayMode::SimultaneousMoves` | `PLAY_MODE_SIMULTANEOUS_MOVES` | enums.rs:249 / enums.hpp:225 | 1; все ходят одновременно (real-time внутри хода) |
+| (не определено) | `PlayMode::Unknown` | `PLAY_MODE_UNKNOWN` | enums.rs:250 / enums.hpp:226 | 2; служебный страж при загрузке/настройке, не UI-вариант |
+| Победа по числу ходов | `VictoryType::Duration` | `VICTORY_TYPE_DURATION` | enums.rs:257 / enums.hpp:219 | 0; по достижении лимита ходов побеждает игрок с максимумом очков |
+| Победа по очкам | `VictoryType::Score` | `VICTORY_TYPE_SCORE` | enums.rs:258 / enums.hpp:220 | 1; первый, достигший цели по очкам (1 очко/ход за работающую `GREENHSE`), побеждает |
+| (категория миссии) | `MissionCategory::Custom`… | `MISSION_CATEGORY_CUSTOM`… | victory.rs:13 / mission.hpp:31 | не `PlayMode`; 8 значений: Custom/Training/Campaign/HotSeat/Multiplayer/Demo/Scenario/MultiPlayerScenario |
+| (тип сохранения) | `FileType::Custom`… | save.md `FileType` | enums.rs:264 / save.md | 10 значений заголовка V70; маппинг в `MissionCategory::from_file_type` |
+
+### Исследования (ResearchTopic)
+
+Порядок тем совпадает с первыми 8 атрибутами `ATTRIB_*` (`unit_values.rs:38-52`):
+каждая тема улучшает соответствующий атрибут всех новых юнитов.
+
+| Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
+|---|---|---|---|---|
+| Атака | `ResearchTopic::Attack` | `RESEARCH_TOPIC_ATTACK` | enums.rs:316 / enums.hpp:237 | 0 = `ATTRIB_ATTACK` |
+| Выстрелы | `ResearchTopic::Shots` | `RESEARCH_TOPIC_SHOTS` | enums.rs:317 / enums.hpp:238 | 1 = `ATTRIB_ROUNDS` |
+| Дальность | `ResearchTopic::Range` | `RESEARCH_TOPIC_RANGE` | enums.rs:318 / enums.hpp:239 | 2 = `ATTRIB_RANGE` |
+| Броня | `ResearchTopic::Armor` | `RESEARCH_TOPIC_ARMOR` | enums.rs:319 / enums.hpp:240 | 3 = `ATTRIB_ARMOR` |
+| Прочность | `ResearchTopic::Hits` | `RESEARCH_TOPIC_HITS` | enums.rs:320 / enums.hpp:241 | 4 = `ATTRIB_HITS` |
+| Скорость | `ResearchTopic::Speed` | `RESEARCH_TOPIC_SPEED` | enums.rs:321 / enums.hpp:242 | 5 = `ATTRIB_SPEED` |
+| Сканирование | `ResearchTopic::Scan` | `RESEARCH_TOPIC_SCAN` | enums.rs:322 / enums.hpp:243 | 6 = `ATTRIB_SCAN` |
+| Стоимость | `ResearchTopic::Cost` | `RESEARCH_TOPIC_COST` | enums.rs:323 / enums.hpp:244 | 7 = `ATTRIB_TURNS`; сокращает время постройки |
+
+### Характеристики кланов (бонусы/штрафы из `SC_CLANS`)
+
+Полная таблица — `CLAN_TRADEOFFS` в `max-brh/crates/max_core/src/unit_values_tables.in:200`
+(кортежи `(клан, юнит, атрибут, дельта)`, 95 записей; применяются в
+`ResourceManager_SetClanUpgradesFromClans` / `unit_values::apply_clan_tradeoffs`).
+
+| Клан | Архетип | Бонусы (юнит → атрибуты) |
+|---|---|---|
+| Избранные (The Chosen) | авиация | `AIRPLT` −5 ходов постройки; `Bomber` +4 атака, −1 ход; `Fighter` +1 дальность, −1 ход; `AirTransport` +4 скорость; `AWAC` +2 скан |
+| Багровый путь (Crimson Path) | флот | `SHIPYARD` −5 ходов; `Submarine` +4 атака, +2 скорость, −1 ход; `Gunboat` +2 броня, +4 прочность, +1 дальность; `Escort`/`Corvette`/`SeaTransport`/`CargoShip` +2 скорость; `MissileCruiser` +1 дальность, −1 ход |
+| Фон Гриффин (Von Griffin) | разведка | `Radar` +6 скан; `Scout` +2 атака/скорость/скан; `Scanner` +4 скан, +1 скорость; `AWAC` +4 скан, +2 скорость; `Submarine` +4 атака, +2 скорость, +2 скан; `Infiltrator` +1 скан/скорость, +2 опыт, −1 ход; `APC` +1 броня, +2 прочность, +2 скорость |
+| Рука Айера (Ayer’s Hand) | ракеты | `RocketLauncher`, `MissileCrawler`, `MissileLauncher` (турель), `MissileCruiser`: +2 атака, +1 дальность, −2 хода |
+| Мусаси (Musashi) | тяжёлая броня | `Tank` +4 атака, +2 броня, +4 прочность, +1 скорость; `GunTurret` +4/+2/+4; `Gunboat` +4 атака, +2 броня, +8 прочность, +1 дальность; `APC` +2 броня, +4 прочность, +1 скорость |
+| Священная восьмёрка (Sacred Eight) | быстрая атака | `AssaultGun` +4 атака, +2 скорость, +1 дальность, −2 хода; `Scout` +2 атака, +2 скорость; `Bomber` +2 атака, +2 скорость; `MobileAntiAir` +1 дальность, +2 скорость; `Escort` +1 дальность, +2 скорость; `Corvette` +2 атака, +2 скорость |
+| Семь рыцарей (Seven Knights) | оборона | `GunTurret` +4 атака, +2 броня, +4 прочность; `Artillery` +2 атака, +1 дальность; `AntiAir` +2 атака, +1 дальность; `MissileLauncher` +2 атака, +1 дальность, −1 ход; `LandMine` +8 атака; `SeaMine` +8 атака; `Radar` +2 скан |
+| Ось (Axis Inc.) | производство | `LIGHTPLT` −2 хода, `LANDPLT` −4 хода постройки |
+
+> Архетипы подтверждаются маппингом клан→ИИ-стратегия в `ai/strategy.rs:1233-1237`
+> и тестами (`team.rs`, `production.rs`, `unit_values.rs`).
 
 ## Прочее
 
