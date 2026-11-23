@@ -841,11 +841,6 @@ impl GameState {
         self.to_save().to_bytes()
     }
 
-    /// Save settings/service fields (V70).
-    pub fn save_meta(&self) -> &SaveMeta {
-        &self.save_meta
-    }
-
     /// Replaces the save settings/service fields (used when creating
     /// a game and when saving from the UI).
     pub(crate) fn set_save_meta(&mut self, meta: SaveMeta) {

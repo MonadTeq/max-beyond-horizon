@@ -489,6 +489,7 @@ pub(crate) fn count_damaged_units(state: &GameState, team: TeamId, unit_type: Un
 }
 
 /// `CountUnitsAboveAttribLevel()` (`scripter.cpp:850`).
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn count_units_above_attrib_level(
     state: &GameState,
     team: TeamId,

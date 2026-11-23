@@ -988,13 +988,8 @@ impl GameState {
         self.groups.get(group as usize)?.clone()
     }
 
-    /// The unit's group number (`None` — the unit is outside a group).
-    pub fn group_id_of(&self, id: UnitId) -> Option<u32> {
-        let slot = self.lookup(id)?;
-        self.unit_group.get(slot).copied().flatten()
-    }
-
     /// `AllocateUnitList` + `AssignUnitList` for the leader: creates a group.
+    #[cfg(test)]
     pub fn create_group_with_leader(&mut self, leader: UnitId) -> u32 {
         let group_id = self.groups.len() as u32;
         self.groups.push(Some(vec![leader]));
@@ -1007,6 +1002,7 @@ impl GameState {
     }
 
     /// Assigns a unit to a group (`UnitInfo::AssignUnitList`).
+    #[cfg(test)]
     pub fn assign_group_member(&mut self, id: UnitId, group_id: u32) {
         if !self.has_unit(id) {
             return;
@@ -1087,12 +1083,6 @@ impl GameState {
         }
 
         result
-    }
-
-    /// The unit's index in its list (`None` — not in a list).
-    pub fn list_position(&self, id: UnitId) -> Option<usize> {
-        let kind = self.unit(id)?.unit_list;
-        self.lists[kind.index()].iter().position(|item| *item == id)
     }
 
     // -----------------------------------------------------------------------
@@ -1252,6 +1242,7 @@ impl GameState {
 
     /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`) — moving to
     /// the front of the current list.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub fn move_to_front_in_unit_list(&mut self, id: UnitId) {
         let Some(kind) = self.unit(id).map(|unit| unit.unit_list) else {
             return;
@@ -2513,6 +2504,7 @@ impl GameState {
     }
 
     /// `Remote_StateSyncIndices[team]` — the last applied index of 54.
+    #[cfg(test)]
     #[inline]
     pub fn state_sync_index(&self, team: TeamId) -> u8 {
         self.state_sync_indices

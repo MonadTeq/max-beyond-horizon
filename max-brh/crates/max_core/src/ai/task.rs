@@ -379,6 +379,7 @@ impl Task {
     }
 
     /// `DeterminePosition()` — `GetBounds().ul`, unless overridden.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn determine_position(&self, world: &GameState) -> Point {
         let bounds = self.kind.get_bounds(world, self.header());
         Point::new(bounds.ulx as i16, bounds.uly as i16)
@@ -390,6 +391,7 @@ impl Task {
     }
 
     /// `Task::IsThinking()` — `false` by default.
+    #[allow(dead_code)] // Oracle trace: reached only from TaskManager::AreTasksThinking.
     pub(crate) fn is_thinking(&self, world: &GameState) -> bool {
         let _ = world;
         self.kind.is_thinking_kind()
@@ -955,16 +957,6 @@ pub(crate) fn task_retreat_from_danger(
     } else {
         false
     }
-}
-
-/// `Task_RemindMoveFinished` (`task.cpp:99`) — a wrapper over the manager.
-pub(crate) fn task_remind_move_finished(
-    manager: &mut super::task_manager::TaskManager,
-    world: &mut GameState,
-    unit_id: UnitId,
-    priority: bool,
-) {
-    manager.remind_move_finished(world, unit_id, priority);
 }
 
 /// `Task_RemoveMovementTasks` (`task.cpp:125`).

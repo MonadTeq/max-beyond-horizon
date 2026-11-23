@@ -785,6 +785,7 @@ pub(crate) fn choose_generic_build_orders(
 
 impl AiPlayer {
     /// `AiPlayer::GetWeightTable` (`aiplayer.cpp:945`).
+    #[cfg(test)]
     pub(crate) fn get_weight_table(
         &self,
         world: &crate::game::GameState,
@@ -811,11 +812,6 @@ impl AiPlayer {
         flags: u8,
     ) -> WeightTable {
         get_extended_weight_table(self, world, target, flags)
-    }
-
-    /// `AiPlayer::GetMaxSpottedScan` (`aiplayer.cpp:1686`).
-    pub(crate) fn get_max_spotted_scan(&self, world: &crate::game::GameState, unit_type: UnitType) -> i32 {
-        get_max_spotted_scan(self, world, unit_type)
     }
 
     /// `AiPlayer::ChooseStrategicBuildOrders` (`aiplayer.cpp:1700`).

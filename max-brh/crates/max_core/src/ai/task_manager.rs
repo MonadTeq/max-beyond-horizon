@@ -402,6 +402,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::AppendDeferredReminder` (`task_manager.cpp:275`).
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn append_deferred_reminder(&mut self, world: &mut GameState, reminder: Reminder) {
         reminder.on_append(self, world);
         self.deferred_reminders.push(reminder);
@@ -593,6 +594,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AreTasksThinking` (`task_manager.cpp:131`).
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn are_tasks_thinking(&self, world: &GameState, team: TeamId) -> bool {
         self.tasks
             .iter()
@@ -606,6 +608,7 @@ impl TaskManager {
     /// (`Ai_SetTasksPendingFlag`/`Ai_ClearTasksPendingFlags`): the static
     /// "there are unfinished tasks" check held the AI turn forever if a unit
     /// ran out of speed and the task waited for the next turn.
+    #[allow(dead_code)] // Diagnostics hook: documents the divergence from AiPlayer::CheckEndTurn.
     pub(crate) fn has_pending_work(&self, world: &GameState, team: TeamId) -> bool {
         if !self.normal_reminders.is_empty()
             || !self.priority_reminders.is_empty()
@@ -1235,6 +1238,7 @@ impl TaskManager {
     }
 
     /// `Task::EventCargoTransfer`.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn task_event_cargo_transfer(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_cargo_transfer(ctx, header, unit)
@@ -1242,6 +1246,7 @@ impl TaskManager {
     }
 
     /// `Task::EventUnitLoaded`.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn task_event_unit_loaded(
         &mut self,
         world: &mut GameState,
@@ -1255,6 +1260,7 @@ impl TaskManager {
     }
 
     /// `Task::EventUnitUnloaded`.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn task_event_unit_unloaded(
         &mut self,
         world: &mut GameState,

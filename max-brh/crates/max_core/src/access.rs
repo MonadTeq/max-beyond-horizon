@@ -1491,6 +1491,7 @@ pub(crate) fn process_new_group_order(state: &mut GameState, leader: UnitId) -> 
 
 /// Assign units to the group led by `leader` (`AllocateUnitList` +
 /// `AssignUnitList`). Returns the group number.
+#[cfg(test)]
 pub(crate) fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitId]) -> u32 {
     clear_unit_group(state, leader);
     let group_id = state.create_group_with_leader(leader);
@@ -1538,6 +1539,7 @@ pub(crate) fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<Unit
 // ---------------------------------------------------------------------------
 
 /// `Access_IsTeamInUnitLists` (`access.cpp`) — whether the team has a unit in the lists.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
     for kind in crate::unit::UnitListKind::ALL {
         for id in state.unit_list(kind) {
@@ -1552,12 +1554,14 @@ pub(crate) fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
 }
 
 /// An `Access_GetUnit2`-like search: the first live unit on the cell.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 #[inline]
 pub(crate) fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
     state.units_at(grid).first().copied()
 }
 
 /// `Access_IsAnyLandPresent` (`access.cpp:1030`) — whether there is land in the 2×2 area.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
@@ -1611,6 +1615,7 @@ pub fn get_attack_range(unit: &UnitInfo) -> i32 {
 
 /// `UnitsManager_IsAccessible` (`units_manager.cpp:4987`): the 2×2 site for
 /// a building (all four cells are passable for its type).
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn is_accessible_for_building(
     state: &GameState,
     unit_type: UnitType,
@@ -1657,6 +1662,7 @@ pub(crate) fn is_accessible_for_building(
 
 /// `Access_IsWithinMovementRange` (`access.cpp`): whether the remaining speed is enough
 /// for the current path.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
     if unit.speed == 0 {
         return false;

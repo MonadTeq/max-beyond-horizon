@@ -95,12 +95,7 @@ pub enum WindowInput {
     },
 }
 
-/// Translates an SDL key into [`WindowKey`].
-fn window_key(code: Keycode) -> WindowKey {
-    window_key_mod(code, Mod::empty())
-}
-
-/// [`window_key`] with modifiers: `Alt+<printable>` → [`WindowKey::Alt`]
+/// Translates an SDL key with modifiers: `Alt+<printable>` → [`WindowKey::Alt`]
 /// (C++ `GNW_KB_KEY_LALT_P`).
 fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
     let alt = modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD);

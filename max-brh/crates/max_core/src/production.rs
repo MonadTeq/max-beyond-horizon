@@ -38,7 +38,7 @@
 //!    (`ORDER_ACTIVATE`/`IN_TRANSITION`, `game_manager.cpp:6879`) or by the AI with the
 //!    `TaskActivate` task ([`crate::unit_order::issue_builder_exit`]); unfolding
 //!    (`ScaleUnit(EXPAND)`, tape removal, the slab stays) is done by
-//!    the [`crate::unit_order::process_orders`] `BuildingReady` branch only after
+//!    the [`crate::game::GameState::process_orders`] `BuildingReady` branch only after
 //!    the builder leaves the site (`UnitsManager_BuildingReady`).
 //!
 //! # Economy
@@ -667,6 +667,7 @@ pub fn footprint(unit_type: UnitType) -> i16 {
 /// `Access_IsAccessible(..., AccessModifier_SameClassBlocks)`, so a construction
 /// can be laid out over own mobile units — C++ does not consider them
 /// an obstacle to the building (`flags & STATIONARY` branch in `Access_IsAccessible`).
+#[allow(dead_code)] // Oracle trace: C++ parity; callers use is_site_accessible_ignoring.
 pub(crate) fn is_site_accessible(
     state: &GameState,
     team: TeamId,
@@ -1983,6 +1984,7 @@ pub(crate) fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<P
 /// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), for
 /// factories — the materials of **their own complex** ([`complex_raw_materials`],
 /// C++ `complex->material`).
+#[allow(dead_code)] // Oracle trace: C++ semantics documented; not wired into UI/AI yet.
 pub(crate) fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
     let Some(unit) = state.unit(unit_id) else {
         return false;

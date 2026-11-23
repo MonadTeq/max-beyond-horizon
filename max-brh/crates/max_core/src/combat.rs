@@ -1040,6 +1040,7 @@ pub(crate) fn is_valid_stealth_target(
 /// `Randomizer_Generate(101)` for `stealth_dice_roll` (`aiattack.cpp:421`).
 ///
 /// Used by the AI layer (P6) and tests; the attack itself does not consume RNG.
+#[cfg(test)]
 pub(crate) fn roll_stealth_dice(state: &mut GameState) -> u8 {
     state.rng.generate_i64(101) as u8
 }

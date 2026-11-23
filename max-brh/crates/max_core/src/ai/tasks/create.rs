@@ -1592,6 +1592,7 @@ fn activate_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `TaskActivate_IsComplete` (`taskactivate.cpp`): the cargo is unloaded onto the map.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn task_activate_is_complete(
     world: &crate::game::GameState,
     payload: UnitId,
@@ -2060,6 +2061,7 @@ pub fn obtain_units(kind: &TaskKind) -> Option<(&[UnitType], Point)> {
 }
 
 /// `TaskObtainUnits::IsNeeded`.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn is_needed(world: &crate::game::GameState, header: TaskHeader) -> bool {
     let Some(parent) = header.parent else {
         return false;

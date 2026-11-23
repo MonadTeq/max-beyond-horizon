@@ -898,6 +898,7 @@ pub(crate) fn choose_site_for_attacker(
 }
 
 /// `AiAttack_ChooseSiteToSabotage` (`aiattack.cpp:105`) — a cell near the target.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn choose_site_to_sabotage(
     world: &GameState,
     unit: &UnitInfo,

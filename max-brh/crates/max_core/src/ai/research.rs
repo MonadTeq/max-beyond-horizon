@@ -276,6 +276,7 @@ pub(crate) fn purchase_upgrades(player: &mut AiPlayer, world: &mut GameState) {
 /// variant (`RollTeamMissionSupplies`, phase A.3+): the strategic orders are
 /// recomputed in `mode = true` after every purchase and the gold comes from
 /// `TeamMissionSupplies::team_gold`, not from the team treasury.
+#[cfg(test)]
 pub(crate) fn choose_initial_upgrades(player: &mut AiPlayer, world: &mut GameState, team_gold: i32) {
     let team_index = player.player_team.0 as usize;
     let mut team_gold = team_gold;

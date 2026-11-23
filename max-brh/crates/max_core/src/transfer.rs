@@ -41,7 +41,7 @@
 //! the buildings' inventory — i.e. **the excess beyond storage capacity is lost**, as in
 //! C++ (the `Complex` fields are only a cache for the current turn).
 
-use crate::alloc::{get_cargo_info, get_cargo_mining};
+use crate::alloc::get_cargo_info;
 use crate::game::GameState;
 use crate::team::{Cargo, ComplexId, TeamId};
 use crate::unit::{UnitId, UnitInfo, UnitListKind};
@@ -393,8 +393,9 @@ pub(crate) fn complex_free_capacity(
 
 /// Total complex production per turn by cargo type (for QA of storage
 /// limits): `Complex::GetCargoMining` → `materials`.
+#[cfg(test)]
 pub(crate) fn complex_income(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
-    let (materials, _) = get_cargo_mining(state, team, complex);
+    let (materials, _) = crate::alloc::get_cargo_mining(state, team, complex);
 
     match cargo {
         CargoType::Raw => materials.raw,

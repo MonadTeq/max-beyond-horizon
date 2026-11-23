@@ -3392,18 +3392,6 @@ pub(crate) fn process_order(state: &mut GameState, id: UnitId) {
     ctx.commit();
 }
 
-/// `UnitsManager_ProcessUnitOrders` (`units_manager.cpp:3401`) — a walk over one
-/// list; extracted into [`GameState::process_unit_orders`].
-pub(crate) fn process_unit_orders(state: &mut GameState, kind: UnitListKind) {
-    state.process_unit_orders(kind);
-}
-
-/// `UnitsManager_ProcessOrders` (`units_manager.cpp:1860`) — extracted into
-/// [`GameState::process_orders`].
-pub(crate) fn process_orders(state: &mut GameState) {
-    state.process_orders();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

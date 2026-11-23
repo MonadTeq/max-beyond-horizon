@@ -442,6 +442,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::ClearZone` (`aiplayer.cpp:3367`) — zone clearing task.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn clear_zone(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
@@ -530,6 +531,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::UnitHidden` (`aiplayer.cpp:3648`).
+    #[allow(dead_code)] // Oracle trace: called by the Ai_UnitHidden port only.
     pub(crate) fn unit_hidden(&mut self, world: &GameState, unit: UnitId) {
         if let Some(spot) = self
             .spotted_units
@@ -823,6 +825,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetPredictedAttack` (`aiplayer.cpp:3307`).
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn get_predicted_attack(
         &self,
         world: &GameState,
@@ -1942,6 +1945,7 @@ impl AiPlayer {
 
     /// `AiPlayer::MatchPath` (`aiplayer.cpp:3660`) — simplified: the request
     /// is accepted if the path leads to the task's target.
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub(crate) fn match_path(&self, world: &GameState, request: &crate::pathfinding::PathRequest) -> bool {
         let Some(unit) = world.unit(request.unit) else {
             return false;
@@ -1960,6 +1964,7 @@ impl AiPlayer {
 
 /// `AiPlayer_CalculateProjectedDamage` (`aiplayer.cpp`): the damage the target
 /// will deal back to a friendly unit.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn calculate_projected_damage(
     world: &GameState,
     friendly: &UnitInfo,
@@ -2548,6 +2553,7 @@ pub fn choose_upgrade_topic(team_info: &crate::team::TeamInfo) -> ResearchTopic 
 }
 
 /// `AiPlayer::GetStrategy` for the team.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
     world.ai.players[team.0 as usize].strategy
 }
@@ -2630,6 +2636,7 @@ pub(crate) fn team_cluster_coordinates(world: &GameState, team: TeamId) -> Point
 }
 
 /// `AiPlayer::GetUnitClusterCoordinates` (`aiplayer.cpp:162`).
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListKind) -> Point {
     let mut sum_x: i64 = 0;
     let mut sum_y: i64 = 0;
@@ -3043,6 +3050,7 @@ pub(crate) fn apply_clan(world: &mut GameState, team: TeamId, clan: TeamClan) {
 }
 
 /// `Ai_GetNormalRateBuildCost` (`ai.cpp:54`).
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn ai_get_normal_rate_build_cost(world: &GameState, unit_type: UnitType, team: TeamId) -> i32 {
     normal_rate_build_cost(world, team, unit_type)
 }

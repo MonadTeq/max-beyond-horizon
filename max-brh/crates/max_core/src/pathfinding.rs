@@ -1061,6 +1061,7 @@ pub(crate) fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Poin
 }
 
 /// Path cost `GroundPath::GetMovementCost` (`groundpath.cpp:178`).
+#[cfg(test)]
 pub(crate) fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
     let Some(UnitPath::Ground(path)) = unit.path.as_ref() else {
         return 0;
@@ -1111,19 +1112,6 @@ pub fn air_path_movement_cost(unit: &UnitInfo) -> i32 {
 /// The `UnitsManager_InitUnitPath` part for a missile: the path to `fire_on`.
 pub fn missile_path(unit: &UnitInfo, fire_on: Point) -> Option<UnitPath> {
     get_missile_path(unit, fire_on).map(UnitPath::Air)
-}
-
-/// Units that currently need a path (for debugging/tests).
-pub(crate) fn pending_request_count(state: &GameState) -> usize {
-    state.path_requests.len()
-}
-
-/// The request queue, unchanged (for tests/dump).
-pub(crate) fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
-    state
-        .path_requests
-        .iter()
-        .find(|request| request.unit == unit)
 }
 
 /// `AirPath::GetPosition` (`airpath.cpp:104`) — the predicted cell of an air

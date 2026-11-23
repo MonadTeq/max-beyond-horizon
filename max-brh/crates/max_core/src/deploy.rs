@@ -199,6 +199,7 @@ pub(crate) fn is_valid_starting_position(state: &GameState, position: Point) -> 
 
 /// `GameManager_FindValidStartingPosition` (`game_manager.cpp:4712`), the variant with
 /// `GameState` (takes into account units already on the map).
+#[allow(dead_code)] // Oracle trace: state-aware C++ variant; setup uses the SurfaceMap one.
 pub(crate) fn find_valid_starting_position(state: &GameState, position: &mut Point) {
     if is_valid_starting_position(state, *position) {
         return;

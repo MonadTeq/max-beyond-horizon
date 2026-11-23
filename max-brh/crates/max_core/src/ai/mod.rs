@@ -275,6 +275,7 @@ impl GameState {
     }
 
     /// `Ai_MarkMineMapPoint` (`ai.cpp:128`).
+    #[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
     pub fn ai_mark_mine_map_point(&mut self, team: TeamId, point: Point) {
         if self.teams[team.0 as usize].team_type == TeamKind::Computer {
             self.ai.players[team.0 as usize].mark_mine_map_point(point);
@@ -470,21 +471,6 @@ pub(crate) fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
     result
 }
 
-/// `Ai_SetInfoMapPoint` (`ai.cpp:122`).
-pub(crate) fn ai_set_info_map_point(world: &mut GameState, point: Point, team: TeamId) {
-    world.ai_set_info_map_point(team, point);
-}
-
-/// `Ai_MarkMineMapPoint` (`ai.cpp:128`).
-pub(crate) fn ai_mark_mine_map_point(world: &mut GameState, point: Point, team: TeamId) {
-    world.ai_mark_mine_map_point(team, point);
-}
-
-/// `Ai_UpdateMineMap` (`ai.cpp:134`).
-pub(crate) fn ai_update_mine_map(world: &mut GameState, point: Point, team: TeamId) {
-    world.ai_update_mine_map(team, point);
-}
-
 /// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) — the "has work" flag for computers.
 pub(crate) fn ai_set_tasks_pending_flag(world: &mut GameState) {
     for team in 0..PLAYER_TEAM_COUNT {
@@ -502,6 +488,7 @@ pub(crate) fn ai_clear_tasks_pending_flags(world: &mut GameState) {
 }
 
 /// `Ai_BeginTurn` (`ai.cpp:148`).
+#[cfg(test)]
 pub(crate) fn ai_begin_turn(world: &mut GameState, team: TeamId) {
     world.ai_begin_turn(team);
 }
@@ -517,6 +504,7 @@ pub(crate) fn ai_add_unit_to_tracker_list(world: &mut GameState, unit: UnitId) {
 }
 
 /// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — create `TaskAutoSurvey`.
+#[allow(dead_code)] // Oracle trace: keeps the C++ `tasks_enabled` guard; no caller yet.
 pub(crate) fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -576,6 +564,7 @@ pub(crate) fn ai_is_dangerous_location(
 /// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) — in max_core
 /// `TerrainDistanceField` is not set up (P5 — only `pathfinding::TerrainDistanceField`
 /// within path search), so the second half is ported: accounting for military strength.
+#[allow(dead_code)] // Oracle trace: partial C++ port kept for the future full port.
 pub(crate) fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -656,6 +645,7 @@ pub(crate) fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId)
 }
 
 /// `Ai_UnitHidden` (`ai.cpp:355`).
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -672,16 +662,6 @@ pub(crate) fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) 
 
         world.ai.players[team.0 as usize] = player;
     }
-}
-
-/// `Ai_EvaluateAttackTargets` (`ai.cpp:361`).
-pub(crate) fn ai_evaluate_attack_targets(world: &mut GameState, unit: UnitId) {
-    world.ai_evaluate_attack_targets(unit);
-}
-
-/// `Ai_CheckComputerReactions` (`ai.cpp:363`).
-pub(crate) fn ai_check_computer_reactions(world: &mut GameState) {
-    world.ai_check_computer_reactions();
 }
 
 /// `Ai_CheckMines` (`ai.cpp:365`) — the minelayer reports mines to teams.
@@ -742,11 +722,13 @@ pub(crate) fn ai_check_reactions(world: &mut GameState) {
 }
 
 /// `Ai_GetReactionState`.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn ai_get_reaction_state(world: &GameState) -> AiReactionState {
     world.ai.reaction_state
 }
 
 /// `Ai_SetReactionState`.
+#[allow(dead_code)] // Oracle trace: C++ parity, no gameplay caller yet.
 pub(crate) fn ai_set_reaction_state(world: &mut GameState, state: AiReactionState) {
     world.ai.reaction_state = state;
 }
@@ -760,6 +742,7 @@ pub(crate) fn task_manager_need_to_reserve_raw_materials(world: &GameState, team
 ///
 /// Part of setup (P2), but entirely on RNG and `TeamMissionSupplies`: ported
 /// 1:1 — up to 64 attempts to find a safe point in `[3, size-3]`.
+#[cfg(test)]
 pub(crate) fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     let mut position = Point::ZERO;
     let mut attempts = 0;
@@ -784,6 +767,7 @@ pub(crate) fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
 }
 
 /// `Ai_IsValidStartingPosition` (`ai.cpp:68`) — a 5×5 area around the point is land.
+#[cfg(test)]
 fn is_valid_starting_position(world: &GameState, bounds: (i32, i32, i32, i32)) -> bool {
     let (ulx, uly, lrx, lry) = bounds;
 
@@ -805,6 +789,7 @@ fn is_valid_starting_position(world: &GameState, bounds: (i32, i32, i32, i32)) -
 }
 
 /// `Ai_IsSafeStartingPosition` (`ai.cpp:80`).
+#[cfg(test)]
 fn is_safe_starting_position(world: &GameState, position: Point, team: TeamId) -> bool {
     let bounds = (
         i32::from(position.x) - 2,

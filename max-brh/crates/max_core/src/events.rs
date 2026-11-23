@@ -42,7 +42,7 @@
 //!   (`Remote_ReceiveNetPacket_54`).
 
 use crate::enums::{ResearchTopic, UnitOrder, UnitOrderState, UnitType};
-use crate::game::{GameState, OrderData};
+use crate::game::GameState;
 use crate::geo::Point;
 use crate::input::{
     is_valid_order, is_valid_team_index, Command, MovePathData, OrderPayload, Packet08Order,
@@ -1034,11 +1034,6 @@ pub fn command_finished_turn(team: TeamId) -> Command {
 /// Builds command 52 (end-of-turn barrier).
 pub fn command_end_turn_barrier(team: TeamId, counter: u8) -> Command {
     Command::EndTurnBarrier(crate::input::Packet52EndTurnBarrier { team, counter })
-}
-
-/// The order data that came with the packet (for tests and debugging).
-pub(crate) fn order_data_of(unit: &UnitInfo, state: &GameState) -> OrderData {
-    state.order_data(unit.id)
 }
 
 /// Research topic by index — checking the shape of packets 10/20 in tests.
