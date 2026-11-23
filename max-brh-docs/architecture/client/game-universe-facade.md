@@ -494,8 +494,10 @@ pub enum RemoteCommand {
 
 ### Этап B — полная инкапсуляция
 
-1. `GameState` → private в модуле `universe`; мутирующие методы → `pub(crate)`
-   (доступны фасаду и `#[cfg(test)]`).
+1. `GameState` → **`pub(crate)` struct** (не `pub`, а не «private в модуле universe»);
+   мутирующие методы → `pub(crate)`; **все** свободные функции доменных модулей с
+   `&GameState` → `pub(crate)`; реэкспорт `&GameState`-функций из `lib.rs` убран;
+   наружу — фасад + `StateRef`.
 2. Перенос владения машиной хода и барьерной FSM (§4): `local.rs`/`net.rs`
    становятся чистыми потребителями `EventStream`/`drain_outgoing`/`submit_remote`.
 3. `NetworkDispatcher` в `max_app` реализует `Dispatcher` (перенос `TurnBarrierFsm`),
@@ -576,6 +578,11 @@ pub enum RemoteCommand {
 7. **`submit -> SubmitOutcome`; `ApplyOutcome` — в `GameEvent::CommandRejected`.**
    `CommandRejected` несёт полный контекст: `cmd`, `outcome` (enum целиком),
    `tick`, `source` (DroppedByRoute / RejectedBySimulation).
+8. **Владение диспетчером в `App`.** `App` становится `App<D: Dispatcher = LocalDispatcher>`
+   (продолжение решения 4); поле `universe: GameUniverse<D>`; локальная поверхность —
+   `impl App<LocalDispatcher>`, сетевая — `impl App<NetworkDispatcher>`; переключение
+   режима = создание нового `App<D>`. **Выполняется отдельным этапом сетевой
+   интеграции, не входит в этап B.**
 
 ---
 

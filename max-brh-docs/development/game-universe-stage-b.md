@@ -371,8 +371,18 @@ saveload,preferences,soak,menu*}.rs` (≈298 обращений, см. `lib.rs`)
 
 Файл `max-brh/crates/max_core/src/game.rs`:
 
-1. Поля `GameState` (`:217-394`) → `pub` снять; структура `GameState` —
-   больше **не** реэкспортируется из `lib.rs` (`:167-171`); наружу — фасад.
+1. `pub struct GameState` (`game.rs:217`) → **`pub(crate) struct GameState`**; поля
+   (`:217-394`) — `pub` снять; структура больше **не** реэкспортируется из
+   `lib.rs` (`:167-171`); наружу — фасад. *(этот флип делает компилятор источником
+   полного списка утечек E0446)*.
+2a. **Доменные free-функции с `&GameState` в публичной сигнатуре.** Все `pub fn`/
+   `pub`-методы на `pub`-типах, упоминающие `GameState` (~260, модули
+   `access`/`ai`(+подмодули)/`alloc`/`combat`/`complex`/`crc`/`deploy`/`events`/
+   `pathfinding`/`power`/`production`/`research`/`save_write`/`transfer`/
+   `unit_order`/`victory`) → `pub(crate)`. Из `lib.rs` убраны все `pub use`-строки,
+   ведущие к таким функциям. GameState-free типы/константы/функции остаются `pub`.
+   Read-only `pub` методы самого `GameState` не трогаются (недостижимы снаружи
+   после `pub(crate) struct`).
 2. Lockstep-мутаторы → `pub(crate)` (видны фасаду и inline `#[cfg(test)]`):
    `tick` (`:2738`), `apply_pending_commands` (`:2774`), `enqueue` (`:2779`),
    `process_orders` (`:1780`), `manage_economy` (`:1886`), `next_team` (`:2400`),
@@ -423,10 +433,18 @@ saveload,preferences,soak,menu*}.rs` (≈298 обращений, см. `lib.rs`)
 - **Гейт 3** пройден: `06`/lobby/hot-seat сходятся байт-в-байт после
   компенсации (N+1 для queue-able; без сдвига для `06`); пути
   `end_local_turn` vs `submit(06)` различимы.
-- **Инкапсуляция** завершена: `GameState` вне публичного API; мутаторы
-  `pub(crate)`; `state_mut()`/`into_state` удалены.
+- **Инкапсуляция** завершена: `GameState` = `pub(crate)`; ни одна `pub` сигнатура
+  `max_core` (fn/struct/enum/trait/type/const/static и `pub use` в `lib.rs`) не
+  упоминает `GameState`; `state_mut()`/`into_state` удалены. **Гейт:**
+  `rg 'pub (fn|struct|enum|trait|type|const|static)[^{;]*GameState' crates/max_core/src`
+  → пусто.
 - **Детерминизм** не нарушен: golden `snapshot_bytes`/`replay_digest`/CRC-пиннинги
   идентичны эталону.
+
+> Приёмка этапа B **не** зависит от перевода `App` на `GameUniverse<NetworkDispatcher>`
+> (generic `App<D>`): это отдельный этап сетевой интеграции. До него сетевой драйвер
+> остаётся на временном мосту (`app.universe_mut()` + фасадные `step_*_barrier`/
+> `submit_remote`/`drain_outgoing`), который `GameState` не упоминает и DoD не нарушает.
 
 **Полная проверка** (как в [`../build.md`](../build.md)):
 `bash ci.sh` (`max-brh-cicd/ci.sh`). Быстрая итерация —
