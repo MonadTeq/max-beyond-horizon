@@ -130,10 +130,10 @@ fn builder_sprite_screen(app: &App, unit_type: UnitType, anchor: Point) -> (i32,
 }
 
 fn site_units(app: &App, team: max_core::TeamId) -> usize {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| {
             unit.team == team
                 && matches!(
@@ -148,10 +148,10 @@ fn site_units(app: &App, team: max_core::TeamId) -> usize {
 }
 
 fn has_slab(app: &App, team: max_core::TeamId) -> bool {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .any(|unit| {
             unit.team == team
                 && matches!(unit.unit_type, UnitType::LargeSlab | UnitType::SmallSlab)
@@ -181,24 +181,23 @@ fn run_build_cycle(exit: ExitClick) {
     );
 
     let team = app.player_team();
-    app.state_mut().team_units[team.0 as usize].set_gold(5000);
+    app.universe_mut().team_units_table_mut()[team.0 as usize].set_gold(5000);
 
     let builder = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Constructor)
         })
         .expect("у RED есть конструктор");
-    let builder_grid = app.state().unit(builder).expect("builder").grid;
+    let builder_grid = app.state_ref().unit(builder).expect("builder").grid;
 
     // A building order exactly as in the UI: the 2×2 ghost is bound to the builder
     // (`GameManager_GetBuilderUnitCursor`), the order — packet 08/P4.
-    let anchor = max_core::production::initial_build_site(
-        app.state(),
+    let anchor = app.state_ref().initial_build_site(
         team,
         UnitType::TrainingHall,
         builder_grid,
@@ -206,7 +205,7 @@ fn run_build_cycle(exit: ExitClick) {
     )
     .expect("свободный якорь 2×2");
     let command = max_app::buildmenu::build_order_command(
-        app.state(),
+        app.state_ref(),
         builder,
         anchor,
         &[UnitType::TrainingHall],
@@ -220,7 +219,7 @@ fn run_build_cycle(exit: ExitClick) {
     for _ in 0..60 {
         app.local_update(FRAME);
         if app
-            .state()
+            .state_ref()
             .unit(builder)
             .is_some_and(|unit| unit.state == UnitOrderState::BuildInProgress)
         {
@@ -229,13 +228,13 @@ fn run_build_cycle(exit: ExitClick) {
     }
 
     assert_eq!(
-        app.state().unit(builder).map(|unit| unit.orders),
+        app.state_ref().unit(builder).map(|unit| unit.orders),
         Some(UnitOrder::Build),
         "строитель должен стоять в ORDER_BUILD"
     );
 
     // Accelerate progress directly through the state: one turn left.
-    app.state_mut().unit_mut(builder).expect("builder").build_time = 1;
+    app.universe_mut().unit_mut(builder).expect("builder").build_time = 1;
 
     // The turn closes interactively: `finish_turn` → `progress_build_state`
     // (`SpawnNewUnit`) at the round boundary, then the AI turn and the human turn again.
@@ -246,18 +245,18 @@ fn run_build_cycle(exit: ExitClick) {
     );
 
     let building = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::TrainingHall)
         })
         .expect("Training Hall построен");
 
-    let builder_unit = app.state().unit(builder).expect("builder").clone();
-    let building_unit = app.state().unit(building).expect("building").clone();
+    let builder_unit = app.state_ref().unit(builder).expect("builder").clone();
+    let building_unit = app.state_ref().unit(building).expect("building").clone();
 
     assert_eq!(builder_unit.orders, UnitOrder::Build);
     assert_eq!(
@@ -306,9 +305,9 @@ fn run_build_cycle(exit: ExitClick) {
 
     // --- (2) The builder leaves → the building appears --------------------------
     // A cell of the `BLDMRK*` ring around the building, free of units.
-    let ring = max_app::render::build_marker_cells(app.state(), &builder_unit)
+    let ring = max_app::render::build_marker_cells(app.state_ref(), &builder_unit)
         .into_iter()
-        .find(|cell| app.state().units_at(*cell).is_empty())
+        .find(|cell| app.state_ref().units_at(*cell).is_empty())
         .expect("свободная клетка кольца маркеров");
     let (ring_x, ring_y) = cell_screen(&app, ring);
 
@@ -322,12 +321,12 @@ fn run_build_cycle(exit: ExitClick) {
     }
 
     assert_eq!(
-        app.state().unit(builder).map(|unit| unit.orders),
+        app.state_ref().unit(builder).map(|unit| unit.orders),
         Some(UnitOrder::Activate),
         "клик по кольцу маркеров отдаёт ORDER_ACTIVATE ({exit:?})"
     );
     assert_eq!(
-        app.state().unit(builder).map(|unit| unit.state),
+        app.state_ref().unit(builder).map(|unit| unit.state),
         Some(UnitOrderState::InTransition),
         "и ORDER_STATE_IN_TRANSITION ({exit:?})"
     );
@@ -338,7 +337,7 @@ fn run_build_cycle(exit: ExitClick) {
         app.local_update(FRAME);
 
         if app
-            .state()
+            .state_ref()
             .unit(building)
             .is_some_and(|unit| unit.orders != UnitOrder::Idle)
         {
@@ -352,8 +351,8 @@ fn run_build_cycle(exit: ExitClick) {
         "UnitsManager_BuildingReady обязан раскрыть здание после ухода строителя ({exit:?})"
     );
 
-    let building_unit = app.state().unit(building).expect("building").clone();
-    let builder_unit = app.state().unit(builder).expect("builder").clone();
+    let building_unit = app.state_ref().unit(building).expect("building").clone();
+    let builder_unit = app.state_ref().unit(builder).expect("builder").clone();
 
     assert_eq!(
         building_unit.scaler_adjust, 4,
@@ -400,22 +399,21 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     );
 
     let team = app.player_team();
-    app.state_mut().team_units[team.0 as usize].set_gold(5000);
+    app.universe_mut().team_units_table_mut()[team.0 as usize].set_gold(5000);
 
     let builder = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == team && unit.unit_type == UnitType::Constructor)
         })
         .expect("у RED есть конструктор");
-    let builder_grid = app.state().unit(builder).expect("builder").grid;
+    let builder_grid = app.state_ref().unit(builder).expect("builder").grid;
 
-    let anchor = max_core::production::initial_build_site(
-        app.state(),
+    let anchor = app.state_ref().initial_build_site(
         team,
         UnitType::TrainingHall,
         builder_grid,
@@ -423,7 +421,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     )
     .expect("свободный якорь 2×2");
     let command = max_app::buildmenu::build_order_command(
-        app.state(),
+        app.state_ref(),
         builder,
         anchor,
         &[UnitType::TrainingHall],
@@ -436,7 +434,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     for _ in 0..60 {
         app.local_update(FRAME);
         if app
-            .state()
+            .state_ref()
             .unit(builder)
             .is_some_and(|unit| unit.state == UnitOrderState::BuildInProgress)
         {
@@ -445,7 +443,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     }
 
     assert_eq!(
-        app.state().unit(builder).map(|unit| unit.orders),
+        app.state_ref().unit(builder).map(|unit| unit.orders),
         Some(UnitOrder::Build)
     );
     assert!(
@@ -453,8 +451,8 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
         "площадка стоит на карте до ухода строителя"
     );
     let slab_at_site = |app: &App| {
-        app.state().units_at(anchor).iter().any(|id| {
-            app.state()
+        app.state_ref().units_at(anchor).iter().any(|id| {
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| matches!(unit.unit_type, UnitType::LargeSlab | UnitType::SmallSlab))
         })
@@ -469,9 +467,9 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
         .map(|(dx, dy)| Point::new(builder_grid.x + dx, builder_grid.y + dy))
         .find(|cell| {
             *cell != builder_grid
-                && app.state().map.index(cell.x, cell.y).is_some()
-                && app.state().units_at(*cell).is_empty()
-                && max_app::hud::build_move_order(app.state(), builder, *cell).is_some()
+                && app.state_ref().map().index(cell.x, cell.y).is_some()
+                && app.state_ref().units_at(*cell).is_empty()
+                && max_app::hud::build_move_order(app.state_ref(), builder, *cell).is_some()
         })
         .expect("достижимая клетка для ухода");
 
@@ -487,7 +485,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
 
     handle_session_input(&mut app, InputEvent::RightClick(click_x, click_y), false);
 
-    let unit = app.state().unit(builder).expect("builder alive").clone();
+    let unit = app.state_ref().unit(builder).expect("builder alive").clone();
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Build, UnitOrderState::BuildInProgress),
@@ -530,39 +528,39 @@ fn clicking_the_site_decal_returns_the_builder() {
     use max_core::enums::unit_flags;
 
     let mut app = App::new(AppConfig::default().with_screen(512, 384));
-    app.state_mut().player_team = max_core::TeamId::RED;
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().set_player_team(max_core::TeamId::RED);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
 
     let site = Point::new(40, 40);
     let team = max_core::TeamId::RED;
     // The builder in the bottom-right cell of the 2×2 site (as after `PositionInTape`).
     let builder = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
         .expect("constructor");
     let building = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
 
     let site_units =
-        max_core::production::deploy_construction_site(app.state_mut(), builder, UnitType::TrainingHall, site)
+        app.universe_mut().deploy_construction_site( builder, UnitType::TrainingHall, site)
             .expect("стройплощадка");
 
     {
-        let mut unit = app.state().unit(builder).expect("builder").clone();
+        let mut unit = app.state_ref().unit(builder).expect("builder").clone();
         unit.parent_unit = Some(building);
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::UnitReady;
-        app.state_mut().write_unit(builder, unit);
+        app.universe_mut().write_unit(builder, unit);
     }
     {
-        let mut unit = app.state().unit(building).expect("building").clone();
+        let mut unit = app.state_ref().unit(building).expect("building").clone();
         unit.parent_unit = Some(builder);
         unit.orders = UnitOrder::Idle;
         unit.state = UnitOrderState::BuildingReady;
-        app.state_mut().write_unit(building, unit);
+        app.universe_mut().write_unit(building, unit);
     }
 
     app.viewport_mut().center_on_grid(site.x, site.y);
@@ -571,7 +569,7 @@ fn clicking_the_site_decal_returns_the_builder() {
     // but returns the builder parent.
     for decal in [site_units.cones, site_units.slab, Some(site_units.tape)] {
         let decal = decal.expect("декаль на площадке");
-        let unit = app.state().unit(decal).expect("decal");
+        let unit = app.state_ref().unit(decal).expect("decal");
         assert!(
             matches!(
                 unit.unit_type,
@@ -589,7 +587,7 @@ fn clicking_the_site_decal_returns_the_builder() {
         let (x, y) = cell_screen(&app, cell);
         // Screen point of the decal cell center in a 512×384 frame (without chrome).
         let (x, y) = (x - max_render::layout::MAIN_MAP.ulx, y - max_render::layout::MAIN_MAP.uly);
-        let picked = max_app::hud::unit_at_screen(app.state(), app.viewport(), team, x, y);
+        let picked = max_app::hud::unit_at_screen(app.state_ref(), app.viewport(), team, x, y);
 
         assert_eq!(
             picked,
@@ -604,20 +602,20 @@ fn clicking_the_site_decal_returns_the_builder() {
     let (x, y) = cell_screen(&app, Point::new(38, 40));
     let (x, y) = (x - max_render::layout::MAIN_MAP.ulx, y - max_render::layout::MAIN_MAP.uly);
     assert_eq!(
-        max_app::hud::unit_at_screen(app.state(), app.viewport(), team, x, y),
+        max_app::hud::unit_at_screen(app.state_ref(), app.viewport(), team, x, y),
         None,
         "в кольце маркеров юнитов нет"
     );
 
     // Decal flags: `GROUND_COVER` is present on all three, `SELECTABLE` — only on the tape.
     assert_ne!(
-        app.state().unit(site_units.tape).unwrap().flags & unit_flags::SELECTABLE,
+        app.state_ref().unit(site_units.tape).unwrap().flags & unit_flags::SELECTABLE,
         0,
         "лента `SELECTABLE`, как в C++ (`Access_GetTeamUnit` → `unit->GetParent()`)"
     );
     for decal in [site_units.cones, site_units.slab].into_iter().flatten() {
         assert_eq!(
-            app.state().unit(decal).unwrap().flags & unit_flags::SELECTABLE,
+            app.state_ref().unit(decal).unwrap().flags & unit_flags::SELECTABLE,
             0,
             "конусы/плита не `SELECTABLE`: клик достаётся строителю через ленту"
         );

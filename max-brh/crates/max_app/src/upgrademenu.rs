@@ -43,7 +43,7 @@ use max_core::access::unit_type_flags;
 // max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::enums::{unit_flags, ResearchTopic, UnitType, UNIT_END};
-use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::production::BUILDABLE;
 use max_core::research::{
     upgrade_packet_values, UpgradeQuote, RESEARCH_TOPIC_FACTORS, UPGRADE_COST_LIMIT,
@@ -177,9 +177,9 @@ pub struct UpgradeMenu {
 impl UpgradeMenu {
     /// Opens the menu for a team — C++ `UpgradeMenu::UpgradeMenu(team, complex)`
     /// (complex is not used in C++ either).
-    pub fn new(state: &GameState, team: TeamId) -> Option<Self> {
+    pub fn new(state: StateRef<'_>, team: TeamId) -> Option<Self> {
         let team_index = team.0 as usize;
-        let units = state.team_units.get(team_index)?;
+        let units = state.team_units().get(team_index)?;
         let base = units.current_values;
         let actual = base;
 
@@ -203,7 +203,7 @@ impl UpgradeMenu {
 
     /// Rebuilds the list of available types (`PopulateTeamUnitsList`), keeping
     /// the selected type if it remains.
-    pub fn rebuild_list(&mut self, state: &GameState, keep: Option<UnitType>) {
+    pub fn rebuild_list(&mut self, state: StateRef<'_>, keep: Option<UnitType>) {
         let previous = keep.or_else(|| self.selected_type());
 
         let mut types: Vec<UnitType> = (0..UNIT_END)
@@ -237,7 +237,7 @@ impl UpgradeMenu {
     }
 
     /// `IsUnitFiltered` (`abstractupgrademenu.cpp:699`).
-    fn is_unit_filtered(&self, state: &GameState, unit_type: UnitType) -> bool {
+    fn is_unit_filtered(&self, state: StateRef<'_>, unit_type: UnitType) -> bool {
         let flags = unit_type_flags(unit_type);
         if flags & unit_flags::UPGRADABLE == 0 || !is_buildable(unit_type) {
             return false;
@@ -257,7 +257,7 @@ impl UpgradeMenu {
         if self.filters[4] {
             // C++: `UnitsManager_TeamInfo[0]` base values, not the menu team.
             let base = state
-                .team_units
+                .team_units()
                 .first()
                 .map(|units| units.base_unit_values(unit_type as u16).attack)
                 .unwrap_or(0);
@@ -280,7 +280,7 @@ impl UpgradeMenu {
     }
 
     /// Selection scrolling (`UnitTypeSelector::ProcessKeys` UP/DOWN).
-    pub fn step(&mut self, delta: i32, state: &GameState) {
+    pub fn step(&mut self, delta: i32, state: StateRef<'_>) {
         if self.unit_types.is_empty() {
             return;
         }
@@ -291,12 +291,12 @@ impl UpgradeMenu {
     }
 
     /// Page scrolling (PageUp/PageDown — `max_item_count` rows).
-    pub fn page(&mut self, delta: i32, state: &GameState) {
+    pub fn page(&mut self, delta: i32, state: StateRef<'_>) {
         self.step(delta * LIST_ROWS, state);
     }
 
     /// Toggles the filter and rebuilds the list.
-    pub fn toggle_filter(&mut self, filter: UpgradeFilter, state: &GameState) {
+    pub fn toggle_filter(&mut self, filter: UpgradeFilter, state: StateRef<'_>) {
         let index = filter as usize;
         self.filters[index] = !self.filters[index];
         self.rebuild_list(state, None);
@@ -304,13 +304,13 @@ impl UpgradeMenu {
 
     /// Builds the upgrade controls for the selected type — C++
     /// `DrawUnitInfo` → `AddUpgradeMilitary/AdjustRow*/AddUpgradeGeneric/Mobile`.
-    pub fn rebuild_controls(&mut self, state: &GameState) {
+    pub fn rebuild_controls(&mut self, state: StateRef<'_>) {
         self.controls.clear();
         let Some(unit_type) = self.selected_type() else {
             return;
         };
         let index = unit_type as usize;
-        let true_base = &state.team_units[self.team.0 as usize].base_values[index];
+        let true_base = &state.team_units()[self.team.0 as usize].base_values[index];
         let actual = self.actual[index];
         let mut uly = COST.uly;
         let mut rows: Vec<(u8, i32)> = Vec::new();
@@ -386,11 +386,11 @@ impl UpgradeMenu {
     }
 
     /// Control quote row for the selected type.
-    pub fn quote(&self, state: &GameState, row: usize) -> Option<UpgradeQuote> {
+    pub fn quote(&self, state: StateRef<'_>, row: usize) -> Option<UpgradeQuote> {
         let (attribute, _) = *self.controls.get(row)?;
         let unit_type = self.selected_type()?;
         let index = unit_type as usize;
-        let true_base = state.team_units[self.team.0 as usize].base_values[index];
+        let true_base = state.team_units()[self.team.0 as usize].base_values[index];
         let team_base = true_base.get_attribute(attribute) as u16;
 
         let level = if attribute as usize >= RESEARCH_TOPIC_FACTORS.len() {
@@ -398,7 +398,7 @@ impl UpgradeMenu {
         } else {
             match ResearchTopic::try_from(attribute).ok() {
                 Some(topic) => {
-                    state.teams[self.team.0 as usize].research_topics[topic as usize].research_level
+                    state.teams()[self.team.0 as usize].research_topics[topic as usize].research_level
                 }
                 None => 0,
             }
@@ -431,7 +431,7 @@ impl UpgradeMenu {
     }
 
     /// Click on an upgrade arrow: `false` if the change is impossible.
-    pub fn adjust(&mut self, state: &GameState, row: usize, increase: bool) -> bool {
+    pub fn adjust(&mut self, state: StateRef<'_>, row: usize, increase: bool) -> bool {
         let Some(unit_type) = self.selected_type() else {
             return false;
         };
@@ -453,7 +453,7 @@ impl UpgradeMenu {
     }
 
     /// Handles a click; returns the action.
-    pub fn click(&mut self, state: &GameState, x: i32, y: i32) -> UpgradeAction {
+    pub fn click(&mut self, state: StateRef<'_>, x: i32, y: i32) -> UpgradeAction {
         if DONE.contains(x, y) {
             return UpgradeAction::Commit;
         }
@@ -520,7 +520,7 @@ impl UpgradeMenu {
     }
 
     /// Keyboard.
-    pub fn key(&mut self, state: &GameState, key: Key) -> UpgradeAction {
+    pub fn key(&mut self, state: StateRef<'_>, key: Key) -> UpgradeAction {
         match key {
             Key::Escape => UpgradeAction::Cancel,
             Key::Enter => UpgradeAction::Commit,
@@ -551,9 +551,12 @@ impl UpgradeMenu {
     /// gold and `stats_gold_spent_on_upgrades`.
     ///
     /// Returns the list of changed types for packet 10 (network).
-    pub fn commit(&mut self, state: &mut GameState) -> Vec<(UnitType, [u16; 13])> {
+    pub fn commit<D: max_core::universe::Dispatcher>(
+        &mut self,
+        state: &mut max_core::universe::GameUniverse<D>,
+    ) -> Vec<(UnitType, [u16; 13])> {
         let mut changed = Vec::new();
-        let team_index = self.team.0 as usize;
+
 
         for index in 0..UNIT_END as usize {
             if self.actual[index] == self.base[index] {
@@ -562,23 +565,27 @@ impl UpgradeMenu {
             let mut values = self.actual[index];
             values.update_version();
             values.mark_as_not_in_use();
-            state.team_units[team_index].current_values[index] = values;
+            if let Some(units) = state.team_units_mut(self.team) {
+                units.current_values[index] = values;
+            }
             if let Ok(unit_type) = UnitType::try_from(index as u16) {
                 changed.push((unit_type, upgrade_packet_values(&values)));
             }
         }
 
-        state.team_units[team_index].gold = self.gold;
+        if let Some(units) = state.team_units_mut(self.team) {
+            units.gold = self.gold;
+        }
         let spent = self.start_gold.saturating_sub(self.gold);
-        state.teams[team_index].stats_gold_spent_on_upgrades = state.teams[team_index]
-            .stats_gold_spent_on_upgrades
-            .saturating_add(spent);
+        if let Some(team) = state.team_mut(self.team) {
+            team.stats_gold_spent_on_upgrades = team.stats_gold_spent_on_upgrades.saturating_add(spent);
+        }
 
         changed
     }
 
     /// Draws the screen over the frame (C++ `DrawUnitStats` + `win_draw`).
-    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: &GameState) -> u32 {
+    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: StateRef<'_>) -> u32 {
         if frame.width() != SCREEN_WIDTH as u32 || frame.height() != SCREEN_HEIGHT as u32 {
             return 0;
         }

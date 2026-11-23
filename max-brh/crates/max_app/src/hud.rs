@@ -41,13 +41,14 @@ use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
 use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::command_finished_turn;
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{
     Command, MovePathData, OrderPayload, Packet08Order, Packet38Move, PayloadP1, PayloadP2,
     PayloadP3,
 };
-use max_core::pathfinding::find_ground_path;
 use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS};
@@ -682,7 +683,7 @@ pub struct MoveOrder {
 ///
 /// `None` — no unit, it is destroyed, already in the target cell, the path is not
 /// found or is longer than [`MAX_PATH_STEPS`].
-pub fn build_move_order(state: &GameState, id: UnitId, destination: Point) -> Option<MoveOrder> {
+pub fn build_move_order(state: StateRef<'_>, id: UnitId, destination: Point) -> Option<MoveOrder> {
     let unit = state.unit(id)?;
 
     if unit.hits == 0 || unit.grid == destination {
@@ -697,8 +698,7 @@ pub fn build_move_order(state: &GameState, id: UnitId, destination: Point) -> Op
         return None;
     }
 
-    let path = find_ground_path(
-        state,
+    let path = state.find_ground_path(
         unit,
         destination,
         ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
@@ -728,7 +728,7 @@ pub fn build_move_order(state: &GameState, id: UnitId, destination: Point) -> Op
 /// `P3 ⊃ P2 ⊃ P1`: the new order `ORDER_MOVE_TO_ATTACK`, state `Init`,
 /// the target in `move_to`/`fire_on`/`enemy_unit`. The path to the attack position is built
 /// by the receiver (`Paths_RequestPath` in `process_order_move`) — as in C++.
-pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Option<Command> {
+pub fn build_attack_order(state: StateRef<'_>, id: UnitId, target: UnitId) -> Option<Command> {
     let unit = state.unit(id)?;
     let enemy = state.unit(target)?;
 
@@ -766,7 +766,7 @@ pub fn build_attack_order(state: &GameState, id: UnitId, target: UnitId) -> Opti
 /// range gives `fire_on_grid = (x, y)` and `ORDER_FIRE`/`ORDER_STATE_INIT`.
 ///
 /// `None` — the unit has no shots or cannot fire.
-pub fn build_ground_fire_order(state: &GameState, id: UnitId, grid: Point) -> Option<Command> {
+pub fn build_ground_fire_order(state: StateRef<'_>, id: UnitId, grid: Point) -> Option<Command> {
     let unit = state.unit(id)?;
 
     if unit.hits == 0 || unit.shots == 0 {
@@ -811,11 +811,11 @@ pub fn build_ground_fire_order(state: &GameState, id: UnitId, grid: Point) -> Op
 /// `None` — the unit is not a "completed builder" (no parent building in
 /// `ORDER_IDLE`/`BUILDING_READY`): the click remains a regular move order.
 pub fn build_builder_exit_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
-    max_core::production::builder_awaiting_exit(state, id)?;
+    state.builder_awaiting_exit( id)?;
 
     let unit = state.unit(id)?;
 
@@ -869,11 +869,11 @@ pub fn builder_exit_zone_contains(building: &UnitInfo, cell: Point) -> bool {
 /// the cursor — `CURSOR_UNIT_NO_GO` and `GameManager_ManagePlayerAction` clears
 /// the selection.
 pub fn build_builder_exit_click_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
-    let building_id = max_core::production::builder_awaiting_exit(state, id)?;
+    let building_id = state.builder_awaiting_exit( id)?;
     let building = state.unit(building_id)?;
 
     if !builder_exit_zone_contains(building, destination) {
@@ -906,7 +906,7 @@ pub fn build_builder_exit_click_order(
 /// `None` — the selected unit is not "in a container" (`ORDER_IDLE` without a parent),
 /// the click is not next to the container or the cell is impassable for it.
 pub fn build_activate_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
@@ -934,8 +934,7 @@ pub fn build_activate_order(
         return None;
     }
 
-    if max_core::access::is_accessible(
-        state,
+    if state.is_accessible(
         unit.unit_type,
         unit.team,
         destination,
@@ -979,7 +978,7 @@ pub fn build_activate_order(
 /// only `move_to`: the simulation itself will compute `AirPath` and the takeoff
 /// (`ExecuteMove` → `ORDER_TAKE_OFF`).
 pub fn build_air_move_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
@@ -1030,7 +1029,7 @@ pub fn build_air_move_order(
 /// For `RESEARCH`, powering on starts research of the default topic
 /// (C++ `ResearchMenu_UpdateResearchProgress(team, topic, +1)` in
 /// `UnitsManager_ProcessOrderPowerOn`).
-pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
+pub fn build_power_order(state: StateRef<'_>, id: UnitId) -> Option<Command> {
     let unit = state.unit(id)?;
     if unit.hits == 0 {
         return None;
@@ -1085,7 +1084,7 @@ pub fn build_power_order(state: &GameState, id: UnitId) -> Option<Command> {
 /// selected — this is an existing simplification that combat and clicking an
 /// enemy rely on). A point outside the map — `None`.
 pub fn unit_at_screen(
-    state: &GameState,
+    state: StateRef<'_>,
     viewport: &Viewport,
     team: TeamId,
     x: i32,
@@ -1191,7 +1190,7 @@ impl App {
 
     /// Local player team (`player_team` of the match).
     pub fn player_team(&self) -> TeamId {
-        self.state().player_team
+        self.state_ref().player_team()
     }
 
     /// Remaining turn timer in seconds — `GameManager_TurnTimerValue`.
@@ -1218,7 +1217,7 @@ impl App {
 
     /// The selected unit, if it still exists.
     pub fn selected_unit(&self) -> Option<&UnitInfo> {
-        self.hud.selected.and_then(|id| self.state().unit(id))
+        self.hud.selected.and_then(|id| self.state_ref().unit(id))
     }
 
     /// Selects a unit (a stale id is ignored on read).
@@ -1259,18 +1258,18 @@ impl App {
     ///
     /// `true` — the match is over (`check_end_game_conditions`).
     pub fn end_turn(&mut self) -> bool {
-        let team = self.state().player_team;
+        let team = self.state_ref().player_team();
         let _ = self.apply(command_finished_turn(team));
 
-        if self.state().game_state != GameStateType::EndTurn {
-            self.state_mut().game_state = GameStateType::EndTurn;
+        if self.state_ref().game_state() != GameStateType::EndTurn {
+            self.universe_mut().set_game_state(GameStateType::EndTurn);
         }
 
-        let over = self.state_mut().finish_turn();
+        let over = self.universe_mut().finish_turn();
         let line = if over {
             "End Turn: game over".to_string()
         } else {
-            format!("End Turn: turn {} begins", self.state().turn_counter)
+            format!("End Turn: turn {} begins", self.state_ref().turn_counter())
         };
 
         self.hud.push_log(line);
@@ -1286,7 +1285,7 @@ impl App {
 #[derive(Clone, Copy)]
 pub struct HudView<'a> {
     /// Match state (units, map, resources).
-    pub state: &'a GameState,
+    pub state: StateRef<'a>,
     /// Selection, log, preview, buttons.
     pub hud: &'a HudState,
     /// Camera: minimap/route line in screen coordinates.
@@ -1434,9 +1433,9 @@ pub fn hud_ui(layout: &HudLayout, hud: &HudState) -> UiState {
 }
 
 /// Team resource line: gold + total complex stocks.
-pub fn resources_line(state: &GameState, team: TeamId) -> String {
+pub fn resources_line(state: StateRef<'_>, team: TeamId) -> String {
     let index = usize::from(team.0);
-    let units = state.team_units.get(index);
+    let units = state.team_units().get(index);
     let gold = units.map(|units| units.gold()).unwrap_or(0);
     let mut raw = 0i32;
     let mut fuel = 0i32;
@@ -1462,7 +1461,7 @@ pub fn resources_line(state: &GameState, team: TeamId) -> String {
 }
 
 /// Panel lines of the selected unit: name/type, HP, ammo, order, cell.
-pub fn unit_panel_lines(state: &GameState, id: UnitId) -> Vec<String> {
+pub fn unit_panel_lines(state: StateRef<'_>, id: UnitId) -> Vec<String> {
     let Some(unit) = state.unit(id) else {
         return vec!["(unit gone)".to_string()];
     };
@@ -1496,7 +1495,7 @@ pub fn surface_color(surface: Surface) -> Rgba {
 pub fn draw_minimap(
     buffer: &mut RgbaBuffer,
     rect: PixelRect,
-    state: &GameState,
+    state: StateRef<'_>,
     viewport: &Viewport,
     team: TeamId,
     selected: Option<UnitId>,
@@ -1509,7 +1508,7 @@ pub fn draw_minimap(
         for px in 0..rect.width {
             let tile_x = (px * i32::from(MAP_WIDTH) / rect.width) as i16;
             let tile_y = (py * i32::from(MAP_HEIGHT) / rect.height) as i16;
-            let color = surface_color(state.map.surface.get(tile_x, tile_y));
+            let color = surface_color(state.map().surface.get(tile_x, tile_y));
 
             buffer.set(rect.ulx + px, rect.uly + py, color);
         }
@@ -1741,20 +1740,28 @@ mod tests {
         let mut app = App::new(AppConfig::default().with_screen(512, 384));
 
         let (tank, enemy) = {
-            let state = app.state_mut();
-            state.player_team = TeamId::RED;
-            state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-            state.teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Computer;
+            let universe = app.universe_mut();
+            universe.set_player_team(TeamId::RED);
+            if let Some(info) = universe.team_mut(TeamId::RED) {
+                info.team_type = TeamKind::Player;
+            }
+            if let Some(info) = universe.team_mut(TeamId::BLUE) {
+                info.team_type = TeamKind::Computer;
+            }
             // Unit attributes are taken from the team `current_values` (as in
             // `GameState::with_setup`), otherwise `hits`/`ammo` would be zero.
-            state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
-            state.team_units[TeamId::BLUE.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
-            state.team_units[TeamId::RED.0 as usize].set_gold(1500);
+            if let Some(units) = universe.team_units_mut(TeamId::RED) {
+                *units = TeamUnits::with_clan(TeamClan::Random);
+                units.set_gold(1500);
+            }
+            if let Some(units) = universe.team_units_mut(TeamId::BLUE) {
+                *units = TeamUnits::with_clan(TeamClan::Random);
+            }
 
-            let tank = state
+            let tank = universe
                 .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
                 .expect("tank spawned");
-            let enemy = state
+            let enemy = universe
                 .spawn_unit(UnitType::Tank, TeamId::BLUE, Point::new(14, 10), 0)
                 .expect("enemy spawned");
 
@@ -1803,17 +1810,15 @@ mod tests {
         let (mut app, _tank, _enemy) = test_app();
         let grid = Point::new(11, 10);
 
-        let slab = app
-            .state_mut()
+        let slab = app.universe_mut()
             .spawn_unit(UnitType::LargeSlab, TeamId::RED, grid, 0)
             .expect("slab");
-        let building = app
-            .state_mut()
+        let building = app.universe_mut()
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, grid, 0)
             .expect("building");
 
         let (x, y) = screen_of(&app, grid);
-        let picked = unit_at_screen(app.state(), app.viewport(), TeamId::RED, x, y);
+        let picked = unit_at_screen(app.state_ref(), app.viewport(), TeamId::RED, x, y);
 
         assert_eq!(
             picked,
@@ -1833,7 +1838,7 @@ mod tests {
             render_hud(
                 &mut buffer,
                 &HudView {
-                    state: app.state(),
+                    state: app.state_ref(),
                     hud: app.hud(),
                     viewport: app.viewport(),
                     team: app.player_team(),
@@ -1858,7 +1863,7 @@ mod tests {
         draw_minimap(
             &mut buffer,
             layout.minimap,
-            app.state(),
+            app.state_ref(),
             app.viewport(),
             app.player_team(),
             Some(tank),
@@ -1942,7 +1947,7 @@ mod tests {
         handle_session_input(&mut app, InputEvent::MouseClick(ex, ey), false);
 
         // Demo mode applied the packet locally via `apply_command`.
-        let unit = app.state().unit(tank).expect("tank");
+        let unit = app.state_ref().unit(tank).expect("tank");
 
         assert_eq!(unit.orders, UnitOrder::MoveToAttack);
         assert_eq!(unit.enemy_unit, Some(enemy));
@@ -1950,7 +1955,7 @@ mod tests {
         assert!(app.hud().pending.is_empty(), "демо-режим не копит приказы");
         // The path to the attack position will be requested by the unit itself on the tick
         // (`process_order_move` → `Paths_RequestPath`), packet 08 does not carry it.
-        assert!(app.state().path_requests.is_empty());
+        assert!(app.state_ref().path_requests().is_empty());
     }
 
     #[test]
@@ -1979,7 +1984,7 @@ mod tests {
         let (app, tank, _enemy) = test_app();
         let destination = Point::new(13, 10);
 
-        let order = build_move_order(app.state(), tank, destination).expect("route");
+        let order = build_move_order(app.state_ref(), tank, destination).expect("route");
 
         assert_eq!(order.preview.unit, tank);
         assert_eq!(order.preview.from, Point::new(10, 10));
@@ -2010,7 +2015,7 @@ mod tests {
     fn move_order_packet_38_matches_the_wire_layout() {
         let (app, tank, _enemy) = test_app();
         // Adjacent cell: a one-step path, the bytes are fully predictable.
-        let order = build_move_order(app.state(), tank, Point::new(11, 10)).expect("route");
+        let order = build_move_order(app.state_ref(), tank, Point::new(11, 10)).expect("route");
         let bytes = Packet::Command(order.command.clone())
             .encode()
             .expect("38 encoded");
@@ -2038,7 +2043,7 @@ mod tests {
     #[test]
     fn attack_order_packet_08_matches_the_wire_layout() {
         let (app, tank, enemy) = test_app();
-        let command = build_attack_order(app.state(), tank, enemy).expect("attack order");
+        let command = build_attack_order(app.state_ref(), tank, enemy).expect("attack order");
         let bytes = Packet::Command(command.clone())
             .encode()
             .expect("08 encoded");
@@ -2091,7 +2096,7 @@ mod tests {
         );
         // Locally the order is not applied yet — the network loop will do it.
         assert_eq!(
-            app.state().unit(tank).expect("tank").orders,
+            app.state_ref().unit(tank).expect("tank").orders,
             UnitOrder::Await
         );
 
@@ -2111,7 +2116,7 @@ mod tests {
         let (mx, my) = screen_of(&app, Point::new(13, 10));
         handle_session_input(&mut app, InputEvent::RightClick(mx, my), false);
 
-        let unit = app.state().unit(tank).expect("tank");
+        let unit = app.state_ref().unit(tank).expect("tank");
 
         assert_eq!(unit.orders, UnitOrder::Move);
         assert_eq!(unit.state, UnitOrderState::InProgress);
@@ -2132,7 +2137,7 @@ mod tests {
     #[test]
     fn end_turn_closes_the_turn_like_the_network_timer() {
         let (mut app, _tank, _enemy) = test_app();
-        let before = app.state().turn_counter;
+        let before = app.state_ref().turn_counter();
 
         let over = app.end_turn();
 
@@ -2148,23 +2153,23 @@ mod tests {
         if over {
             // `check_end_game_conditions` ended the match: `finish_turn` does not
             // reset the phase and does not advance the turn counter.
-            assert_eq!(app.state().game_state, GameStateType::EndTurn);
-            assert_eq!(app.state().turn_counter, before);
+            assert_eq!(app.state_ref().game_state(), GameStateType::EndTurn);
+            assert_eq!(app.state_ref().turn_counter(), before);
         } else {
-            assert_eq!(app.state().game_state, GameStateType::InGame);
-            assert_eq!(app.state().turn_counter, before + 1);
+            assert_eq!(app.state_ref().game_state(), GameStateType::InGame);
+            assert_eq!(app.state_ref().turn_counter(), before + 1);
         }
     }
 
     #[test]
     fn resources_and_unit_panel_show_the_documented_fields() {
         let (app, tank, _enemy) = test_app();
-        let line = resources_line(app.state(), TeamId::RED);
+        let line = resources_line(app.state_ref(), TeamId::RED);
 
         assert!(line.contains("GOLD 1500"), "{line}");
         assert!(line.contains("TEAM 0"), "{line}");
 
-        let lines = unit_panel_lines(app.state(), tank);
+        let lines = unit_panel_lines(app.state_ref(), tank);
 
         assert_eq!(lines.len(), 5);
         assert!(lines[0].contains("Tank"), "{lines:?}");
@@ -2179,13 +2184,12 @@ mod tests {
     #[test]
     fn unit_panel_lines_never_show_speed() {
         let (mut app, tank, _enemy) = test_app();
-        let mine = app
-            .state_mut()
+        let mine = app.universe_mut()
             .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(16, 10), 0)
             .expect("шахта создана");
 
         for (id, what) in [(tank, "танк"), (mine, "шахта")] {
-            let lines = unit_panel_lines(app.state(), id);
+            let lines = unit_panel_lines(app.state_ref(), id);
 
             assert!(
                 lines
@@ -2274,7 +2278,7 @@ mod tests {
         );
 
         let view = HudView {
-            state: app.state(),
+            state: app.state_ref(),
             hud: app.hud(),
             viewport: app.viewport(),
             team: app.player_team(),
@@ -2287,7 +2291,7 @@ mod tests {
         app.hud_mut().chat.open();
         app.hud_mut().chat.push_char('h');
         let view = HudView {
-            state: app.state(),
+            state: app.state_ref(),
             hud: app.hud(),
             viewport: app.viewport(),
             team: app.player_team(),
@@ -2336,7 +2340,7 @@ mod tests {
         );
         assert!(!app.hud().chat.is_active());
         assert_eq!(
-            app.state().chat_log,
+            app.state_ref().chat_log(),
             vec![(TeamId::RED, "Hello".to_string())]
         );
         assert!(
@@ -2370,7 +2374,7 @@ mod tests {
         handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), true);
 
         assert!(
-            app.state().chat_log.is_empty(),
+            app.state_ref().chat_log().is_empty(),
             "локальное применение делает net::flush_hud_orders"
         );
 
@@ -2411,7 +2415,7 @@ mod tests {
             "Esc в чате не выходит из сессии"
         );
         assert!(!app.hud().chat.is_active());
-        assert!(app.state().chat_log.is_empty());
+        assert!(app.state_ref().chat_log().is_empty());
         assert!(app
             .hud()
             .log

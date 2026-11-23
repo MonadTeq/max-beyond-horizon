@@ -169,15 +169,15 @@ fn autosave_is_written_at_the_end_of_a_round() {
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
-    let first_turn = app.state().turn_counter;
+    let first_turn = app.state_ref().turn_counter();
 
     // Human End Turn → computer turn → `finish_turn` → autosave.
     app.local_end_turn();
     run_until_player_turn(&mut app, 20_000);
     assert!(
-        app.state().turn_counter > first_turn,
+        app.state_ref().turn_counter() > first_turn,
         "раунд завершился: turn={}",
-        app.state().turn_counter
+        app.state_ref().turn_counter()
     );
 
     // Custom category → `dta`, the autosave slot — 10 (C++ `SaveLoad_GetSaveFileName`).
@@ -190,8 +190,8 @@ fn autosave_is_written_at_the_end_of_a_round() {
 
     let save = SaveFile::parse(&std::fs::read(&autosave).expect("файл автосейва"))
         .expect("автосейв — валидный V70");
-    assert_eq!(save.game.turn_counter, app.state().turn_counter);
-    assert_eq!(save.units.len(), app.state().unit_count());
+    assert_eq!(save.game.turn_counter, app.state_ref().turn_counter());
+    assert_eq!(save.units.len(), app.state_ref().unit_count());
     assert!(
         save.header.save_name().starts_with("(Turn "),
         "имя автосейва как в C++: {:?}",
@@ -224,8 +224,8 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
 
     let preview = menu.slots[0].preview.as_ref().expect("превью слота 1");
     assert_eq!(preview.save_name, "First save");
-    assert_eq!(preview.turn, app.state().turn_counter);
-    assert_eq!(preview.units, app.state().unit_count());
+    assert_eq!(preview.turn, app.state_ref().turn_counter());
+    assert_eq!(preview.units, app.state_ref().unit_count());
     assert_eq!(preview.version, max_core::SAVE_VERSION_V70);
 
     // Name: 30 bytes as in V70, Backspace and printable characters.
@@ -298,10 +298,10 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
     assert!(app.save_load().is_some());
 
     // Input goes to the window: Esc closes it, the match state does not change.
-    let turn = app.state().turn_counter;
+    let turn = app.state_ref().turn_counter();
     max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
     assert!(app.save_load().is_none(), "Esc закрывает окно");
-    assert_eq!(app.state().turn_counter, turn, "Esc не двигает партию");
+    assert_eq!(app.state_ref().turn_counter(), turn, "Esc не двигает партию");
 
     assert!(app.open_load_menu(false));
     assert_eq!(
@@ -336,13 +336,13 @@ fn local_load_resumes_without_replaying_the_turn_economy() {
         Some(max_app::local::LocalPhase::PlayerTurn),
         "RED's turn is active: the round entry already applied its economy"
     );
-    let saved_active = app.state().active_turn_team;
-    let saved_turn = app.state().turn_counter;
+    let saved_active = app.state_ref().active_turn_team();
+    let saved_turn = app.state_ref().turn_counter();
 
     // The builder is injected after the round entry, so its storage records the
     // number of economy passes after the save only.
     let builder = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             max_core::UnitType::Constructor,
             TeamId::RED,
@@ -351,15 +351,14 @@ fn local_load_resumes_without_replaying_the_turn_economy() {
         )
         .expect("builder spawns");
     {
-        let state = app.state_mut();
-        let mut unit = state.unit(builder).expect("builder").clone();
+        let mut unit = app.state_ref().unit(builder).expect("builder").clone();
         unit.storage = 40;
         unit.build_list = vec![max_core::UnitType::TrainingHall];
         unit.build_time = 10;
         unit.build_rate = 1;
         unit.orders = max_core::UnitOrder::Build;
         unit.state = max_core::UnitOrderState::ExecutingOrder;
-        state.write_unit(builder, unit);
+        app.universe_mut().write_unit(builder, unit);
     }
 
     let bytes = app
@@ -372,18 +371,18 @@ fn local_load_resumes_without_replaying_the_turn_economy() {
         .expect("V70 loads as a local match");
 
     assert_eq!(
-        fresh.state().active_turn_team,
+        fresh.state_ref().active_turn_team(),
         saved_active,
         "the loaded match resumes at the saved active team"
     );
-    assert_eq!(fresh.state().turn_counter, saved_turn);
+    assert_eq!(fresh.state_ref().turn_counter(), saved_turn);
     assert_eq!(
         fresh.local().map(|local| local.phase),
         Some(max_app::local::LocalPhase::PlayerTurn),
         "the resumed turn is the human turn, not a round close"
     );
     assert_eq!(
-        fresh.state().unit(builder).expect("builder").storage,
+        fresh.state_ref().unit(builder).expect("builder").storage,
         40,
         "the loaded turn applied manage_economy a second time"
     );
@@ -401,7 +400,7 @@ struct Snapshot {
 }
 
 fn snapshot(app: &App) -> Snapshot {
-    let state = app.state();
+    let state = app.state_ref();
     let ids: Vec<UnitId> = state.unit_ids_in_order();
     let mut detailed: Vec<(UnitId, max_core::UnitType, i16, i16)> = ids
         .iter()
@@ -414,10 +413,10 @@ fn snapshot(app: &App) -> Snapshot {
     detailed.sort_by_key(|entry| entry.0);
 
     Snapshot {
-        turn: state.turn_counter,
+        turn: state.turn_counter(),
         units: ids,
         ids: detailed,
-        gold: state.team_units[TeamId::RED.0 as usize].gold,
-        team_types: std::array::from_fn(|index| state.teams[index].team_type),
+        gold: state.team_units()[TeamId::RED.0 as usize].gold,
+        team_types: std::array::from_fn(|index| state.teams()[index].team_type),
     }
 }

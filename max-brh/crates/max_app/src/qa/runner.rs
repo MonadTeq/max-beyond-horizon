@@ -474,12 +474,12 @@ impl QaRunner {
             .app
             .hud()
             .selected
-            .and_then(|id| self.app.state().unit(id))
+            .and_then(|id| self.app.state_ref().unit(id))
             .map(|unit| unit.grid)
             .unwrap_or_else(|| {
                 max_core::geo::Point::new(
-                    self.app.state().map.size.width / 2,
-                    self.app.state().map.size.height / 2,
+                    self.app.state_ref().map().size.width / 2,
+                    self.app.state_ref().map().size.height / 2,
                 )
             });
 
@@ -498,21 +498,18 @@ impl QaRunner {
                 (0..size).all(|dy| {
                     (0..size).all(|dx| {
                         let point = max_core::geo::Point::new(cell.x + dx, cell.y + dy);
-                        self.app.state().map.index(point.x, point.y).is_some()
-                            && self.app.state().units_at(point).is_empty()
+                        self.app.state_ref().map().index(point.x, point.y).is_some()
+                            && self.app.state_ref().units_at(point).is_empty()
                     })
                 })
             })
             .ok_or_else(|| format!("spawn {name}: нет свободной клетки рядом с {anchor:?}"))?;
 
         let flags = max_core::access::unit_type_flags(unit_type);
-        let id = self
-            .app
-            .state_mut()
-            .spawn_unit(unit_type, team, cell, flags)
+        let id = self.app.universe_mut().spawn_unit(unit_type, team, cell, flags)
             .ok_or_else(|| format!("spawn {name}: не удалось поставить юнита"))?;
 
-        if let Some(unit) = self.app.state_mut().unit_mut(id) {
+        if let Some(unit) = self.app.universe_mut().unit_mut(id) {
             unit.set_visible_to_team(player, true);
         }
 
@@ -566,13 +563,13 @@ impl QaRunner {
             for dx in 0..size {
                 let point = Point::new(cell.x + dx, cell.y + dy);
 
-                if self.app.state().map.index(point.x, point.y).is_none() {
+                if self.app.state_ref().map().index(point.x, point.y).is_none() {
                     return Err(format!(
                         "spawn at: клетка ({}, {}) вне карты",
                         point.x, point.y
                     ));
                 }
-                if !self.app.state().units_at(point).is_empty() {
+                if !self.app.state_ref().units_at(point).is_empty() {
                     return Err(format!(
                         "spawn at: клетка ({}, {}) занята",
                         point.x, point.y
@@ -582,13 +579,10 @@ impl QaRunner {
         }
 
         let flags = max_core::access::unit_type_flags(unit_type);
-        let id = self
-            .app
-            .state_mut()
-            .spawn_unit(unit_type, team, cell, flags)
+        let id = self.app.universe_mut().spawn_unit(unit_type, team, cell, flags)
             .ok_or_else(|| format!("spawn at: не удалось поставить юнита {name}"))?;
 
-        if let Some(unit) = self.app.state_mut().unit_mut(id) {
+        if let Some(unit) = self.app.universe_mut().unit_mut(id) {
             unit.set_visible_to_team(player, true);
         }
 
@@ -689,8 +683,8 @@ impl QaRunner {
             .map(|id| max_core::team::ComplexId(id as i16))
             .or_else(|| {
                 self.app
-                    .state()
-                    .team_units
+                    .state_ref()
+                    .team_units()
                     .get(team.0 as usize)
                     .and_then(|units| {
                         units
@@ -701,7 +695,7 @@ impl QaRunner {
             })
             .ok_or_else(|| "complex: у команды нет комплекса".to_string())?;
 
-        let Some(target) = self.app.state().complex(team, complex.0 as u16) else {
+        let Some(target) = self.app.state_ref().complex(team, complex.0 as u16) else {
             return Err("complex: комплекс не найден".to_string());
         };
 
@@ -718,8 +712,7 @@ impl QaRunner {
             gold.map_or_else(|| i32::from(target.gold).to_string(), |v| v.to_string()),
         );
 
-        max_core::transfer::complex_transfer(
-            self.app.state_mut(),
+        self.app.universe_mut().complex_transfer(
             team,
             complex,
             delta_raw,
@@ -764,7 +757,7 @@ impl QaRunner {
         };
 
         let team = self.app.player_team();
-        let Some(units) = self.app.state_mut().team_units.get_mut(team.0 as usize) else {
+        let Some(units) = self.app.universe_mut().team_units_mut(team) else {
             return Err("teamvalues: у команды нет TeamUnits".to_string());
         };
         units
@@ -1092,7 +1085,7 @@ impl QaRunner {
                 };
                 let grid = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit(id)
                     .map(|unit| unit.grid)
                     .ok_or_else(|| "unit-menu open: юнит исчез".to_string())?;
@@ -1113,17 +1106,17 @@ impl QaRunner {
                     // click on the adjacent cell brings it out (`ORDER_ACTIVATE`).
                     let now_selected = self.app.hud().selected;
                     let released = now_selected != Some(id)
-                        && self.app.state().unit(id).is_some_and(|unit| {
+                        && self.app.state_ref().unit(id).is_some_and(|unit| {
                             unit.orders == max_core::enums::UnitOrder::Build
                                 && unit.state == max_core::enums::UnitOrderState::UnitReady
                         })
                         && now_selected
-                            .and_then(|client| self.app.state().unit(client))
+                            .and_then(|client| self.app.state_ref().unit(client))
                             .is_some_and(|client| client.parent_unit == Some(id));
 
                     if released {
                         let client = now_selected
-                            .and_then(|client| self.app.state().unit(client))
+                            .and_then(|client| self.app.state_ref().unit(client))
                             .map(|client| client.unit_type);
 
                         self.detail = Some(format!(
@@ -1134,7 +1127,7 @@ impl QaRunner {
                         return Ok(Flow::Continue);
                     }
 
-                    let unit = self.app.state().unit(id);
+                    let unit = self.app.state_ref().unit(id);
                     return Err(format!(
                         "unit-menu open: меню не открылось (юнит {:?} в ({}, {}), orders={:?}/{:?})",
                         unit.map(|unit| unit.unit_type),
@@ -1198,11 +1191,11 @@ impl QaRunner {
         let wanted = name.trim().to_ascii_lowercase();
         let id = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .filter(|id| {
-                self.app.state().unit(*id).is_some_and(|unit| {
+                self.app.state_ref().unit(*id).is_some_and(|unit| {
                     unit.team == team
                         && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
                             == wanted
@@ -1214,7 +1207,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "click unit: юнит исчез".to_string())?;
@@ -1238,11 +1231,11 @@ impl QaRunner {
         let wanted = name.trim().to_ascii_lowercase();
         let id = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .filter(|id| {
-                self.app.state().unit(*id).is_some_and(|unit| {
+                self.app.state_ref().unit(*id).is_some_and(|unit| {
                     unit.team != team
                         && unit.team != max_core::team::TeamId::ALIEN
                         && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
@@ -1257,7 +1250,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "click enemy: юнит исчез".to_string())?;
@@ -1501,7 +1494,7 @@ impl QaRunner {
         let (anchor, valid) = self
             .app
             .build_site()
-            .map(|site| (site.anchor, site.valid(self.app.state())))
+            .map(|site| (site.anchor, site.valid(self.app.state_ref())))
             .ok_or_else(|| "build cursor: режим закрылся".to_string())?;
 
         self.detail = Some(format!(
@@ -1538,7 +1531,7 @@ impl QaRunner {
         let target = match target {
             Some(target) => target,
             None => app
-                .state()
+                .state_ref()
                 .unit(builder)
                 .map(|unit| unit.grid)
                 .ok_or_else(|| "build place near: строитель исчез".to_string())?,
@@ -1570,12 +1563,12 @@ impl QaRunner {
 
         let tape = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| self.app.state().unit(id))
+            .filter_map(|id| self.app.state_ref().unit(id))
             .filter(|unit| {
-                unit.team == self.app.state().player_team
+                unit.team == self.app.state_ref().player_team()
                     && matches!(
                         unit.unit_type,
                         max_core::enums::UnitType::LargeTape | max_core::enums::UnitType::SmallTape
@@ -2384,7 +2377,7 @@ impl QaRunner {
             let update = self.app.local_update(0.0);
 
             if let Some(local) = self.app.local() {
-                self.ctx.status = local.status_line(self.app.state().turn_counter);
+                self.ctx.status = local.status_line(self.app.state_ref().turn_counter());
             }
 
             if update.finished || self.app.local().is_some_and(|local| local.finished()) {
@@ -2474,7 +2467,7 @@ impl QaRunner {
             .app
             .hud()
             .selected
-            .and_then(|id| self.app.state().unit(id));
+            .and_then(|id| self.app.state_ref().unit(id));
 
         Err(format!(
             "wait firing: выделенный юнит не показал кадр выстрела за {LIMIT} кадров (unit={:?} orders={:?}/{:?})",
@@ -2755,12 +2748,12 @@ impl QaRunner {
         let team = self.app.player_team();
         let ids: Vec<_> = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .filter(|id| {
                 self.app
-                    .state()
+                    .state_ref()
                     .unit(*id)
                     .is_some_and(|unit| unit.team == team && hud::unit_can_move(unit))
             })
@@ -2775,7 +2768,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "select unit: юнит исчез".to_string())?;
@@ -2795,12 +2788,12 @@ impl QaRunner {
         let team = self.app.player_team();
         let id = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .filter(|id| {
                 self.app
-                    .state()
+                    .state_ref()
                     .unit(*id)
                     .is_some_and(|unit| unit.team == team)
             })
@@ -2809,7 +2802,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "select last: юнит исчез".to_string())?;
@@ -2829,11 +2822,11 @@ impl QaRunner {
         let wanted = name.trim().to_ascii_lowercase();
         let id = self
             .app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .filter(|id| {
-                self.app.state().unit(*id).is_some_and(|unit| {
+                self.app.state_ref().unit(*id).is_some_and(|unit| {
                     unit.team == team
                         && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
                             == wanted
@@ -2845,7 +2838,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "select type: юнит исчез".to_string())?;
@@ -2861,7 +2854,7 @@ impl QaRunner {
         let team = self.app.player_team();
         let selected = self.app.hud().selected;
 
-        match selected.and_then(|id| self.app.state().unit(id)) {
+        match selected.and_then(|id| self.app.state_ref().unit(id)) {
             Some(unit) if unit.team == team => {
                 self.detail = Some(format!(
                     "{:?} в ({}, {}), подвижный: {}",
@@ -2907,7 +2900,7 @@ impl QaRunner {
         let id = self.app.hud().selected?;
 
         self.app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| (unit.orders, unit.state))
     }
@@ -2975,7 +2968,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "move near: выделенный юнит исчез".to_string())?;
@@ -3003,7 +2996,7 @@ impl QaRunner {
             {
                 continue;
             }
-            if !self.app.state().units_at(target).is_empty() {
+            if !self.app.state_ref().units_at(target).is_empty() {
                 rejections.push(format!("({}, {}): занято", target.x, target.y));
                 continue;
             }
@@ -3053,7 +3046,7 @@ impl QaRunner {
 
         let grid = self
             .app
-            .state()
+            .state_ref()
             .unit(id)
             .map(|unit| unit.grid)
             .ok_or_else(|| "move near refused: выделенный юнит исчез".to_string())?;
@@ -3081,7 +3074,7 @@ impl QaRunner {
             {
                 continue;
             }
-            if !self.app.state().units_at(target).is_empty() {
+            if !self.app.state_ref().units_at(target).is_empty() {
                 rejections.push(format!("({}, {}): занято", target.x, target.y));
                 continue;
             }
@@ -3138,7 +3131,7 @@ impl QaRunner {
         let Some(id) = self.app.hud().selected else {
             return Err("launch: нет выделенного юнита (сначала select)".to_string());
         };
-        let Some(selected) = self.app.state().unit(id).cloned() else {
+        let Some(selected) = self.app.state_ref().unit(id).cloned() else {
             return Err("launch: выделенный юнит исчез".to_string());
         };
 
@@ -3158,17 +3151,17 @@ impl QaRunner {
             (id, client)
         };
 
-        let Some(container) = self.app.state().unit(container_id).cloned() else {
+        let Some(container) = self.app.state_ref().unit(container_id).cloned() else {
             return Err("launch: контейнер исчез".to_string());
         };
-        let Some(client) = self.app.state().unit(client_id).cloned() else {
+        let Some(client) = self.app.state_ref().unit(client_id).cloned() else {
             return Err("launch: готовый юнит исчез".to_string());
         };
 
         let target = match action {
             LaunchCommand::Grid(x, y) => Point::new(x, y),
             LaunchCommand::Near => {
-                max_core::production::factory_exit_cell(self.app.state(), &container, &client)
+                self.app.state_ref().factory_exit_cell(&container, &client)
                     .ok_or_else(|| {
                         format!(
                             "launch near: рядом с {:?} в ({}, {}) нет проходимой клетки",
@@ -3196,7 +3189,7 @@ impl QaRunner {
 
         // The order is applied locally immediately (`apply_pending_orders`): the container
         // must be in `ORDER_ACTIVATE`/`EXECUTING_ORDER`.
-        let container_now = self.app.state().unit(container_id);
+        let container_now = self.app.state_ref().unit(container_id);
         let activated = container_now.is_some_and(|unit| {
             unit.orders == max_core::enums::UnitOrder::Activate
                 || unit.parent_unit.is_none()
@@ -3258,14 +3251,14 @@ impl QaRunner {
             eprintln!(
                 "qa_run: WARN end_turn занял {} кадров (turn={}, phase={:?}, counters={:?})",
                 self.frames - before,
-                self.app.state().turn_counter,
+                self.app.state_ref().turn_counter(),
                 self.app.local().map(|local| local.phase),
                 (0..4)
-                    .map(|team| self.app.state().ai.players[team].end_turn_retry_counter)
+                    .map(|team| self.app.state_ref().ai().players[team].end_turn_retry_counter)
                     .collect::<Vec<_>>()
             );
-            for id in self.app.state().unit_ids_in_order() {
-                let Some(unit) = self.app.state().unit(id) else {
+            for id in self.app.state_ref().unit_ids_in_order() {
+                let Some(unit) = self.app.state_ref().unit(id) else {
                     continue;
                 };
                 if matches!(
@@ -3290,7 +3283,7 @@ impl QaRunner {
 
         self.detail = Some(format!(
             "ход {} · {} кадров",
-            self.app.state().turn_counter,
+            self.app.state_ref().turn_counter(),
             self.frames - before
         ));
         Ok(Flow::Continue)
@@ -3298,7 +3291,7 @@ impl QaRunner {
 
     fn local_state_tuple(&self) -> (i32, Option<LocalPhase>, Option<u8>) {
         (
-            self.app.state().turn_counter,
+            self.app.state_ref().turn_counter(),
             self.app.local().map(|local| local.phase),
             self.app
                 .local()
@@ -3379,8 +3372,8 @@ impl QaRunner {
         self.detail = Some(format!(
             "{}: ход {}, юнитов {}",
             path.display(),
-            self.app.state().turn_counter,
-            self.app.state().unit_count()
+            self.app.state_ref().turn_counter(),
+            self.app.state_ref().unit_count()
         ));
         Ok(Flow::Continue)
     }
@@ -3392,7 +3385,7 @@ impl QaRunner {
     fn check(&mut self, assertion: Assertion) -> Result<Flow, String> {
         match assertion {
             Assertion::Turn(cmp, expected) => {
-                let actual = i64::from(self.app.state().turn_counter);
+                let actual = i64::from(self.app.state_ref().turn_counter());
 
                 self.expect(
                     cmp.test(actual, i64::from(expected)),
@@ -3401,7 +3394,7 @@ impl QaRunner {
                 )
             }
             Assertion::Units(cmp, expected) => {
-                let actual = i64::try_from(self.app.state().unit_count()).unwrap_or(i64::MAX);
+                let actual = i64::try_from(self.app.state_ref().unit_count()).unwrap_or(i64::MAX);
 
                 self.expect(
                     cmp.test(actual, i64::from(expected)),
@@ -3410,7 +3403,7 @@ impl QaRunner {
                 )
             }
             Assertion::Team(expected) => {
-                let actual = self.app.state().active_turn_team.0;
+                let actual = self.app.state_ref().active_turn_team().0;
 
                 self.expect(
                     actual == expected,
@@ -3467,7 +3460,7 @@ impl QaRunner {
                         "{}: партия ещё не окончена (phase={}, ход {})",
                         if want_victory { "victory" } else { "defeat" },
                         self.phase_label(),
-                        self.app.state().turn_counter
+                        self.app.state_ref().turn_counter()
                     )),
                 }
             }
@@ -3501,7 +3494,7 @@ impl QaRunner {
                 let actual = self
                     .app
                     .build_site()
-                    .map(|site| site.valid(self.app.state()));
+                    .map(|site| site.valid(self.app.state_ref()));
 
                 self.expect(
                     actual == Some(expected),
@@ -3509,7 +3502,7 @@ impl QaRunner {
                     match self.app.build_site() {
                         Some(site) => format!(
                             "build-site={} (якорь {},{}; курсор {},{}), статус «{}»",
-                            if site.valid(self.app.state()) {
+                            if site.valid(self.app.state_ref()) {
                                 "valid"
                             } else {
                                 "invalid"
@@ -3518,7 +3511,7 @@ impl QaRunner {
                             site.anchor.y,
                             site.cursor.x,
                             site.cursor.y,
-                            site.status_line(self.app.state())
+                            site.status_line(self.app.state_ref())
                         ),
                         None => "build-site=closed (режим не открыт)".to_string(),
                     },
@@ -3530,20 +3523,20 @@ impl QaRunner {
                     .build_site()
                     .map(|site| site.builder)
                     .or_else(|| self.app.hud().selected);
-                let Some(unit) = builder.and_then(|id| self.app.state().unit(id)) else {
+                let Some(unit) = builder.and_then(|id| self.app.state_ref().unit(id)) else {
                     return self.expect(
                         false,
                         "build-center=yes".to_string(),
                         "нет строителя".to_string(),
                     );
                 };
-                let offset = crate::buildsite::tape_center_offset(self.app.state(), unit);
+                let offset = crate::buildsite::tape_center_offset(self.app.state_ref(), unit);
                 let tape = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| self.app.state().unit(id))
+                    .filter_map(|id| self.app.state_ref().unit(id))
                     .find(|candidate| {
                         candidate.parent_unit == Some(unit.id)
                             && matches!(
@@ -3589,10 +3582,10 @@ impl QaRunner {
                 let team = self.app.player_team();
                 let tape = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| self.app.state().unit(id))
+                    .filter_map(|id| self.app.state_ref().unit(id))
                     .filter(|unit| {
                         unit.team == team
                             && matches!(
@@ -3617,10 +3610,10 @@ impl QaRunner {
                 let team = self.app.player_team();
                 let builder = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| self.app.state().unit(id))
+                    .filter_map(|id| self.app.state_ref().unit(id))
                     .filter(|unit| {
                         unit.team == team
                             && unit.unit_type == max_core::enums::UnitType::Constructor
@@ -3639,10 +3632,10 @@ impl QaRunner {
                 // so the reference is the building size.
                 let building = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| self.app.state().unit(id))
+                    .filter_map(|id| self.app.state_ref().unit(id))
                     .filter(|unit| unit.team == team && unit.is_quad())
                     .min_by_key(|unit| {
                         let size: i16 = 2;
@@ -3684,10 +3677,10 @@ impl QaRunner {
                 let team = self.app.player_team();
                 let found = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| self.app.state().unit(id))
+                    .filter_map(|id| self.app.state_ref().unit(id))
                     .find(|unit| {
                         unit.team == team
                             && unit.orders == max_core::enums::UnitOrder::Idle
@@ -3711,7 +3704,7 @@ impl QaRunner {
                 // `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` holds the ready unit
                 // "inside" (`parent_unit` — it) and waits for the player's order.
                 let found = self.app.hud().selected.and_then(|id| {
-                    self.app.state().unit(id).and_then(|unit| {
+                    self.app.state_ref().unit(id).and_then(|unit| {
                         (unit.orders == max_core::enums::UnitOrder::Build
                             && unit.state == max_core::enums::UnitOrderState::UnitReady)
                             .then_some(unit)
@@ -3733,9 +3726,9 @@ impl QaRunner {
             Assertion::UnitStored(name) => {
                 let wanted = name.as_deref().map(|name| name.trim().to_ascii_lowercase());
                 let stored = self.app.hud().selected.and_then(|id| {
-                    let container = self.app.state().unit(id)?;
+                    let container = self.app.state_ref().unit(id)?;
                     let client_id = container.parent_unit?;
-                    let client = self.app.state().unit(client_id)?;
+                    let client = self.app.state_ref().unit(client_id)?;
 
                     (client.orders == max_core::enums::UnitOrder::Idle
                         && client.state == max_core::enums::UnitOrderState::Store)
@@ -3769,11 +3762,11 @@ impl QaRunner {
             Assertion::EndTurnPressed(pressed) => {
                 // The same function that draws the button (`panels::end_turn_pressed`):
                 // computer turn — pressed, human turn — released.
-                let active = self.app.state().active_turn_team;
+                let active = self.app.state_ref().active_turn_team();
                 let kind = self
                     .app
-                    .state()
-                    .teams
+                    .state_ref()
+                    .teams()
                     .get(usize::from(active.0))
                     .map(|team| team.team_type)
                     .unwrap_or(max_core::team::TeamKind::None);
@@ -3952,7 +3945,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id))
+                    .and_then(|id| self.app.state_ref().unit(id))
                     .map(|unit| unit.orders);
 
                 self.expect(
@@ -3974,7 +3967,7 @@ impl QaRunner {
             }
             Assertion::ResearchAlloc(topic, cmp, expected) => {
                 let actual =
-                    self.app.state().research_allocation(self.app.player_team())[topic as usize];
+                    self.app.state_ref().research_allocation(self.app.player_team())[topic as usize];
 
                 self.expect(
                     cmp.test(i64::from(actual), i64::from(expected)),
@@ -4050,7 +4043,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id))
+                    .and_then(|id| self.app.state_ref().unit(id))
                     .map(|unit| i32::from(unit.storage));
 
                 self.expect(
@@ -4107,8 +4100,8 @@ impl QaRunner {
             Assertion::Gold(cmp, expected) => {
                 let actual = self
                     .app
-                    .state()
-                    .team_units
+                    .state_ref()
+                    .team_units()
                     .get(self.app.player_team().0 as usize)
                     .map(|units| units.gold)
                     .unwrap_or(0);
@@ -4127,7 +4120,7 @@ impl QaRunner {
                 )
             }
             Assertion::ResearchLevel(topic, cmp, expected) => {
-                let actual = self.app.state().teams[self.app.player_team().0 as usize]
+                let actual = self.app.state_ref().teams()[self.app.player_team().0 as usize]
                     .research_topics[topic as usize]
                     .research_level;
                 let ok = match cmp {
@@ -4148,8 +4141,8 @@ impl QaRunner {
                 let wanted = name.trim().to_ascii_lowercase();
                 let mut actual = 0u32;
 
-                for id in self.app.state().unit_ids_in_order() {
-                    let Some(unit) = self.app.state().unit(id) else {
+                for id in self.app.state_ref().unit_ids_in_order() {
+                    let Some(unit) = self.app.state_ref().unit(id) else {
                         continue;
                     };
 
@@ -4175,11 +4168,11 @@ impl QaRunner {
                 // the line "launch cell center → target cell center".
                 let found = self
                     .app
-                    .state()
+                    .state_ref()
                     .unit_ids_in_order()
                     .into_iter()
                     .find_map(|id| {
-                        let unit = self.app.state().unit(id)?;
+                        let unit = self.app.state_ref().unit(id)?;
                         if unit.flags & max_core::enums::unit_flags::MISSILE_UNIT == 0 {
                             return None;
                         }
@@ -4236,7 +4229,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id))
+                    .and_then(|id| self.app.state_ref().unit(id))
                     .is_some_and(|unit| max_core::unit_order::active_build_site(unit).is_some());
 
                 self.expect(
@@ -4246,8 +4239,8 @@ impl QaRunner {
                 )
             }
             Assertion::Trail(expected) => {
-                let actual = self.app.state().unit_ids_in_order().into_iter().any(|id| {
-                    self.app.state().unit(id).is_some_and(|unit| {
+                let actual = self.app.state_ref().unit_ids_in_order().into_iter().any(|id| {
+                    self.app.state_ref().unit(id).is_some_and(|unit| {
                         matches!(
                             unit.unit_type,
                             max_core::enums::UnitType::RocketSmoke
@@ -4265,8 +4258,8 @@ impl QaRunner {
             Assertion::UnitType(name) => {
                 let team = self.app.player_team();
                 let wanted = name.trim().to_ascii_lowercase();
-                let found = self.app.state().unit_ids_in_order().into_iter().any(|id| {
-                    self.app.state().unit(id).is_some_and(|unit| {
+                let found = self.app.state_ref().unit_ids_in_order().into_iter().any(|id| {
+                    self.app.state_ref().unit(id).is_some_and(|unit| {
                         unit.team == team
                             && (crate::buildmenu::unit_name(unit.unit_type).to_ascii_lowercase()
                                 == wanted
@@ -4288,8 +4281,8 @@ impl QaRunner {
                 let mut matching = Vec::new();
                 let mut any_site = Vec::new();
 
-                for id in self.app.state().unit_ids_in_order() {
-                    let Some(tape) = self.app.state().unit(id) else {
+                for id in self.app.state_ref().unit_ids_in_order() {
+                    let Some(tape) = self.app.state_ref().unit(id) else {
                         continue;
                     };
                     let (is_large, cones_type, slab_type) = match tape.unit_type {
@@ -4310,16 +4303,16 @@ impl QaRunner {
                     }
 
                     let site = tape.grid;
-                    let units = self.app.state().units_at(site);
+                    let units = self.app.state_ref().units_at(site);
                     let has_cones = units.iter().any(|other| {
                         self.app
-                            .state()
+                            .state_ref()
                             .unit(*other)
                             .is_some_and(|unit| unit.unit_type == cones_type)
                     });
                     let has_slab = units.iter().any(|other| {
                         self.app
-                            .state()
+                            .state_ref()
                             .unit(*other)
                             .is_some_and(|unit| unit.unit_type == slab_type)
                     });
@@ -4377,8 +4370,8 @@ impl QaRunner {
                 let mut decals: Vec<(max_core::unit::UnitId, max_core::enums::UnitType)> =
                     Vec::new();
 
-                for id in self.app.state().unit_ids_in_order() {
-                    let Some(tape) = self.app.state().unit(id) else {
+                for id in self.app.state_ref().unit_ids_in_order() {
+                    let Some(tape) = self.app.state_ref().unit(id) else {
                         continue;
                     };
                     if tape.team != team
@@ -4391,8 +4384,8 @@ impl QaRunner {
                         continue;
                     }
 
-                    for other in self.app.state().units_at(tape.grid) {
-                        let Some(unit) = self.app.state().unit(*other) else {
+                    for other in self.app.state_ref().units_at(tape.grid) {
+                        let Some(unit) = self.app.state_ref().unit(*other) else {
                             continue;
                         };
                         if unit.team == team && site_types.contains(&unit.unit_type) {
@@ -4417,11 +4410,11 @@ impl QaRunner {
                 let mut parts = Vec::new();
 
                 for (id, unit_type) in &decals {
-                    if let Some(unit) = self.app.state_mut().unit_mut(*id) {
+                    if let Some(unit) = self.app.universe_mut().unit_mut(*id) {
                         unit.set_visible_to_team(team, false);
                     }
                     let hidden = self.app.render_frame();
-                    if let Some(unit) = self.app.state_mut().unit_mut(*id) {
+                    if let Some(unit) = self.app.universe_mut().unit_mut(*id) {
                         unit.set_visible_to_team(team, true);
                     }
 
@@ -4518,7 +4511,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id));
+                    .and_then(|id| self.app.state_ref().unit(id));
                 let ok = selected.is_some_and(|unit| unit.team == team && hud::unit_can_move(unit));
 
                 self.expect(
@@ -4587,7 +4580,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id));
+                    .and_then(|id| self.app.state_ref().unit(id));
 
                 self.expect(
                     selected.is_some_and(|unit| unit.grid == max_core::geo::Point::new(x, y)),
@@ -4606,7 +4599,7 @@ impl QaRunner {
                     .app
                     .hud()
                     .selected
-                    .and_then(|id| self.app.state().unit(id));
+                    .and_then(|id| self.app.state_ref().unit(id));
                 let names = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 
                 self.expect(
@@ -4844,7 +4837,7 @@ impl QaRunner {
         let complex = self
             .app
             .economy_complex()
-            .and_then(|id| self.app.state().complex(team, id));
+            .and_then(|id| self.app.state_ref().complex(team, id));
 
         match complex {
             Some(complex) => {
@@ -4893,7 +4886,7 @@ impl QaRunner {
             .app
             .hud()
             .selected
-            .and_then(|id| self.app.state().unit(id))
+            .and_then(|id| self.app.state_ref().unit(id))
         else {
             return false;
         };

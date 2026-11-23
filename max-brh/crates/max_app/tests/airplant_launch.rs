@@ -18,6 +18,7 @@
 
 use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
+use max_core::universe::{GameUniverse, LocalDispatcher, StateRef};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::GameState;
 
@@ -37,7 +38,7 @@ fn state() -> GameState {
 
 /// AIRPLT at `(10,10)` with a ready fighter "inside" — the state after
 /// `UnitInfo::SpawnNewUnit`.
-fn plant_with_fighter(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
+fn plant_with_fighter(state: &mut GameUniverse<LocalDispatcher>) -> (max_core::UnitId, max_core::UnitId) {
     let plant = state
         .spawn_unit(UnitType::AirUnitsPlant, TeamId::RED, Point::new(10, 10), 0)
         .expect("air plant");
@@ -46,7 +47,7 @@ fn plant_with_fighter(state: &mut GameState) -> (max_core::UnitId, max_core::Uni
         .expect("fighter");
 
     {
-        let mut unit = state.unit(fighter).expect("fighter").clone();
+        let mut unit = state.snapshot().unit(fighter).expect("fighter").clone();
         unit.parent_unit = Some(plant);
         unit.orders = UnitOrder::Idle;
         unit.state = UnitOrderState::Store;
@@ -54,7 +55,7 @@ fn plant_with_fighter(state: &mut GameState) -> (max_core::UnitId, max_core::Uni
         state.write_unit(fighter, unit);
     }
     {
-        let mut unit = state.unit(plant).expect("plant").clone();
+        let mut unit = state.snapshot().unit(plant).expect("plant").clone();
         unit.parent_unit = Some(fighter);
         unit.storage = 1;
         unit.orders = UnitOrder::Build;
@@ -68,11 +69,11 @@ fn plant_with_fighter(state: &mut GameState) -> (max_core::UnitId, max_core::Uni
 
 #[test]
 fn activate_order_targets_the_plant_and_carries_the_fighter_as_parent() {
-    let mut state = state();
-    let (plant, fighter) = plant_with_fighter(&mut state);
+    let mut universe = GameUniverse::new(state(), LocalDispatcher);
+    let (plant, fighter) = plant_with_fighter(&mut universe);
 
     // A cell next to the factory (2×2 at (10,10)-(11,11)) — `9,10`.
-    let command = hud::build_activate_order(&state, fighter, Point::new(9, 10))
+    let command = hud::build_activate_order(universe.snapshot(), fighter, Point::new(9, 10))
         .expect("CURSOR_ACTIVATE: приказ вывода");
 
     match command {
@@ -94,15 +95,15 @@ fn activate_order_targets_the_plant_and_carries_the_fighter_as_parent() {
 
 #[test]
 fn clicking_the_plant_footprint_does_not_launch() {
-    let mut state = state();
-    let (_plant, fighter) = plant_with_fighter(&mut state);
+    let mut universe = GameUniverse::new(state(), LocalDispatcher);
+    let (_plant, fighter) = plant_with_fighter(&mut universe);
 
     // Inside the factory 2×2 C++ gives `CURSOR_FRIEND` — no order.
-    assert!(hud::build_activate_order(&state, fighter, Point::new(10, 10)).is_none());
-    assert!(hud::build_activate_order(&state, fighter, Point::new(11, 11)).is_none());
+    assert!(hud::build_activate_order(universe.snapshot(), fighter, Point::new(10, 10)).is_none());
+    assert!(hud::build_activate_order(universe.snapshot(), fighter, Point::new(11, 11)).is_none());
 
     // Too far — not "next to the container".
-    assert!(hud::build_activate_order(&state, fighter, Point::new(20, 20)).is_none());
+    assert!(hud::build_activate_order(universe.snapshot(), fighter, Point::new(20, 20)).is_none());
 }
 
 #[test]
@@ -117,7 +118,7 @@ fn ordinary_units_have_no_activate_order() {
         )
         .expect("tank");
 
-    assert!(hud::build_activate_order(&state, tank, Point::new(6, 5)).is_none());
+    assert!(hud::build_activate_order(StateRef::from(&state), tank, Point::new(6, 5)).is_none());
 }
 
 #[test]
@@ -133,7 +134,7 @@ fn air_move_order_is_a_packet_08_move_with_init_state() {
         .expect("fighter");
 
     let command =
-        hud::build_air_move_order(&state, fighter, Point::new(13, 14)).expect("air move");
+        hud::build_air_move_order(StateRef::from(&state), fighter, Point::new(13, 14)).expect("air move");
     match command {
         max_core::input::Command::Order(packet) => {
             assert_eq!(packet.unit, fighter);
@@ -158,18 +159,18 @@ fn air_move_order_is_a_packet_08_move_with_init_state() {
             unit_flags::MOBILE_LAND_UNIT,
         )
         .expect("tank");
-    assert!(hud::build_air_move_order(&state, tank, Point::new(6, 5)).is_none());
+    assert!(hud::build_air_move_order(StateRef::from(&state), tank, Point::new(6, 5)).is_none());
 }
 
 #[test]
 fn app_launches_the_fighter_out_of_the_air_plant() {
     let mut app = App::new(AppConfig::default());
-    *app.state_mut() = state();
-    let (_plant, fighter) = plant_with_fighter(app.state_mut());
+    app.install_universe(GameUniverse::new(state(), LocalDispatcher));
+    let (_plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // Player: the ready unit is selected (after `PlaceNewUnit`), a click next to the factory.
     app.hud_mut().select(Some(fighter));
-    let command = hud::build_activate_order(app.state(), fighter, Point::new(9, 10))
+    let command = hud::build_activate_order(app.state_ref(), fighter, Point::new(9, 10))
         .expect("приказ вывода");
     assert_eq!(
         app.apply(command),
@@ -180,7 +181,7 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
     for _ in 0..64 {
         app.tick();
 
-        let Some(unit) = app.state().unit(fighter) else {
+        let Some(unit) = app.state_ref().unit(fighter) else {
             break;
         };
         if unit.flags & unit_flags::HOVERING != 0 && unit.grid != Point::new(10, 10) {
@@ -188,7 +189,7 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
         }
     }
 
-    let unit = app.state().unit(fighter).expect("fighter alive");
+    let unit = app.state_ref().unit(fighter).expect("fighter alive");
     assert_ne!(unit.grid, Point::new(10, 10), "самолёт вылетел из завода");
     assert!(
         unit.flags & unit_flags::HOVERING != 0,
@@ -200,8 +201,8 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
 #[test]
 fn unit_menu_on_a_ready_plant_selects_the_stored_fighter() {
     let mut app = App::new(AppConfig::default());
-    *app.state_mut() = state();
-    let (plant, fighter) = plant_with_fighter(app.state_mut());
+    app.install_universe(GameUniverse::new(state(), LocalDispatcher));
+    let (plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // The first click on the factory — selection.
     app.hud_mut().select(Some(plant));

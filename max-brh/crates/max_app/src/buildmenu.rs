@@ -73,16 +73,16 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::geo::Point;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
 // max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
 use max_core::input::{Command, OrderPayload, Packet08Order, PayloadP1, PayloadP2, PayloadP3, PayloadP4};
 use max_core::production::{
-    buildable_units, can_build, cost_per_turn, find_build_site, is_factory,
-    max_possible_build_rate, turns_and_consumption, turns_to_build as production_turns_to_build,
-    BuildError,
+    buildable_units, can_build, cost_per_turn, is_factory, max_possible_build_rate, BuildError,
 };
 use max_core::team::TeamId;
 use max_core::unit::UnitId;
@@ -269,7 +269,7 @@ pub fn unit_name(unit_type: UnitType) -> &'static str {
 /// `move_to`. `build_list` — the queue (for a mobile builder exactly one type,
 /// for a factory — the whole queue), `build_time` is computed by the head.
 pub fn build_order_command(
-    state: &GameState,
+    state: StateRef<'_>,
     unit_id: UnitId,
     site: Point,
     build_list: &[UnitType],
@@ -278,7 +278,7 @@ pub fn build_order_command(
 ) -> Option<Command> {
     let unit = state.unit(unit_id)?;
     let head = build_list.first().copied()?;
-    let turns = production_turns_to_build(state, unit.team, head).max(1);
+    let turns = state.turns_to_build( unit.team, head).max(1);
     let build_rate = build_rate.max(1);
 
     Some(Command::Order(Packet08Order {
@@ -366,7 +366,7 @@ pub struct BuildMenu {
 
 impl BuildMenu {
     /// Opens the menu for a unit; `None` — the unit is not a builder.
-    pub fn new(state: &GameState, unit_id: UnitId) -> Option<Self> {
+    pub fn new(state: StateRef<'_>, unit_id: UnitId) -> Option<Self> {
         let unit = state.unit(unit_id)?;
         let unit_types = buildable_units(unit.unit_type);
 
@@ -440,12 +440,12 @@ impl BuildMenu {
     }
 
     /// Turns for the selected type (the number in the list).
-    pub fn turns_for(&self, state: &GameState, unit_type: UnitType) -> i32 {
-        production_turns_to_build(state, self.team, unit_type).max(0)
+    pub fn turns_for(&self, state: StateRef<'_>, unit_type: UnitType) -> i32 {
+        state.turns_to_build( self.team, unit_type).max(0)
     }
 
     /// Maximum speed for the queue head (or the selected type).
-    pub fn max_rate(&self, state: &GameState) -> u16 {
+    pub fn max_rate(&self, state: StateRef<'_>) -> u16 {
         let Some(unit) = state.unit(self.unit) else {
             return 1;
         };
@@ -459,7 +459,7 @@ impl BuildMenu {
         }
 
         let head = self.active_type().unwrap_or(unit.unit_type);
-        let turns = production_turns_to_build(state, self.team, head).max(1);
+        let turns = state.turns_to_build( self.team, head).max(1);
         let storage = if self.factory {
             i32::from(i16::MAX)
         } else {
@@ -483,7 +483,7 @@ impl BuildMenu {
     /// not a "rate per turn" but the sum of all turns (and the turns may not divide by the
     /// speed). `ATTRIB_TURNS` already includes the clan modifiers and
     /// research (`current_unit_values`).
-    pub fn rate_numbers(&self, state: &GameState, rate: u16) -> (i32, i32) {
+    pub fn rate_numbers(&self, state: StateRef<'_>, rate: u16) -> (i32, i32) {
         let Some(unit) = state.unit(self.unit) else {
             return (0, 0);
         };
@@ -493,7 +493,7 @@ impl BuildMenu {
             return (0, 0);
         };
 
-        turns_and_consumption(state, unit, unit_type, i32::from(rate.max(1)))
+        state.turns_and_consumption( unit, unit_type, i32::from(rate.max(1)))
     }
 
     /// `AddSelection` — add the selected type to the queue (factory).
@@ -554,7 +554,7 @@ impl BuildMenu {
     }
 
     /// `1101..1103` — the 1×/2×/4× buttons.
-    pub fn set_rate(&mut self, state: &GameState, rate: u16) -> bool {
+    pub fn set_rate(&mut self, state: StateRef<'_>, rate: u16) -> bool {
         let max_rate = self.max_rate(state);
 
         if rate > max_rate {
@@ -654,7 +654,7 @@ impl BuildMenu {
     }
 
     /// Click on the screen — the same buttons as in C++.
-    pub fn click(&mut self, state: &GameState, x: i32, y: i32) -> BuildMenuAction {
+    pub fn click(&mut self, state: StateRef<'_>, x: i32, y: i32) -> BuildMenuAction {
         // List rows — first: they overlap the background but not the buttons.
         if LIST_AREA.contains(x, y) {
             let row = ((y - LIST_AREA.uly) / LIST_ROW) as usize;
@@ -748,7 +748,7 @@ impl BuildMenu {
     }
 
     /// C++ keys (`1/2/3`, Enter `Build()`, Esc `Cancel`).
-    pub fn key(&mut self, state: &GameState, key: crate::ui::Key) -> BuildMenuAction {
+    pub fn key(&mut self, state: StateRef<'_>, key: crate::ui::Key) -> BuildMenuAction {
         use crate::ui::Key;
 
         match key {
@@ -812,7 +812,7 @@ impl BuildMenu {
     ///
     /// Returns `None` for an empty queue/no site (the text is in
     /// [`Self::status`]).
-    pub fn command(&mut self, state: &GameState) -> Option<Command> {
+    pub fn command(&mut self, state: StateRef<'_>) -> Option<Command> {
         self.command_at(state, None)
     }
 
@@ -822,7 +822,7 @@ impl BuildMenu {
     /// [`find_build_site`] (C++ `TaskCreateBuilding::FindBuildSite`); for a
     /// mobile builder of **non-buildings** — its own cell
     /// (`UnitsManager_IssueBuildOrder`).
-    pub fn command_at(&mut self, state: &GameState, site: Option<Point>) -> Option<Command> {
+    pub fn command_at(&mut self, state: StateRef<'_>, site: Option<Point>) -> Option<Command> {
         let unit = state.unit(self.unit)?;
         // A factory builds from the queue; a mobile builder — exactly the selected type
         // (`MobileBuildMenu::Build`: `selector->GetLast()`).
@@ -847,7 +847,7 @@ impl BuildMenu {
             match site {
                 Some(site) => site,
                 None if max_core::production::footprint(head) == 1 => unit.grid,
-                None => match find_build_site(state, self.team, head, unit.grid) {
+                None => match state.find_build_site( self.team, head, unit.grid) {
                     Some(site) => site,
                     None => {
                         self.status = BuildError::NoSite.message().to_string();
@@ -883,7 +883,7 @@ impl BuildMenu {
     /// Returns the queue head (what we build) and the build speed.
     pub fn site_selection_target(
         &self,
-        state: &GameState,
+        state: StateRef<'_>,
         force_path: bool,
     ) -> Option<(UnitType, u16)> {
         if self.factory {
@@ -914,7 +914,7 @@ impl BuildMenu {
         &self,
         frame: &mut RgbaBuffer,
         assets: &Assets,
-        state: &GameState,
+        state: StateRef<'_>,
         mouse: Option<(i32, i32)>,
     ) -> u32 {
         if frame.width() != SCREEN_WIDTH as u32 || frame.height() != SCREEN_HEIGHT as u32 {
@@ -1120,7 +1120,7 @@ impl BuildMenu {
         if let Some(unit_type) = portrait_type {
             if let (Some(cargo), Some(team_units)) = (
                 assets.cargo.as_ref(),
-                state.team_units.get(self.team.0 as usize),
+                state.team_units().get(self.team.0 as usize),
             ) {
                 let rows = crate::mobilize::Mobilization::stats_rows_for(
                     &team_units.base_values,
@@ -1389,11 +1389,11 @@ impl crate::App {
                 self.hud.mouse_position = Some((x, y));
                 BuildMenuAction::None
             }
-            crate::ui::InputEvent::MouseClick(x, y) => menu.click(self.state(), x, y),
+            crate::ui::InputEvent::MouseClick(x, y) => menu.click(self.state_ref(), x, y),
             // In C++ the right click is not assigned in the menu (`ProcessKey` does not catch
             // `RMB`); here it closes the screen, like `Esc`.
             crate::ui::InputEvent::RightClick(..) => BuildMenuAction::Close,
-            crate::ui::InputEvent::Key(key) => menu.key(self.state(), key),
+            crate::ui::InputEvent::Key(key) => menu.key(self.state_ref(), key),
         };
 
         self.build_menu = Some(menu);
@@ -1426,7 +1426,7 @@ impl crate::App {
         // `UnitsManager_IssueBuildOrder`: there must be a passable 2×2
         // anchor next to the builder, otherwise `BuildMenu` stays open with
         // the message "Invalid square" (`_(1031)`).
-        if let Some((unit_type, build_rate)) = menu.site_selection_target(self.state(), force_path)
+        if let Some((unit_type, build_rate)) = menu.site_selection_target(self.state_ref(), force_path)
         {
             self.build_menu = Some(menu);
 
@@ -1448,7 +1448,7 @@ impl crate::App {
             return Some(menu.status.clone());
         }
 
-        let command = menu.command(self.state());
+        let command = menu.command(self.state_ref());
         let status = menu.status.clone();
         let head = menu.queue.first().copied().or_else(|| menu.selected_type());
         let build_rate = menu.build_rate;
@@ -1512,7 +1512,7 @@ impl crate::App {
         let Some(mut menu) = self.build_menu.take() else {
             return false;
         };
-        let applied = menu.set_rate(self.state(), rate);
+        let applied = menu.set_rate(self.state_ref(), rate);
         self.build_menu = Some(menu);
         applied
     }
@@ -1607,7 +1607,7 @@ mod tests {
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
             .expect("constructor");
-        let mut menu = BuildMenu::new(&state, constructor).expect("constructor builds");
+        let mut menu = BuildMenu::new(StateRef::from(&state), constructor).expect("constructor builds");
 
         assert!(!menu.factory);
         assert_eq!(menu.unit_types.len(), 15);
@@ -1628,7 +1628,7 @@ mod tests {
         assert!(menu.add_to_queue());
         assert_eq!(menu.queue, vec![UnitType::MiningStation]);
 
-        let command = menu.command(&state).expect("build command");
+        let command = menu.command(StateRef::from(&state)).expect("build command");
         let Command::Order(packet) = command else {
             panic!("expected order");
         };
@@ -1647,7 +1647,7 @@ mod tests {
         let factory = state
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
             .expect("factory");
-        let mut menu = BuildMenu::new(&state, factory).expect("factory builds");
+        let mut menu = BuildMenu::new(StateRef::from(&state), factory).expect("factory builds");
 
         assert!(menu.factory);
         assert_eq!(menu.unit_types.len(), 2);
@@ -1662,7 +1662,7 @@ mod tests {
         );
 
         assert!(menu.toggle_repeat());
-        let command = menu.command(&state).expect("command");
+        let command = menu.command(StateRef::from(&state)).expect("command");
         let Command::Order(packet) = command else {
             panic!("expected order");
         };
@@ -1680,20 +1680,20 @@ mod tests {
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
             .expect("constructor");
-        let mut menu = BuildMenu::new(&state, constructor).expect("menu");
+        let mut menu = BuildMenu::new(StateRef::from(&state), constructor).expect("menu");
 
         assert_eq!(
-            menu.click(&state, CANCEL.ulx + 1, CANCEL.uly + 1),
+            menu.click(StateRef::from(&state), CANCEL.ulx + 1, CANCEL.uly + 1),
             BuildMenuAction::Close
         );
         assert_eq!(
-            menu.key(&state, crate::ui::Key::Escape),
+            menu.key(StateRef::from(&state), crate::ui::Key::Escape),
             BuildMenuAction::Close
         );
         // Cancel alone does not change the selection: the order exists only after
         // `Done` (C++ `event_click_cancel` does not call `Build()`).
         assert!(menu.queue.is_empty());
-        let command = menu.command(&state).expect("выбранный тип — это заказ");
+        let command = menu.command(StateRef::from(&state)).expect("выбранный тип — это заказ");
         let Command::Order(packet) = command else {
             panic!("expected order");
         };
@@ -1709,7 +1709,7 @@ mod tests {
         let constructor = state
             .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
             .expect("constructor");
-        let mut menu = BuildMenu::new(&state, constructor).expect("menu");
+        let mut menu = BuildMenu::new(StateRef::from(&state), constructor).expect("menu");
 
         for _ in 0..LIST_ROWS {
             menu.page_list(true);
@@ -1718,14 +1718,14 @@ mod tests {
         assert_eq!(menu.selected, LIST_ROWS);
         assert!(menu.page_min <= menu.selected);
         assert_eq!(
-            menu.click(&state, LIST_UP.ulx + 1, LIST_UP.uly + 1),
+            menu.click(StateRef::from(&state), LIST_UP.ulx + 1, LIST_UP.uly + 1),
             BuildMenuAction::None
         );
         assert_eq!(menu.selected, LIST_ROWS - 1);
 
         let down_row = 3;
         menu.click(
-            &state,
+            StateRef::from(&state),
             LIST_AREA.ulx + 2,
             LIST_AREA.uly + down_row * LIST_ROW + 2,
         );
@@ -1739,7 +1739,7 @@ mod tests {
             .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
             .expect("tank");
 
-        assert!(BuildMenu::new(&state, tank).is_none());
+        assert!(BuildMenu::new(StateRef::from(&state), tank).is_none());
     }
 
     #[test]
@@ -1753,7 +1753,7 @@ mod tests {
                 0,
             )
             .expect("factory");
-        let mut menu = BuildMenu::new(&state, factory).expect("factory menu");
+        let mut menu = BuildMenu::new(StateRef::from(&state), factory).expect("factory menu");
         let tank = menu
             .unit_types
             .iter()
@@ -1763,10 +1763,10 @@ mod tests {
 
         // TANK = 4 turns; factory 3/turn at 1×, 12 at 2×, 36 at 4×. The second number —
         // the total cost (sum of turns), not the rate per turn.
-        assert_eq!(menu.max_rate(&state), 4);
-        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
-        assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
-        assert_eq!(menu.rate_numbers(&state, 4), (1, 36));
+        assert_eq!(menu.max_rate(StateRef::from(&state)), 4);
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 1), (4, 12));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 2), (2, 24));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 4), (1, 36));
     }
 
     #[test]
@@ -1775,7 +1775,7 @@ mod tests {
         let hall = state
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
             .expect("training hall");
-        let mut menu = BuildMenu::new(&state, hall).expect("factory menu");
+        let mut menu = BuildMenu::new(StateRef::from(&state), hall).expect("factory menu");
         let infantry = menu
             .unit_types
             .iter()
@@ -1784,9 +1784,9 @@ mod tests {
         menu.select(infantry);
 
         // C++ `AbstractBuildMenu::Draw`: `build_rate_x2/x4->Enable(false)`.
-        assert_eq!(menu.max_rate(&state), 1);
+        assert_eq!(menu.max_rate(StateRef::from(&state)), 1);
         // INFANTRY = 2 turns, TRAINHAL rate 1/turn.
-        assert_eq!(menu.rate_numbers(&state, 1), (2, 2));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 1), (2, 2));
     }
 
     #[test]
@@ -1797,22 +1797,22 @@ mod tests {
             .expect("constructor");
         // In a real match `deploy_starting_units` sets `storage = cargo`.
         random.unit_mut(builder).unwrap().storage = 0;
-        let mut menu = BuildMenu::new(&random, builder).expect("menu");
+        let mut menu = BuildMenu::new(StateRef::from(&random), builder).expect("menu");
         let shipyard = menu
             .unit_types
             .iter()
             .position(|unit| *unit == UnitType::Shipyard)
             .expect("SHIPYARD in CONSTRCT list");
         menu.select(shipyard);
-        assert_eq!(menu.max_rate(&random), 1);
-        assert_eq!(menu.rate_numbers(&random, 1), (20, 40));
+        assert_eq!(menu.max_rate(StateRef::from(&random)), 1);
+        assert_eq!(menu.rate_numbers(StateRef::from(&random), 1), (20, 40));
 
         // CrimsonPath: SHIPYARD -5 turns (`CLAN_TRADEOFFS`), price 15 × 2.
         random.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
         random.unit_mut(builder).unwrap().storage = 0;
-        let mut menu = BuildMenu::new(&random, builder).expect("menu");
+        let mut menu = BuildMenu::new(StateRef::from(&random), builder).expect("menu");
         menu.select(shipyard);
-        assert_eq!(menu.rate_numbers(&random, 1), (15, 30));
+        assert_eq!(menu.rate_numbers(StateRef::from(&random), 1), (15, 30));
     }
 
     #[test]
@@ -1826,7 +1826,7 @@ mod tests {
                 0,
             )
             .expect("factory");
-        let mut menu = BuildMenu::new(&state, factory).expect("factory menu");
+        let mut menu = BuildMenu::new(StateRef::from(&state), factory).expect("factory menu");
         let tank = menu
             .unit_types
             .iter()
@@ -1843,25 +1843,25 @@ mod tests {
         // the queue is active).
         menu.queue.push(UnitType::Tank);
         menu.select(launcher);
-        let turns = menu.turns_for(&state, UnitType::RocketLauncher);
-        assert_eq!(menu.rate_numbers(&state, 1), (turns, turns * 3));
+        let turns = menu.turns_for(StateRef::from(&state), UnitType::RocketLauncher);
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 1), (turns, turns * 3));
 
         menu.queue_selected = 0;
         menu.queue_active = true;
-        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
-        assert_eq!(menu.rate_numbers(&state, 2), (2, 24));
-        assert_eq!(menu.rate_numbers(&state, 4), (1, 36));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 1), (4, 12));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 2), (2, 24));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 4), (1, 36));
 
         // Back to the list — the selected row again.
         menu.queue_active = false;
         menu.select(tank);
-        assert_eq!(menu.rate_numbers(&state, 1), (4, 12));
+        assert_eq!(menu.rate_numbers(StateRef::from(&state), 1), (4, 12));
     }
 
     #[test]
     fn stats_rows_for_a_building_carry_icons_and_the_cpp_cost() {
         let state = state();
-        let team_units = &state.team_units[0];
+        let team_units = &StateRef::from(&state).team_units()[0];
         let rows = crate::mobilize::Mobilization::stats_rows_for(
             &team_units.base_values,
             &team_units.current_values,

@@ -480,10 +480,10 @@ fn run_new_game(cli: &Cli) -> Result<()> {
     // with a sprite is selected — then the `--new-game` frame immediately shows the portrait,
     // statistics and description rather than empty panels.
     let selected = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .find(|unit| {
             unit.team == app.player_team()
                 && unit.hits > 0
@@ -507,7 +507,7 @@ fn run_new_game(cli: &Cli) -> Result<()> {
         stats.units(),
         stats.units_drawn,
         stats.units_marker,
-        app.state().player_team
+        app.state_ref().player_team()
     );
 
     if let Some(path) = &cli.out {
@@ -895,7 +895,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                         site.anchor.y,
                         site.cursor.x,
                         site.cursor.y,
-                        u8::from(site.valid(app.state()))
+                        u8::from(site.valid(app.state_ref()))
                     ),
                     None => "site=closed".to_string(),
                 };
@@ -1042,12 +1042,12 @@ fn run_ui(cli: &Cli) -> Result<()> {
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
                 let tick = app.ticks();
                 if tick % 10 == 0 || tick <= 3 {
-                    let player = app.state().player_team;
+                    let player = app.state_ref().player_team();
                     let mut units: Vec<String> = app
-                        .state()
+                        .state_ref()
                         .unit_ids_in_order()
                         .iter()
-                        .filter_map(|id| app.state().unit(*id))
+                        .filter_map(|id| app.state_ref().unit(*id))
                         .filter(|u| u.team == player)
                         .take(12)
                         .map(|u| {
@@ -1080,14 +1080,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
                         .unwrap_or(0);
                     eprintln!(
                         "[tick {tick}] turn={} phase={phase} {selected} preview={preview} units={}",
-                        app.state().turn_counter,
+                        app.state_ref().turn_counter(),
                         units.join(" ")
                     );
                 }
             }
 
             if let Some(local) = app.local() {
-                ctx.status = local.status_line(app.state().turn_counter);
+                ctx.status = local.status_line(app.state_ref().turn_counter());
             }
 
             if update.finished || app.local().is_some_and(|local| local.finished()) {
@@ -1373,7 +1373,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             "IN SESSION · {} · tick={} turn={} · LMB select · RMB move · Esc cancel",
             self.game_id,
             app.ticks(),
-            app.state().turn_counter
+            app.state_ref().turn_counter()
         );
 
         let view = ScreenView {

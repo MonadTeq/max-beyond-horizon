@@ -47,7 +47,7 @@ use max_core::geo::Point;
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::GameEvent;
-use max_core::victory::{self, MissionCategory, WinLossStatus};
+use max_core::victory::{MissionCategory, WinLossStatus};
 
 use crate::hotseat::TurnNotice;
 use crate::{App, NewGameConfig};
@@ -639,52 +639,58 @@ impl App {
             .map_err(|error| format!("local game: {error:#}"))?;
 
         let enemy_halt = self.preferences.enemy_halt;
-        let state = self.state_mut();
+        let universe = self.universe_mut();
 
         // `Remote_IsNetworkGame = false` — a local match, not lockstep.
-        state.network_game = false;
+        universe.set_network_game(false);
         // `GameManager_InitGame`: `GameManager_FastMovement`/`enemy_halt` —
         // live settings; in the port simulation the second is a state field.
-        state.enemy_halt = enemy_halt;
+        universe.set_enemy_halt(enemy_halt);
         // `GameManager_UpdateHumanPlayerCount`: hot-seat is always turn-based.
-        state.play_mode = setup.effective_play_mode();
-        state.victory_type = setup.victory_type;
-        state.victory_limit = setup.victory_limit;
+        universe.set_play_mode(setup.effective_play_mode());
+        universe.set_victory_type(setup.victory_type);
+        universe.set_victory_limit(setup.victory_limit);
         // `menu_custom_game_menu`: `MISSION_CATEGORY_CUSTOM` / `MISSION_CATEGORY_HOT_SEAT`.
-        state.mission_category = if setup.is_hot_seat() {
+        universe.set_mission_category(if setup.is_hot_seat() {
             MissionCategory::HotSeat
         } else {
             MissionCategory::Custom
-        };
-        state.mission_index = 0;
-        state.player_team = human;
+        });
+        universe.set_mission_index(0);
+        universe.set_player_team(human);
         // `GameManager_InitGame`: `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN`
         // (or the first computer team). In hot-seat it follows that the
         // «Begin turn» window is shown to the first human team too —
         // `GameManager_PlayerTeam != team` (`game_manager.cpp:3076`, `:2440`).
         if setup.is_hot_seat() {
-            state.player_team = TeamId::ALIEN;
+            universe.set_player_team(TeamId::ALIEN);
         }
-        state.active_turn_team = human;
-        state.game_state = GameStateType::InGame;
-        state.turn_counter = 1;
+        universe.set_active_turn_team(human);
+        universe.set_game_state(GameStateType::InGame);
+        universe.set_turn_counter(1);
         // `new_game` sets `Player` only for the first team; in hot-seat there are
         // several humans (`GameManager_InitGame`: each team's type from the settings).
         for team in setup.human_teams() {
-            state.teams[team.0 as usize].team_type = TeamKind::Player;
+            if let Some(info) = universe.team_mut(team) {
+                info.team_type = TeamKind::Player;
+            }
         }
-        state.teams[human.0 as usize].team_type = TeamKind::Player;
+        if let Some(info) = universe.team_mut(human) {
+            info.team_type = TeamKind::Player;
+        }
         for index in 0..LOCAL_TEAM_COUNT {
-            state.teams[index].team_clan = setup.team_clans[index];
+            if let Some(info) = universe.team_mut(TeamId(index as u8)) {
+                info.team_clan = setup.team_clans[index];
+            }
         }
-        state.ai.settings.opponent = setup.opponent;
-        state.ai.all_visible = false;
+        universe.ai_mut().settings.opponent = setup.opponent;
+        universe.ai_mut().all_visible = false;
 
         // `Ai_Init` + `Ai_SetupStrategy` for computer teams
         // (`GameManager_InitGame`).
-        max_core::ai_init(state);
+        universe.ai_init();
         for team in setup.ai_teams() {
-            let _ = max_core::ai_setup_strategy(state, team);
+            let _ = universe.ai_setup_strategy(team);
         }
 
         let local = LocalGame::new(setup.clone());
@@ -707,7 +713,7 @@ impl App {
         // plus the player's current `IniPreferences` (7 × `signed int`).
         let meta =
             crate::saveload::save_meta_for_local_game_with(setup, &self.preferences.to_ini());
-        self.state_mut().set_save_meta(meta);
+        self.universe_mut().set_save_meta(meta);
         self.hud.clear();
         self.close_unit_menu();
         if setup.is_hot_seat() {
@@ -849,7 +855,7 @@ impl App {
                     // `GameOver` is only reported by the closing step, so the
                     // pre-step status is the one C++ passes to the screen.
                     let status = notice.status.unwrap_or_else(|| {
-                        victory::evaluate_status(self.state(), self.state().turn_counter)
+                        self.state_ref().evaluate_status()
                     });
                     self.local_game_over(status);
                     return;
@@ -870,8 +876,8 @@ impl App {
     /// the closing step is measured is exact: `upcoming_team()` does not change
     /// before the machine runs (the 06 apply does not move the round cursor).
     fn local_close_turn(&mut self, team: TeamId) {
-        let closing = self.state().upcoming_team().is_none();
-        let turn_counter = self.state().turn_counter;
+        let closing = self.state_ref().upcoming_team().is_none();
+        let turn_counter = self.state_ref().turn_counter();
         let _profile = closing.then(|| crate::profile::finish_turn_scope(turn_counter));
 
         self.universe.end_local_turn(team);
@@ -916,7 +922,7 @@ impl App {
         // The power message (`ProductionManager::DrawResourceMessage`)
         // is re-established after the turn change: `clear_interaction`
         // removes `hint` together with the selection.
-        if let Some(message) = self.state().industry_message.clone() {
+        if let Some(message) = self.state_ref().industry_message().map(str::to_owned) {
             self.hud.set_hint(message);
         }
         // The command popup belongs to the previous selection
@@ -930,11 +936,11 @@ impl App {
             self.hud.push_log(if hot_seat {
                 format!(
                     "Turn {}: {} moves",
-                    self.state().turn_counter,
+                    self.state_ref().turn_counter(),
                     team_name(team)
                 )
             } else {
-                format!("Turn {}: your move", self.state().turn_counter)
+                format!("Turn {}: your move", self.state_ref().turn_counter())
             });
         }
     }
@@ -956,7 +962,7 @@ impl App {
         self.local = Some(local);
         self.hud.push_log(format!(
             "Turn {}: {} (computer)",
-            self.state().turn_counter,
+            self.state_ref().turn_counter(),
             team_name(team)
         ));
     }
@@ -975,8 +981,8 @@ impl App {
         // Production turn events (`GameManager_ReportNewUnitsMessage`):
         // only for the local player, so that the log is not flooded with foreign
         // factories.
-        let player = self.state().player_team;
-        let events = self.state_mut().take_production_events();
+        let player = self.state_ref().player_team();
+        let events = self.universe_mut().take_production_events();
 
         for event in events.iter().filter(|event| event.builder.team() == player) {
             let name = crate::buildmenu::unit_name(event.unit_type);
@@ -1016,7 +1022,7 @@ impl App {
         }
 
         // `ResearchMenu_NewTurn`: completed topics (P6).
-        let research = self.state_mut().take_research_events();
+        let research = self.universe_mut().take_research_events();
         for event in research.iter().filter(|event| event.team == player) {
             self.hud.push_log(format!(
                 "Research complete: {:?} level {}",
@@ -1028,7 +1034,7 @@ impl App {
         // «Adjustments made: …» over the map (`MESSAGE_BOX_NOTICE`).
         // The message lives in the state until the end of the round and is re-established
         // on entering the human turn (the turn change clears `hint`).
-        if let Some(message) = self.state().industry_message.clone() {
+        if let Some(message) = self.state_ref().industry_message().map(str::to_owned) {
             self.hud.set_hint(message);
         }
 
@@ -1039,7 +1045,7 @@ impl App {
         }
 
         self.hud
-            .push_log(format!("Turn {} begins", self.state().turn_counter));
+            .push_log(format!("Turn {} begins", self.state_ref().turn_counter()));
         // C++ `GameManager_UpdateGui(team, …, enable_autosave = true)` for the first
         // team of the round: autosave (slot 10) with `SETUP.auto_save` enabled.
         self.autosave();
@@ -1049,14 +1055,14 @@ impl App {
     /// end of the match (`menu_check_end_game_conditions`); the screen data is
     /// assembled from the `WinLoss_Status` evaluated **before** the close.
     fn local_game_over(&mut self, status: WinLossStatus) {
-        let player_team = self.state().player_team;
+        let player_team = self.state_ref().player_team();
         let is_winner = if status.team_status[player_team.0 as usize] == WinLossState::Generic {
             status.team_rank[player_team.0 as usize] == 1
         } else {
             status.team_status[player_team.0 as usize] == WinLossState::Won
         };
         // `finish_turn` does not advance the counter when the game is over.
-        let turn_counter = self.state().turn_counter;
+        let turn_counter = self.state_ref().turn_counter();
 
         let mut local = self.local.take().expect("local game");
         local.phase = LocalPhase::Finished;
@@ -1195,10 +1201,10 @@ impl App {
                 // `GameManager_AutoSelectNext` after an order completes
                 // (`UnitInfo::MoveFinished`): the order snapshot — before the tick.
                 let before = self.selected_order_snapshot();
-                self.state_mut().tick();
+                self.universe_mut().tick();
                 // Combat sounds of this tick (`UnitInfo::PrepareFire`/
                 // `StartExplosion`): the queue is taken by `main.rs` (`AudioPlayer`).
-                self.collect_combat_sounds();
+                self.collect_facade_sounds();
                 // `App::tick` counts ticks for diagnostics/the digest; the local
                 // loop ticks right here, so the counter must grow in the window too,
                 // otherwise the `MAX_DEBUG_INPUT` trace shows an eternal `tick 0`.
@@ -1228,10 +1234,10 @@ impl App {
             }
             LocalPhase::AiTurn(team) => {
                 let before = self.selected_order_snapshot();
-                self.state_mut().tick();
+                self.universe_mut().tick();
                 // AI combat is heard by the player the same as own (`PlaySfx` in C++ does not
                 // depend on the unit owner) — the frame queue.
-                self.collect_combat_sounds();
+                self.collect_facade_sounds();
                 self.ticks += 1;
                 self.auto_select_after_tick(before);
                 self.follow_selected_unit();
@@ -1247,13 +1253,13 @@ impl App {
                 // `ai_check_end_turn`); here we read its retry counter:
                 // C++ `GameManager_RefreshOrders` closes the turn at `> 120`.
                 let finished = self
-                    .state()
-                    .ai
+                    .state_ref()
+                    .ai()
                     .players
                     .get(team.0 as usize)
                     .map(|player| player.end_turn_retry_counter > 120)
                     .unwrap_or(true)
-                    || self.state().teams[team.0 as usize].finished_turn;
+                    || self.state_ref().teams()[team.0 as usize].finished_turn;
 
                 if let Some(local) = self.local.as_mut() {
                     local.ai_ticks += 1;
@@ -1277,10 +1283,10 @@ impl App {
                     tracing::warn!(
                         "AI turn timeout: team={team:?} orders_pending={} \
                          tasks_pending={} counter={} finished_turn={}",
-                        self.state().orders_pending,
-                        self.state().ai.players[team.0 as usize].tasks_pending,
-                        self.state().ai.players[team.0 as usize].end_turn_retry_counter,
-                        self.state().teams[team.0 as usize].finished_turn,
+                        self.state_ref().orders_pending(),
+                        self.state_ref().ai().players[team.0 as usize].tasks_pending,
+                        self.state_ref().ai().players[team.0 as usize].end_turn_retry_counter,
+                        self.state_ref().teams()[team.0 as usize].finished_turn,
                     );
                 }
 
@@ -1390,7 +1396,7 @@ impl LocalSave {
     /// Assembles the container from the current application state.
     pub fn capture(app: &App) -> Option<Self> {
         let local = app.local()?;
-        let snapshot = app.state().snapshot_bytes();
+        let snapshot = app.state_ref().snapshot_bytes();
         let snapshot_crc = max_core::crc::crc16(&snapshot);
 
         Some(Self {
@@ -1399,11 +1405,11 @@ impl LocalSave {
             active_team: local.active_team,
             timer_left_ms: (local.timer_left.max(0.0) * 1000.0) as u32,
             paused: local.paused,
-            round_team: app.state().round_team.min(u8::MAX as usize) as u8,
+            round_team: app.state_ref().round_team().min(u8::MAX as usize) as u8,
             ai_ticks: local.ai_ticks,
             finished: local.finished(),
             victory: local.victory(),
-            turn_counter: app.state().turn_counter,
+            turn_counter: app.state_ref().turn_counter(),
             snapshot,
             snapshot_crc,
             team_names: local.team_names.clone(),
@@ -1669,50 +1675,62 @@ impl App {
 
         // `SaveLoad_Load` (`saveload.cpp:920-934`): the file's `IniPreferences`
         // are applied to the player settings — `effects` controls the frames again.
-        let saved_preferences = self.state().save_meta.ini_preferences;
+        let saved_preferences = self.state_ref().save_meta().ini_preferences;
         self.preferences.apply_ini(saved_preferences);
         // `SaveLoad_Load` (`saveload.cpp:1175-1176`): the timers from the file become
         // `settings["timer"]`/`["endturn"]` again.
-        let saved_timer = self.state().save_meta.ini_options.turn_timer.max(0);
-        let saved_endturn = self.state().save_meta.ini_options.endturn.max(0);
+        let saved_timer = self.state_ref().save_meta().ini_options.turn_timer.max(0);
+        let saved_endturn = self.state_ref().save_meta().ini_options.endturn.max(0);
         self.preferences.turn_timer = saved_timer;
         self.preferences.endturn = saved_endturn;
         // `settings` settings the simulation reads (`enemy_halt`).
-        self.state_mut().enemy_halt = self.preferences.enemy_halt;
+        let enemy_halt = self.preferences.enemy_halt;
+        self.universe_mut().set_enemy_halt(enemy_halt);
 
-        let state = self.state_mut();
-        state.network_game = false;
-        state.play_mode = setup.effective_play_mode();
-        state.victory_type = setup.victory_type;
-        state.victory_limit = setup.victory_limit;
-        state.ai.settings.opponent = setup.opponent;
+        let play_mode = setup.effective_play_mode();
+        let saved_team_types: [TeamKind; LOCAL_TEAM_COUNT] = std::array::from_fn(|index| {
+            self.state_ref()
+                .teams()
+                .get(index)
+                .map(|team| team.team_type)
+                .unwrap_or(TeamKind::None)
+        });
 
         // Playing teams — from the save; the save's `player_team` — human.
         let mut team_types = [TeamKind::None; LOCAL_TEAM_COUNT];
         for (index, slot) in team_types.iter_mut().enumerate() {
-            *slot = match state.teams[index].team_type {
+            *slot = match saved_team_types[index] {
                 TeamKind::None | TeamKind::Eliminated => TeamKind::None,
                 TeamKind::Player => TeamKind::Player,
                 _ => TeamKind::Computer,
             };
         }
 
+        let saved_player_team = self.state_ref().player_team();
         if !team_types.contains(&TeamKind::Player) {
-            let player = setup.human_team().unwrap_or(state.player_team);
+            let player = setup.human_team().unwrap_or(saved_player_team);
             team_types[player.0 as usize] = TeamKind::Player;
-            state.player_team = player;
+            self.universe_mut().set_player_team(player);
         }
 
+        let universe = self.universe_mut();
+        universe.set_network_game(false);
+        universe.set_play_mode(play_mode);
+        universe.set_victory_type(setup.victory_type);
+        universe.set_victory_limit(setup.victory_limit);
+        universe.ai_mut().settings.opponent = setup.opponent;
         for (index, kind) in team_types.iter().enumerate() {
             if *kind == TeamKind::Computer {
-                state.teams[index].team_type = TeamKind::Computer;
+                if let Some(info) = universe.team_mut(TeamId(index as u8)) {
+                    info.team_type = TeamKind::Computer;
+                }
             }
         }
 
-        max_core::ai_init(state);
+        universe.ai_init();
         for index in 0..LOCAL_TEAM_COUNT {
             if team_types[index] == TeamKind::Computer {
-                let _ = max_core::ai_setup_strategy(state, TeamId(index as u8));
+                let _ = universe.ai_setup_strategy(TeamId(index as u8));
             }
         }
 
@@ -1723,25 +1741,30 @@ impl App {
         // A save with several human teams is played as hot-seat.
         loaded.hot_seat = loaded.is_hot_seat();
 
-        self.state_mut().mission_category = if loaded.is_hot_seat() {
+        universe.set_mission_category(if loaded.is_hot_seat() {
             MissionCategory::HotSeat
         } else {
             MissionCategory::Custom
-        };
+        });
         // P3: if the screen settings overrode the mode/victory from the file, we bring
         // `SaveMeta` to the same form — otherwise a repeated save would "drift"
         // relative to the just loaded one.
         {
-            let state = self.state_mut();
-            let meta = &mut state.save_meta;
-            meta.save_game_type = if state.mission_category == MissionCategory::HotSeat {
+            let universe = self.universe_mut();
+            let snapshot = universe.snapshot();
+            let mission_category = snapshot.mission_category();
+            let play_mode = snapshot.play_mode();
+            let victory_type = snapshot.victory_type();
+            let victory_limit = snapshot.victory_limit();
+            let meta = universe.save_meta_mut();
+            meta.save_game_type = if mission_category == MissionCategory::HotSeat {
                 max_core::enums::FileType::HotSeat
             } else {
                 max_core::enums::FileType::Custom
             };
-            meta.ini_options.play_mode = state.play_mode;
-            meta.ini_options.victory_type = state.victory_type;
-            meta.ini_options.victory_limit = state.victory_limit;
+            meta.ini_options.play_mode = play_mode;
+            meta.ini_options.victory_type = victory_type;
+            meta.ini_options.victory_limit = victory_limit;
             meta.ini_options.opponent = max_core::enums::Opponent::try_from(setup.opponent)
                 .unwrap_or(max_core::enums::Opponent::Average);
             meta.opponent = meta.ini_options.opponent;

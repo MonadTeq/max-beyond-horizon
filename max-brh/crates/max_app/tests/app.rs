@@ -105,8 +105,8 @@ fn demo_is_bit_identical_across_two_runs() {
     }
 
     assert_eq!(
-        left.state().snapshot_bytes(),
-        right.state().snapshot_bytes()
+        left.state_ref().snapshot_bytes(),
+        right.state_ref().snapshot_bytes()
     );
     assert_eq!(left.digest(), right.digest());
 }
@@ -236,9 +236,9 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     // M3.2: the starting armies do not let the match end on the first turn —
     // `menu_check_end_game_conditions` no longer sees the teams as "eliminated".
     for turn in 0..3 {
-        app.state_mut().game_state = GameStateType::EndTurn;
+        app.universe_mut().set_game_state(GameStateType::EndTurn);
         assert!(
-            !app.state_mut().finish_turn(),
+            !app.universe_mut().finish_turn(),
             "партия не должна завершаться на ходу {turn}"
         );
     }
@@ -278,7 +278,7 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     // Units — in the lists, the map hash and with a correct team; buildings occupy
     // all four 2×2 cells (`Hash_MapHash.Add`).
     {
-        let state = app_aliens.state();
+        let state = app_aliens.state_ref();
         let alien_ids: Vec<_> = state
             .unit_ids_in_order()
             .into_iter()
@@ -357,17 +357,17 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
 
     let id = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_list == UnitListKind::MobileLandSea
             })
         })
         .expect("мобильный юнит RED");
 
-    let from = app.state().unit(id).expect("юнит").grid;
+    let from = app.state_ref().unit(id).expect("юнит").grid;
     let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
     let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
     app.apply(command);
@@ -391,7 +391,7 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     );
 
     app.update_visual_units(0.0);
-    let grid = app.state().unit(id).expect("юнит").grid;
+    let grid = app.state_ref().unit(id).expect("юнит").grid;
     assert_eq!(
         app.visual_position(id),
         Some((f32::from(grid.x), f32::from(grid.y))),
@@ -407,11 +407,11 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     use max_core::unit_order::paths_get_angle;
 
     let mut app = App::new(AppConfig::default());
-    app.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
-    app.state_mut().team_units[0] =
+    app.universe_mut().teams_mut()[0].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] =
         max_core::team::TeamUnits::with_clan(max_core::TeamClan::Random);
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::RED,
@@ -421,7 +421,7 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         .expect("танк");
 
     // L route: 2 cells east, then 2 north.
-    let mut unit = app.state().unit(id).expect("танк").clone();
+    let mut unit = app.state_ref().unit(id).expect("танк").clone();
     unit.angle = 2;
     unit.orders = UnitOrder::Move;
     unit.state = UnitOrderState::InProgress;
@@ -436,14 +436,14 @@ fn visual_angle_stays_on_the_segment_being_animated() {
             PathStep::new(0, -1),
         ],
     }));
-    app.state_mut().write_unit(id, unit);
+    app.universe_mut().write_unit(id, unit);
     app.update_visual_units(0.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
     // The first tick: a step east; the next step is east too — the sprite and
     // the simulation face east.
     app.tick();
-    assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(11, 10));
+    assert_eq!(app.state_ref().unit(id).expect("танк").grid, Point::new(11, 10));
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
@@ -451,8 +451,8 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     // turning north (`GroundPath::UpdateUnitAngle`: E → NE), but the sprite
     // still walks the east segment and must face east.
     app.tick();
-    assert_eq!(app.state().unit(id).expect("танк").grid, Point::new(12, 10));
-    assert_eq!(app.state().unit(id).expect("танк").angle, 1);
+    assert_eq!(app.state_ref().unit(id).expect("танк").grid, Point::new(12, 10));
+    assert_eq!(app.state_ref().unit(id).expect("танк").angle, 1);
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(
         app.visual_angle(id),
@@ -495,7 +495,7 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         app.update_visual_units(1.0 / 60.0);
     }
 
-    let unit = app.state().unit(id).expect("танк");
+    let unit = app.state_ref().unit(id).expect("танк");
     assert_eq!(unit.grid, Point::new(12, 8));
     assert_eq!(unit.angle, 0);
     assert_eq!(
@@ -512,17 +512,17 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
     app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
 
     let id = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_list == UnitListKind::MobileLandSea
             })
         })
         .expect("мобильный юнит RED");
 
-    let from = app.state().unit(id).expect("юнит").grid;
+    let from = app.state_ref().unit(id).expect("юнит").grid;
     let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
     app.apply(command_move_linear(
         id,
@@ -540,12 +540,12 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
     // We wait for the tick on which the simulation takes the first route step: the `Init`
     // order may first request a path (`NEW_ORDER`/`ISSUING_PATH`).
     let mut ticks = 0;
-    while app.state().unit(id).map(|unit| unit.grid) == Some(from) && ticks < 120 {
+    while app.state_ref().unit(id).map(|unit| unit.grid) == Some(from) && ticks < 120 {
         app.tick();
         ticks += 1;
     }
     assert_ne!(
-        app.state().unit(id).map(|unit| unit.grid),
+        app.state_ref().unit(id).map(|unit| unit.grid),
         Some(from),
         "юнит не сдвинулся за {ticks} тиков"
     );
@@ -590,7 +590,7 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         app.update_visual_units(1.0 / 60.0);
     }
 
-    let target = app.state().unit(id).expect("юнит жив").grid;
+    let target = app.state_ref().unit(id).expect("юнит жив").grid;
     assert_eq!(
         app.visual_position(id),
         Some((f32::from(target.x), f32::from(target.y))),
@@ -605,17 +605,17 @@ fn move_command_replays_through_app() {
         app.load_save_bytes(SAVE1).expect("загрузка SAVE1.CAM");
 
         let id = app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
-                app.state().unit(*id).is_some_and(|unit| {
+                app.state_ref().unit(*id).is_some_and(|unit| {
                     unit.team == TeamId::RED && unit.unit_list == UnitListKind::MobileLandSea
                 })
             })
             .expect("в SAVE1.CAM есть мобильный юнит красных");
 
-        let from = app.state().unit(id).expect("юнит существует").grid;
+        let from = app.state_ref().unit(id).expect("юнит существует").grid;
         let to = Point::new((from.x + 3).min(MAP_WIDTH - 2), from.y);
 
         // Exactly the same helper as in the max_core tests (`packet_38_builds_ground_path`).
@@ -624,10 +624,10 @@ fn move_command_replays_through_app() {
         assert_eq!(app.apply(command), ApplyOutcome::Applied);
         assert_eq!(app.applied_commands(), 1);
         assert!(
-            app.state().unit(id).expect("юнит").path.is_some(),
+            app.state_ref().unit(id).expect("юнит").path.is_some(),
             "пакет 38 обязан выставить путь"
         );
-        assert_eq!(app.state().order_data(id).move_to, to);
+        assert_eq!(app.state_ref().order_data(id).move_to, to);
 
         for _ in 0..3 {
             app.tick();
@@ -686,11 +686,11 @@ fn assets_integration_smoke() {
     // is really loaded from MAX.RES: otherwise not a single drawn sprite may get into
     // the small window (all depends on where the first unit stands).
     let mut player_types: Vec<u16> = Vec::new();
-    for id in app.state().unit_ids_in_order() {
-        let Some(unit) = app.state().unit(id) else {
+    for id in app.state_ref().unit_ids_in_order() {
+        let Some(unit) = app.state_ref().unit(id) else {
             continue;
         };
-        if unit.team == app.state().player_team {
+        if unit.team == app.state_ref().player_team() {
             player_types.push(unit.unit_type as u16);
         }
     }
@@ -698,12 +698,12 @@ fn assets_integration_smoke() {
     player_types.dedup();
 
     let target = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
-                unit.team == app.state().player_team
+            app.state_ref().unit(*id).is_some_and(|unit| {
+                unit.team == app.state_ref().player_team()
                     && app
                         .assets()
                         .is_some_and(|assets| assets.sprite(unit.unit_type).is_some())
@@ -713,7 +713,7 @@ fn assets_integration_smoke() {
             panic!("нет спрайта ни для одного типа красных; типы: {player_types:?}")
         });
 
-    let grid = app.state().unit(target).expect("юнит").grid;
+    let grid = app.state_ref().unit(target).expect("юнит").grid;
     app.viewport_mut().center_on_grid(grid.x, grid.y);
 
     let (frame, stats) = app.render_frame_with_stats();
@@ -785,10 +785,10 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
     assert!(app.chrome_active(), "640×480 + FRAMEPIC = хром 1:1");
 
     let unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .find(|unit| unit.team == app.player_team())
         .expect("стартовый юнит игрока");
     let grid = unit.grid;
@@ -816,7 +816,7 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
     assert_eq!(transition, max_app::ui::Transition::None);
     let selected = app.hud().selected.expect("клик по карте выбирает юнита");
     assert_eq!(
-        app.state().unit(selected).expect("юнит").grid,
+        app.state_ref().unit(selected).expect("юнит").grid,
         grid,
         "клик в центр окна карты выбирает юнита в ожидаемой клетке"
     );
@@ -939,8 +939,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     let tan = palette.rgba(max_app::panels::END_TURN_TEXT);
 
     // My turn (RED, human): the button is released, the usual label.
-    app.state_mut().active_turn_team = max_core::TeamId::RED;
-    app.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::RED);
+    app.universe_mut().teams_mut()[0].team_type = max_core::team::TeamKind::Player;
     let (human, _) = app.render_frame_with_stats();
 
     assert!(
@@ -949,8 +949,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // Computer GREEN turn: the button is pressed, the label — the team color (index 2).
-    app.state_mut().active_turn_team = max_core::TeamId::GREEN;
-    app.state_mut().teams[1].team_type = max_core::team::TeamKind::Computer;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Computer;
     let (ai, _) = app.render_frame_with_stats();
     let green = palette.rgba(2);
 
@@ -982,8 +982,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // HOT-SEAT: the second human moves — the button is released again.
-    app.state_mut().active_turn_team = max_core::TeamId::GREEN;
-    app.state_mut().teams[1].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Player;
     let (hotseat, _) = app.render_frame_with_stats();
 
     assert!(
@@ -1011,40 +1011,39 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     let site = Point::new(30, 20);
     let team = app.player_team();
     let builder = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, site, 0)
         .expect("constructor");
     let building = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
 
-    max_core::production::deploy_construction_site(
-        app.state_mut(),
+    app.universe_mut().deploy_construction_site(
         builder,
         UnitType::TrainingHall,
         site,
     )
     .expect("site deployed");
 
-    let mut builder_unit = app.state().unit(builder).expect("builder").clone();
+    let mut builder_unit = app.state_ref().unit(builder).expect("builder").clone();
     builder_unit.grid = site;
     builder_unit.parent_unit = Some(building);
     builder_unit.orders = UnitOrder::Build;
     builder_unit.state = UnitOrderState::UnitReady;
-    app.state_mut().write_unit(builder, builder_unit);
+    app.universe_mut().write_unit(builder, builder_unit);
 
-    let mut building_unit = app.state().unit(building).expect("building").clone();
+    let mut building_unit = app.state_ref().unit(building).expect("building").clone();
     building_unit.parent_unit = Some(builder);
     building_unit.orders = UnitOrder::Idle;
     building_unit.state = UnitOrderState::BuildingReady;
-    app.state_mut().write_unit(building, building_unit);
+    app.universe_mut().write_unit(building, building_unit);
 
     app.hud_mut().select(Some(builder));
     app.viewport_mut().center_on_grid(site.x, site.y);
 
     let cells =
-        max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
+        max_app::render::build_marker_cells(app.state_ref(), app.state_ref().unit(builder).unwrap());
     assert!(
         cells.len() >= 8,
         "вокруг площадки 2×2 обязаны быть проходимые клетки: {cells:?}"
@@ -1139,7 +1138,7 @@ fn app_can_be_created_twice_and_start_exit_twice() {
         app.start_local_game(&setup).expect("локальная партия");
 
         assert!(app.local_active(), "партия поднялась");
-        assert_eq!(app.state().turn_counter, 1, "новый App — новый ход");
+        assert_eq!(app.state_ref().turn_counter(), 1, "новый App — новый ход");
         assert_eq!(app.ticks(), 0, "счётчик тиков нового App сброшен");
 
         app.local_update(0.0);
@@ -1195,7 +1194,7 @@ fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
     max_app::render_hud(
         &mut buffer,
         &max_app::HudView {
-            state: app.state(),
+            state: app.state_ref(),
             hud: app.hud(),
             viewport: app.viewport(),
             team: app.player_team(),
@@ -1267,7 +1266,10 @@ fn assets_app_with_land() -> Option<App> {
     };
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    *app.state_mut() = empty_land_state();
+    app.install_universe(max_core::universe::GameUniverse::new(
+        empty_land_state(),
+        max_core::universe::LocalDispatcher,
+    ));
     app.viewport_mut().center_on_grid(40, 40);
 
     Some(app)
@@ -1311,47 +1313,50 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 
     let mut app = App::new(AppConfig::default());
-    *app.state_mut() = empty_land_state();
+    app.install_universe(max_core::universe::GameUniverse::new(
+        empty_land_state(),
+        max_core::universe::LocalDispatcher,
+    ));
 
     let site = Point::new(40, 40);
     let team = app.player_team();
     let building = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
     let builder = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
         .expect("constructor");
 
     let tape = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::LargeTape, team, site, 0)
         .expect("large tape");
     {
         // Only the tape (without cones/slab): the frame must have exactly one
         // marker — the builder, otherwise the centroid would mix with the site decals.
-        let mut t = app.state().unit(tape).expect("tape").clone();
+        let mut t = app.state_ref().unit(tape).expect("tape").clone();
         t.parent_unit = Some(builder);
         t.orders = UnitOrder::Await;
         t.state = UnitOrderState::ExecutingOrder;
-        app.state_mut().write_unit(tape, t);
+        app.universe_mut().write_unit(tape, t);
     }
 
     {
-        let mut unit = app.state().unit(builder).expect("builder").clone();
+        let mut unit = app.state_ref().unit(builder).expect("builder").clone();
         unit.grid = Point::new(41, 41);
         unit.parent_unit = Some(building);
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::UnitReady;
-        app.state_mut().write_unit(builder, unit);
+        app.universe_mut().write_unit(builder, unit);
     }
     {
-        let mut unit = app.state().unit(building).expect("building").clone();
+        let mut unit = app.state_ref().unit(building).expect("building").clone();
         unit.parent_unit = Some(builder);
         unit.orders = UnitOrder::Idle;
         unit.state = UnitOrderState::BuildingReady;
-        app.state_mut().write_unit(building, unit);
+        app.universe_mut().write_unit(building, unit);
     }
 
     app.viewport_mut().center_on_grid(site.x, site.y);
@@ -1393,12 +1398,12 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
 
     // The player's order to leave — the only thing that removes the centering: after
     // `TAPE_POSITIONING_DEINIT`/`LEAVE` the shift includes the exit steps.
-    let mut unit = app.state().unit(builder).expect("builder").clone();
+    let mut unit = app.state_ref().unit(builder).expect("builder").clone();
     unit.orders = UnitOrder::AwaitTapePositioning;
     unit.state = UnitOrderState::TapePositioningLeave;
     unit.moved = 2;
 
-    let offset = max_app::buildsite::tape_center_offset(app.state(), &unit);
+    let offset = max_app::buildsite::tape_center_offset(app.state_ref(), &unit);
     assert_ne!(
         offset,
         (-32, -32),
@@ -1419,30 +1424,29 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     let site = Point::new(30, 20);
     let team = app.player_team();
     let builder = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, site, 0)
         .expect("constructor");
     let building = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
-    max_core::production::deploy_construction_site(
-        app.state_mut(),
+    app.universe_mut().deploy_construction_site(
         builder,
         UnitType::TrainingHall,
         site,
     )
     .expect("site");
 
-    let mut builder_unit = app.state().unit(builder).expect("builder").clone();
+    let mut builder_unit = app.state_ref().unit(builder).expect("builder").clone();
     builder_unit.grid = site;
     builder_unit.parent_unit = Some(building);
     builder_unit.orders = UnitOrder::Build;
     builder_unit.state = UnitOrderState::UnitReady;
-    app.state_mut().write_unit(builder, builder_unit);
+    app.universe_mut().write_unit(builder, builder_unit);
 
     let cells =
-        max_app::render::build_marker_cells(app.state(), app.state().unit(builder).unwrap());
+        max_app::render::build_marker_cells(app.state_ref(), app.state_ref().unit(builder).unwrap());
 
     // C++: start `(parent.x - 1, parent.y + 1)`, for a building `+1` in y, then
     // N/E/S/W for three steps cumulatively; the `Access_IsAccessible` filter.
@@ -1511,30 +1515,30 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     let unknown_cell = Point::new(42, 40);
 
     // RED surveyed gold in `known_cell`, the second cell is not surveyed.
-    app.state_mut().map.resources.set(
+    app.universe_mut().map_mut().resources.set(
         known_cell.x,
         known_cell.y,
         ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0b1000),
     );
-    app.state_mut().map.resources.set(
+    app.universe_mut().map_mut().resources.set(
         unknown_cell.x,
         unknown_cell.y,
         ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0),
     );
 
     let building = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::PowerGenerator, TeamId::RED, known_cell, 0)
         .expect("power generator");
     {
-        let mut unit = app.state().unit(building).expect("generator").clone();
+        let mut unit = app.state_ref().unit(building).expect("generator").clone();
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
-        app.state_mut().write_unit(building, unit);
+        app.universe_mut().write_unit(building, unit);
     }
 
     let surveyor = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(30, 30), 0)
         .expect("surveyor");
 
@@ -1586,11 +1590,14 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
     use max_core::enums::UnitType;
 
     let mut app = App::new(AppConfig::default());
-    *app.state_mut() = empty_land_state();
+    app.install_universe(max_core::universe::GameUniverse::new(
+        empty_land_state(),
+        max_core::universe::LocalDispatcher,
+    ));
 
     let cell = Point::new(40, 40);
     let tank = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Tank, TeamId::RED, cell, 0)
         .expect("tank");
     app.viewport_mut().center_on_grid(cell.x, cell.y);
@@ -1673,41 +1680,43 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
 
     let mut site = Point::new(40, 40);
     let engineer = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(30, 30), 0)
         .expect("engineer");
     // `UnitsManager_DeployUnit` zeroes the new unit's storage; landing gives 40.
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(engineer)
         .expect("engineer")
         .storage = 40;
 
     {
-        let state = app.state_mut();
-        let mut manager = ProductionManager::new(state, TeamId::RED);
-        manager.enqueue(engineer, UnitType::Radar).expect("queue");
-        let report = manager.commit(engineer).expect("site");
-        drop(manager);
+        app.universe_mut()
+            .enqueue_build(TeamId::RED, engineer, UnitType::Radar)
+            .expect("queue");
+        let report = app
+            .universe_mut()
+            .commit_build(TeamId::RED, engineer)
+            .expect("site");
 
         // `commit` chooses the site anchor itself (`PathBuild`): then we look for
         // the building exactly in it, not in the engineer's original cell.
         site = report.site;
 
-        let mut unit = state.unit(engineer).expect("engineer").clone();
+        let mut unit = app.state_ref().unit(engineer).expect("engineer").clone();
         unit.grid = report.site;
-        state.write_unit(engineer, unit);
+        app.universe_mut().write_unit(engineer, unit);
     }
 
     let mut radar = None;
     for _ in 0..80 {
-        let state = app.state_mut();
-        state.manage_economy(TeamId::RED);
-        max_core::production::progress_build_state(state, TeamId::RED);
+        app.universe_mut().manage_economy(TeamId::RED);
+        app.universe_mut().progress_build_state(TeamId::RED);
 
-        if let Some(unit) = state
+        if let Some(unit) = app
+            .state_ref()
             .units_at(site)
             .iter()
-            .filter_map(|id| state.unit(*id))
+            .filter_map(|id| app.state_ref().unit(*id))
             .find(|unit| unit.unit_type == UnitType::Radar)
         {
             radar = Some(unit.id);
@@ -1716,7 +1725,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     }
 
     let radar = radar.unwrap_or_else(|| {
-        let state = app.state();
+        let state = app.state_ref();
         let e = state.unit(engineer).expect("engineer");
         panic!(
             "RADAR построен: engineer={:?}/{:?} build_time={} build_list={:?} site={site:?}",
@@ -1725,7 +1734,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     });
 
     {
-        let unit = app.state().unit(radar).expect("radar");
+        let unit = app.state_ref().unit(radar).expect("radar");
         assert_eq!(
             (unit.orders, unit.state),
             (UnitOrder::Idle, UnitOrderState::BuildingReady),
@@ -1739,14 +1748,11 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     }
 
     // The builder leaves by order (A1) → `BuildingReady`/`RestoreOrders`.
-    assert!(max_core::unit_order::issue_builder_exit(
-        app.state_mut(),
-        engineer
-    ));
+    assert!(app.universe_mut().issue_builder_exit(engineer));
     for _ in 0..60 {
-        app.state_mut().tick();
+        app.universe_mut().tick();
         if app
-            .state()
+            .state_ref()
             .unit(radar)
             .is_some_and(|unit| unit.orders == UnitOrder::Sentry)
         {
@@ -1754,7 +1760,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
         }
     }
     assert_eq!(
-        app.state().unit(radar).expect("radar").orders,
+        app.state_ref().unit(radar).expect("radar").orders,
         UnitOrder::Sentry,
         "RADAR снова в ORDER_SENTRY"
     );

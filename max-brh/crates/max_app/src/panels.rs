@@ -33,14 +33,17 @@
 
 use max_assets::image::SimpleImage;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType, VictoryType};
-use max_core::game::{GameState, PLAYER_TEAM_COUNT};
+use max_core::game::PLAYER_TEAM_COUNT;
+#[cfg(test)]
+use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::{UnitInfo, UnitListKind};
 use max_core::unit_values::{
     ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE,
 };
 use max_core::victory::{
-    cargo_get_net_production, cargo_life_consumption_rate, cargo_power_consumption_rate,
+    cargo_life_consumption_rate, cargo_power_consumption_rate,
     cargo_type_of, CargoType, NetProduction,
 };
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
@@ -759,7 +762,7 @@ impl Panels {
         let Some(assets) = app.assets() else {
             return 0;
         };
-        let state = app.state();
+        let state = app.state_ref();
         let hud = app.hud();
         let viewport = app.viewport();
         let panel = &hud.panels;
@@ -799,9 +802,9 @@ impl Panels {
         // The pressed button label — `_(aeb0)` "End Turn", baked into the resource
         // in the team color: `FontColor(team + 1, team + 1, 0x3F)`
         // (`game_manager.cpp:7860-7883`; for GRAY — `0xFF`).
-        let active_team = state.active_turn_team;
+        let active_team = state.active_turn_team();
         let active_kind = state
-            .teams
+            .teams()
             .get(usize::from(active_team.0))
             .map(|team| team.team_type)
             .unwrap_or(TeamKind::None);
@@ -853,7 +856,7 @@ impl Panels {
             frame,
             layout::TURN_COUNTER,
             GnwFontId::Font5.font(),
-            &format!("{}", state.turn_counter.max(0)),
+            &format!("{}", state.turn_counter().max(0)),
             palette.rgba(TEXT),
         );
         painted += self.blit(
@@ -1059,8 +1062,8 @@ impl Panels {
 
             let image_base = crate::render::image_base_for(
                 unit,
-                app.state()
-                    .teams
+                app.state_ref()
+                    .teams()
                     .get(unit.team.0 as usize)
                     .map(|team| team.team_clan),
             );
@@ -1068,7 +1071,7 @@ impl Panels {
             // Presentation fields (shadow/brightness) — the `GameState` table
             // (phase 5.3/B), not `UnitInfo`.
             let presentation = app
-                .state()
+                .state_ref()
                 .presentation(unit.id)
                 .cloned()
                 .unwrap_or_default();
@@ -1423,7 +1426,7 @@ const FINISHED_FACTORY: &str =
 ///
 /// Returns `None` if there is no hint for the unit (C++ draws the message
 /// only for `ORDER_BUILD`/`CLEAR`/`HALT_BUILDING`/`HALT_BUILDING_2`).
-pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<String> {
+pub fn builder_status_message(state: StateRef<'_>, unit: &UnitInfo) -> Option<String> {
     if !matches!(
         unit.orders,
         UnitOrder::Build | UnitOrder::Clear | UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
@@ -1468,7 +1471,7 @@ pub fn builder_status_message(state: &GameState, unit: &UnitInfo) -> Option<Stri
         ));
     }
 
-    let (turns, _) = max_core::production::turns_and_consumption(state, unit, unit_type, build_rate);
+    let (turns, _) = state.turns_and_consumption(unit, unit_type, build_rate);
 
     Some(format!(
         "Currently building: {name}.\nTurns to completion: {turns}."
@@ -1601,22 +1604,22 @@ fn assign_row(rows: &mut [Option<StatRow>; 4], index: usize, row: Option<StatRow
 /// `Cargo_GetNetProduction(unit)` in the `DrawInfoDisplayType1/2` loop: for a unit in
 /// `ORDER_UPGRADE` C++ computes production by the **previous** order
 /// (temporarily `SetOrder(prior)`), so we clone with `prior_orders`.
-fn net_production_of(state: &GameState, unit: &UnitInfo) -> NetProduction {
+fn net_production_of(state: StateRef<'_>, unit: &UnitInfo) -> NetProduction {
     if unit.orders == UnitOrder::Upgrade && unit.state == UnitOrderState::ExecutingOrder {
         let mut simulated = unit.clone();
 
         simulated.orders = unit.prior_orders;
 
-        cargo_get_net_production(state, &simulated, false)
+        state.cargo_get_net_production( &simulated, false)
     } else {
-        cargo_get_net_production(state, unit, false)
+        state.cargo_get_net_production( unit, false)
     }
 }
 
 /// `GameManager_DrawInfoDisplayType2` — power: row 2 `Usage`/`Power`,
 /// rows 3/4 — `Total`/`Usage` by the complex (own units only).
 fn power_rows(
-    state: &GameState,
+    state: StateRef<'_>,
     unit: &UnitInfo,
     player_team: TeamId,
     rows: &mut [Option<StatRow>; 4],
@@ -1630,7 +1633,7 @@ fn power_rows(
         return;
     }
 
-    let cargo = cargo_get_net_production(state, unit, false);
+    let cargo = state.cargo_get_net_production( unit, false);
     let current_power_need = cargo.power;
 
     if power_need >= 0 {
@@ -1703,7 +1706,7 @@ fn power_rows(
 /// `GameManager_DrawInfoDisplayType1` — workers: row 2 `Usage`/`Teams`,
 /// rows 3/4 — `Total`/`Usage` by the complex (own units only).
 fn life_rows(
-    state: &GameState,
+    state: StateRef<'_>,
     unit: &UnitInfo,
     player_team: TeamId,
     rows: &mut [Option<StatRow>; 4],
@@ -1714,7 +1717,7 @@ fn life_rows(
         return;
     }
 
-    let cargo = cargo_get_net_production(state, unit, false);
+    let cargo = state.cargo_get_net_production( unit, false);
     let current_life_need = cargo.life;
 
     if life_need >= 0 {
@@ -1783,17 +1786,17 @@ fn life_rows(
 }
 
 /// `GameManager_DrawInfoDisplayType3` — the player's greenhouse: match points.
-fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRow>; 4]) {
-    let mut current_value = if state.victory_type == VictoryType::Score {
-        state.victory_limit
+fn greenhouse_rows(state: StateRef<'_>, unit: &UnitInfo, rows: &mut [Option<StatRow>; 4]) {
+    let mut current_value = if state.victory_type() == VictoryType::Score {
+        state.victory_limit()
     } else {
         let mut value = 0;
 
         for team in 0..PLAYER_TEAM_COUNT {
-            let info = &state.teams[team];
+            let info = &state.teams()[team];
 
             if info.team_type != TeamKind::None && info.team_type != TeamKind::Eliminated {
-                value = value.max(state.teams[unit.team.0 as usize].team_points as i32);
+                value = value.max(state.teams()[unit.team.0 as usize].team_points as i32);
             }
         }
 
@@ -1817,7 +1820,7 @@ fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRo
         2,
         make_row(
             StatLabel::Total,
-            state.teams[unit.team.0 as usize].team_points as i32,
+            state.teams()[unit.team.0 as usize].team_points as i32,
             current_value,
             value_limit,
         ),
@@ -1827,7 +1830,7 @@ fn greenhouse_rows(state: &GameState, unit: &UnitInfo, rows: &mut [Option<StatRo
 /// Complex stock — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
 /// `Cargo_GetCargoCapacity`: the sum of `storage` and `ATTRIB_STORAGE` of stationary
 /// units of the same complex with the same cargo type (the `_(d28b)` «Total» row).
-fn complex_cargo(state: &GameState, unit: &UnitInfo, cargo_type: CargoType) -> (i32, i32) {
+fn complex_cargo(state: StateRef<'_>, unit: &UnitInfo, cargo_type: CargoType) -> (i32, i32) {
     let mut value = 0;
     let mut capacity = 0;
 
@@ -1864,7 +1867,7 @@ fn complex_cargo(state: &GameState, unit: &UnitInfo, cargo_type: CargoType) -> (
 ///
 /// A row with a zero base or zero factor remains empty — exactly like
 /// `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`).
-pub fn rows_for(state: &GameState, unit: &UnitInfo, player_team: TeamId) -> [Option<StatRow>; 4] {
+pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [Option<StatRow>; 4] {
     let values = &unit.base_values;
     let own = unit.team == player_team;
     let mut rows: [Option<StatRow>; 4] = [None; 4];
@@ -1991,7 +1994,7 @@ fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette
 /// Rows that C++ does not draw remain the window background — [``None``].
 fn draw_stats(
     frame: &mut RgbaBuffer,
-    state: &GameState,
+    state: StateRef<'_>,
     selected: Option<&UnitInfo>,
     palette: &UiPalette,
 ) -> u32 {
@@ -1999,7 +2002,7 @@ fn draw_stats(
         return 0;
     };
 
-    let rows = rows_for(state, unit, state.player_team);
+    let rows = rows_for(state, unit, state.player_team());
     let rects = [
         layout::STAT_ROW_1,
         layout::STAT_ROW_2,
@@ -2236,18 +2239,18 @@ fn draw_minimap(
         return 0;
     }
 
-    let state = app.state();
+    let state = app.state_ref();
     let panel = &app.hud().panels;
     let viewport = app.viewport();
     let combined = minimap_palette(palette, world.palette());
     let dark = darkening_table(&combined);
 
     // 1. FOV: `Access_UpdateMinimapFogOfWar` — unexplored cells are darker.
-    let all_visible = state.ai.all_visible;
+    let all_visible = state.ai().all_visible;
     let heat = state
-        .ai
+        .ai()
         .heat_maps
-        .get(usize::from(state.player_team.0))
+        .get(usize::from(state.player_team().0))
         .map(|map| map.cells())
         .unwrap_or(&[]);
     let mut layer = Vec::with_capacity((map_width * map_height) as usize);
@@ -2352,7 +2355,7 @@ fn draw_minimap(
 /// Unit dots on the minimap layer (exactly the C++ conditions).
 fn paint_minimap_units(
     layer: &mut [u8],
-    state: &GameState,
+    state: StateRef<'_>,
     map_width: i32,
     map_height: i32,
     tnt: bool,
@@ -2361,7 +2364,7 @@ fn paint_minimap_units(
     use max_core::enums::unit_flags;
     use max_core::enums::UnitOrder;
 
-    let player_team = state.player_team;
+    let player_team = state.player_team();
 
     for id in state.unit_ids_in_order() {
         let Some(unit) = state.unit(id) else {
@@ -2686,7 +2689,7 @@ mod tests {
             .unwrap();
         let mut layer = vec![0u8; MAP_TILES];
 
-        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
         assert_eq!(
             layer[10 * 112 + 10],
             minimap_unit_color(TeamId::RED),
@@ -2700,7 +2703,7 @@ mod tests {
             .unwrap()
             .set_visible_to_team(TeamId::RED, true);
         layer.fill(0);
-        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
         assert_eq!(
             layer[20 * 112 + 20],
             minimap_unit_color(TeamId::GREEN),
@@ -2849,7 +2852,7 @@ mod tests {
         state.unit_mut(id).expect("юнит").orders = UnitOrder::Move;
 
         let mut layer = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut layer, &state, 112, 112, false, false);
+        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
 
         // 2×2 unit dot, RED color (index 1).
         assert_eq!(layer[10 * 112 + 10], 1);
@@ -2861,12 +2864,12 @@ mod tests {
             unit.flags &= !(unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES);
         }
         let mut filtered = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut filtered, &state, 112, 112, true, false);
+        paint_minimap_units(&mut filtered, StateRef::from(&state), 112, 112, true, false);
         assert_eq!(filtered[10 * 112 + 10], 0);
 
         // In 2x a non-building is drawn as one cell.
         let mut zoomed = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut zoomed, &state, 112, 112, false, true);
+        paint_minimap_units(&mut zoomed, StateRef::from(&state), 112, 112, false, true);
         assert_eq!(zoomed[10 * 112 + 10], 1);
         assert_eq!(zoomed[11 * 112 + 11], 0);
     }
@@ -2970,7 +2973,7 @@ mod tests {
     fn mining_station_panel_shows_hits_cargo_total_without_speed() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::MiningStation);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -2999,7 +3002,7 @@ mod tests {
     fn tank_panel_keeps_speed_ammo_and_shots() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::Tank);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3017,7 +3020,7 @@ mod tests {
     fn turret_panel_shows_ammo_and_shots_without_speed() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::GunTurret);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3035,7 +3038,7 @@ mod tests {
     fn surveyor_panel_skips_empty_attribute_rows() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::Surveyor);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3051,7 +3054,7 @@ mod tests {
     fn training_hall_panel_shows_worker_usage_and_total() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::TrainingHall);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3073,7 +3076,7 @@ mod tests {
     fn power_station_panel_shows_power_and_total() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::PowerStation);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3090,7 +3093,7 @@ mod tests {
     fn habitat_panel_shows_teams_and_total() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::Habitat);
-        let rows = rows_for(&state, &unit, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3109,7 +3112,7 @@ mod tests {
         let mut enemy = unit;
         enemy.team = TeamId::GREEN;
 
-        let rows = rows_for(&state, &enemy, TeamId::RED);
+        let rows = rows_for(StateRef::from(&state), &enemy, TeamId::RED);
 
         assert_eq!(
             labels(&rows),
@@ -3159,7 +3162,7 @@ mod tests {
             unit.ammo = base.ammo as u8;
             unit.storage = 0;
 
-            let rows = rows_for(&state, &unit, TeamId::RED);
+            let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
             let has_speed = rows
                 .iter()
                 .flatten()

@@ -520,9 +520,23 @@ impl Dispatcher for NetworkDispatcher {
 
     /// A peer's command is replayed in receive order; packet 54 is authoritative
     /// state and is applied immediately (owner decision 2).
+    ///
+    /// The barrier-consent packets `00`/`52`/`45` are the exception (decision A4,
+    /// `game-universe-stage-b.md` §0.2): the barrier wait reads the consent
+    /// counters synchronously and never ticks, so a queued barrier would block
+    /// until the 30-second timeout and shift the CRC counters by one tick. They
+    /// are therefore applied **immediately** through
+    /// [`RemoteHandling::ApplyBarrier`]; `01`/`53` and the order packets keep the
+    /// receive-order replay.
     fn receive(&mut self, cmd: RemoteCommand) -> RemoteHandling {
         match cmd {
-            RemoteCommand::Command(command) => RemoteHandling::Replay(command),
+            RemoteCommand::Command(command) => {
+                if is_consent_barrier(&command) {
+                    RemoteHandling::ApplyBarrier(command)
+                } else {
+                    RemoteHandling::Replay(command)
+                }
+            }
             RemoteCommand::StateSync(packet) => RemoteHandling::ApplyStateSync(packet),
         }
     }
@@ -539,6 +553,18 @@ impl Dispatcher for NetworkDispatcher {
     }
 }
 
+/// Whether a command is a barrier-consent packet (`00`/`52`/`45`) — decision A4.
+///
+/// These three are the packets the barrier wait compares against (`*_barrier_reached`,
+/// `net.rs::wait_barrier`); `01` (frame pacing) and `53` (complex summary) are not
+/// consent facts and keep the receive-order replay.
+fn is_consent_barrier(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::TurnBarrier(_) | Command::EndTurnBarrier(_) | Command::CrcBarrier(_)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,8 +573,8 @@ mod tests {
     use max_core::game::GameState;
     use max_core::geo::Point;
     use max_core::input::{
-        Packet06FinishedTurn, Packet10UpgradeUnitType, Packet13Seed, Packet18Chat,
-        Packet45CrcBarrier, Packet53ComplexSummary,
+        Packet01FrameBarrier, Packet06FinishedTurn, Packet10UpgradeUnitType, Packet13Seed,
+        Packet18Chat, Packet45CrcBarrier, Packet53ComplexSummary,
     };
     use max_core::team::TeamUnits;
     use max_core::universe::{LocalDispatcher, RemoteCommand, SubmitOutcome};
@@ -595,17 +621,17 @@ mod tests {
         assert_eq!(universe.state().frame_sync_counter[local.0 as usize], 1);
         // The own counter is not yet agreed with the peers.
         assert!(!fsm.begin_reached(&universe));
-        universe.state_mut().frame_sync_counter[TeamId::GREEN.0 as usize] = 1;
+        universe.set_frame_sync_counter(TeamId::GREEN, 1);
         assert!(!fsm.begin_reached(&universe), "all peers are required");
-        universe.state_mut().frame_sync_counter[TeamId::BLUE.0 as usize] = 1;
+        universe.set_frame_sync_counter(TeamId::BLUE, 1);
         assert!(fsm.begin_reached(&universe));
 
         let end = fsm.end(&mut universe);
         assert_eq!(barrier_counter(&end[0]), 1, "the first 52 is 1");
         assert_eq!(universe.state().turn_indices[local.0 as usize], 1);
         assert!(!fsm.end_reached(&universe));
-        universe.state_mut().turn_indices[TeamId::GREEN.0 as usize] = 1;
-        universe.state_mut().turn_indices[TeamId::BLUE.0 as usize] = 1;
+        universe.set_turn_index(TeamId::GREEN, 1);
+        universe.set_turn_index(TeamId::BLUE, 1);
         assert!(fsm.end_reached(&universe));
 
         let sync = fsm.sync(&universe);
@@ -619,8 +645,8 @@ mod tests {
             other => panic!("expected 54, got {other:?}"),
         }
         assert!(!fsm.sync_reached(&universe));
-        universe.state_mut().state_sync_indices[TeamId::GREEN.0 as usize] = 1;
-        universe.state_mut().state_sync_indices[TeamId::BLUE.0 as usize] = 1;
+        universe.set_state_sync_index(TeamId::GREEN, 1);
+        universe.set_state_sync_index(TeamId::BLUE, 1);
         assert!(fsm.sync_reached(&universe));
 
         let crc = fsm.crc(&mut universe);
@@ -632,15 +658,15 @@ mod tests {
         };
         assert_eq!(own_crc, crc::state_checksum(universe.state()));
         assert!(!fsm.crc_reached(&universe));
-        universe.state_mut().next_turn_indices[TeamId::GREEN.0 as usize] = 1;
-        universe.state_mut().next_turn_indices[TeamId::BLUE.0 as usize] = 1;
+        universe.set_next_turn_index(TeamId::GREEN, 1);
+        universe.set_next_turn_index(TeamId::BLUE, 1);
         assert!(fsm.crc_reached(&universe));
         assert!(
             !fsm.crc_matches(&universe),
             "the peer CRCs are not here yet"
         );
-        universe.state_mut().team_data_crc16[TeamId::GREEN.0 as usize] = own_crc;
-        universe.state_mut().team_data_crc16[TeamId::BLUE.0 as usize] = own_crc;
+        universe.set_team_data_crc16(TeamId::GREEN, own_crc);
+        universe.set_team_data_crc16(TeamId::BLUE, own_crc);
         assert!(fsm.crc_matches(&universe));
     }
 
@@ -654,7 +680,7 @@ mod tests {
         let begin = fsm.begin(&mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::Begin);
         assert_eq!(barrier_counter(&begin[0]), 1);
-        universe.state_mut().frame_sync_counter[TeamId::GREEN.0 as usize] = 1;
+        universe.set_frame_sync_counter(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 53
@@ -675,22 +701,22 @@ mod tests {
         let end = fsm.end(&mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::End);
         assert_eq!(barrier_counter(&end[0]), 1);
-        universe.state_mut().turn_indices[TeamId::GREEN.0 as usize] = 1;
+        universe.set_turn_index(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 54
         let sync = fsm.sync(&universe);
         assert_eq!(fsm.phase(), BarrierPhase::Sync);
         assert!(matches!(&sync[0], Packet::StateSync(packet) if packet.sync_index == 1));
-        universe.state_mut().state_sync_indices[TeamId::GREEN.0 as usize] = 1;
+        universe.set_state_sync_index(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 45
         let crc = fsm.crc(&mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::Crc);
         assert_eq!(barrier_counter(&crc[0]), 1);
-        universe.state_mut().next_turn_indices[TeamId::GREEN.0 as usize] = 1;
-        universe.state_mut().team_data_crc16[TeamId::GREEN.0 as usize] = fsm.crc_checksum();
+        universe.set_next_turn_index(TeamId::GREEN, 1);
+        universe.set_team_data_crc16(TeamId::GREEN, fsm.crc_checksum());
         assert!(fsm.reached(&universe));
         assert!(fsm.crc_matches(&universe));
 
@@ -754,7 +780,7 @@ mod tests {
         assert!(fsm.reached(&universe));
 
         // The 53 of the previous turn does not close the new one.
-        universe.state_mut().turn_counter = 1;
+        universe.set_turn_counter(1);
         let packet = fsm.complex(&universe);
         assert!(matches!(
             &packet[0],
@@ -1011,6 +1037,39 @@ mod tests {
         assert_eq!(
             dispatcher.receive(RemoteCommand::StateSync(packet.clone())),
             RemoteHandling::ApplyStateSync(packet)
+        );
+    }
+
+    /// A4: the consent barriers `00`/`52`/`45` are applied immediately, not replayed.
+    #[test]
+    fn dispatcher_receive_applies_consent_barriers_immediately() {
+        let mut dispatcher = NetworkDispatcher::new(TeamId::RED, PlayMode::TurnBased);
+        let team = TeamId::GREEN;
+
+        for barrier in [
+            Command::TurnBarrier(max_core::input::Packet00TurnBarrier { team, counter: 3 }),
+            Command::EndTurnBarrier(max_core::input::Packet52EndTurnBarrier { team, counter: 4 }),
+            Command::CrcBarrier(max_core::input::Packet45CrcBarrier {
+                team,
+                next_turn_index: 5,
+                crc16: 0x1234,
+            }),
+        ] {
+            assert_eq!(
+                dispatcher.receive(RemoteCommand::Command(barrier.clone())),
+                RemoteHandling::ApplyBarrier(barrier),
+                "a consent barrier is immediate (A4)"
+            );
+        }
+
+        // `01` is a pacing packet, not a consent barrier: it keeps the replay path.
+        let frame = Command::FrameBarrier(Packet01FrameBarrier {
+            team,
+            counter: 1,
+        });
+        assert_eq!(
+            dispatcher.receive(RemoteCommand::Command(frame.clone())),
+            RemoteHandling::Replay(frame)
         );
     }
 

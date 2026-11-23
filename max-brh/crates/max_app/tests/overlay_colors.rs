@@ -57,11 +57,11 @@ fn app_with_assets() -> Option<App> {
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
     for index in 0..4 {
-        app.state_mut().teams[index].team_type = TeamKind::Player;
-        app.state_mut().team_units[index] = max_core::TeamUnits::with_clan(TeamClan::Random);
+        app.universe_mut().teams_mut()[index].team_type = TeamKind::Player;
+        app.universe_mut().team_units_table_mut()[index] = max_core::TeamUnits::with_clan(TeamClan::Random);
     }
-    for index in 4..app.state().teams.len() {
-        app.state_mut().teams[index].team_type = TeamKind::None;
+    for index in 4..app.state_ref().teams().len() {
+        app.universe_mut().teams_mut()[index].team_type = TeamKind::None;
     }
     app.viewport_mut().set_zoom(64);
 
@@ -89,7 +89,7 @@ fn colors_frame_uses_the_team_color() {
     let mut ids = Vec::new();
     for (index, team) in teams.iter().enumerate() {
         let id = app
-            .state_mut()
+            .universe_mut()
             .spawn_unit(
                 UnitType::Tank,
                 *team,
@@ -98,7 +98,7 @@ fn colors_frame_uses_the_team_color() {
             )
             .expect("tank");
         // Visually visible to the player (RED) — otherwise the map does not draw it.
-        if let Some(unit) = app.state_mut().unit_mut(id) {
+        if let Some(unit) = app.universe_mut().unit_mut(id) {
             unit.visible_to_team = [true; 5];
         }
         assert_eq!(
@@ -140,7 +140,7 @@ fn colors_frame_uses_the_team_color() {
     }
 
     for (index, id) in ids.iter().enumerate() {
-        let unit = app.state().unit(*id).expect("unit");
+        let unit = app.state_ref().unit(*id).expect("unit");
         let color = team_frame_color(&palette, unit);
         assert_eq!(
             color,
@@ -164,7 +164,7 @@ fn colors_frame_uses_the_team_color() {
 
     // The loaded save carries the `HASH_TEAM_*` bits directly in `flags` — they are honoured
     // the same way as in C++ (`DrawMap_RenderUnitDisplays`).
-    let mut flagged = app.state().unit(ids[0]).expect("unit").clone();
+    let mut flagged = app.state_ref().unit(ids[0]).expect("unit").clone();
     flagged.flags |= max_core::enums::unit_flags::HASH_TEAM_BLUE;
     assert_eq!(
         team_frame_color(&palette, &flagged),
@@ -180,17 +180,17 @@ fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
     };
 
     let alien = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(20, 30), 0)
         .expect("alien tank");
-    if let Some(unit) = app.state_mut().unit_mut(alien) {
+    if let Some(unit) = app.universe_mut().unit_mut(alien) {
         unit.visible_to_team = [true; 5];
     }
     app.viewport_mut().center_on_grid(20, 30);
     app.hud_mut().panels.colors = true;
 
     let palette = UiPalette::from_assets(app.assets().expect("assets")).expect("палитра");
-    let unit = app.state().unit(alien).expect("alien");
+    let unit = app.state_ref().unit(alien).expect("alien");
     assert_eq!(team_color_index(TeamId::ALIEN), COLOR_DERELICT);
     assert_eq!(
         team_frame_color(&palette, unit),
@@ -199,7 +199,7 @@ fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
     );
 
     // C++ draws COLORS only for **non**-stationary (`!(flags & STATIONARY)`).
-    app.state_mut()
+    app.universe_mut()
         .spawn_unit(UnitType::LightVehiclePlant, TeamId::RED, Point::new(60, 60), 0)
         .expect("factory");
     app.hud_mut().panels.colors = false;

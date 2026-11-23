@@ -13,6 +13,7 @@ use max_app::ui::{handle_session_input, InputEvent, Key, Transition};
 use max_app::{App, AppConfig, LocalSetup};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
+use max_core::universe::StateRef;
 use max_core::team::TeamId;
 use max_core::unit::UnitId;
 
@@ -38,8 +39,8 @@ fn free_point(app: &App, near: Point) -> Point {
             for dx in -radius..=radius {
                 let point = Point::new(near.x + dx, near.y + dy);
 
-                if app.state().map.index(point.x, point.y).is_some()
-                    && app.state().units_at(point).is_empty()
+                if app.state_ref().map().index(point.x, point.y).is_some()
+                    && app.state_ref().units_at(point).is_empty()
                 {
                     return point;
                 }
@@ -54,7 +55,7 @@ fn spawn(app: &mut App, unit_type: UnitType, team: TeamId, near: Point) -> Optio
     let flags = max_core::access::unit_type_flags(unit_type);
     let point = free_point(app, near);
 
-    app.state_mut().spawn_unit(unit_type, team, point, flags)
+    app.universe_mut().spawn_unit(unit_type, team, point, flags)
 }
 
 /// `attack` — the `targeting_mode` toggle (`UnitsManager_Popup_OnClick_TargetingMode`).
@@ -67,8 +68,8 @@ fn attack_item_toggles_targeting_mode() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let Some(tank) = spawn(&mut app, UnitType::Tank, team, center) else {
         return;
@@ -103,8 +104,8 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let Some(carrier) = spawn(&mut app, UnitType::ArmouredPersonnelCarrier, team, center) else {
         return;
@@ -134,8 +135,8 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     );
 
     // A click on an own infantryman: **it** gets the order (C++ `GameManager_Unit`).
-    let state = app.state().clone();
-    let command = max_app::unitmenu::load_mode_click(&state, carrier, infantry)
+    let state = app.state_copy();
+    let command = max_app::unitmenu::load_mode_click(StateRef::from(&state), carrier, infantry)
         .expect("load click")
         .expect("приказ");
 
@@ -155,14 +156,14 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
 
     // The second click, when the passenger is already in the transport cell and ready:
     // `ORDER_LAND`/`INIT` with `parent = transport` (`game_manager.cpp:6824`).
-    let mut same_cell = app.state().clone();
+    let mut same_cell = app.state_copy();
     let carrier_grid = same_cell.unit(carrier).expect("транспорт").grid;
     if let Some(unit) = same_cell.unit_mut(infantry) {
         unit.grid = carrier_grid;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.orders = UnitOrder::Await;
     }
-    let command = max_app::unitmenu::load_mode_click(&same_cell, carrier, infantry)
+    let command = max_app::unitmenu::load_mode_click(StateRef::from(&same_cell), carrier, infantry)
         .expect("load same cell")
         .expect("приказ");
 
@@ -194,7 +195,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
         return;
     }
 
-    let mut state = app.state().clone();
+    let mut state = app.state_copy();
     let center = Point::new(state.map.size.width / 2, state.map.size.height / 2);
     let point = free_point(&app, center);
     let commando = state
@@ -233,7 +234,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
             UnitOrder::AwaitDisableUnit,
         ),
     ] {
-        let command = max_app::unitmenu::stealth_mode_click(&state, commando, target, cursor, 42)
+        let command = max_app::unitmenu::stealth_mode_click(StateRef::from(&state), commando, target, cursor, 42)
             .expect("stealth click")
             .expect("приказ");
 
@@ -260,7 +261,7 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
         unit.shots = 0;
     }
     let error = max_app::unitmenu::stealth_mode_click(
-        &empty,
+        StateRef::from(&empty),
         commando,
         target,
         max_app::unitmenu::CURSOR_STEAL,
@@ -281,8 +282,8 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let Some(_bulldozer) = spawn(&mut app, UnitType::Bulldozer, team, center) else {
         return;
@@ -292,16 +293,16 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
         .hud()
         .selected
         .or_else(|| {
-            app.state().unit_ids_in_order().into_iter().find(|id| {
-                app.state()
+            app.state_ref().unit_ids_in_order().into_iter().find(|id| {
+                app.state_ref()
                     .unit(*id)
                     .is_some_and(|unit| unit.unit_type == UnitType::Bulldozer)
             })
         })
         .expect("бульдозер");
-    let grid = app.state().unit(bulldozer).expect("бульдозер").grid;
+    let grid = app.state_ref().unit(bulldozer).expect("бульдозер").grid;
     let rubble = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::SmallRubble,
             team,
@@ -311,7 +312,7 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
         .expect("обломки");
 
     assert_eq!(
-        max_app::unitmenu::removable_rubble(app.state(), team, grid),
+        max_app::unitmenu::removable_rubble(app.state_ref(), team, grid),
         Some(rubble)
     );
 
@@ -324,11 +325,11 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
     app.activate_unit_menu_item(index);
 
     assert_eq!(
-        app.state().unit(bulldozer).expect("бульдозер").build_time,
+        app.state_ref().unit(bulldozer).expect("бульдозер").build_time,
         1
     );
     assert_eq!(
-        app.state().unit(bulldozer).expect("бульдозер").parent_unit,
+        app.state_ref().unit(bulldozer).expect("бульдозер").parent_unit,
         Some(rubble)
     );
 
@@ -355,27 +356,27 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let Some(station) = spawn(&mut app, UnitType::PowerStation, team, center) else {
         return;
     };
 
     // The upgrade is available: the current values are above the base.
-    if let Some(team_units) = app.state_mut().team_units.get_mut(team.0 as usize) {
+    if let Some(team_units) = app.universe_mut().team_units_table_mut().get_mut(team.0 as usize) {
         let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
         let hits = values.get_attribute(max_core::unit_values::ATTRIB_HITS);
         values.set_attribute(max_core::unit_values::ATTRIB_HITS, hits + 10);
     }
     // The complex has materials (C++ `GetCargoInfo`).
-    if let Some(complex) = app.state().unit(station).and_then(|unit| unit.complex) {
-        if let Some(complex) = app.state_mut().complex_mut(team, complex.0 as u16) {
+    if let Some(complex) = app.state_ref().unit(station).and_then(|unit| unit.complex) {
+        if let Some(complex) = app.universe_mut().complex_mut(team, complex.0 as u16) {
             complex.raw = 120;
         }
     }
 
-    let report = max_app::unitmenu::upgrade_all_orders(app.state(), station).expect("отчёт");
+    let report = max_app::unitmenu::upgrade_all_orders(app.state_ref(), station).expect("отчёт");
     assert_eq!(report.count, 1, "{}", report.message);
     assert_eq!(report.commands.len(), 1);
     assert!(report.material_cost > 0);
@@ -404,8 +405,8 @@ fn self_destruct_dialog_arms_and_orders_explode() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let Some(station) = spawn(&mut app, UnitType::PowerStation, team, center) else {
         return;
@@ -496,8 +497,8 @@ fn ui_events_queue_cpp_sounds() {
     }
 
     let center = Point::new(
-        app.state().map.size.width / 2,
-        app.state().map.size.height / 2,
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
     );
     let _ = spawn(&mut app, UnitType::Tank, team, center);
 

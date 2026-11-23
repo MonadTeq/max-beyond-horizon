@@ -1286,7 +1286,7 @@ impl Screen {
             Self::GameOver => {
                 if let (Some(menu_assets), Some(app)) = (menu_assets, view.app) {
                     if let Some(local) = app.local() {
-                        winloss::draw_game_over(buffer, menu_assets, app.state(), local, mouse);
+                        winloss::draw_game_over(buffer, menu_assets, app.state_ref(), local, mouse);
                         return;
                     }
                 }
@@ -1982,7 +1982,7 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
                 app.hud_mut().push_log("Power: select a unit first");
                 return Transition::None;
             };
-            let Some(command) = hud::build_power_order(app.state(), id) else {
+            let Some(command) = hud::build_power_order(app.state_ref(), id) else {
                 app.hud_mut().push_log("Power: unit cannot be powered");
                 return Transition::None;
             };
@@ -2094,7 +2094,7 @@ fn session_self_destruct_input(
                 apply_pending_orders(app);
             }
             let name = unit
-                .and_then(|unit| app.state().unit(unit))
+                .and_then(|unit| app.state_ref().unit(unit))
                 .map(unit_label)
                 .unwrap_or_else(|| "unit".to_string());
             app.hud_mut()
@@ -2345,7 +2345,7 @@ fn session_build_site_input(
 
             if let Some(grid) = grid_at(app, x, y) {
                 if let Some(mut site) = app.build_site.take() {
-                    site.update_cursor(app.state(), grid);
+                    site.update_cursor(app.state_ref(), grid);
                     app.build_site = Some(site);
                 }
             }
@@ -2359,8 +2359,8 @@ fn session_build_site_input(
             };
             let valid = match app.build_site.take() {
                 Some(mut site) => {
-                    site.update_cursor(app.state(), grid);
-                    let valid = site.valid(app.state());
+                    site.update_cursor(app.state_ref(), grid);
+                    let valid = site.valid(app.state_ref());
                     app.build_site = Some(site);
                     valid
                 }
@@ -2673,9 +2673,9 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
     let minimap = max_render::layout::MINIMAP;
 
     if minimap.contains(x, y) {
-        let state = app.state();
-        let map_width = i32::from(state.map.size.width);
-        let map_height = i32::from(state.map.size.height);
+        let state = app.state_ref();
+        let map_width = i32::from(state.map().size.width);
+        let map_height = i32::from(state.map().size.height);
         let two_x = app.hud().panels.minimap_2x;
 
         if let Some((grid_x, grid_y)) =
@@ -2816,7 +2816,7 @@ fn session_map_left_click(
     let grid = viewport.screen_to_grid(x, y);
     if debug_input() {
         let at = app
-            .state()
+            .state_ref()
             .units_at(max_core::geo::Point::new(grid.0, grid.1))
             .len();
         let origin = viewport.origin();
@@ -2825,7 +2825,7 @@ fn session_map_left_click(
             grid.0, grid.1, origin.0, origin.1
         );
     }
-    let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) else {
+    let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) else {
         // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5832-5843`):
         // the selected builder in `ORDER_STATE_UNIT_READY` + a cell next to the
         // completed building (the `BLDMRK*` ring) — cursor `CURSOR_UNIT_GO`, and
@@ -2835,7 +2835,7 @@ fn session_map_left_click(
         let exit_cell = max_core::geo::Point::new(grid.0, grid.1);
         if let Some(selected) = app.hud().selected {
             if let Some(command) =
-                hud::build_builder_exit_click_order(app.state(), selected, exit_cell)
+                hud::build_builder_exit_click_order(app.state_ref(), selected, exit_cell)
             {
                 app.hud_mut().preview = None;
                 app.hud_mut().pending.push(command);
@@ -2862,9 +2862,8 @@ fn session_map_left_click(
         if app.hud().targeting_mode {
             if let Some(selected) = app.hud().selected {
                 let cell = max_core::geo::Point::new(grid.0, grid.1);
-                let in_range = app.state().unit(selected).is_some_and(|unit| {
-                    max_core::access::is_within_attack_range(
-                        app.state(),
+                let in_range = app.state_ref().unit(selected).is_some_and(|unit| {
+                    app.state_ref().is_within_attack_range(
                         unit,
                         cell,
                         i32::from(unit.base_values.get_attribute(
@@ -2874,7 +2873,7 @@ fn session_map_left_click(
                 });
 
                 if in_range {
-                    match hud::build_ground_fire_order(app.state(), selected, cell) {
+                    match hud::build_ground_fire_order(app.state_ref(), selected, cell) {
                         Some(command) => {
                             app.hud_mut().pending.push(command);
                             app.hud_mut()
@@ -2900,7 +2899,7 @@ fn session_map_left_click(
         return Transition::None;
     };
 
-    let (unit_team, label) = match app.state().unit(id) {
+    let (unit_team, label) = match app.state_ref().unit(id) {
         Some(unit) => (unit.team, unit_label(unit)),
         None => return Transition::None,
     };
@@ -2917,11 +2916,11 @@ fn session_map_left_click(
                 // X-FER: `GameManager_ProcessMouse` → CURSOR_TRANSFER →
                 // `GameManager_TransferCargo` → `TransferMenu_Menu`.
                 if cursor == crate::unitmenu::CURSOR_TRANSFER {
-                    match crate::transfermenu::resolve_target(app.state(), selected, id) {
+                    match crate::transfermenu::resolve_target(app.state_ref(), selected, id) {
                         Ok(Some(target)) => {
                             if app.open_transfer_menu(selected, target) {
                                 let label = app
-                                    .state()
+                                    .state_ref()
                                     .unit(target)
                                     .map(unit_label)
                                     .unwrap_or_else(|| format!("unit {target:?}"));
@@ -2940,7 +2939,7 @@ fn session_map_left_click(
                     return Transition::None;
                 }
 
-                match crate::unitmenu::cursor_mode_click(app.state(), selected, id, cursor) {
+                match crate::unitmenu::cursor_mode_click(app.state_ref(), selected, id, cursor) {
                     Ok(Some(command)) => {
                         app.hud_mut().pending.push(command);
                         let label = match cursor {
@@ -2974,7 +2973,7 @@ fn session_map_left_click(
                 if cursor == crate::unitmenu::CURSOR_LOAD {
                     // C++ gives the order only when the cursor is `CURSOR_LOAD`
                     // (`load_mode_applies`); otherwise the target is not accepted.
-                    let applies = match (app.state().unit(selected), app.state().unit(id)) {
+                    let applies = match (app.state_ref().unit(selected), app.state_ref().unit(id)) {
                         (Some(transport), Some(passenger)) => {
                             crate::unitmenu::load_mode_applies(transport, passenger)
                         }
@@ -2988,7 +2987,7 @@ fn session_map_left_click(
                         return Transition::None;
                     }
 
-                    match crate::unitmenu::load_mode_click(app.state(), selected, id) {
+                    match crate::unitmenu::load_mode_click(app.state_ref(), selected, id) {
                         Ok(Some(command)) => {
                             app.hud_mut().pending.push(command);
                             app.hud_mut()
@@ -3012,7 +3011,7 @@ fn session_map_left_click(
         // unit — `ORDER_MOVE_TO_UNIT` into its cell (boarding a transport).
         if app.hud().enter_mode {
             if let Some(selected) = selected.filter(|selected| *selected != id) {
-                if let Some(command) = crate::unitmenu::enter_mode_click(app.state(), selected, id)
+                if let Some(command) = crate::unitmenu::enter_mode_click(app.state_ref(), selected, id)
                 {
                     app.hud_mut().pending.push(command);
                     app.hud_mut().enter_mode = false;
@@ -3071,9 +3070,9 @@ fn session_map_left_click(
         // `GameManager_StealUnit`/`GameManager_DisableUnit`
         // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` goes into
         // packet 08/P3 (`stealth_dice_roll`), so the roll is generated here.
-        let roll = app.state_mut().rng.generate(101i32) as u8;
+        let roll = app.universe_mut().generate_rng_i32(101) as u8;
 
-        match crate::unitmenu::stealth_mode_click(app.state(), selected, id, cursor, roll) {
+        match crate::unitmenu::stealth_mode_click(app.state_ref(), selected, id, cursor, roll) {
             Ok(Some(command)) => {
                 app.hud_mut().pending.push(command);
                 let label = if cursor == crate::unitmenu::CURSOR_STEAL {
@@ -3102,7 +3101,7 @@ fn session_map_left_click(
         }
     }
 
-    match hud::build_attack_order(app.state(), selected, id) {
+    match hud::build_attack_order(app.state_ref(), selected, id) {
         Some(command) => {
             app.hud_mut().preview = None;
             app.hud_mut().pending.push(command);
@@ -3126,9 +3125,9 @@ fn session_map_left_click(
 /// is closed, like `MessageManager_ClearMessageBox` in `GameManager_UnitSelect`.
 fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
     let message = app
-        .state()
+        .state_ref()
         .unit(id)
-        .and_then(|unit| crate::panels::builder_status_message(app.state(), unit));
+        .and_then(|unit| crate::panels::builder_status_message(app.state_ref(), unit));
 
     match message {
         Some(text) => app.hud_mut().set_hint(text),
@@ -3179,9 +3178,9 @@ fn session_map_right_click(
     }
 
     // «Cancel — Esc/right click on the unit».
-    if let Some(id) = hud::unit_at_screen(app.state(), viewport, team, x, y) {
+    if let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) {
         let label = app
-            .state()
+            .state_ref()
             .unit(id)
             .map(unit_label)
             .unwrap_or_else(|| "unit".to_string());
@@ -3222,7 +3221,7 @@ fn session_map_right_click(
     // order goes to the container (`game_manager.cpp:6918-6926`),
     // `UnitsManager_ActivateUnit` brings the unit out. Checked **before**
     // `unit_can_move`: a ready aircraft in AIRPLT is also `ORDER_IDLE`.
-    if let Some(command) = hud::build_activate_order(app.state(), selected, destination) {
+    if let Some(command) = hud::build_activate_order(app.state_ref(), selected, destination) {
         app.hud_mut().preview = None;
         app.hud_mut().pending.push(command);
         app.hud_mut().push_log(format!(
@@ -3247,8 +3246,8 @@ fn session_map_right_click(
     // Aviation moves via `ORDER_MOVE`/`INIT` (packet 08/P3): the `AirPath` is built
     // by the simulation (`Paths_GetAirPath`), and `unit_can_move` deliberately
     // excludes `MOBILE_AIR_UNIT` (the ground `Packet38Move` does not suit it).
-    if app.state().unit(selected).is_some_and(|unit| unit.is_air()) {
-        match hud::build_air_move_order(app.state(), selected, destination) {
+    if app.state_ref().unit(selected).is_some_and(|unit| unit.is_air()) {
+        match hud::build_air_move_order(app.state_ref(), selected, destination) {
             Some(command) => {
                 app.hud_mut().preview = None;
                 app.hud_mut().pending.push(command);
@@ -3269,7 +3268,7 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    let can_move = app.state().unit(selected).is_some_and(hud::unit_can_move);
+    let can_move = app.state_ref().unit(selected).is_some_and(hud::unit_can_move);
 
     if !can_move {
         if debug {
@@ -3284,7 +3283,7 @@ fn session_map_right_click(
     // `IN_TRANSITION` — exactly `game_manager.cpp:6879-6890`. The path is not built
     // (C++ sets only `move_to`), so `build_move_order` is not called
     // here.
-    if let Some(command) = hud::build_builder_exit_order(app.state(), selected, destination) {
+    if let Some(command) = hud::build_builder_exit_order(app.state_ref(), selected, destination) {
         app.hud_mut().preview = None;
         app.hud_mut().pending.push(command);
         app.hud_mut().push_log(format!(
@@ -3312,7 +3311,7 @@ fn session_map_right_click(
     // It can only be taken away by an explicit `stop` in the popup
     // (`UnitsManager_Popup_OnClick_BuildStop` → `ORDER_BUILD`/`BUILD_CANCEL`).
     if let Some(site) = app
-        .state()
+        .state_ref()
         .unit(selected)
         .and_then(max_core::unit_order::active_build_site)
     {
@@ -3333,7 +3332,7 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    match hud::build_move_order(app.state(), selected, destination) {
+    match hud::build_move_order(app.state_ref(), selected, destination) {
         Some(order) => {
             let steps = order.preview.len();
             app.hud_mut().preview = Some(order.preview);
@@ -3456,7 +3455,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
         }
 
         let hud_view = hud::HudView {
-            state: app.state(),
+            state: app.state_ref(),
             hud: app.hud(),
             viewport: app.viewport(),
             team: app.player_team(),
@@ -4834,15 +4833,13 @@ mod tests {
 
         let (_ctx, _log) = context(Vec::new(), None);
         let mut app = App::new(AppConfig::default());
-        let id = app
-            .state_mut()
-            .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
+        let id = app.universe_mut().spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("center");
-        let mut unit = app.state().unit(id).cloned().expect("unit");
+        let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
         unit.research_topic = ResearchTopic::Attack;
-        app.state_mut().write_unit(id, unit);
-        app.state_mut()
+        app.universe_mut().write_unit(id, unit);
+        app.universe_mut()
             .update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
         app.hud_mut().select(Some(id));
 
@@ -4868,7 +4865,7 @@ mod tests {
         );
         assert!(app.research_menu().is_none());
         assert_eq!(
-            app.state().research_allocation(TeamId::RED)[ResearchTopic::Attack as usize],
+            app.state_ref().research_allocation(TeamId::RED)[ResearchTopic::Attack as usize],
             1
         );
     }
@@ -4880,13 +4877,11 @@ mod tests {
         use max_core::team::TeamId;
 
         let mut app = App::new(AppConfig::default());
-        let id = app
-            .state_mut()
-            .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+        let id = app.universe_mut().spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
             .expect("unit");
-        let mut unit = app.state().unit(id).cloned().expect("unit");
+        let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::Await;
-        app.state_mut().write_unit(id, unit);
+        app.universe_mut().write_unit(id, unit);
 
         // `?`/the HELP_OF button enables help mode (`HelpMenu_Menu`): there is no window,
         // an entry is chosen by clicking an element.

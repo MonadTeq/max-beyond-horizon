@@ -74,7 +74,9 @@
 
 use max_core::access;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::geo::{Point, DIRECTION_OFFSETS};
 use max_core::production;
 use max_core::team::TeamId;
@@ -153,7 +155,7 @@ impl BuildSiteSelect {
     /// The anchor is recomputed per axis separately and kept when the
     /// cursor is exactly on the builder's line (as in C++). For the engineer the 1×1 tape stands
     /// right in the cursor cell (`target_grid_x = grid_x` in C++).
-    pub fn update_cursor(&mut self, state: &GameState, cursor: Point) {
+    pub fn update_cursor(&mut self, state: StateRef<'_>, cursor: Point) {
         self.cursor = cursor;
 
         if let Some(unit) = state.unit(self.builder) {
@@ -170,7 +172,7 @@ impl BuildSiteSelect {
     /// Anchor for an arbitrary cursor cell (C++
     /// `GameManager_GetBuilderUnitCursor`): binding to the builder keeping the
     /// previous axis when the cursor is exactly on its line; for the engineer — the cell itself.
-    pub fn anchor_at(&self, state: &GameState, cursor: Point) -> Point {
+    pub fn anchor_at(&self, state: StateRef<'_>, cursor: Point) -> Point {
         if self.is_engineer() {
             return cursor;
         }
@@ -182,7 +184,7 @@ impl BuildSiteSelect {
     }
 
     /// Whether an arbitrary cursor cell is valid with the anchor `anchor`.
-    pub fn is_valid_at(&self, state: &GameState, anchor: Point, cursor: Point) -> bool {
+    pub fn is_valid_at(&self, state: StateRef<'_>, anchor: Point, cursor: Point) -> bool {
         let Some(unit) = state.unit(self.builder) else {
             return false;
         };
@@ -197,8 +199,7 @@ impl BuildSiteSelect {
             // a passable cell (`UnitsManager_MoveUnitAndParent`).
             return anchor == cursor
                 && production::engineer_site_covers(unit.grid, cursor)
-                && production::is_site_accessible_ignoring(
-                    state,
+                && state.is_site_accessible_ignoring(
                     self.team,
                     self.unit_type,
                     cursor,
@@ -215,8 +216,7 @@ impl BuildSiteSelect {
         }
 
         production::site_covers(self.unit_type, anchor, cursor)
-            && production::is_site_accessible_ignoring(
-                state,
+            && state.is_site_accessible_ignoring(
                 self.team,
                 self.unit_type,
                 anchor,
@@ -226,13 +226,13 @@ impl BuildSiteSelect {
 
     /// Whether the current cell is valid: the cursor is inside the 2×2 and the site is passable
     /// (`UnitsManager_MoveUnitAndParent` in C++).
-    pub fn valid(&self, state: &GameState) -> bool {
+    pub fn valid(&self, state: StateRef<'_>) -> bool {
         self.is_valid_at(state, self.anchor, self.cursor)
     }
 
     /// Window cursor: `CURSOR_MAP2` over a valid cell, `CURSOR_UNIT_NO_GO`
     /// over an invalid one (`GameManager_GetBuilderUnitCursor`).
-    pub fn cursor_id(&self, state: &GameState) -> CursorId {
+    pub fn cursor_id(&self, state: StateRef<'_>) -> CursorId {
         if self.valid(state) {
             CursorId::Map2
         } else {
@@ -241,7 +241,7 @@ impl BuildSiteSelect {
     }
 
     /// Status line text for the HUD/log.
-    pub fn status_line(&self, state: &GameState) -> String {
+    pub fn status_line(&self, state: StateRef<'_>) -> String {
         let (x, y) = (self.anchor.x, self.anchor.y);
 
         if self.valid(state) {
@@ -315,7 +315,7 @@ impl BuildSiteSelect {
 /// the current hull angle: the angle could have been turned to the working pose
 /// (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`). The builder's grid does not
 /// change on entry.
-pub fn tape_center_offset(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
+pub fn tape_center_offset(state: StateRef<'_>, unit: &UnitInfo) -> (i32, i32) {
     if unit.unit_type != UnitType::Constructor || !unit.is_mobile() {
         return (0, 0);
     }
@@ -448,13 +448,13 @@ impl crate::App {
             return false;
         };
         let (builder, team, builder_type) = (menu.unit, menu.team, menu.builder_type);
-        let Some(unit) = self.state().unit(builder) else {
+        let Some(unit) = self.state_ref().unit(builder) else {
             return false;
         };
         let builder_grid = unit.grid;
 
         let Some(anchor) =
-            production::initial_build_site(self.state(), team, unit_type, builder_grid, &[builder])
+            self.state_ref().initial_build_site( team, unit_type, builder_grid, &[builder])
         else {
             return false;
         };
@@ -491,7 +491,7 @@ impl crate::App {
         let (valid, anchor) = {
             let site = self.build_site.as_ref()?;
 
-            (site.valid(self.state()), site.anchor)
+            (site.valid(self.state_ref()), site.anchor)
         };
 
         if !valid {
@@ -502,7 +502,7 @@ impl crate::App {
 
         let site = self.build_site.take()?;
         let command = crate::buildmenu::build_order_command(
-            self.state(),
+            self.state_ref(),
             site.builder,
             site.anchor,
             &[site.unit_type],
@@ -615,8 +615,7 @@ mod tests {
         let (state, builder) = land_state();
         let grid = state.unit(builder).unwrap().grid;
 
-        let site = production::initial_build_site(
-            &state,
+        let site = StateRef::from(&state).initial_build_site(
             TeamId::RED,
             UnitType::TrainingHall,
             grid,
@@ -632,8 +631,7 @@ mod tests {
     fn cursor_selects_the_cell_the_player_points_at() {
         let (mut state, builder) = land_state();
         let grid = state.unit(builder).unwrap().grid;
-        let anchor = production::initial_build_site(
-            &state,
+        let anchor = StateRef::from(&state).initial_build_site(
             TeamId::RED,
             UnitType::TrainingHall,
             grid,
@@ -652,14 +650,14 @@ mod tests {
         );
 
         // Cursor on the builder's cell — valid, `CURSOR_MAP2`.
-        assert!(select.valid(&state));
-        assert_eq!(select.cursor_id(&state), CursorId::Map2);
+        assert!(select.valid(StateRef::from(&state)));
+        assert_eq!(select.cursor_id(StateRef::from(&state)), CursorId::Map2);
         assert_eq!(select.anchor, grid);
 
         // Cursor to the left — the anchor moves left together with the ghost.
-        select.update_cursor(&state, Point::new(grid.x - 1, grid.y));
+        select.update_cursor(StateRef::from(&state), Point::new(grid.x - 1, grid.y));
         assert_eq!(select.anchor, Point::new(grid.x - 1, grid.y));
-        assert!(select.valid(&state));
+        assert!(select.valid(StateRef::from(&state)));
 
         // Water under the site — invalid, `CURSOR_UNIT_NO_GO`.
         for dy in 0..2 {
@@ -675,8 +673,8 @@ mod tests {
                     .unwrap() = Surface::WATER;
             }
         }
-        assert!(!select.valid(&state));
-        assert_eq!(select.cursor_id(&state), CursorId::UnitNoGo);
+        assert!(!select.valid(StateRef::from(&state)));
+        assert_eq!(select.cursor_id(StateRef::from(&state)), CursorId::UnitNoGo);
     }
 
     #[test]
@@ -696,9 +694,9 @@ mod tests {
             far,
         );
 
-        assert!(!select.is_valid_at(&state, far, far));
-        assert!(!select.valid(&state));
-        assert_eq!(select.cursor_id(&state), CursorId::UnitNoGo);
+        assert!(!select.is_valid_at(StateRef::from(&state), far, far));
+        assert!(!select.valid(StateRef::from(&state)));
+        assert_eq!(select.cursor_id(StateRef::from(&state)), CursorId::UnitNoGo);
     }
 
     #[test]
@@ -719,7 +717,7 @@ mod tests {
 
         let unit = state.unit(builder).unwrap();
         assert_eq!(
-            tape_center_offset(&state, unit),
+            tape_center_offset(StateRef::from(&state), unit),
             (0, 0),
             "сдвиг к центру только для ленты, накрывающей строителя"
         );
@@ -748,12 +746,12 @@ mod tests {
         assert_eq!(state.unit(tape.tape).unwrap().parent_unit, Some(builder));
 
         let unit = state.unit(builder).unwrap();
-        assert_eq!(tape_center_offset(&state, unit), (-32, -32));
+        assert_eq!(tape_center_offset(StateRef::from(&state), unit), (-32, -32));
 
         let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
         let (unit_center_x, unit_center_y) = (
-            i32::from(unit.grid.x) * 64 + 32 + tape_center_offset(&state, unit).0,
-            i32::from(unit.grid.y) * 64 + 32 + tape_center_offset(&state, unit).1,
+            i32::from(unit.grid.x) * 64 + 32 + tape_center_offset(StateRef::from(&state), unit).0,
+            i32::from(unit.grid.y) * 64 + 32 + tape_center_offset(StateRef::from(&state), unit).1,
         );
         assert_eq!(
             (unit_center_x, unit_center_y),
@@ -769,7 +767,7 @@ mod tests {
         for moved in 0..=4u8 {
             state.unit_mut(builder).unwrap().moved = moved;
             let unit = state.unit(builder).unwrap();
-            let offset = tape_center_offset(&state, unit);
+            let offset = tape_center_offset(StateRef::from(&state), unit);
             assert_eq!(offset, (-8 * i32::from(moved), -8 * i32::from(moved)));
         }
     }
@@ -794,18 +792,18 @@ mod tests {
         // The builder is west of the center, facing east — the shift is exactly (1,0)*8.
         state.unit_mut(builder).unwrap().angle = 2;
         let unit = state.unit(builder).unwrap();
-        assert_eq!(tape_center_offset(&state, unit), (8, 0));
+        assert_eq!(tape_center_offset(StateRef::from(&state), unit), (8, 0));
 
         // Diagonal case: facing NW — the (1,1) diagonal.
         state.unit_mut(builder).unwrap().angle = 7;
         let unit = state.unit(builder).unwrap();
-        assert_eq!(tape_center_offset(&state, unit), (-8, -8));
+        assert_eq!(tape_center_offset(StateRef::from(&state), unit), (-8, -8));
 
         // The other directions — exactly `DIRECTION_OFFSETS[angle] * 8`.
         for angle in 0..8u8 {
             state.unit_mut(builder).unwrap().angle = angle;
             let unit = state.unit(builder).unwrap();
-            let offset = tape_center_offset(&state, unit);
+            let offset = tape_center_offset(StateRef::from(&state), unit);
             let step = DIRECTION_OFFSETS[usize::from(angle)];
 
             assert_eq!(
@@ -844,7 +842,7 @@ mod tests {
             unit.state = UnitOrderState::TapePositioningEnter;
 
             assert_eq!(
-                max_core::unit_order::get_target_unit_angle(&state, &unit, unit.target_grid),
+                StateRef::from(&state).target_unit_angle( &unit, unit.target_grid),
                 angle,
                 "клетка {grid:?}: C++ GetTargetUnitAngle"
             );
@@ -884,18 +882,18 @@ mod tests {
         unit.orders = UnitOrder::AwaitTapePositioning;
         unit.state = UnitOrderState::TapePositioningDeinit;
         unit.moved = 0;
-        assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
+        assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (-32, -32));
 
         // `ORDER_BUILD`/`BUILD_IN_PROGRESS`: the working pose in the tape center.
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::BuildInProgress;
-        assert_eq!(tape_center_offset(&state, &unit), (-32, -32));
+        assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (-32, -32));
 
         // `ORDER_BUILD`/`UNIT_READY`: the building is finished, the builder waits for a player
         // order — C++ does not move its `x`/`y`, so the sprite stays in the center.
         unit.state = UnitOrderState::UnitReady;
         assert_eq!(
-            tape_center_offset(&state, &unit),
+            tape_center_offset(StateRef::from(&state), &unit),
             (-32, -32),
             "после достройки строитель остаётся в центре ленты"
         );
@@ -906,7 +904,7 @@ mod tests {
         unit.orders = UnitOrder::Activate;
         unit.state = UnitOrderState::InTransition;
         assert_eq!(
-            tape_center_offset(&state, &unit),
+            tape_center_offset(StateRef::from(&state), &unit),
             (-32, -32),
             "кадр после клика игрока не «прыгает» в угол площадки"
         );
@@ -914,7 +912,7 @@ mod tests {
         // `ORDER_ACTIVATE`/`BUILD_IN_PROGRESS` — the state **after** leaving:
         // `PositionInTape` recomputed the cell, the sprite is again in the center of its cell.
         unit.state = UnitOrderState::BuildInProgress;
-        assert_eq!(tape_center_offset(&state, &unit), (0, 0));
+        assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (0, 0));
 
         // `TAPE_POSITIONING_LEAVE`: the same 32 px plus 8 px per tick toward
         // `move_to` (C++ `move_to_grid_*`): the target is west-north — NW.
@@ -931,7 +929,7 @@ mod tests {
             unit.moved = moved;
             let step = i32::from(moved);
             assert_eq!(
-                tape_center_offset(&state, &unit),
+                tape_center_offset(StateRef::from(&state), &unit),
                 (-32 - 8 * step, -32 - 8 * step),
                 "шаг {moved}: съезд с ленты к выбранной клетке"
             );
@@ -943,8 +941,8 @@ mod tests {
         let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
         assert_eq!(
             (
-                i32::from(unit.grid.x) * 64 + 32 + tape_center_offset(&state, &unit).0,
-                i32::from(unit.grid.y) * 64 + 32 + tape_center_offset(&state, &unit).1,
+                i32::from(unit.grid.x) * 64 + 32 + tape_center_offset(StateRef::from(&state), &unit).0,
+                i32::from(unit.grid.y) * 64 + 32 + tape_center_offset(StateRef::from(&state), &unit).1,
             ),
             (center_x - 32, center_y - 32),
             "съезд NW на 64 px уводит спрайт на клетку северо-западнее центра ленты"
@@ -981,13 +979,13 @@ mod tests {
         assert_eq!(unit.angle, 7, "строитель довернулся к ленте (NW)");
         assert_eq!(unit.moved, 0, "до доворота сдвига нет");
         state.write_unit(builder, unit.clone());
-        assert_eq!(tape_center_offset(&state, &unit), (0, 0));
+        assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (0, 0));
 
         // Tick 2: the angle is already the target — the first sliding step (−8,−8).
         max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
         assert_eq!(unit.moved, 1);
         state.write_unit(builder, unit.clone());
-        assert_eq!(tape_center_offset(&state, &unit), (-8, -8));
+        assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (-8, -8));
 
         // Ticks 3–5: three more steps of 8 px — exactly to the tape center.
         for step in 2..=4u8 {
@@ -995,14 +993,14 @@ mod tests {
             assert_eq!(unit.moved, step);
             state.write_unit(builder, unit.clone());
             assert_eq!(
-                tape_center_offset(&state, &unit),
+                tape_center_offset(StateRef::from(&state), &unit),
                 (-8 * i32::from(step), -8 * i32::from(step)),
                 "шаг {step}: скольжение по диагонали NW"
             );
         }
 
         let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
-        let offset = tape_center_offset(&state, &unit);
+        let offset = tape_center_offset(StateRef::from(&state), &unit);
         assert_eq!(
             (
                 i32::from(unit.grid.x) * 64 + 32 + offset.0,
@@ -1021,7 +1019,7 @@ mod tests {
         assert_eq!(unit.moved, 0);
         state.write_unit(builder, unit.clone());
         assert_eq!(
-            tape_center_offset(&state, &unit),
+            tape_center_offset(StateRef::from(&state), &unit),
             (-32, -32),
             "рабочая поза остаётся в центре ленты"
         );

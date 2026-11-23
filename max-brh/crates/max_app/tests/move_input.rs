@@ -92,12 +92,12 @@ fn phased_app() -> Option<(App, max_core::unit::UnitId)> {
     app.new_game_on_surface(&config, &surface);
 
     let surveyor = app
-        .state()
+        .state_ref()
         .unit_list(UnitListKind::MobileLandSea)
         .iter()
         .copied()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_type == UnitType::Surveyor
             })
         })
@@ -130,10 +130,10 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
 
     let assets = app.assets().expect("ассеты");
     let find = |unit_type| {
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .find(|unit| unit.team == TeamId::RED && unit.unit_type == unit_type)
             .unwrap_or_else(|| panic!("{unit_type:?} не высажен"))
     };
@@ -151,8 +151,8 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
         let sprite = assets.sprite(unit.unit_type).expect("спрайт");
         let base = max_app::render::image_base_for(
             unit,
-            app.state()
-                .teams
+            app.state_ref()
+                .teams()
                 .get(unit.team.0 as usize)
                 .map(|team| team.team_clan),
         );
@@ -205,8 +205,8 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
         let sprite = assets.sprite(unit.unit_type).expect("спрайт");
         let base = max_app::render::image_base_for(
             unit,
-            app.state()
-                .teams
+            app.state_ref()
+                .teams()
                 .get(unit.team.0 as usize)
                 .map(|team| team.team_clan),
         );
@@ -232,10 +232,10 @@ fn camera_centers_on_the_mining_station_like_cpp() {
     app.new_game_on_surface(&config, &land_surface());
 
     let base = app
-        .state()
+        .state_ref()
         .unit_list(UnitListKind::Stationary)
         .iter()
-        .filter_map(|id| app.state().unit(*id))
+        .filter_map(|id| app.state_ref().unit(*id))
         .find(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation)
         .expect("шахта высажена")
         .grid;
@@ -337,10 +337,10 @@ fn base_is_centred_and_the_qa_click_lands_on_the_surveyor() {
     };
 
     let base = app
-        .state()
+        .state_ref()
         .unit_list(UnitListKind::Stationary)
         .iter()
-        .filter_map(|id| app.state().unit(*id))
+        .filter_map(|id| app.state_ref().unit(*id))
         .find(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation)
         .expect("шахта высажена")
         .grid;
@@ -357,7 +357,7 @@ fn base_is_centred_and_the_qa_click_lands_on_the_surveyor() {
     // `move-input.qa` clicks (468,178): with the camera on the mine this is the Surveyor's
     // cell. If the camera moves, the scenario coordinates must be
     // recomputed — the test will catch it.
-    let surveyor_grid = app.state().unit(surveyor).expect("Surveyor").grid;
+    let surveyor_grid = app.state_ref().unit(surveyor).expect("Surveyor").grid;
     assert_eq!(
         surveyor_grid,
         Point::new(base.x + 1, base.y - 1),
@@ -380,9 +380,9 @@ fn move_order_moves_the_unit_on_following_ticks() {
         return;
     };
 
-    let grid = app.state().unit(surveyor).expect("Surveyor").grid;
+    let grid = app.state_ref().unit(surveyor).expect("Surveyor").grid;
     let destination = Point::new(grid.x + 1, grid.y);
-    let Some(order) = build_move_order(app.state(), surveyor, destination) else {
+    let Some(order) = build_move_order(app.state_ref(), surveyor, destination) else {
         return;
     };
 
@@ -390,13 +390,13 @@ fn move_order_moves_the_unit_on_following_ticks() {
     app.flush_orders();
 
     let mut ticks = 0;
-    while app.state().unit(surveyor).map(|unit| unit.grid) != Some(destination) && ticks < 120 {
+    while app.state_ref().unit(surveyor).map(|unit| unit.grid) != Some(destination) && ticks < 120 {
         app.tick();
         ticks += 1;
     }
 
     assert_eq!(
-        app.state().unit(surveyor).map(|unit| unit.grid),
+        app.state_ref().unit(surveyor).map(|unit| unit.grid),
         Some(destination),
         "юнит должен дойти до (24,21) за {ticks} тиков, а не стоять на месте"
     );
@@ -408,7 +408,7 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
         return;
     };
 
-    let grid = app.state().unit(surveyor).expect("Surveyor").grid;
+    let grid = app.state_ref().unit(surveyor).expect("Surveyor").grid;
     let (x, y) = screen_point(&app, grid);
 
     handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
@@ -427,11 +427,11 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
             }
 
             let point = Point::new(grid.x + dx, grid.y + dy);
-            if !app.state().units_at(point).is_empty() {
+            if !app.state_ref().units_at(point).is_empty() {
                 continue;
             }
 
-            if build_move_order(app.state(), surveyor, point).is_some() {
+            if build_move_order(app.state_ref(), surveyor, point).is_some() {
                 destination = Some(point);
                 break;
             }
@@ -536,10 +536,10 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
     app.new_game_on_surface(&config, &surface);
 
     let find = |unit_type| {
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .find(|unit| unit.team == TeamId::RED && unit.unit_type == unit_type)
             .unwrap_or_else(|| panic!("{unit_type:?} не высажен"))
     };
@@ -568,10 +568,10 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
 
     // On the landing cell there is exactly the mine and the slab; the generator is not there.
     let types_at_base: Vec<UnitType> = app
-        .state()
+        .state_ref()
         .units_at(mining.grid)
         .iter()
-        .filter_map(|id| app.state().unit(*id))
+        .filter_map(|id| app.state_ref().unit(*id))
         .map(|unit| unit.unit_type)
         .collect();
 
@@ -603,16 +603,16 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     );
 
     let surveyor = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_type == UnitType::Surveyor
             })
         })
         .expect("Surveyor высажен");
-    let start = app.state().unit(surveyor).expect("Surveyor").grid;
+    let start = app.state_ref().unit(surveyor).expect("Surveyor").grid;
 
     // LMB on the Surveyor cell: the camera is already on the mine (`focus_player`), the click
     // arrives in the same coordinate system as the window.
@@ -629,11 +629,11 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
             }
 
             let point = Point::new(start.x + dx, start.y + dy);
-            if !app.state().units_at(point).is_empty() {
+            if !app.state_ref().units_at(point).is_empty() {
                 continue;
             }
 
-            if build_move_order(app.state(), surveyor, point).is_some() {
+            if build_move_order(app.state_ref(), surveyor, point).is_some() {
                 destination = Some(point);
                 break 'search;
             }
@@ -684,7 +684,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
             seen.push(position);
         }
 
-        let grid = app.state().unit(surveyor).map(|unit| unit.grid);
+        let grid = app.state_ref().unit(surveyor).map(|unit| unit.grid);
         let target = (f32::from(destination.x), f32::from(destination.y));
 
         if grid == Some(destination) && position == target {
@@ -693,7 +693,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     }
 
     assert_eq!(
-        app.state().unit(surveyor).map(|unit| unit.grid),
+        app.state_ref().unit(surveyor).map(|unit| unit.grid),
         Some(destination),
         "после приказа юнит обязан дойти до ({}, {})",
         destination.x,
@@ -730,7 +730,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     }
 
     assert_eq!(
-        app.state().unit(surveyor).map(|unit| unit.grid),
+        app.state_ref().unit(surveyor).map(|unit| unit.grid),
         Some(destination),
         "End Turn не должен откатывать или терять приказ"
     );
@@ -746,7 +746,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         "после хода ИИ снова ход человека"
     );
     assert_eq!(
-        app.state().unit(surveyor).map(|unit| unit.grid),
+        app.state_ref().unit(surveyor).map(|unit| unit.grid),
         Some(destination)
     );
     assert_eq!(

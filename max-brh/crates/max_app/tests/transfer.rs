@@ -82,11 +82,11 @@ fn game_app() -> Option<App> {
 }
 
 fn unit_of_type(app: &App, unit_type: UnitType) -> UnitId {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_type == unit_type
             })
         })
@@ -102,7 +102,7 @@ fn key(app: &mut App, key: Key) -> Transition {
 }
 
 fn frame_point(app: &mut App, id: UnitId) -> (i32, i32) {
-    let grid = app.state().unit(id).expect("unit").grid;
+    let grid = app.state_ref().unit(id).expect("unit").grid;
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
 
@@ -127,18 +127,18 @@ fn prepare_transfer(app: &mut App) -> (UnitId, UnitId) {
     let constructor = unit_of_type(app, UnitType::Constructor);
 
     let complex = app
-        .state()
+        .state_ref()
         .unit(mine)
         .and_then(|unit| unit.complex)
         .expect("у шахты есть комплекс");
 
-    app.state_mut().unit_mut(mine).expect("mine").storage = 10;
-    app.state_mut()
+    app.universe_mut().unit_mut(mine).expect("mine").storage = 10;
+    app.universe_mut()
         .unit_mut(constructor)
         .expect("constructor")
         .storage = 40;
     if let Some(target) = app
-        .state_mut()
+        .universe_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
     {
         target.raw = 10;
@@ -228,28 +228,28 @@ fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
 
     // The order is applied (offline — immediately), but `ProcessTransfer` runs on the tick.
     assert_eq!(
-        app.state().unit(mine).expect("mine").orders,
+        app.state_ref().unit(mine).expect("mine").orders,
         UnitOrder::Transfer
     );
     app.tick();
 
     assert_eq!(
-        app.state().unit(mine).expect("mine").storage,
+        app.state_ref().unit(mine).expect("mine").storage,
         4,
         "шахта отдала 6"
     );
     assert_eq!(
-        app.state().unit(constructor).expect("constructor").storage,
+        app.state_ref().unit(constructor).expect("constructor").storage,
         46,
         "конструктор принял 6"
     );
     let complex = app
-        .state()
+        .state_ref()
         .unit(mine)
         .and_then(|unit| unit.complex)
         .expect("комплекс");
     assert_eq!(
-        app.state()
+        app.state_ref()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("комплекс")
             .raw,
@@ -257,7 +257,7 @@ fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
         "запас комплекса уменьшился на 6"
     );
     assert_eq!(
-        app.state().unit(mine).expect("mine").orders,
+        app.state_ref().unit(mine).expect("mine").orders,
         UnitOrder::PowerOn,
         "RestoreOrders вернул PowerOn"
     );
@@ -277,13 +277,13 @@ fn xfer_cancel_and_zero_amount_do_not_change_storage() {
 
     app.tick();
 
-    assert_eq!(app.state().unit(mine).expect("mine").storage, 10);
+    assert_eq!(app.state_ref().unit(mine).expect("mine").storage, 10);
     assert_eq!(
-        app.state().unit(constructor).expect("constructor").storage,
+        app.state_ref().unit(constructor).expect("constructor").storage,
         40
     );
     assert_eq!(
-        app.state().unit(mine).expect("mine").orders,
+        app.state_ref().unit(mine).expect("mine").orders,
         UnitOrder::PowerOn
     );
 
@@ -293,7 +293,7 @@ fn xfer_cancel_and_zero_amount_do_not_change_storage() {
     let _ = key(&mut app, Key::Enter);
     assert!(app.transfer_menu().is_none());
     app.tick();
-    assert_eq!(app.state().unit(mine).expect("mine").storage, 10);
+    assert_eq!(app.state_ref().unit(mine).expect("mine").storage, 10);
 }
 
 #[test]

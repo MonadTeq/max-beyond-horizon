@@ -23,10 +23,10 @@ use max_core::universe::SubmitOutcome;
 
 fn app() -> App {
     let mut app = App::new(AppConfig::default());
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().teams[1].team_type = TeamKind::Computer;
-    app.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    app.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().teams_mut()[1].team_type = TeamKind::Computer;
+    app.universe_mut().team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
     app
 }
 
@@ -50,15 +50,15 @@ fn state_ref_is_the_canonical_state_of_the_app() {
         app.snapshot(),
         "the facade snapshot must carry the canonical state bytes"
     );
-    assert_eq!(app.state_ref().turn_counter(), app.state().turn_counter);
+    assert_eq!(app.state_ref().turn_counter(), app.state_ref().turn_counter());
     assert_eq!(
         app.state_ref().active_turn_team(),
-        app.state().active_turn_team
+        app.state_ref().active_turn_team()
     );
 
     // `Q22`: the presentation fields are part of the facade snapshot.
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             max_core::enums::UnitType::Tank,
             TeamId::RED,
@@ -71,7 +71,7 @@ fn state_ref_is_the_canonical_state_of_the_app() {
         "UnitPresentation must be readable through StateRef"
     );
     assert_eq!(
-        app.state()
+        app.state_ref()
             .presentation(id)
             .map(|presentation| presentation.clone()),
         app.state_ref()
@@ -90,7 +90,7 @@ fn app_tick_adds_nothing_to_the_simulation_state() {
 
     for _ in 0..5 {
         facade.tick();
-        direct.state_mut().tick();
+        direct.universe_mut().tick();
     }
 
     assert_eq!(
@@ -105,10 +105,10 @@ fn app_tick_adds_nothing_to_the_simulation_state() {
     );
 
     // Single player never steps the barrier counters (gate 4, owner item 4).
-    let state = facade.state();
-    assert_eq!(state.frame_sync_counter, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(state.turn_indices, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(state.next_turn_indices, [0; max_core::TEAM_SLOTS]);
+    let state = facade.state_ref();
+    assert_eq!(state.frame_sync_counter(), [0; max_core::TEAM_SLOTS]);
+    assert_eq!(state.turn_indices(), [0; max_core::TEAM_SLOTS]);
+    assert_eq!(state.next_turn_indices(), [0; max_core::TEAM_SLOTS]);
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn app_order_command_travels_through_the_facade() {
     // that applies it — the documented one-command stage of the single path.
     let mut app = app();
     let red = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             max_core::enums::UnitType::Tank,
             TeamId::RED,
@@ -151,8 +151,8 @@ fn app_order_command_travels_through_the_facade() {
             max_core::enums::unit_flags::MOBILE_LAND_UNIT | max_core::enums::unit_flags::SELECTABLE,
         )
         .expect("tank");
-    app.state_mut().active_turn_team = TeamId::RED;
-    app.state_mut().player_team = TeamId::RED;
+    app.universe_mut().set_active_turn_team(TeamId::RED);
+    app.universe_mut().set_player_team(TeamId::RED);
 
     let order = command_move_linear(
         red,
@@ -162,11 +162,11 @@ fn app_order_command_travels_through_the_facade() {
         UnitOrderState::InProgress,
     );
     assert_eq!(app.submit(order), SubmitOutcome::Accepted);
-    assert!(!app.state().commands.is_empty(), "the order is queued");
+    assert!(!app.state_ref().commands().is_empty(), "the order is queued");
 
     app.tick();
     assert!(
-        app.state().commands.is_empty(),
+        app.state_ref().commands().is_empty(),
         "the order is applied at the start of the tick"
     );
 }

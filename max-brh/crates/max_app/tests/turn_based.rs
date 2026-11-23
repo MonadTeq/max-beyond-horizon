@@ -124,15 +124,15 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     );
 
     // The target is visible to the shooter (in the match — survey): a deterministic shot.
-    app.state_mut().ai.all_visible = true;
-    app.state_mut().update_visibility_status(false);
+    app.universe_mut().ai_mut().all_visible = true;
+    app.universe_mut().update_visibility_status(false);
 
     let base = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find_map(|id| {
-            app.state()
+            app.state_ref()
                 .unit(id)
                 .filter(|unit| unit.team == TeamId::RED)
                 .map(|unit| unit.grid)
@@ -143,7 +143,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     let target_grid = Point::new((base.x + 9).min(110), base.y);
 
     let launcher = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::MissileCrawler,
             TeamId::RED,
@@ -152,7 +152,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
         )
         .expect("снайпер-ракетчик");
     let target = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::GREEN,
@@ -160,12 +160,12 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
             MOBILE_LAND_UNIT | SELECTABLE,
         )
         .expect("цель");
-    app.state_mut().update_visibility_status(false);
+    app.universe_mut().update_visibility_status(false);
 
-    let mut data = app.state_mut().order_data(launcher);
+    let mut data = app.state_ref().order_data(launcher);
     data.fire_on = target_grid;
-    app.state_mut().set_order_data(launcher, data);
-    app.state_mut()
+    app.universe_mut().set_order_data(launcher, data);
+    app.universe_mut()
         .set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
 
     // The player presses End Turn without waiting for the hit.
@@ -178,7 +178,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
         "после End Turn ходит компьютер"
     );
 
-    let turn_before = app.state().turn_counter;
+    let turn_before = app.state_ref().turn_counter();
     let mut saw_missile = false;
     let mut saw_explosion = false;
 
@@ -186,8 +186,8 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     for _ in 0..3_000 {
         app.local_update(0.0);
 
-        for id in app.state().unit_ids_in_order() {
-            if let Some(unit) = app.state().unit(id) {
+        for id in app.state_ref().unit_ids_in_order() {
+            if let Some(unit) = app.state_ref().unit(id) {
                 if unit.unit_type == UnitType::Rocket {
                     saw_missile = true;
                 }
@@ -209,25 +209,25 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
          counters={:?}",
         app.local().map(|local| local.phase),
         (0..4)
-            .map(|team| app.state().ai.players[team].end_turn_retry_counter)
+            .map(|team| app.state_ref().ai().players[team].end_turn_retry_counter)
             .collect::<Vec<_>>()
     );
     assert!(
-        app.state().turn_counter > turn_before,
+        app.state_ref().turn_counter() > turn_before,
         "раунд должен закрыться (turn_counter)"
     );
     assert!(saw_missile, "снаряд ROCKET должен был появиться");
     assert!(saw_explosion, "взрыв попадания должен был появиться");
     assert!(
-        app.state().unit(target).is_none_or(|unit| unit.hits < 24),
+        app.state_ref().unit(target).is_none_or(|unit| unit.hits < 24),
         "ракета должна была попасть в цель"
     );
 
     let leftovers: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| combat_effect(unit.unit_type))
         .map(|unit| unit.unit_type)
         .collect();
@@ -301,7 +301,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
         assert!(app.local_acknowledge_turn());
     }
 
-    assert!(app.state().turn_counter >= 4, "раунды закрываются");
+    assert!(app.state_ref().turn_counter() >= 4, "раунды закрываются");
 }
 
 /// SP in Turn Based: several rounds in a row, the AI turn closes normally.
@@ -314,7 +314,7 @@ fn several_turn_based_rounds_close_without_hanging() {
     app.start_local_game(&setup_vs_one_ai()).expect("партия");
 
     for turn in 1..=4 {
-        assert_eq!(app.state().turn_counter, turn);
+        assert_eq!(app.state_ref().turn_counter(), turn);
         assert_eq!(
             app.local().map(|local| local.phase),
             Some(LocalPhase::PlayerTurn)
@@ -327,5 +327,5 @@ fn several_turn_based_rounds_close_without_hanging() {
         );
     }
 
-    assert_eq!(app.state().turn_counter, 5);
+    assert_eq!(app.state_ref().turn_counter(), 5);
 }

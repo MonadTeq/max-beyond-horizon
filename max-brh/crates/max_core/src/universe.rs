@@ -38,17 +38,24 @@
 //!
 //! The module is I/O-, thread- and float-free (`max_core` rules).
 
+use crate::ai::AiState;
+use crate::classification::Environment;
 use crate::crc;
-use crate::enums::{GameStateType, PlayMode, UnitOrder, UnitOrderState, UnitType, VictoryType};
-use crate::events::{self, ApplyOutcome, StateSyncPacket};
+use crate::enums::{
+    GameStateType, PlayMode, ResearchTopic, UnitOrder, UnitOrderState, UnitType, VictoryType,
+    RESEARCH_TOPIC_COUNT,
+};
+use crate::events::{self, ApplyOutcome, CommandQueue, StateSyncPacket, UnitEvent};
 use crate::game::{GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use crate::geo::Point;
-use crate::input::Command;
+use crate::input::{Command, Packet12MissionSupply};
+use crate::pathfinding::PathRequest;
 use crate::production::ProductionEvent;
 use crate::research::ResearchEvent;
-use crate::team::{TeamId, TeamInfo, TeamKind, TeamUnits};
+use crate::save_write::SaveMeta;
+use crate::team::{Cargo, Complex, TeamId, TeamInfo, TeamKind, TeamUnits};
 use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPresentation};
-use crate::victory::{self, MissionCategory, WinLossStatus};
+use crate::victory::{self, CargoType, MissionCategory, NetProduction, WinLossStatus};
 
 use max_types::map::Map;
 
@@ -117,6 +124,15 @@ pub enum RoutedCommand {
 pub enum RemoteHandling {
     /// Put into the queue in receive order.
     Replay(Command),
+    /// Apply the barrier-consent packet `00`/`52`/`45` **immediately** (A4).
+    ///
+    /// A barrier packet is not a lockstep command: [`GameState::begin_turn_barrier_reached`]
+    /// and the other consent predicates are read by `net::wait_barrier`, which does not
+    /// advance time. A `Replay`ed barrier would deadlock the barrier wait until its
+    /// 30-second timeout and shift the CRC counters by one tick (decision A4,
+    /// `game-universe-stage-b.md` §0.2). The facade applies it right away through
+    /// `events::apply_command` and counts it as a state version.
+    ApplyBarrier(Command),
     /// Apply the authoritative state immediately (packet 54).
     ApplyStateSync(StateSyncPacket),
     /// Ignore.
@@ -524,6 +540,11 @@ impl<'a> StateRef<'a> {
         &self.state.mission_supplies
     }
 
+    /// The replay digest CRC (`crc.rs`) — the trailer of `replay_digest_bytes`.
+    pub fn replay_digest_crc(&self) -> u16 {
+        crc::replay_digest_crc(self.state)
+    }
+
     /// The canonical replay digest (`crc.rs:242`) — end-to-end parity bytes.
     pub fn replay_digest_bytes(&self) -> Vec<u8> {
         crc::replay_digest_bytes(self.state)
@@ -532,6 +553,328 @@ impl<'a> StateRef<'a> {
     /// The canonical state bytes.
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         self.state.snapshot_bytes()
+    }
+
+    // — stage B §6: the rest of the read surface used by `max_app` —
+    //
+    // Every accessor below is a 1:1 read of a `GameState` field/method or of a
+    // read-only `max_core` query helper that takes `&GameState`. They exist so that
+    // `max_app` never has to name `GameState` (stage-b §6 item 1); none of them
+    // mutates the state or advances `seq`.
+
+    /// `CTInfo::team_units[PLAYER_TEAM_MAX]` — the team-economy table
+    /// (`game.rs:224`).
+    pub fn team_units(&self) -> &'a [TeamUnits; TEAM_SLOTS] {
+        &self.state.team_units
+    }
+
+    /// `ini_setting_victory_type` (`game.rs:392`).
+    pub fn victory_type(&self) -> VictoryType {
+        self.state.victory_type
+    }
+
+    /// `ini_setting_victory_limit` (`game.rs:393`).
+    pub fn victory_limit(&self) -> i32 {
+        self.state.victory_limit
+    }
+
+    /// `MissionManager::GetMission()->GetCategory()` (`game.rs:389`).
+    pub fn mission_category(&self) -> MissionCategory {
+        self.state.mission_category
+    }
+
+    /// `SaveFormatHeader::mission_index` (`game.rs:387`).
+    pub fn mission_index(&self) -> u16 {
+        self.state.mission_index
+    }
+
+    /// `Remote_IsNetworkGame` (`game.rs:350`).
+    pub fn network_game(&self) -> bool {
+        self.state.network_game
+    }
+
+    /// The `enemy_halt` setting (`game.rs:373`).
+    pub fn enemy_halt(&self) -> bool {
+        self.state.enemy_halt
+    }
+
+    /// The `effects` setting (`game.rs:355`).
+    pub fn settings_effects(&self) -> bool {
+        self.state.settings_effects
+    }
+
+    /// The `disable_fire` setting (`game.rs:357`).
+    pub fn disable_fire(&self) -> bool {
+        self.state.disable_fire
+    }
+
+    /// `GameManager_RealTime` (`game.rs:360`).
+    pub fn real_time(&self) -> bool {
+        self.state.real_time
+    }
+
+    /// The AI state (players, task manager, heat maps) — `game.rs:366`.
+    pub fn ai(&self) -> &'a AiState {
+        &self.state.ai
+    }
+
+    /// V70 save data that is not simulation state (`game.rs:383`).
+    pub fn save_meta(&self) -> &'a SaveMeta {
+        &self.state.save_meta
+    }
+
+    /// `TeamUnits::CreateComplex`-computed research allocation (`game.rs:1994`).
+    pub fn research_allocation(&self, team: TeamId) -> [u32; RESEARCH_TOPIC_COUNT] {
+        self.state.research_allocation(team)
+    }
+
+    /// `GameManager_TeamTurnTurnBased` round cursor (`game.rs:265`) — not CRC state.
+    pub fn round_team(&self) -> usize {
+        self.state.round_team
+    }
+
+    /// `UnitsManager_OrdersPending` (`game.rs:294`).
+    pub fn orders_pending(&self) -> bool {
+        self.state.orders_pending
+    }
+
+    /// The complex industry message of the last production turn (`game.rs:336`).
+    pub fn industry_message(&self) -> Option<&'a str> {
+        self.state.industry_message.as_deref()
+    }
+
+    /// The path request queue (`game.rs:262`).
+    pub fn path_requests(&self) -> &'a std::collections::VecDeque<PathRequest> {
+        &self.state.path_requests
+    }
+
+    /// The incoming command queue (`game.rs:378`).
+    pub fn commands(&self) -> &'a CommandQueue {
+        &self.state.commands
+    }
+
+    /// `UnitEvent_UnitEvents` (`game.rs:312`).
+    pub fn unit_events(&self) -> &'a [UnitEvent] {
+        &self.state.unit_events
+    }
+
+    /// A team complex by id (`game.rs:3139`).
+    pub fn complex(&self, team: TeamId, complex_id: u16) -> Option<&'a Complex> {
+        self.state.complex(team, complex_id)
+    }
+
+    /// V70 save bytes of the state (`save_write.rs`).
+    pub fn to_save_bytes(&self) -> Result<Vec<u8>, crate::save::SaveError> {
+        self.state.to_save_bytes()
+    }
+
+    // — stage B §6: read-only `max_core` query helpers the UI layer needs —
+    //
+    // `max_app` calls these `max_core` functions with `&GameState` today; after
+    // stage B the state is not nameable there, so the read-only subset is exposed
+    // on `StateRef` as a 1:1 forward (`AI-хуки`/access/production/victory/transfer
+    // queries, stage-b §6 item 1).
+
+    /// `Paths_GetGroundPath` (`pathfinding.rs`) — the HUD route preview query.
+    pub fn find_ground_path(
+        &self,
+        unit: &UnitInfo,
+        destination: Point,
+        flags: u32,
+        minimum_distance: i32,
+    ) -> Option<crate::unit::GroundPath> {
+        crate::pathfinding::find_ground_path(self.state, unit, destination, flags, minimum_distance)
+    }
+    /// `Access_IsEngaged` (`access.rs:1145`).
+    pub fn is_engaged(&self, unit: &UnitInfo) -> bool {
+        crate::access::is_engaged(self.state, unit)
+    }
+
+    /// `Access_GetGroupMembers`-style group lookup (`access.rs:1532`).
+    pub fn group_members_of(&self, id: UnitId) -> Option<Vec<UnitId>> {
+        crate::access::group_members_of(self.state, id)
+    }
+
+    /// `Access_IsAccessible` (`access.rs:365`).
+    pub fn is_accessible(&self, unit_type: UnitType, team: TeamId, grid: Point, flags: u32) -> u32 {
+        crate::access::is_accessible(self.state, unit_type, team, grid, flags)
+    }
+
+    /// `Access_GetTeamUnit` (`access.rs:875`).
+    pub fn get_team_unit(&self, grid: Point, team: TeamId, flags: u32) -> Option<UnitId> {
+        crate::access::get_team_unit(self.state, grid, team, flags)
+    }
+
+    /// `Access_GetTeamUnitByEnvironment` (`access.rs:896`).
+    pub fn get_team_unit_by_environments(
+        &self,
+        grid: Point,
+        team: TeamId,
+        environments: &[Environment],
+    ) -> Option<UnitId> {
+        crate::access::get_team_unit_by_environments(self.state, grid, team, environments)
+    }
+
+    /// `Access_GetAttackTarget` (`access.rs:790`).
+    pub fn get_attack_target(&self, unit: &UnitInfo, grid: Point, mode: bool) -> Option<UnitId> {
+        crate::access::get_attack_target(self.state, unit, grid, mode)
+    }
+
+    /// `Access_WithinAttackRange` (`access.rs:624`).
+    pub fn is_within_attack_range(&self, unit: &UnitInfo, grid: Point, range: i32) -> bool {
+        crate::access::is_within_attack_range(self.state, unit, grid, range)
+    }
+
+    /// `Access_IsValidAttackTarget` (`access.rs:769`).
+    pub fn is_valid_attack_target(&self, attacker: &UnitInfo, target: &UnitInfo) -> bool {
+        crate::access::is_valid_attack_target(self.state, attacker, target)
+    }
+
+    /// `Access_GetReceiverUnit` (`access.rs:1034`).
+    pub fn get_receiver_unit(&self, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
+        crate::access::get_receiver_unit(self.state, unit, grid)
+    }
+
+    /// `UnitInfo::GetTargetUnitAngle` (`unit_order.rs:584`).
+    pub fn target_unit_angle(&self, unit: &UnitInfo, move_to: Point) -> i32 {
+        crate::unit_order::get_target_unit_angle(self.state, unit, move_to)
+    }
+
+    /// `UnitInfo::GetTurnsToBuild` (`production.rs`) — the team's upgrade value.
+    pub fn turns_to_build(&self, team: TeamId, unit_type: UnitType) -> i32 {
+        crate::production::turns_to_build(self.state, team, unit_type)
+    }
+
+    /// `UnitInfo::GetTurnsAndConsumption` (`production.rs`).
+    pub fn turns_and_consumption(
+        &self,
+        builder: &UnitInfo,
+        unit_type: UnitType,
+        build_speed_multiplier: i32,
+    ) -> (i32, i32) {
+        crate::production::turns_and_consumption(
+            self.state,
+            builder,
+            unit_type,
+            build_speed_multiplier,
+        )
+    }
+
+    /// `TaskCreateBuilding::FindBuildSite` (`production.rs`).
+    pub fn find_build_site(
+        &self,
+        team: TeamId,
+        unit_type: UnitType,
+        origin: Point,
+    ) -> Option<Point> {
+        crate::production::find_build_site(self.state, team, unit_type, origin)
+    }
+
+    /// `Builder_AwaitingExit` (`production.rs`).
+    pub fn builder_awaiting_exit(&self, builder_id: UnitId) -> Option<UnitId> {
+        crate::production::builder_awaiting_exit(self.state, builder_id)
+    }
+
+    /// `UnitsManager_GetBuildSite` (`production.rs`).
+    pub fn initial_build_site(
+        &self,
+        team: TeamId,
+        unit_type: UnitType,
+        builder_grid: Point,
+        ignored: &[UnitId],
+    ) -> Option<Point> {
+        crate::production::initial_build_site(self.state, team, unit_type, builder_grid, ignored)
+    }
+
+    /// `UnitsManager_IsAccessible` (`production.rs`).
+    pub fn is_site_accessible_ignoring(
+        &self,
+        team: TeamId,
+        unit_type: UnitType,
+        site: Point,
+        ignored: &[UnitId],
+    ) -> bool {
+        crate::production::is_site_accessible_ignoring(self.state, team, unit_type, site, ignored)
+    }
+
+    /// `PrepareConstructionSite` (`production.rs`) — the construction tape at `site`.
+    pub fn construction_utility(&self, team: TeamId, site: Point) -> Option<UnitId> {
+        crate::production::construction_utility(self.state, team, site)
+    }
+
+    /// `UnitInfo::GetActivationExitCell` (`production.rs`).
+    pub fn factory_exit_cell(&self, container: &UnitInfo, client: &UnitInfo) -> Option<Point> {
+        crate::production::factory_exit_cell(self.state, container, client)
+    }
+
+    /// `Cargo_GetNetProduction` (`victory.rs:667`).
+    pub fn cargo_get_net_production(&self, unit: &UnitInfo, current_order: bool) -> NetProduction {
+        crate::victory::cargo_get_net_production(self.state, unit, current_order)
+    }
+
+    /// `WinLoss_EvaluateStatus` at the current turn counter (`victory.rs:1411`).
+    pub fn evaluate_status(&self) -> WinLossStatus {
+        victory::evaluate_status(self.state, self.state.turn_counter)
+    }
+
+    /// `Transfer_FindUnitWithCargoType` (`transfer.rs:57`).
+    pub fn find_unit_with_cargo_type(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        cargo_type: CargoType,
+    ) -> Option<UnitId> {
+        crate::transfer::find_unit_with_cargo_type(self.state, team, complex, cargo_type)
+    }
+
+    /// `TransferMenu_GetCargoInfo` (`transfer.rs:327`).
+    pub fn transfer_menu_cargo_info(
+        &self,
+        source: UnitId,
+        destination: UnitId,
+        cargo: CargoType,
+    ) -> (i32, i32) {
+        crate::transfer::transfer_menu_cargo_info(self.state, source, destination, cargo)
+    }
+
+    /// `Complex::GetCargoInfo` for one cargo type (`transfer.rs:363`).
+    pub fn complex_stored(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        cargo: CargoType,
+    ) -> i32 {
+        crate::transfer::complex_stored(self.state, team, complex, cargo)
+    }
+
+    /// `Complex::GetCargoMining` (`alloc.rs`) — extraction and capacity.
+    pub fn cargo_mining(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+    ) -> (Cargo, Cargo) {
+        crate::alloc::get_cargo_mining(self.state, team, complex)
+    }
+
+    /// `Complex::GetCargoMinable` (`alloc.rs`) — consumption.
+    pub fn cargo_minable(&self, team: TeamId, complex: crate::team::ComplexId) -> Cargo {
+        crate::alloc::get_cargo_minable(self.state, team, complex)
+    }
+
+    /// `Complex::GetCargoInfo` (`alloc.rs`) — materials and capacity.
+    pub fn cargo_info(&self, team: TeamId, complex: crate::team::ComplexId) -> (Cargo, Cargo) {
+        crate::alloc::get_cargo_info(self.state, team, complex)
+    }
+}
+
+impl<'a> From<&'a GameState> for StateRef<'a> {
+    /// A read view over a state the caller already owns (tests/QA harnesses).
+    ///
+    /// Stage B keeps `GameState` public, so an integration test may still build a
+    /// state directly and observe it through the same read surface the application
+    /// uses. The application itself always goes through [`GameUniverse::snapshot`].
+    fn from(state: &'a GameState) -> Self {
+        Self { state }
     }
 }
 
@@ -656,7 +999,12 @@ impl<D: Dispatcher> GameUniverse<D> {
         }
 
         // Phase 6: the transport plan.
-        self.outgoing = self.dispatcher.plan(&facts);
+        //
+        // The plan is **extended**, not replaced: a `submit(Broadcast)` packet is
+        // queued at submission time and must survive the following `tick`
+        // (decision A2: `NetworkDispatcher::plan` returns `vec![]`). `drain_outgoing`
+        // takes everything accumulated since the previous drain.
+        self.outgoing.extend(self.dispatcher.plan(&facts));
     }
 
     // — pull state out —
@@ -703,18 +1051,23 @@ impl<D: Dispatcher> GameUniverse<D> {
 
     /// Applies a DTO that arrived from a peer.
     ///
-    /// A replayed command is queued (applied at the next tick); an authoritative
-    /// state sync (packet 54) is applied **immediately** and counts as a state
-    /// version (owner decision 2).
+    /// * a replayed command is queued (applied at the next tick);
+    /// * a barrier-consent packet `00`/`52`/`45` is applied **immediately**
+    ///   (decision A4): the barrier wait reads the consent counters without
+    ///   ticking, so a queued barrier would time out;
+    /// * an authoritative state sync (packet 54) is applied **immediately** and
+    ///   counts as a state version (owner decision 2).
     pub fn submit_remote(&mut self, cmd: RemoteCommand) {
         match self.dispatcher.receive(cmd) {
             RemoteHandling::Replay(command) => {
                 self.notify_chat(&command);
                 self.state.enqueue(command);
             }
+            RemoteHandling::ApplyBarrier(command) => {
+                self.apply_barrier(&command);
+            }
             RemoteHandling::ApplyStateSync(packet) => {
-                events::apply_state_sync(&mut self.state, &packet);
-                self.seq += 1;
+                self.apply_state_sync(&packet);
             }
             RemoteHandling::Ignore => {}
         }
@@ -872,6 +1225,271 @@ impl<D: Dispatcher> GameUniverse<D> {
     /// of a single `team_units` slot.
     pub fn team_units_mut(&mut self, team: TeamId) -> Option<&mut TeamUnits> {
         self.state.team_units.get_mut(team.0 as usize)
+    }
+
+    /// The whole team table, mutable (setup/test writer; per-slot `team_mut` is
+    /// preferable in production code).
+    pub fn teams_mut(&mut self) -> &mut [TeamInfo; TEAM_SLOTS] {
+        &mut self.state.teams
+    }
+
+    /// The whole team-economy table, mutable (setup/test writer).
+    pub fn team_units_table_mut(&mut self) -> &mut [TeamUnits; TEAM_SLOTS] {
+        &mut self.state.team_units
+    }
+
+    /// `GameManager_PlayerTeam` (`game.rs:270`) — setup write.
+    pub fn set_player_team(&mut self, team: TeamId) {
+        self.state.player_team = team;
+    }
+
+    /// `GameManager_ActiveTurnTeam` (`game.rs:269`) — setup write.
+    pub fn set_active_turn_team(&mut self, team: TeamId) {
+        self.state.active_turn_team = team;
+    }
+
+    /// `GameManager_TurnCounter` (`game.rs:258`) — match start/resume write.
+    pub fn set_turn_counter(&mut self, value: i32) {
+        self.state.turn_counter = value;
+    }
+
+    /// Packet 12 mission supplies (`game.rs:340`) — the lobby setup input.
+    pub fn set_mission_supplies(&mut self, supplies: [Option<Packet12MissionSupply>; TEAM_SLOTS]) {
+        self.state.mission_supplies = supplies;
+    }
+
+    /// The AI state (`game.rs:366`) — setup configuration (`ai.settings.opponent`, …).
+    pub fn ai_mut(&mut self) -> &mut AiState {
+        &mut self.state.ai
+    }
+
+    /// The V70 save data (`game.rs:383`) — save/load configuration.
+    pub fn save_meta_mut(&mut self) -> &mut SaveMeta {
+        &mut self.state.save_meta
+    }
+
+    /// `GameState::complex_mut` (`game.rs:3148`) — the alloc-dialog writer.
+    pub fn complex_mut(
+        &mut self,
+        team: TeamId,
+        complex_id: u16,
+    ) -> Option<&mut Complex> {
+        self.state.complex_mut(team, complex_id)
+    }
+
+    /// `GameState::set_research_allocation` (`game.rs:2014`); returns the actual
+    /// allocation.
+    pub fn set_research_allocation(
+        &mut self,
+        team: TeamId,
+        targets: [u32; RESEARCH_TOPIC_COUNT],
+    ) -> [u32; RESEARCH_TOPIC_COUNT] {
+        self.state.set_research_allocation(team, targets)
+    }
+
+    /// `ResearchMenu_UpdateResearchProgress` (`game.rs:1972`) — the research-centre
+    /// allocation of one topic.
+    pub fn update_research_progress(&mut self, team: TeamId, topic: ResearchTopic, allocation: i32) {
+        self.state.update_research_progress(team, topic, allocation);
+    }
+
+    /// `DeployConstructionSiteUtilities` (`production.rs`) — the setup/QA builder order.
+    pub fn deploy_construction_site(
+        &mut self,
+        builder: UnitId,
+        unit_type: UnitType,
+        site: Point,
+    ) -> Option<crate::production::ConstructionSite> {
+        crate::production::deploy_construction_site(&mut self.state, builder, unit_type, site)
+    }
+
+    /// `ProductionManager::enqueue` (`production.rs`) — the QA/test build queue.
+    pub fn enqueue_build(
+        &mut self,
+        team: TeamId,
+        builder: UnitId,
+        unit_type: UnitType,
+    ) -> Result<usize, crate::production::BuildError> {
+        let mut manager = crate::production::ProductionManager::new(&mut self.state, team);
+        manager.enqueue(builder, unit_type)
+    }
+
+    /// `ProductionManager::commit` (`production.rs`) — the QA/test build order.
+    pub fn commit_build(
+        &mut self,
+        team: TeamId,
+        builder: UnitId,
+    ) -> Result<crate::production::BuildReport, crate::production::BuildError> {
+        let mut manager = crate::production::ProductionManager::new(&mut self.state, team);
+        manager.commit(builder)
+    }
+
+    /// `GameManager_ProgressBuildState` (`production.rs`) — the QA production turn.
+    pub fn progress_build_state(&mut self, team: TeamId) -> Vec<ProductionEvent> {
+        crate::production::progress_build_state(&mut self.state, team)
+    }
+
+    /// `issue_builder_exit` (`unit_order.rs`) — the builder leaves the finished building.
+    pub fn issue_builder_exit(&mut self, builder: UnitId) -> bool {
+        crate::unit_order::issue_builder_exit(&mut self.state, builder)
+    }
+
+    /// `Ai_Init` (`ai/mod.rs:453`) — `GameManager_InitGame`/load entry.
+    pub fn ai_init(&mut self) {
+        crate::ai::ai_init(&mut self.state);
+    }
+
+    /// `Ai_SetupStrategy` (`ai/mod.rs:467`) — the computer-team strategy choice.
+    pub fn ai_setup_strategy(&mut self, team: TeamId) -> bool {
+        crate::ai::ai_setup_strategy(&mut self.state, team)
+    }
+
+    /// `AllocMenu_Optimize` (`alloc.rs`) — the mining allocation writer.
+    pub fn optimize_allocation(
+        &mut self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        kind: crate::alloc::MiningKind,
+        material: i32,
+    ) -> i32 {
+        crate::alloc::optimize(&mut self.state, team, complex, kind, material)
+    }
+
+    /// `AllocMenu_ReduceProduction` (`alloc.rs`) — the mining allocation writer.
+    pub fn reduce_production_allocation(
+        &mut self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        kind: crate::alloc::MiningKind,
+        amount: i32,
+    ) {
+        crate::alloc::reduce_production(&mut self.state, team, complex, kind, amount);
+    }
+
+    /// The game map, mutable (setup/test writer: resources, surfaces).
+    pub fn map_mut(&mut self) -> &mut Map {
+        &mut self.state.map
+    }
+
+    /// Barrier-counter write for the FSM/network tests (`game.rs:319-333`).
+    pub fn set_frame_sync_counter(&mut self, team: TeamId, value: u8) {
+        self.state.frame_sync_counter[team.0 as usize] = value;
+    }
+
+    /// `Remote_TurnIndices` write (packet 52 tests).
+    pub fn set_turn_index(&mut self, team: TeamId, value: u8) {
+        self.state.turn_indices[team.0 as usize] = value;
+    }
+
+    /// `Remote_NextTurnIndices` write (packet 45 tests).
+    pub fn set_next_turn_index(&mut self, team: TeamId, value: u8) {
+        self.state.next_turn_indices[team.0 as usize] = value;
+    }
+
+    /// `Remote_StateSyncIndices` write (packet 54 tests).
+    pub fn set_state_sync_index(&mut self, team: TeamId, value: u8) {
+        self.state.state_sync_indices[team.0 as usize] = value;
+    }
+
+    /// `Remote_TeamDataCrc16` write (packet 45 tests).
+    pub fn set_team_data_crc16(&mut self, team: TeamId, value: u16) {
+        self.state.team_data_crc16[team.0 as usize] = value;
+    }
+    /// `Complex::Transfer` (`transfer.rs`) — the QA complex-stock writer.
+    pub fn complex_transfer(
+        &mut self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        raw: i32,
+        fuel: i32,
+        gold: i32,
+    ) {
+        crate::transfer::complex_transfer(&mut self.state, team, complex, raw, fuel, gold);
+    }
+
+    /// `Randomizer_Generate(101)` — the stealth dice roll of packet 08/P3
+    /// (`GameManager_StealUnit`/`GameManager_DisableUnit`, `game_manager.cpp:4680/4696`).
+    ///
+    /// The roll goes into the command payload, so it is generated by the application
+    /// but consumes the simulation RNG stream exactly as before.
+    pub fn generate_rng_i32(&mut self, bound: i32) -> i32 {
+        self.state.rng.generate(bound)
+    }
+    /// `AllocMenu_Balance` (`alloc.rs`) — normalizes the complex distribution and
+    /// returns the `cargo_2` balance.
+    pub fn allocation_balance(
+        &mut self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        kind: crate::alloc::MiningKind,
+        material1: i32,
+        material2: i32,
+    ) -> i32 {
+        crate::alloc::balance(&mut self.state, team, complex, kind, material1, material2)
+    }
+
+    // — stage B §6: the legacy `App::apply`/`flush_commands` bridges —
+    //
+    // `App::apply` (an immediate application, used by the HUD/menu input and the
+    // network driver before the lockstep path is switched over) and
+    // `App::flush_commands` (the lobby configuration boundary) have no `submit`
+    // equivalent: `submit` queues, while these call sites observe the outcome or
+    // need the packets applied before the world is regenerated. They stay as
+    // documented facade passthroughs until the network path owns
+    // `GameUniverse<NetworkDispatcher>`; they do not bump `seq` (the old code did
+    // not either), so they are not state versions.
+
+    /// Applies a command right away — the temporary `App::apply` bridge (§6).
+    pub fn apply_now(&mut self, command: Command) -> ApplyOutcome {
+        events::apply_command(&mut self.state, &command)
+    }
+
+    /// Applies the already queued commands (`GameState::apply_pending_commands`).
+    pub fn flush_commands(&mut self) -> usize {
+        self.state.apply_pending_commands()
+    }
+    // — stage B §6: UI/QA report passthroughs for the local loop —
+    //
+    // The local match (`local.rs`) consumes the core's report queues at the turn
+    // boundary, before the next `tick` — at that moment the facade has not drained
+    // them into the `EventStream` yet. These 1:1 passthroughs keep that timing
+    // (stage-b §6 item 3: `take_*` through the facade) without changing behavior;
+    // a consumer that polls the stream after a tick uses `EventStream` instead.
+
+    /// `GameState::take_production_events` (`game.rs:2695`).
+    pub fn take_production_events(&mut self) -> Vec<ProductionEvent> {
+        self.state.take_production_events()
+    }
+
+    /// `GameState::take_research_events` (`game.rs:2075`).
+    pub fn take_research_events(&mut self) -> Vec<ResearchEvent> {
+        self.state.take_research_events()
+    }
+
+    /// `GameState::take_unit_sounds` (`game.rs:2083`).
+    pub fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
+        self.state.take_unit_sounds()
+    }
+
+    /// Applies an authoritative state sync (packet 54) immediately; counts as a
+    /// state version, like the [`Self::submit_remote`] branch (owner decision 2).
+    pub fn apply_state_sync(&mut self, packet: &StateSyncPacket) -> ApplyOutcome {
+        let outcome = events::apply_state_sync(&mut self.state, packet);
+        self.seq += 1;
+        outcome
+    }
+
+    /// Applies a barrier-consent packet (`00`/`52`/`45`) immediately (A4).
+    ///
+    /// Barrier packets are read by the synchronous barrier wait
+    /// (`net::wait_barrier`), so they cannot wait for the next `tick`; the state
+    /// version is bumped, as for any observable state change.
+    pub fn apply_barrier(&mut self, command: &Command) -> ApplyOutcome {
+        let outcome = events::apply_command(&mut self.state, command);
+        if outcome == ApplyOutcome::Applied {
+            self.seq += 1;
+        }
+        outcome
     }
 
     // — stage B: barrier steppers, reachable only through the facade (A1) —

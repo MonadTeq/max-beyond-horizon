@@ -17,7 +17,9 @@
 
 use max_core::enums::{WinLossState, UNIT_END};
 use max_core::team::{TeamId, TeamKind};
+#[cfg(test)]
 use max_core::GameState;
+use max_core::universe::StateRef;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
 // max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
@@ -102,8 +104,8 @@ pub fn background_index(local: &LocalGame) -> usize {
 
 /// How many buildings were lost (`LOST` buildings, as in C++: `flags & BUILDING` —
 /// a 2×2 footprint, i.e. [`max_core::classification::Footprint`]).
-fn building_casualties(state: &GameState, team: TeamId) -> u32 {
-    let info = &state.teams[team.0 as usize];
+fn building_casualties(state: StateRef<'_>, team: TeamId) -> u32 {
+    let info = &state.teams()[team.0 as usize];
     let mut total = 0;
 
     for index in 0..UNIT_END {
@@ -121,8 +123,8 @@ fn building_casualties(state: &GameState, team: TeamId) -> u32 {
 }
 
 /// Losses of mobile units (there is an environment flag — `MOBILE_*`).
-fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
-    let info = &state.teams[team.0 as usize];
+fn mobile_casualties(state: StateRef<'_>, team: TeamId) -> u32 {
+    let info = &state.teams()[team.0 as usize];
     let mut total = 0;
 
     for index in 0..UNIT_END {
@@ -143,7 +145,7 @@ fn mobile_casualties(state: &GameState, team: TeamId) -> u32 {
 pub fn draw_game_over(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
-    state: &GameState,
+    state: StateRef<'_>,
     local: &LocalGame,
     _mouse: Option<(i32, i32)>,
 ) -> u32 {
@@ -207,7 +209,7 @@ pub fn draw_game_over(
     let mut ulx = 80;
 
     for team in 0..LOCAL_TEAM_COUNT {
-        if state.teams[team].team_type == TeamKind::None {
+        if state.teams()[team].team_type == TeamKind::None {
             continue;
         }
 
@@ -234,7 +236,7 @@ pub fn draw_game_over(
         let name = display_name(local, team_id);
         silver(frame, ulx, 61, &name, 2, lrx - ulx);
 
-        let info = &state.teams[team];
+        let info = &state.teams()[team];
         let rank = outcome.status.team_rank[team];
 
         // Points, then the place (generic) or Mission Success/Failed (script).

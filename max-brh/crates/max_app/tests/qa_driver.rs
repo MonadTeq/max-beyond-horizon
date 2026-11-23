@@ -198,9 +198,9 @@ fn sp_full_script_passes_through_the_real_input_path() {
 
     // The state is really played: three turns and the AI turns are behind.
     assert!(
-        runner.app().state().turn_counter >= 3,
+        runner.app().state_ref().turn_counter() >= 3,
         "turn_counter={}",
-        runner.app().state().turn_counter
+        runner.app().state_ref().turn_counter()
     );
 
     // log.txt is written and contains the result.
@@ -240,9 +240,9 @@ fn cargo_full_script_passes_through_the_real_input_path() {
     }
 
     // The match started after Done, the credits were spent on purchases/cargo/upgrade.
-    assert!(runner.app().state().turn_counter >= 1);
+    assert!(runner.app().state_ref().turn_counter() >= 1);
     assert!(
-        runner.app().state().team_units[max_core::team::TeamId::RED.0 as usize].gold < 150,
+        runner.app().state_ref().team_units()[max_core::team::TeamId::RED.0 as usize].gold < 150,
         "золото команды после мобилизации"
     );
 
@@ -283,10 +283,10 @@ fn move_input_script_passes_through_the_real_input_path() {
     // the order is really executed by the simulation, not just written to the log.
     let surveyor = runner
         .app()
-        .state()
+        .state_ref()
         .unit_list(max_core::unit::UnitListKind::MobileLandSea)
         .iter()
-        .filter_map(|id| runner.app().state().unit(*id))
+        .filter_map(|id| runner.app().state_ref().unit(*id))
         .find(|unit| {
             unit.team == max_core::team::TeamId::RED
                 && unit.unit_type == max_core::enums::UnitType::Surveyor
@@ -340,7 +340,7 @@ fn research_help_script_passes_through_the_real_input_path() {
     // the Shots level (Attack remained 0) — the screen really affects
     // `finish_turn`.
     let team = runner.app().player_team();
-    let topics = &runner.app().state().teams[team.0 as usize].research_topics;
+    let topics = &runner.app().state_ref().teams()[team.0 as usize].research_topics;
     assert_eq!(
         topics[max_core::enums::ResearchTopic::Attack as usize].research_level,
         0
@@ -614,10 +614,10 @@ fn visible_point(app: &App, grid: Point) -> Option<(i32, i32)> {
 fn visible_player_unit(app: &App) -> Option<((i32, i32), Point)> {
     let team = app.player_team();
 
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| unit.team == team)
         .find_map(|unit| visible_point(app, unit.grid).map(|point| (point, unit.grid)))
 }
@@ -639,7 +639,7 @@ fn visible_neighbor(app: &App, grid: Point) -> Option<(i32, i32)> {
         if target.x < 0 || target.y < 0 || target.x >= MAP_WIDTH || target.y >= MAP_HEIGHT {
             continue;
         }
-        if !app.state().units_at(target).is_empty() {
+        if !app.state_ref().units_at(target).is_empty() {
             continue;
         }
         if let Some(point) = visible_point(app, target) {
@@ -849,9 +849,9 @@ fn edge_cases_script_passes_click_spam_and_unicode() {
     );
     assert!(report.frames > 0, "партия прокручивала кадры");
     assert!(
-        runner.app().state().turn_counter >= 2,
+        runner.app().state_ref().turn_counter() >= 2,
         "второй старт доигран до хода 2: turn={}",
-        runner.app().state().turn_counter
+        runner.app().state_ref().turn_counter()
     );
 
     for name in [

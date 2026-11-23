@@ -118,7 +118,7 @@ fn free_neighbour(app: &App, grid: Point) -> Option<Point> {
         if candidate.x < 0 || candidate.y < 0 || candidate.x >= 112 || candidate.y >= 112 {
             continue;
         }
-        if app.state().units_at(candidate).is_empty() {
+        if app.state_ref().units_at(candidate).is_empty() {
             return Some(candidate);
         }
     }
@@ -243,16 +243,16 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
         app.local().map(|local| local.phase),
         Some(LocalPhase::PlayerTurn)
     );
-    assert_eq!(app.state().player_team, TeamId::RED);
-    assert_eq!(app.state().teams[0].team_type, TeamKind::Player);
-    assert_eq!(app.state().teams[1].team_type, TeamKind::Player);
-    assert_eq!(app.state().teams[2].team_type, TeamKind::None);
+    assert_eq!(app.state_ref().player_team(), TeamId::RED);
+    assert_eq!(app.state_ref().teams()[0].team_type, TeamKind::Player);
+    assert_eq!(app.state_ref().teams()[1].team_type, TeamKind::Player);
+    assert_eq!(app.state_ref().teams()[2].team_type, TeamKind::None);
     // Hot-seat is always turn-based.
-    assert_eq!(app.state().play_mode, PlayMode::TurnBased);
+    assert_eq!(app.state_ref().play_mode(), PlayMode::TurnBased);
 
     // The turn does not close until the window is confirmed.
     app.local_end_turn();
-    assert_eq!(app.state().turn_counter, 1);
+    assert_eq!(app.state_ref().turn_counter(), 1);
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
         Some(TeamId::RED)
@@ -267,7 +267,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
         app.local_notice().map(|notice| notice.team),
         Some(TeamId::GREEN)
     );
-    assert_eq!(app.state().player_team, TeamId::GREEN, "управление у GREEN");
+    assert_eq!(app.state_ref().player_team(), TeamId::GREEN, "управление у GREEN");
     assert_eq!(
         app.local().map(|local| local.active_team),
         Some(TeamId::GREEN)
@@ -277,12 +277,12 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
     app.local_end_turn();
 
     // Both humans of the round have played — the turn counter grew, RED again.
-    assert_eq!(app.state().turn_counter, 2);
+    assert_eq!(app.state_ref().turn_counter(), 2);
     assert_eq!(
         app.local_notice().map(|notice| notice.team),
         Some(TeamId::RED)
     );
-    assert_eq!(app.state().player_team, TeamId::RED);
+    assert_eq!(app.state_ref().player_team(), TeamId::RED);
 
     // Three more rounds in a row: the order and control switching are stable.
     for round in 2..=4 {
@@ -292,7 +292,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
                 Some(expected),
                 "раунд {round}: окно перехода {expected:?}"
             );
-            assert_eq!(app.state().player_team, expected);
+            assert_eq!(app.state_ref().player_team(), expected);
             assert_eq!(
                 app.local().map(|local| local.active_team),
                 Some(expected),
@@ -302,7 +302,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
         }
 
         assert!(!app.local().is_some_and(|local| local.finished()));
-        assert_eq!(app.state().turn_counter, round + 1, "раунд {round} закрыт");
+        assert_eq!(app.state_ref().turn_counter(), round + 1, "раунд {round} закрыт");
     }
 }
 
@@ -329,7 +329,7 @@ fn four_humans_all_play_in_team_order() {
         let active = app.local().map(|local| local.active_team).expect("партия");
 
         assert_eq!(notice, active, "окно принадлежит активной команде");
-        assert_eq!(app.state().player_team, active, "управление у {active:?}");
+        assert_eq!(app.state_ref().player_team(), active, "управление у {active:?}");
 
         order.push(active);
         app.local_end_turn();
@@ -339,7 +339,7 @@ fn four_humans_all_play_in_team_order() {
         order,
         vec![TeamId::RED, TeamId::GREEN, TeamId::BLUE, TeamId::GRAY]
     );
-    assert_eq!(app.state().turn_counter, 2, "раунд закрылся один раз");
+    assert_eq!(app.state_ref().turn_counter(), 2, "раунд закрылся один раз");
 }
 
 #[test]
@@ -395,8 +395,8 @@ fn ai_plays_between_two_humans() {
         Some(TeamId::BLUE),
         "после ИИ — окно второго человека"
     );
-    assert_eq!(app.state().player_team, TeamId::BLUE);
-    assert_eq!(app.state().turn_counter, 1, "раунд ещё не закрыт");
+    assert_eq!(app.state_ref().player_team(), TeamId::BLUE);
+    assert_eq!(app.state_ref().turn_counter(), 1, "раунд ещё не закрыт");
 }
 
 #[test]
@@ -463,27 +463,27 @@ fn only_the_active_human_controls_their_units() {
 
     // We find a unit of each team and put the camera on the RED unit.
     let red_unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED)
         })
         .expect("юнит RED");
     let green_unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::GREEN)
         })
         .expect("юнит GREEN");
-    let green_grid = app.state().unit(green_unit).expect("юнит").grid;
-    let red_grid = app.state().unit(red_unit).expect("юнит").grid;
+    let green_grid = app.state_ref().unit(green_unit).expect("юнит").grid;
+    let red_grid = app.state_ref().unit(red_unit).expect("юнит").grid;
 
     app.viewport_mut()
         .center_on_grid(green_grid.x, green_grid.y);
@@ -508,7 +508,7 @@ fn only_the_active_human_controls_their_units() {
 
     let selected = app.hud().selected.expect("свой юнит выделен");
     assert_eq!(
-        app.state().unit(selected).map(|unit| unit.team),
+        app.state_ref().unit(selected).map(|unit| unit.team),
         Some(TeamId::RED),
         "выделен юнит RED"
     );
@@ -516,10 +516,10 @@ fn only_the_active_human_controls_their_units() {
     // A right click on a free cell — a move order to the selected unit:
     // in demo mode (`online = false`) it is applied immediately.
     let green_orders: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| unit.team == TeamId::GREEN)
         .map(|unit| unit.orders)
         .collect();
@@ -529,7 +529,7 @@ fn only_the_active_human_controls_their_units() {
         handle_session_input(&mut app, InputEvent::RightClick(dx, dy), false);
 
         let ordered = app
-            .state()
+            .state_ref()
             .unit(selected)
             .map(|unit| unit.orders)
             .expect("юнит RED");
@@ -543,10 +543,10 @@ fn only_the_active_human_controls_their_units() {
     }
 
     let green_orders_after: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| unit.team == TeamId::GREEN)
         .map(|unit| unit.orders)
         .collect();
@@ -562,7 +562,7 @@ fn only_the_active_human_controls_their_units() {
         Some(TeamId::GREEN)
     );
     acknowledge(&mut app);
-    assert_eq!(app.state().player_team, TeamId::GREEN);
+    assert_eq!(app.state_ref().player_team(), TeamId::GREEN);
     assert_eq!(
         app.hud().selected,
         None,
@@ -600,16 +600,16 @@ fn input_is_ignored_during_the_ai_turn() {
     assert!(app.local_input_blocked());
 
     let red_unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED)
         })
         .expect("юнит RED");
-    let grid = app.state().unit(red_unit).expect("юнит").grid;
+    let grid = app.state_ref().unit(red_unit).expect("юнит").grid;
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = chrome_screen_of(&app, grid);
@@ -640,16 +640,16 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
     assert!(app.local_notice().is_some());
 
     let red_unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED)
         })
         .expect("юнит RED");
-    let grid = app.state().unit(red_unit).expect("юнит").grid;
+    let grid = app.state_ref().unit(red_unit).expect("юнит").grid;
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = chrome_screen_of(&app, grid);
@@ -668,7 +668,7 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
     handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
     let selected = app.hud().selected.expect("после OK ввод работает");
     assert_eq!(
-        app.state().unit(selected).map(|unit| unit.team),
+        app.state_ref().unit(selected).map(|unit| unit.team),
         Some(TeamId::RED)
     );
 }
@@ -694,7 +694,7 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
     let mut ctx = UiContext::new(Box::new(NoNetwork), 640, 480);
     ctx.status = app
         .local()
-        .map(|local| local.status_line(app.state().turn_counter))
+        .map(|local| local.status_line(app.state_ref().turn_counter()))
         .unwrap_or_default();
 
     let screen = Screen::InSession {

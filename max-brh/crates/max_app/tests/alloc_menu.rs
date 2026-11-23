@@ -85,11 +85,11 @@ fn game_app() -> Option<App> {
 
 /// RED mine (the only one at the start).
 fn mining_station(app: &App) -> UnitId {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation)
         })
@@ -107,7 +107,7 @@ fn key(app: &mut App, key: Key) -> Transition {
 /// Selects the mine and opens the command menu with a repeated click.
 fn select_mine(app: &mut App) -> UnitId {
     let id = mining_station(app);
-    let grid = app.state().unit(id).expect("шахта").grid;
+    let grid = app.state_ref().unit(id).expect("шахта").grid;
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = max_app::hud::tile_center(&app.map_viewport(), grid);
@@ -174,7 +174,7 @@ fn allocate_opens_the_dialog_and_matches_the_cpp_layout() {
         max_render::buffer::PixelRect::new(0, 0, 640, 480)
     );
     // Complex extraction = the mine's `raw_mining`/`fuel_mining`/`gold_mining`.
-    let unit = app.state().unit(menu.unit).expect("шахта");
+    let unit = app.state_ref().unit(menu.unit).expect("шахта");
     assert_eq!(menu.production.raw, i32::from(unit.raw_mining));
     assert_eq!(menu.production.fuel, i32::from(unit.fuel_mining));
     assert_eq!(menu.production.gold, i32::from(unit.gold_mining));
@@ -199,7 +199,7 @@ fn values_change_and_survive_closing_the_dialog() {
         app.alloc_menu().map(|menu| menu.production_of(MiningKind::Raw)),
         Some(3)
     );
-    assert_eq!(app.state().unit(id).expect("шахта").raw_mining, 3);
+    assert_eq!(app.state_ref().unit(id).expect("шахта").raw_mining, 3);
 
     // The second resource — the one that is actually present in the mine cell.
     let other = MiningKind::ALL
@@ -219,14 +219,14 @@ fn values_change_and_survive_closing_the_dialog() {
     app.flush_orders();
     assert!(app.alloc_menu().is_none(), "Enter закрывает диалог");
     assert_eq!(
-        app.state().unit(id).expect("шахта").orders,
+        app.state_ref().unit(id).expect("шахта").orders,
         UnitOrder::NewAllocate,
         "C++ рассылает `ORDER_NEW_ALLOCATE` шахтам комплекса"
     );
 
     // The unit fields remain: the `allocate` task is to change extraction, not the order.
-    assert_eq!(app.state().unit(id).expect("шахта").raw_mining, 3);
-    let total = app.state().unit(id).expect("шахта").total_mining;
+    assert_eq!(app.state_ref().unit(id).expect("шахта").raw_mining, 3);
+    let total = app.state_ref().unit(id).expect("шахта").total_mining;
     assert!(total <= 16, "сумма добычи не больше 16: {total}");
 
     // Reopening shows the saved values.
@@ -250,20 +250,20 @@ fn arrows_bump_one_unit_like_the_cpp_buttons() {
         app.alloc_menu_set(MiningKind::Raw, 0);
     }
 
-    let before = app.state().unit(id).expect("шахта").raw_mining;
+    let before = app.state_ref().unit(id).expect("шахта").raw_mining;
     let rect = max_app::allocmenu::RIGHT_ARROW_X;
     let y = max_app::allocmenu::SECTION_TOP[0] + 2;
     let _ = click(&mut app, (rect + 2, y));
 
     assert_eq!(
-        app.state().unit(id).expect("шахта").raw_mining,
+        app.state_ref().unit(id).expect("шахта").raw_mining,
         before + 1,
         "правая стрелка `RTARO_OF` добавляет единицу"
     );
 
     let _ = click(&mut app, (max_app::allocmenu::LEFT_ARROW_X + 2, y));
     assert_eq!(
-        app.state().unit(id).expect("шахта").raw_mining,
+        app.state_ref().unit(id).expect("шахта").raw_mining,
         before,
         "левая стрелка `LFARO_OF` снимает единицу"
     );
@@ -309,7 +309,7 @@ fn allocation_changes_the_complex_income_next_turn() {
     app.alloc_menu_set(MiningKind::Raw, 0);
     app.alloc_menu_set(other, target);
     assert_eq!(
-        app.state().unit(id).expect("шахта").raw_mining,
+        app.state_ref().unit(id).expect("шахта").raw_mining,
         0,
         "сырьё больше не добывается"
     );
@@ -318,11 +318,11 @@ fn allocation_changes_the_complex_income_next_turn() {
     app.flush_orders();
 
     // `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`.
-    app.state_mut().manage_economy(TeamId::RED);
+    app.universe_mut().manage_economy(TeamId::RED);
 
     let complex_id = app.economy_complex().expect("комплекс шахты");
     let complex = app
-        .state()
+        .state_ref()
         .complex(TeamId::RED, complex_id)
         .expect("комплекс шахты");
 
@@ -337,10 +337,10 @@ fn allocation_changes_the_complex_income_next_turn() {
     // (`cargo.cpp:183-200`), so the net income = extraction − 2. Before the complexes
     // merged the generator was not in the mine's pool and the test saw the full 5.
     let has_generator = app
-        .state()
+        .state_ref()
         .unit_list(max_core::unit::UnitListKind::Stationary)
         .iter()
-        .filter_map(|id| app.state().unit(*id))
+        .filter_map(|id| app.state_ref().unit(*id))
         .any(|unit| {
             unit.complex.map(|complex| complex.0) == Some(complex_id as i16)
                 && unit.unit_type == UnitType::PowerGenerator
@@ -384,7 +384,7 @@ fn two_identical_dialogs_stay_deterministic() {
         b.digest().state_checksum,
         "CRC пакета 45 совпадает: добыча входит в снапшот полями юнита"
     );
-    assert_eq!(a.state().snapshot_bytes(), b.state().snapshot_bytes());
+    assert_eq!(a.state_ref().snapshot_bytes(), b.state_ref().snapshot_bytes());
     assert_eq!(a.digest().state_digest, b.digest().state_digest);
 }
 

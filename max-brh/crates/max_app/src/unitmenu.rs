@@ -92,7 +92,9 @@
 
 use max_assets::image::SimpleImage;
 use max_core::enums::{unit_flags, PlayMode, UnitOrder, UnitOrderState, UnitType};
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::geo::Point;
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::unit_values::{
@@ -396,8 +398,8 @@ fn init_kind(unit_type: UnitType) -> InitKind {
 }
 
 /// `UnitInfo::HasUpgradeableAttributes` (`unitinfo.cpp:1403`).
-fn has_upgradeable_attributes(state: &GameState, unit: &UnitInfo) -> bool {
-    let Some(team_units) = state.team_units.get(unit.team.0 as usize) else {
+fn has_upgradeable_attributes(state: StateRef<'_>, unit: &UnitInfo) -> bool {
+    let Some(team_units) = state.team_units().get(unit.team.0 as usize) else {
         return false;
     };
     let current = team_units.current_unit_values(unit.unit_type as u16);
@@ -419,16 +421,16 @@ fn has_upgradeable_attributes(state: &GameState, unit: &UnitInfo) -> bool {
 }
 
 /// `UnitInfo::IsUpgradeAvailable` (`unitinfo.cpp:1423`): stationary only.
-pub fn is_upgrade_available(state: &GameState, unit: &UnitInfo) -> bool {
+pub fn is_upgrade_available(state: StateRef<'_>, unit: &UnitInfo) -> bool {
     !unit.is_mobile() && has_upgradeable_attributes(state, unit)
 }
 
 /// Common items — `UnitsManager_Popup_InitCommons` (`units_manager.cpp:543`).
-fn init_commons(state: &GameState, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>) {
+fn init_commons(state: StateRef<'_>, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>) {
     let order = unit.orders;
 
     // `Manual`: simultaneous moves only, with ammo and not a commando.
-    if state.play_mode == PlayMode::SimultaneousMoves
+    if state.play_mode() == PlayMode::SimultaneousMoves
         && unit.base_values.get_attribute(ATTRIB_AMMO) > 0
         && unit.unit_type != UnitType::Infiltrator
     {
@@ -657,7 +659,7 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
 /// Menu item list of a unit — C++ `popup->init(unit, &GameManager_PopupButtons)`.
 ///
 /// An empty list — the menu does not open (C++ `popup_count == 0`).
-pub fn items_for(state: &GameState, unit: &UnitInfo) -> Vec<UnitMenuItem> {
+pub fn items_for(state: StateRef<'_>, unit: &UnitInfo) -> Vec<UnitMenuItem> {
     let mut items = Vec::new();
 
     if init_for_kind(init_kind(unit.unit_type), unit, &mut items) {
@@ -726,7 +728,7 @@ impl UnitMenu {
     ///
     /// `anchor`/`area` — in frame pixels (already with the map window offset).
     pub fn new(
-        state: &GameState,
+        state: StateRef<'_>,
         unit: &UnitInfo,
         anchor: (i32, i32),
         area: PixelRect,
@@ -910,7 +912,7 @@ pub fn menu_event(menu: &UnitMenu, event: crate::ui::InputEvent) -> MenuEvent {
 
 /// `P1` order (packet 08) — C++ `Remote_SendNetPacket_08` with processor 1.
 pub fn p1_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     order: UnitOrder,
     order_state: UnitOrderState,
@@ -933,7 +935,7 @@ pub fn p1_order(
 
 /// `P2` order (packet 08) — with a parent (`ORDER_REPAIR`/`ORDER_RELOAD`).
 pub fn p2_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     order: UnitOrder,
     order_state: UnitOrderState,
@@ -961,7 +963,7 @@ pub fn p2_order(
 
 /// `P3` order (packet 08) — with a destination cell (`ORDER_AWAIT`/`MOVE_TO_UNIT`).
 pub fn p3_order(
-    state: &GameState,
+    state: StateRef<'_>,
     id: UnitId,
     order: UnitOrder,
     order_state: UnitOrderState,
@@ -1008,7 +1010,7 @@ pub fn p3_order(
 /// here it does not turn into an order. `load` — [`load_mode_click`],
 /// `steal`/`disable` — [`stealth_mode_click`] (a click on an enemy, see `ui.rs`).
 pub fn cursor_mode_click(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: UnitId,
     target: UnitId,
     cursor: u8,
@@ -1050,7 +1052,7 @@ pub fn cursor_mode_click(
 /// "Board the transport" order by click (C++ `CURSOR_UNIT_GO` + `enter_mode`):
 /// `ORDER_MOVE_TO_UNIT` into the target cell, like `GameManager_SetUnitOrder`.
 pub fn enter_mode_click(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: UnitId,
     target: UnitId,
 ) -> Option<max_core::input::Command> {
@@ -1084,7 +1086,7 @@ pub const CURSOR_DISABLE: u8 = 9;
 /// target. For `ORDER_AWAIT_STEAL_UNIT` — also not stationary/not occupied
 /// by a transport with cargo.
 pub fn is_valid_stealth_target(
-    state: &GameState,
+    state: StateRef<'_>,
     unit: &UnitInfo,
     target: &UnitInfo,
     order: UnitOrder,
@@ -1102,7 +1104,7 @@ pub fn is_valid_stealth_target(
         || target_order == UnitOrder::Explode
         || target.state == UnitOrderState::Destroy
         || !max_core::access::is_adjacent_to_grid(target, unit.grid)
-        || !max_core::access::is_valid_attack_target(state, unit, target)
+        || !state.is_valid_attack_target( unit, target)
     {
         return false;
     }
@@ -1126,7 +1128,7 @@ pub fn is_valid_stealth_target(
 /// `ORDER_AWAIT_STEAL_UNIT`/`ORDER_AWAIT_DISABLE_UNIT` + `INIT` (packet 08/P3).
 /// `Err` — the commando has no action left for this turn (`_(f37a)`/`_(3e56)`).
 pub fn stealth_mode_click(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: UnitId,
     target: UnitId,
     cursor: u8,
@@ -1158,7 +1160,7 @@ pub fn stealth_mode_click(
     let target_id = if is_valid_stealth_target(state, unit, target_unit, order) {
         target
     } else if let Some(other) =
-        max_core::access::get_attack_target(state, unit, target_unit.grid, false)
+        state.get_attack_target( unit, target_unit.grid, false)
     {
         let Some(other_unit) = state.unit(other) else {
             return Ok(None);
@@ -1240,7 +1242,7 @@ pub fn load_mode_applies(selected: &UnitInfo, target: &UnitInfo) -> bool {
 /// * otherwise — the **target** gets `ORDER_MOVE_TO_UNIT` into the transport cell
 ///   (`GameManager_Unit` in C++, not the selected unit).
 pub fn load_mode_click(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: UnitId,
     target: UnitId,
 ) -> Result<Option<max_core::input::Command>, String> {
@@ -1318,7 +1320,7 @@ pub fn load_mode_click(
 /// the bulldozer can remove. `LRGRUBLE` requires the other three cells of the 2×2
 /// to be passable for `BULLDOZR` (`Access_IsAccessible` with
 /// `AccessModifier_SameClassBlocks`).
-pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: Point) -> Option<UnitId> {
+pub fn removable_rubble(state: StateRef<'_>, team: max_core::team::TeamId, grid: Point) -> Option<UnitId> {
     for id in state.units_at(grid).iter().copied() {
         let Some(unit) = state.unit(id) else {
             continue;
@@ -1333,8 +1335,7 @@ pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: P
                             continue;
                         }
 
-                        if max_core::access::is_accessible(
-                            state,
+                        if state.is_accessible(
                             UnitType::Bulldozer,
                             team,
                             Point::new(x, y),
@@ -1359,7 +1360,7 @@ pub fn removable_rubble(state: &GameState, team: max_core::team::TeamId, grid: P
 /// (`units_manager.cpp:1082-1121`): the parent is the rubble, `build_time` = 4 for
 /// a building and 1 for other rubble.
 pub fn clear_order(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: UnitId,
     rubble: UnitId,
 ) -> Option<max_core::input::Command> {
@@ -1434,7 +1435,7 @@ pub struct UpgradeAllReport {
 /// complexes, debiting the cost from the complex materials (`GetCargoInfo`).
 ///
 /// `get_normal_rate_build_cost(unit) / 4` — `UnitInfo::GetUpgradeCost()`.
-pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeAllReport> {
+pub fn upgrade_all_orders(state: StateRef<'_>, unit_id: UnitId) -> Option<UpgradeAllReport> {
     let unit = state.unit(unit_id)?;
     let team = unit.team;
     let unit_type = unit.unit_type;
@@ -1506,7 +1507,7 @@ pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeA
 
     let version = roman_version(
         state
-            .team_units
+            .team_units()
             .get(team.0 as usize)
             .map(|units| units.current_unit_values(unit_type as u16).version)
             .unwrap_or(1),
@@ -1534,7 +1535,7 @@ pub fn upgrade_all_orders(state: &GameState, unit_id: UnitId) -> Option<UpgradeA
 /// Building self-destruct order — `UnitsManager_SetNewOrder(unit,
 /// ORDER_EXPLODE, ORDER_STATE_EXPLODE)` (`units_manager.cpp:506-511`).
 pub fn explode_order(
-    state: &GameState,
+    state: StateRef<'_>,
     unit_id: UnitId,
 ) -> Option<max_core::input::Command> {
     p1_order(state, unit_id, UnitOrder::Explode, UnitOrderState::Explode)
@@ -1579,7 +1580,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
         let unit = state.unit(id).expect("танк").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
         let names: Vec<&str> = items.iter().map(|item| item.id.name()).collect();
 
         // `InitMilitary`: attack('3') → commons x-fer? (the tank has no cargo) →
@@ -1604,7 +1605,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Constructor);
         let unit = state.unit(id).expect("строитель").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
 
         assert_eq!(items[0].id, ItemId::Build);
         assert!(items[0].enabled, "Build открывает BuildMenu");
@@ -1623,7 +1624,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
         let mut unit = state.unit(id).expect("танк").clone();
-        assert!(!items_for(&state, &unit)
+        assert!(!items_for(StateRef::from(&state), &unit)
             .iter()
             .any(|item| item.id == ItemId::Stop));
 
@@ -1634,7 +1635,7 @@ mod tests {
             steps: Vec::new(),
         }));
 
-        assert!(items_for(&state, &unit)
+        assert!(items_for(StateRef::from(&state), &unit)
             .iter()
             .any(|item| item.id == ItemId::Stop && item.enabled));
     }
@@ -1653,7 +1654,7 @@ mod tests {
         unit.build_time = 10;
         state.write_unit(id, unit.clone());
 
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
         assert!(
             !items.iter().any(|item| item.id == ItemId::Build),
             "во время стройки `Build` заменяется на `stop` (как C++)"
@@ -1681,7 +1682,7 @@ mod tests {
         unit.build_time = 2;
         state.write_unit(id, unit.clone());
 
-        let start = items_for(&state, &unit)
+        let start = items_for(StateRef::from(&state), &unit)
             .into_iter()
             .find(|item| item.id == ItemId::StartBuild)
             .expect("start у остановленного завода");
@@ -1697,7 +1698,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::ArmouredPersonnelCarrier);
         let unit = state.unit(id).expect("транспорт").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
 
         let load = items
             .iter()
@@ -1724,7 +1725,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Infiltrator);
         let unit = state.unit(id).expect("диверсант").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
 
         for id in [ItemId::Disable, ItemId::Steal, ItemId::Attack] {
             let item = items
@@ -1750,7 +1751,7 @@ mod tests {
         }
 
         let unit = state.unit(id).expect("здание").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
 
         let remove = items
             .iter()
@@ -1770,7 +1771,7 @@ mod tests {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Bulldozer);
         let unit = state.unit(id).expect("бульдозер").clone();
-        let items = items_for(&state, &unit);
+        let items = items_for(StateRef::from(&state), &unit);
 
         let remove = items
             .iter()
@@ -1786,7 +1787,7 @@ mod tests {
         let id = spawn(&mut state, UnitType::Tank);
         let mut unit = state.unit(id).expect("танк").clone();
 
-        assert!(!items_for(&state, &unit)
+        assert!(!items_for(StateRef::from(&state), &unit)
             .iter()
             .find(|item| item.id == ItemId::Sentry)
             .expect("sentry")
@@ -1794,7 +1795,7 @@ mod tests {
 
         unit.orders = UnitOrder::Sentry;
 
-        assert!(items_for(&state, &unit)
+        assert!(items_for(StateRef::from(&state), &unit)
             .iter()
             .find(|item| item.id == ItemId::Sentry)
             .expect("sentry")
@@ -1826,7 +1827,7 @@ mod tests {
         let id = spawn(&mut state, UnitType::Tank);
         let unit = state.unit(id).expect("танк").clone();
         let menu = UnitMenu::new(
-            &state,
+            StateRef::from(&state),
             &unit,
             (400, 200),
             PixelRect::new(180, 18, 448, 448),
@@ -1851,7 +1852,7 @@ mod tests {
         let id = spawn(&mut state, UnitType::Tank);
         let unit = state.unit(id).expect("танк").clone();
         let menu = UnitMenu::new(
-            &state,
+            StateRef::from(&state),
             &unit,
             (400, 200),
             PixelRect::new(180, 18, 448, 448),
@@ -1915,7 +1916,7 @@ mod tests {
     fn sentry_click_produces_p1_order() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let command = p1_order(&state, id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)
+        let command = p1_order(StateRef::from(&state), id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)
             .expect("приказ");
 
         match command {
@@ -1935,7 +1936,7 @@ mod tests {
         // Application: the order reaches the unit (`events::apply_command`).
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let command = p1_order(&state, id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)
+        let command = p1_order(StateRef::from(&state), id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)
             .expect("приказ");
         max_core::events::apply_command(&mut state, &command);
         assert_eq!(state.unit(id).expect("танк").orders, UnitOrder::Sentry);
@@ -1953,12 +1954,12 @@ mod tests {
 
         state.unit_mut(repair).expect("repair").storage = 0;
 
-        let error = cursor_mode_click(&state, repair, tank, CURSOR_REPAIR).expect_err("нет груза");
+        let error = cursor_mode_click(StateRef::from(&state), repair, tank, CURSOR_REPAIR).expect_err("нет груза");
         assert!(error.contains("storage"), "сообщение об отсутствии груза");
 
         state.unit_mut(repair).expect("repair").storage = 3;
 
-        let command = cursor_mode_click(&state, repair, tank, CURSOR_REPAIR)
+        let command = cursor_mode_click(StateRef::from(&state), repair, tank, CURSOR_REPAIR)
             .expect("приказ")
             .expect("не пусто");
 
@@ -1977,7 +1978,7 @@ mod tests {
         state.unit_mut(transport).expect("транспорт").grid = Point::new(25, 22);
         state.unit_mut(tank).expect("танк").grid = Point::new(22, 22);
 
-        let command = enter_mode_click(&state, tank, transport).expect("приказ");
+        let command = enter_mode_click(StateRef::from(&state), tank, transport).expect("приказ");
 
         match &command {
             max_core::input::Command::Order(packet) => {
@@ -2003,9 +2004,9 @@ mod tests {
         let mut unit = state.unit(id).expect("завод").clone();
         unit.state = UnitOrderState::UnitReady;
 
-        assert!(items_for(&state, &unit).is_empty());
+        assert!(items_for(StateRef::from(&state), &unit).is_empty());
         assert!(UnitMenu::new(
-            &state,
+            StateRef::from(&state),
             &unit,
             (400, 200),
             PixelRect::new(180, 18, 448, 448),

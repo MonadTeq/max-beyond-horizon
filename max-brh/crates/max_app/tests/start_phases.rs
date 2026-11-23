@@ -42,20 +42,20 @@ fn single_human() -> LocalSetup {
 }
 
 fn team_units(app: &App, team: TeamId) -> Vec<UnitType> {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| unit.team == team)
         .map(|unit| unit.unit_type)
         .collect()
 }
 
 fn find_unit(app: &App, team: TeamId, unit_type: UnitType) -> Option<Point> {
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .find(|unit| unit.team == team && unit.unit_type == unit_type)
         .map(|unit| unit.grid)
 }
@@ -143,7 +143,7 @@ fn mobilization_buys_units_and_spends_credits() {
     app.new_game_on_surface(&config, &land_surface());
 
     assert_eq!(
-        app.state().team_units[TeamId::RED.0 as usize].gold,
+        app.state_ref().team_units()[TeamId::RED.0 as usize].gold,
         remaining,
         "team_gold после закупки (TeamUnits::SetGold)"
     );
@@ -226,10 +226,10 @@ fn ai_teams_get_their_own_starting_positions() {
 
     assert!(ai_base.is_some(), "ИИ-команда высажена на своей точке");
     assert!(
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .any(|id| app.state().unit(id).is_some_and(|unit| unit.team == TeamId::GREEN)),
+            .any(|id| app.state_ref().unit(id).is_some_and(|unit| unit.team == TeamId::GREEN)),
         "у ИИ есть юниты"
     );
 }
@@ -282,7 +282,7 @@ fn default_config_keeps_the_old_behavior() {
 
     assert_eq!(report.start_units, 14, "2 команды × (4 постройки + 3 юнита)");
     assert_eq!(
-        app.state().team_units[TeamId::RED.0 as usize].gold,
+        app.state_ref().team_units()[TeamId::RED.0 as usize].gold,
         config.start_gold
     );
 }
@@ -323,11 +323,11 @@ fn mobilization_upgrades_reach_the_deployed_units() {
     app.new_game_on_surface(&config, &land_surface());
 
     let constructors: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::Constructor)
         })
@@ -335,7 +335,7 @@ fn mobilization_upgrades_reach_the_deployed_units() {
 
     assert_eq!(constructors.len(), 2, "бесплатный + купленный Constructor");
     for id in constructors {
-        let values = app.state().unit(id).unwrap().base_values;
+        let values = app.state_ref().unit(id).unwrap().base_values;
         assert_eq!(
             values.armor,
             base_armor + 1,
@@ -343,7 +343,7 @@ fn mobilization_upgrades_reach_the_deployed_units() {
         );
     }
     assert_eq!(
-        app.state().teams[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades,
+        app.state_ref().teams()[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades,
         config.deployments[0].gold_spent_on_upgrades
     );
 }

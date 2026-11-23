@@ -22,7 +22,7 @@ use max_core::enums::{unit_flags, GameStateType, UnitOrder, UnitOrderState, Unit
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::{UnitId, UnitInfo, UnitListKind};
-use max_core::GameState;
+use max_core::universe::StateRef;
 use max_render::terrain::PaletteRgba;
 
 /// Cursor index (`CursorId` from `cursor.hpp:34-65`).
@@ -313,7 +313,7 @@ pub fn is_unit_next_to_position(unit: &UnitInfo, grid: Point) -> bool {
 /// `Access_GetActiveLoader(unit) == nullptr` is modeled in the port by
 /// [`max_core::access::is_engaged`] (a unit that is being loaded/led does not accept
 /// orders).
-pub fn ready_to_take_orders(state: &GameState, unit: &UnitInfo) -> bool {
+pub fn ready_to_take_orders(state: StateRef<'_>, unit: &UnitInfo) -> bool {
     if unit.hits == 0 {
         return false;
     }
@@ -322,13 +322,13 @@ pub fn ready_to_take_orders(state: &GameState, unit: &UnitInfo) -> bool {
         || (matches!(unit.orders, UnitOrder::Move | UnitOrder::MoveToUnit)
             && unit.state == UnitOrderState::ExecutingOrder);
 
-    order_ok && !access::is_engaged(state, unit)
+    order_ok && !state.is_engaged(unit)
 }
 
 /// `Access_GetEnemyUnit(team, x, y, flags)` (`access.cpp:1731`): a visible enemy in
 /// the cell (first regular units, then ground cover/mines).
 pub fn get_enemy_unit(
-    state: &GameState,
+    state: StateRef<'_>,
     team: TeamId,
     grid: Point,
     flags: u32,
@@ -368,7 +368,7 @@ pub fn get_enemy_unit(
 
 /// The tail of `Access_GetTeamUnit`/`Access_GetEnemyUnit`: the tape belongs to
 /// the builder (`unit = unit->GetParent()`).
-fn resolve_tape_parent(state: &GameState, id: UnitId) -> Option<UnitId> {
+fn resolve_tape_parent(state: StateRef<'_>, id: UnitId) -> Option<UnitId> {
     let unit = state.unit(id)?;
 
     if matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape) {
@@ -379,7 +379,7 @@ fn resolve_tape_parent(state: &GameState, id: UnitId) -> Option<UnitId> {
 }
 
 /// `GameManager_IsValidTransferTarget` (`game_manager.cpp:6084`).
-pub fn is_valid_transfer_target(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
+pub fn is_valid_transfer_target(state: StateRef<'_>, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
     if unit1.id == unit2.id {
         return false;
     }
@@ -403,8 +403,8 @@ pub fn is_valid_transfer_target(state: &GameState, unit1: &UnitInfo, unit2: &Uni
 
 /// `GameManager_IsGroupOrderInterrupted` (`access.cpp:2390`): the group has
 /// a unit that is still moving.
-pub fn is_group_order_interrupted(state: &GameState, unit: &UnitInfo) -> bool {
-    let Some(members) = access::group_members_of(state, unit.id) else {
+pub fn is_group_order_interrupted(state: StateRef<'_>, unit: &UnitInfo) -> bool {
+    let Some(members) = state.group_members_of(unit.id) else {
         return false;
     };
 
@@ -428,7 +428,7 @@ pub fn is_group_order_interrupted(state: &GameState, unit: &UnitInfo) -> bool {
 /// [`crate::buildsite`] and is checked before this function is called
 /// ([`session_cursor`]).
 pub fn builder_unit_cursor(
-    state: &GameState,
+    state: StateRef<'_>,
     player_team: TeamId,
     unit1: &UnitInfo,
     grid: Point,
@@ -441,8 +441,7 @@ pub fn builder_unit_cursor(
             .is_some_and(|parent| is_unit_next_to_position(parent, grid));
 
         if next_to_parent
-            && access::is_accessible(
-                state,
+            && state.is_accessible(
                 unit1.unit_type,
                 player_team,
                 grid,
@@ -465,7 +464,7 @@ pub fn builder_unit_cursor(
 /// `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937`): the order
 /// `ORDER_IDLE` of the unit (tape/inside a building) — `CURSOR_ACTIVATE`.
 pub fn air_unit_cursor(
-    state: &GameState,
+    state: StateRef<'_>,
     player_team: TeamId,
     unit1: &UnitInfo,
     grid: Point,
@@ -475,8 +474,7 @@ pub fn air_unit_cursor(
 
     if let Some(parent) = parent {
         if is_unit_next_to_position(parent, grid)
-            && access::is_accessible(
-                state,
+            && state.is_accessible(
                 unit1.unit_type,
                 player_team,
                 grid,
@@ -511,7 +509,7 @@ pub fn air_unit_cursor(
 /// `cursor` — the C++ `unit->cursor` mode; in the port it lives in
 /// [`crate::hud::HudState::cursor_mode`] and is passed here explicitly.
 pub fn unit_action_cursor(
-    state: &GameState,
+    state: StateRef<'_>,
     player_team: TeamId,
     unit1: &UnitInfo,
     grid: Point,
@@ -519,8 +517,7 @@ pub fn unit_action_cursor(
     shift_pressed: bool,
     cursor: u8,
 ) -> CursorId {
-    let accessible = access::is_accessible(
-        state,
+    let accessible = state.is_accessible(
         unit1.unit_type,
         player_team,
         grid,
@@ -550,8 +547,7 @@ pub fn unit_action_cursor(
             // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, i.e. the `load` mode
             // (and `repair`/`reload`/`x-fer` fall into `else` below).
             if cursor == crate::unitmenu::CURSOR_LOAD && i32::from(unit1.storage) < capacity {
-                let land = access::get_team_unit_by_environments(
-                    state,
+                let land = state.get_team_unit_by_environments(
                     grid,
                     player_team,
                     &[Environment::Ground, Environment::Amphibious],
@@ -627,7 +623,7 @@ pub fn unit_action_cursor(
 /// `CURSOR_ARROW_NE` (`x-fer`) check from `GameManager_GetUnitActionCursor`:
 /// the same cargo category, the target is not in `CLEAR`/`BUILD`, or the target building
 /// has a receiver of the needed cargo in the complex.
-fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInfo) -> bool {
+fn transfer_target_accepts(state: StateRef<'_>, unit1: &UnitInfo, target: &UnitInfo) -> bool {
     let cargo = max_core::victory::cargo_type_of(unit1.unit_type);
 
     if max_core::victory::cargo_type_of(target.unit_type) == cargo
@@ -639,8 +635,7 @@ fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInf
 
     if unit1.is_mobile() && !target.is_mobile() {
         if let Some(complex) = target.complex {
-            return max_core::transfer::find_unit_with_cargo_type(
-                state, target.team, complex, cargo,
+            return state.find_unit_with_cargo_type( target.team, complex, cargo,
             )
             .is_some();
         }
@@ -653,7 +648,7 @@ fn transfer_target_accepts(state: &GameState, unit1: &UnitInfo, target: &UnitInf
 /// a valid target — `CURSOR_ENEMY`, `CURSOR_FAR_TARGET`, `CURSOR_DISABLE`,
 /// `CURSOR_STEAL`, otherwise `CURSOR_UNIT_NO_GO`.
 pub fn military_cursor(
-    state: &GameState,
+    state: StateRef<'_>,
     selected: &UnitInfo,
     grid: Point,
     cursor: u8,
@@ -667,12 +662,12 @@ pub fn military_cursor(
             return CursorId::UnitNoGo;
         }
 
-        if selected.ammo == 0 && access::group_members_of(state, selected.id).is_none() {
+        if selected.ammo == 0 && state.group_members_of(selected.id).is_none() {
             return CursorId::UnitNoGo;
         }
     }
 
-    let Some(target_id) = access::get_attack_target(state, selected, grid, false) else {
+    let Some(target_id) = state.get_attack_target( selected, grid, false) else {
         return CursorId::UnitNoGo;
     };
     let Some(target) = state.unit(target_id) else {
@@ -713,7 +708,7 @@ pub fn military_cursor(
         return CursorId::UnitNoGo;
     }
 
-    if selected.ammo == 0 && access::group_members_of(state, selected.id).is_none() {
+    if selected.ammo == 0 && state.group_members_of(selected.id).is_none() {
         return CursorId::UnitNoGo;
     }
 
@@ -721,7 +716,7 @@ pub fn military_cursor(
         .base_values
         .get_attribute(max_core::unit_values::ATTRIB_RANGE);
 
-    if access::is_within_attack_range(state, selected, grid, range) {
+    if state.is_within_attack_range( selected, grid, range) {
         if selected.ammo > 0 {
             CursorId::Enemy
         } else {
@@ -754,19 +749,19 @@ pub fn military_cursor(
 ///     type), `TRANSFER`/`RELOAD` by the cursor mode, otherwise
 ///     `FRND_PTR`/`UNIT_NGO`.
 pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
-    let state = app.state();
-    let player_team = state.player_team;
+    let state = app.state_ref();
+    let player_team = state.player_team();
     // C++ `unit->cursor` (X-FER/repair/reload/load/steal/disable modes).
     let cursor_mode = app.hud().cursor_mode;
     // C++ `targeting_mode`/`enter_mode` live in `UnitInfo`; in the port — in the HUD
     // (`HudState::targeting_mode`/`enter_mode`, `unitmenu` toggles them).
     let targeting_mode = app.hud().targeting_mode;
     let enter_mode = app.hud().enter_mode;
-    let team_unit_id = access::get_team_unit(state, grid, player_team, unit_flags::SELECTABLE);
+    let team_unit_id = state.get_team_unit( grid, player_team, unit_flags::SELECTABLE);
     let team_unit = team_unit_id.and_then(|id| state.unit(id));
     let active_kind = state
-        .teams
-        .get(usize::from(state.active_turn_team.0))
+        .teams()
+        .get(usize::from(state.active_turn_team().0))
         .map(|team| team.team_type)
         .unwrap_or(TeamKind::None);
 
@@ -778,7 +773,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         return CursorId::Hand;
     }
 
-    if state.game_state == GameStateType::EndTurn || active_kind != TeamKind::Player {
+    if state.game_state() == GameStateType::EndTurn || active_kind != TeamKind::Player {
         return if team_unit.is_some() {
             CursorId::Friend
         } else {
@@ -864,7 +859,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                 if enemy.unit_type != UnitType::Connector
                     && (enemy.flags & unit_flags::GROUND_COVER == 0
                         || matches!(enemy.unit_type, UnitType::LandMine | UnitType::SeaMine))
-                    && access::is_valid_attack_target(state, selected, enemy)
+                    && state.is_valid_attack_target( selected, enemy)
                 {
                     let result = military_cursor(state, selected, grid, cursor_mode);
 
@@ -889,12 +884,12 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             .base_values
             .get_attribute(max_core::unit_values::ATTRIB_RANGE);
 
-        if !access::is_within_attack_range(state, selected, grid, range) {
+        if !state.is_within_attack_range( selected, grid, range) {
             return CursorId::UnitNoGo;
         }
 
         if let Some(team_unit) = team_unit {
-            if !access::is_valid_attack_target(state, selected, team_unit) {
+            if !state.is_valid_attack_target( selected, team_unit) {
                 return CursorId::UnitNoGo;
             }
         }
@@ -908,7 +903,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             return CursorId::Friend;
         }
 
-        return if access::get_receiver_unit(state, selected, grid).is_some() {
+        return if state.get_receiver_unit( selected, grid).is_some() {
             CursorId::UnitGo
         } else {
             CursorId::UnitNoGo
@@ -925,8 +920,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                     .base_values
                     .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
         {
-            let land = access::get_team_unit_by_environments(
-                state,
+            let land = state.get_team_unit_by_environments(
                 grid,
                 player_team,
                 &[Environment::Ground, Environment::Amphibious],
@@ -936,8 +930,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             if let Some(land) = land {
                 if land.orders != UnitOrder::Clear
                     && land.orders != UnitOrder::Build
-                    && access::get_team_unit_by_environments(
-                        state,
+                    && state.get_team_unit_by_environments(
                         grid,
                         player_team,
                         &[Environment::Air],
@@ -994,7 +987,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
 
             if !environments.is_empty() {
                 let candidate =
-                    access::get_team_unit_by_environments(state, grid, player_team, environments)
+                    state.get_team_unit_by_environments( grid, player_team, environments)
                         .and_then(|id| state.unit(id));
 
                 if let Some(candidate) = candidate {
@@ -1020,7 +1013,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         }
 
         if cursor_mode != 0 {
-            let target = access::get_team_unit(state, grid, player_team, unit_flags::SELECTABLE)
+            let target = state.get_team_unit( grid, player_team, unit_flags::SELECTABLE)
                 .and_then(|id| state.unit(id));
 
             if let Some(target) = target {
@@ -1098,8 +1091,8 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
     // `GameManager_GetBuilderUnitCursor` returns `CURSOR_MAP2`/`UNIT_NO_GO`.
     if let Some(site) = app.build_site() {
         let hovered = Point::new(grid_x, grid_y);
-        let anchor = site.anchor_at(app.state(), hovered);
-        let valid = site.is_valid_at(app.state(), anchor, hovered);
+        let anchor = site.anchor_at(app.state_ref(), hovered);
+        let valid = site.is_valid_at(app.state_ref(), anchor, hovered);
 
         return (cursor_for_context(CursorContext::BuildSite { valid }), 0);
     }

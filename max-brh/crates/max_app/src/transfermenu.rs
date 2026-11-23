@@ -53,12 +53,13 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState};
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::team::TeamId;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
 // max_core); no glob re-exports (phase 5.2).
 use max_core::UnitTypeClassify;
-use max_core::transfer::{find_unit_with_cargo_type, transfer_menu_cargo_info};
 use max_core::unit::UnitId;
 use max_core::victory::{cargo_type_of, CargoType};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
@@ -241,7 +242,7 @@ impl TransferMenu {
     ///
     /// `None` if one of the sides is missing, the cargo is not `RAW/FUEL/GOLD`, or the sides
     /// are of different teams (C++ closes such a window immediately in `Run`).
-    pub fn new(state: &GameState, source: UnitId, target: UnitId) -> Option<Self> {
+    pub fn new(state: StateRef<'_>, source: UnitId, target: UnitId) -> Option<Self> {
         let source_unit = state.unit(source)?;
         let target_unit = state.unit(target)?;
 
@@ -256,9 +257,9 @@ impl TransferMenu {
 
         let team = source_unit.team;
         let (source_materials, source_capacity) =
-            transfer_menu_cargo_info(state, source, target, cargo);
+            state.transfer_menu_cargo_info( source, target, cargo);
         let (target_materials, target_capacity) =
-            transfer_menu_cargo_info(state, target, source, cargo);
+            state.transfer_menu_cargo_info( target, source, cargo);
 
         let mut give_max = target_capacity - target_materials;
         give_max = give_max.min(source_materials);
@@ -465,7 +466,7 @@ impl TransferMenu {
     }
 
     /// Draws the window over the frame.
-    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &crate::Assets, state: &GameState) -> u32 {
+    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &crate::Assets, state: StateRef<'_>) -> u32 {
         let Some(menu_assets) = assets.transfer.as_ref() else {
             return 0;
         };
@@ -756,7 +757,7 @@ fn draw_horizontal_bar(
 ///   needed cargo — the target is replaced with that building (`GetUnitWithCargoType`);
 /// * otherwise `Ok(None)` — C++ silently does nothing.
 pub fn resolve_target(
-    state: &GameState,
+    state: StateRef<'_>,
     source: UnitId,
     clicked: UnitId,
 ) -> Result<Option<UnitId>, String> {
@@ -787,7 +788,7 @@ pub fn resolve_target(
     if let Some(complex) = target_unit.complex {
         if !target_unit.is_mobile() {
             if let Some(id) =
-                find_unit_with_cargo_type(state, target_unit.team, complex, cargo)
+                state.find_unit_with_cargo_type( target_unit.team, complex, cargo)
             {
                 return Ok(Some(id));
             }
@@ -804,7 +805,7 @@ pub fn resolve_target(
 /// the target, `transfer_cargo` — a signed amount. `prior_order`/`prior_state`
 /// are taken from the unit, like `Remote_SendNetPacket_08` after `SetNewOrder`.
 pub fn transfer_order(
-    state: &GameState,
+    state: StateRef<'_>,
     unit_id: UnitId,
     target: UnitId,
     amount: i16,
@@ -844,7 +845,7 @@ pub fn amount_to_transfer(menu: &TransferMenu) -> i16 {
 
 /// QA check: the target is valid for x-fer (for tests/log).
 pub fn can_transfer_between(
-    state: &GameState,
+    state: StateRef<'_>,
     source: UnitId,
     target: UnitId,
 ) -> bool {
@@ -855,18 +856,18 @@ pub fn can_transfer_between(
 }
 
 /// Unit cargo by type (for QA/log).
-pub fn unit_storage_of(state: &GameState, unit_id: UnitId) -> i32 {
+pub fn unit_storage_of(state: StateRef<'_>, unit_id: UnitId) -> i32 {
     state.unit(unit_id).map_or(0, |unit| i32::from(unit.storage))
 }
 
 /// Cargo units in the complex by type — a wrapper for QA lines.
 pub fn stored_in_complex(
-    state: &GameState,
+    state: StateRef<'_>,
     team: TeamId,
     complex: max_core::team::ComplexId,
     cargo: CargoType,
 ) -> i32 {
-    max_core::transfer::complex_stored(state, team, complex, cargo)
+    state.complex_stored( team, complex, cargo)
 }
 
 // For tests and the future bar "dragging": the icon resource type.
@@ -931,7 +932,7 @@ mod tests {
     #[test]
     fn menu_numbers_follow_cpp_formulas() {
         let (state, truck, dump) = state_with_transfer();
-        let menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         // source — a truck: 30/50; target — the whole complex: 10/75.
         assert_eq!((menu.source_materials, menu.source_capacity), (30, 50));
@@ -950,7 +951,7 @@ mod tests {
     #[test]
     fn slider_click_uses_limited_scrollbar_formula() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         // zero_offset = -10, capacity = 75-10 = 65, width = 223.
         // x = 0 → (111 + 0)/223 - 10 = -10.
@@ -967,7 +968,7 @@ mod tests {
     #[test]
     fn adjust_respects_give_and_take_limits() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         assert!(!menu.adjust(true), "give_max достигнут");
         assert!(menu.adjust(false));
@@ -982,7 +983,7 @@ mod tests {
     #[test]
     fn click_buttons_map_to_actions() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
         let window = menu.window_rect();
         let centre = |rect: PixelRect| {
             (
@@ -1011,7 +1012,7 @@ mod tests {
     #[test]
     fn keys_match_cpp() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         assert_eq!(menu.key(Key::Enter), TransferAction::Confirm);
         assert_eq!(menu.key(Key::Escape), TransferAction::Cancel);
@@ -1037,7 +1038,7 @@ mod tests {
     #[test]
     fn arrow_points_from_source_to_target() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         // `SetRestState(total >= 0)` → pressed → `down` = `XFRRTARO` (right):
         // the transfer goes from the unit (source, left) into the receiver (right).
@@ -1058,7 +1059,7 @@ mod tests {
     #[test]
     fn bar_fill_scales_amount_over_target_capacity() {
         let (state, truck, dump) = state_with_transfer();
-        let mut menu = TransferMenu::new(&state, truck, dump).expect("menu");
+        let mut menu = TransferMenu::new(StateRef::from(&state), truck, dump).expect("menu");
 
         // amount 30: (30 + 10) * 223 / 65 = 137.
         assert_eq!(menu.bar_fill(), (40 * 223) / 65);
@@ -1081,7 +1082,7 @@ mod tests {
                     .is_some_and(|unit| unit.unit_type == UnitType::MiningStation)
             })
             .expect("mine");
-        assert_eq!(resolve_target(&state, truck, mine), Ok(Some(mine)));
+        assert_eq!(resolve_target(StateRef::from(&state), truck, mine), Ok(Some(mine)));
 
         // A truck with fuel to a complex with ADUMP: C++ replaces the target with
         // the building with fuel — there is none, so `None` (no transfer).
@@ -1096,7 +1097,7 @@ mod tests {
             })
             .expect("truck");
         assert_eq!(
-            resolve_target(&cargo_state, fuel_truck, dump),
+            resolve_target(StateRef::from(&cargo_state), fuel_truck, dump),
             Ok(Some(dump)),
             "тип груза совпадает (RAW)"
         );
@@ -1106,13 +1107,13 @@ mod tests {
     fn resolve_target_rejects_disabled_target() {
         let (mut state, truck, dump) = state_with_transfer();
         state.unit_mut(dump).expect("dump").orders = UnitOrder::Disable;
-        assert!(resolve_target(&state, truck, dump).is_err());
+        assert!(resolve_target(StateRef::from(&state), truck, dump).is_err());
     }
 
     #[test]
     fn transfer_order_carries_parent_and_cargo_in_p3() {
         let (state, truck, dump) = state_with_transfer();
-        let command = transfer_order(&state, truck, dump, 12).expect("command");
+        let command = transfer_order(StateRef::from(&state), truck, dump, 12).expect("command");
 
         match command {
             max_core::input::Command::Order(packet) => match packet.payload {

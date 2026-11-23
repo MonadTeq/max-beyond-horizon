@@ -218,15 +218,15 @@ fn app_collects_combat_sounds_into_the_frame_queue() {
 
     // Tank attributes are taken from the team `current_values`, and firing happens on
     // the active turn — like in a real match (`ResourceManager_InitTeamUnits`).
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().teams[1].team_type = TeamKind::Computer;
-    app.state_mut().team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
-    app.state_mut().team_units[1] = TeamUnits::with_clan(max_core::TeamClan::Random);
-    app.state_mut().active_turn_team = TeamId::RED;
-    app.state_mut().player_team = TeamId::RED;
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().teams_mut()[1].team_type = TeamKind::Computer;
+    app.universe_mut().team_units_table_mut()[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
+    app.universe_mut().team_units_table_mut()[1] = TeamUnits::with_clan(max_core::TeamClan::Random);
+    app.universe_mut().set_active_turn_team(TeamId::RED);
+    app.universe_mut().set_player_team(TeamId::RED);
 
     let attacker = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::RED,
@@ -235,7 +235,7 @@ fn app_collects_combat_sounds_into_the_frame_queue() {
         )
         .expect("attacker");
     let target = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::GREEN,
@@ -245,11 +245,11 @@ fn app_collects_combat_sounds_into_the_frame_queue() {
         .expect("target");
     let _ = target;
 
-    let mut data = app.state().order_data(attacker);
+    let mut data = app.state_ref().order_data(attacker);
     data.fire_on = Point::new(11, 10);
     data.move_to = Point::new(11, 10);
-    app.state_mut().set_order_data(attacker, data);
-    app.state_mut()
+    app.universe_mut().set_order_data(attacker, data);
+    app.universe_mut()
         .set_order(attacker, UnitOrder::Fire, UnitOrderState::Init);
 
     let mut collected = Vec::new();

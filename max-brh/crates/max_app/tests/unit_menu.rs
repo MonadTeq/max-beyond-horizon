@@ -90,10 +90,10 @@ fn free_grid(app: &App) -> Point {
             for dx in -radius..=radius {
                 let grid = Point::new(22 + dx, 22 + dy);
 
-                if app.state().units_at(grid).is_empty()
+                if app.state_ref().units_at(grid).is_empty()
                     && app
-                        .state()
-                        .map
+                        .state_ref()
+                        .map()
                         .surface_at(grid.x, grid.y)
                         .bits()
                         & max_core::enums::Surface::LAND.bits()
@@ -113,7 +113,7 @@ fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
     let grid = free_grid(app);
     let flags = max_core::access::unit_type_flags(unit_type);
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(unit_type, TeamId::RED, grid, flags)
         .expect("юнит появился");
 
@@ -126,8 +126,8 @@ fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
 fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
     let land = max_core::enums::Surface::LAND.bits();
     let free = |app: &App, cell: Point| {
-        app.state().units_at(cell).is_empty()
-            && app.state().map.surface_at(cell.x, cell.y).bits() & land != 0
+        app.state_ref().units_at(cell).is_empty()
+            && app.state_ref().map().surface_at(cell.x, cell.y).bits() & land != 0
     };
     let mut spot = Point::new(30, 30);
 
@@ -149,7 +149,7 @@ fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
 
     let flags = max_core::access::unit_type_flags(unit_type);
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(unit_type, TeamId::RED, spot, flags)
         .expect("юнит появился");
 
@@ -182,7 +182,7 @@ fn open_menu(app: &mut App, id: UnitId) {
     app.hud_mut().cursor_mode = 0;
     app.hud_mut().enter_mode = false;
 
-    let grid = app.state().unit(id).expect("юнит").grid;
+    let grid = app.state_ref().unit(id).expect("юнит").grid;
     let point = screen_point(app, grid);
     let _ = click(app, point);
     assert_eq!(app.hud().selected, Some(id), "первый клик выделяет юнита");
@@ -198,7 +198,7 @@ fn repeat_click_on_selected_unit_opens_menu() {
     };
 
     let id = spawn(&mut app, UnitType::Tank);
-    let grid = app.state().unit(id).expect("танк").grid;
+    let grid = app.state_ref().unit(id).expect("танк").grid;
     let point = screen_point(&app, grid);
 
     // The first click — selection only (like C++ `GameManager_ClickUnit` with unit1 != unit2).
@@ -290,7 +290,7 @@ fn menu_is_modal_for_the_map() {
 
     // A click on another own unit: the menu closes, the selection does not change,
     // no orders appeared (C++: the popup is modal for the map).
-    let point = screen_point(&app, app.state().unit(other).expect("scout").grid);
+    let point = screen_point(&app, app.state_ref().unit(other).expect("scout").grid);
     let _ = click(&mut app, point);
 
     assert!(app.unit_menu().is_none(), "клик вне меню закрывает его");
@@ -321,7 +321,7 @@ fn hotkey_and_click_activate_sentry() {
     let _ = click(&mut app, (rect.ulx + rect.width / 2, rect.uly + rect.height / 2));
 
     assert!(app.unit_menu().is_none(), "пункт закрывает меню");
-    let unit = app.state().unit(tank).expect("танк");
+    let unit = app.state_ref().unit(tank).expect("танк");
     assert_eq!(unit.orders, UnitOrder::Sentry);
     assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
 
@@ -334,7 +334,7 @@ fn hotkey_and_click_activate_sentry() {
     // The '8' hotkey clears sentry (`ORDER_AWAIT`).
     let _ = key(&mut app, Key::Char('8'));
     assert_eq!(
-        app.state().unit(tank).expect("танк").orders,
+        app.state_ref().unit(tank).expect("танк").orders,
         UnitOrder::Await
     );
 }
@@ -416,7 +416,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     );
     app.flush_orders();
     assert_eq!(
-        app.state().unit(builder).expect("строитель").orders,
+        app.state_ref().unit(builder).expect("строитель").orders,
         UnitOrder::Build,
         "строитель в приказе Build"
     );
@@ -444,7 +444,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     // (`UnitsManager_ProcessOrderBuild` → `ORDER_STATE_BUILD_CANCEL`).
     app.tick();
 
-    let unit = app.state().unit(builder).expect("строитель");
+    let unit = app.state_ref().unit(builder).expect("строитель");
     assert_eq!(
         unit.orders,
         UnitOrder::Await,
@@ -546,7 +546,7 @@ fn cursor_mode_repairs_own_unit() {
     };
 
     let repair = spawn(&mut app, UnitType::RepairUnit);
-    app.state_mut().unit_mut(repair).expect("repair").storage = 2;
+    app.universe_mut().unit_mut(repair).expect("repair").storage = 2;
     let tank = spawn(&mut app, UnitType::Tank);
 
     open_menu(&mut app, repair);
@@ -560,10 +560,10 @@ fn cursor_mode_repairs_own_unit() {
     assert_eq!(app.hud().cursor_mode, unitmenu::CURSOR_REPAIR);
 
     // A click on an own tank — the `ORDER_REPAIR` order with the tank as parent.
-    let point = screen_point(&app, app.state().unit(tank).expect("танк").grid);
+    let point = screen_point(&app, app.state_ref().unit(tank).expect("танк").grid);
     let _ = click(&mut app, point);
 
-    let unit = app.state().unit(repair).expect("repair");
+    let unit = app.state_ref().unit(repair).expect("repair");
     assert_eq!(unit.orders, UnitOrder::Repair);
     assert_eq!(unit.parent_unit, Some(tank));
     // C++ does not reset `unit->cursor` after a click — the mode remains until
@@ -572,7 +572,7 @@ fn cursor_mode_repairs_own_unit() {
 
     // The menu item turns the mode off (C++ `cursor = 0`): the unit is still selected,
     // so a single click on it opens the menu again.
-    let repair_grid = app.state().unit(repair).expect("repair").grid;
+    let repair_grid = app.state_ref().unit(repair).expect("repair").grid;
     let point = screen_point(&app, repair_grid);
     let _ = click(&mut app, point);
     assert!(app.unit_menu().is_some(), "меню открылось повторным кликом");
@@ -605,13 +605,13 @@ fn enter_mode_moves_to_unit() {
 
     assert!(app.hud().enter_mode, "enter включил режим посадки");
 
-    let transport_grid = app.state().unit(transport).expect("транспорт").grid;
+    let transport_grid = app.state_ref().unit(transport).expect("транспорт").grid;
     let point = screen_point(&app, transport_grid);
     let _ = click(&mut app, point);
 
-    let unit = app.state().unit(tank).expect("танк");
+    let unit = app.state_ref().unit(tank).expect("танк");
     assert_eq!(unit.orders, UnitOrder::MoveToUnit);
-    assert_eq!(app.state().order_data(tank).move_to, transport_grid);
+    assert_eq!(app.state_ref().order_data(tank).move_to, transport_grid);
     assert!(!app.hud().enter_mode, "C++ сбрасывает enter_mode после клика");
 }
 

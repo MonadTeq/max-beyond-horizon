@@ -505,8 +505,8 @@ pub fn draw_unit_overlays(
     palette: &UiPalette,
 ) -> u32 {
     let panel = &app.hud().panels;
-    let state = app.state();
-    let player_team = state.player_team;
+    let state = app.state_ref();
+    let player_team = state.player_team();
     let colors = panel.colors;
     let status = panel.status;
     let hits = panel.hits;
@@ -601,8 +601,8 @@ pub fn draw_range_scan(
         return 0;
     }
 
-    let state = app.state();
-    let player_team = state.player_team;
+    let state = app.state_ref();
+    let player_team = state.player_team();
     let Some(id) = app.hud().selected else {
         return 0;
     };
@@ -691,7 +691,7 @@ pub fn draw_grid(
     palette: &UiPalette,
     complex: bool,
 ) -> u32 {
-    let state = app.state();
+    let state = app.state_ref();
     let width = frame.width() as i32;
     let height = frame.height() as i32;
 
@@ -733,7 +733,7 @@ pub fn draw_grid(
 
     for grid_y in y0..=y1 {
         for grid_x in x0..=x1 {
-            let surface = state.map.surface_at(grid_x, grid_y);
+            let surface = state.map().surface_at(grid_x, grid_y);
             let color = grid_color(palette, surface);
             let (screen_x, screen_y) = viewport.grid_to_screen(grid_x, grid_y);
 

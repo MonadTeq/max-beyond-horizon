@@ -15,13 +15,13 @@ fn app_with_team() -> App {
     state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
     state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
     state.team_units[TeamId::RED.0 as usize].gold = 500;
-    *app.state_mut() = state;
+    app.install_universe(max_core::universe::GameUniverse::new(state, max_core::universe::LocalDispatcher));
     app
 }
 
 fn select_constructor(app: &mut App) -> max_core::unit::UnitId {
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Constructor,
             TeamId::RED,
@@ -64,19 +64,19 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     assert!(app.upgrade_menu_select(infantry_index));
 
     let attack_before = app
-        .state()
-        .team_units[TeamId::RED.0 as usize]
+        .state_ref()
+        .team_units()[TeamId::RED.0 as usize]
         .current_values[UnitType::Infantry as usize]
         .attack;
-    let gold_before = app.state().team_units[TeamId::RED.0 as usize].gold;
+    let gold_before = app.state_ref().team_units()[TeamId::RED.0 as usize].gold;
 
     assert!(app.upgrade_menu_adjust(0, true), "атака покупается");
     app.commit_upgrade_menu(false).expect("commit");
 
-    let attack_after = app.state().team_units[TeamId::RED.0 as usize].current_values
+    let attack_after = app.state_ref().team_units()[TeamId::RED.0 as usize].current_values
         [UnitType::Infantry as usize]
         .attack;
-    let gold_after = app.state().team_units[TeamId::RED.0 as usize].gold;
+    let gold_after = app.state_ref().team_units()[TeamId::RED.0 as usize].gold;
     assert!(
         attack_after > attack_before,
         "апгрейд атаки: {attack_before} -> {attack_after}"
@@ -86,11 +86,11 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     // A new unit of this type is created with the current values (C++
     // `UnitInfo::UnitInfo` → `GetCurrentUnitValues`).
     let spawned = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Infantry, TeamId::RED, Point::new(20, 20), 0)
         .expect("infantry");
     assert_eq!(
-        app.state().unit(spawned).unwrap().base_values.attack,
+        app.state_ref().unit(spawned).unwrap().base_values.attack,
         attack_after
     );
 }
@@ -109,42 +109,42 @@ fn cancel_rolls_back_gold_and_values() {
         .unwrap();
     app.upgrade_menu_select(index);
 
-    let before = app.state().team_units[TeamId::RED.0 as usize].current_values
+    let before = app.state_ref().team_units()[TeamId::RED.0 as usize].current_values
         [UnitType::Infantry as usize];
-    let gold = app.state().team_units[TeamId::RED.0 as usize].gold;
+    let gold = app.state_ref().team_units()[TeamId::RED.0 as usize].gold;
 
     assert!(app.upgrade_menu_adjust(0, true));
     // The menu changes only its own copy of gold.
-    assert_eq!(app.state().team_units[TeamId::RED.0 as usize].gold, gold);
+    assert_eq!(app.state_ref().team_units()[TeamId::RED.0 as usize].gold, gold);
     app.close_upgrade_menu();
 
     assert_eq!(
-        app.state().team_units[TeamId::RED.0 as usize].current_values
+        app.state_ref().team_units()[TeamId::RED.0 as usize].current_values
             [UnitType::Infantry as usize],
         before
     );
-    assert_eq!(app.state().team_units[TeamId::RED.0 as usize].gold, gold);
+    assert_eq!(app.state_ref().team_units()[TeamId::RED.0 as usize].gold, gold);
 }
 
 #[test]
 fn filters_keep_only_the_matching_unit_class() {
     let mut app = app_with_team();
     select_constructor(&mut app);
-    let menu = UpgradeMenu::new(app.state(), TeamId::RED).expect("menu");
+    let menu = UpgradeMenu::new(app.state_ref(), TeamId::RED).expect("menu");
     assert!(menu.unit_types.iter().any(|unit_type| {
         max_core::access::unit_type_flags(*unit_type) & max_core::enums::unit_flags::STATIONARY != 0
     }));
 
     let mut menu = menu;
     menu.filters = [true, false, false, false, false];
-    menu.rebuild_list(app.state(), None);
+    menu.rebuild_list(app.state_ref(), None);
     assert!(!menu.unit_types.is_empty());
     assert!(menu.unit_types.iter().all(|unit_type| {
         max_core::access::unit_type_flags(*unit_type) & max_core::enums::unit_flags::MOBILE_LAND_UNIT
             != 0
     }));
 
-    menu.toggle_filter(UpgradeFilter::Ground, app.state());
+    menu.toggle_filter(UpgradeFilter::Ground, app.state_ref());
     assert!(menu.filters[0] == false);
 }
 

@@ -60,7 +60,7 @@ fn assets(app: &App) -> &Assets {
 /// Spawns a unit and selects it.
 fn select(app: &mut App, unit_type: UnitType) -> max_core::unit::UnitId {
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(unit_type, TeamId::RED, Point::new(20, 20), 0)
         .expect("юнит создан");
 

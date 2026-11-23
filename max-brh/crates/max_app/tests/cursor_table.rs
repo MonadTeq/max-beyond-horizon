@@ -1,4 +1,4 @@
-﻿//! Cursor table — 1:1 `GameManager_GetWindowCursor` (`game_manager.cpp:4215`).
+//! Cursor table — 1:1 `GameManager_GetWindowCursor` (`game_manager.cpp:4215`).
 //!
 //! Every mode from the oracle is checked:
 //! * an empty map without selection → `UNIT_NGO` (`SelectedUnit == nullptr`);
@@ -26,18 +26,18 @@ use max_core::{TeamClan, UnitId};
 fn app() -> App {
     let mut app = App::new(AppConfig::default());
     {
-        let state = app.state_mut();
-        state.game_state = GameStateType::InGame;
-        state.play_mode = PlayMode::TurnBased;
-        state.player_team = TeamId::RED;
-        state.active_turn_team = TeamId::RED;
-        state.teams[0].team_type = TeamKind::Player;
-        state.teams[1].team_type = TeamKind::Computer;
-        state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-        state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
-        state.ai.all_visible = true;
+        let state = app.universe_mut();
+        state.set_game_state(GameStateType::InGame);
+        state.set_play_mode(PlayMode::TurnBased);
+        state.set_player_team(TeamId::RED);
+        state.set_active_turn_team(TeamId::RED);
+        state.teams_mut()[0].team_type = TeamKind::Player;
+        state.teams_mut()[1].team_type = TeamKind::Computer;
+        state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+        state.team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
+        state.ai_mut().all_visible = true;
 
-        for tile in state.map.surface.tiles_mut().iter_mut() {
+        for tile in state.map_mut().surface.tiles_mut().iter_mut() {
             *tile = Surface::LAND;
         }
     }
@@ -48,11 +48,11 @@ fn app() -> App {
 fn spawn(app: &mut App, unit_type: UnitType, team: TeamId, grid: Point) -> Option<UnitId> {
     let flags = access::unit_type_flags(unit_type);
 
-    app.state_mut().spawn_unit(unit_type, team, grid, flags)
+    app.universe_mut().spawn_unit(unit_type, team, grid, flags)
 }
 
 fn ready(app: &mut App, id: UnitId) {
-    let mut unit = app.state().unit(id).expect("unit").clone();
+    let mut unit = app.state_ref().unit(id).expect("unit").clone();
     unit.orders = UnitOrder::Await;
     unit.state = UnitOrderState::ExecutingOrder;
     unit.hits = unit
@@ -63,7 +63,7 @@ fn ready(app: &mut App, id: UnitId) {
         .base_values
         .get_attribute(max_core::unit_values::ATTRIB_AMMO)
         .max(1) as u8;
-    app.state_mut().write_unit(id, unit);
+    app.universe_mut().write_unit(id, unit);
 }
 
 #[test]
@@ -164,9 +164,9 @@ fn repair_mode_over_damaged_unit_is_repair() {
     app.hud_mut().cursor_mode = max_app::unitmenu::CURSOR_REPAIR;
 
     let damaged = {
-        let mut unit = app.state().unit(tank).expect("tank").clone();
+        let mut unit = app.state_ref().unit(tank).expect("tank").clone();
         unit.hits = 1;
-        app.state_mut().write_unit(tank, unit.clone());
+        app.universe_mut().write_unit(tank, unit.clone());
         unit
     };
 
@@ -180,7 +180,7 @@ fn repair_mode_over_damaged_unit_is_repair() {
     full.hits = full
         .base_values
         .get_attribute(max_core::unit_values::ATTRIB_HITS) as u16;
-    app.state_mut().write_unit(tank, full);
+    app.universe_mut().write_unit(tank, full);
 
     assert_eq!(
         window_cursor(&app, Point::new(41, 40)),
@@ -201,9 +201,9 @@ fn reload_mode_over_empty_ammo_is_reload() {
     app.hud_mut().cursor_mode = max_app::unitmenu::CURSOR_RELOAD;
 
     {
-        let mut unit = app.state().unit(tank).expect("tank").clone();
+        let mut unit = app.state_ref().unit(tank).expect("tank").clone();
         unit.ammo = 0;
-        app.state_mut().write_unit(tank, unit);
+        app.universe_mut().write_unit(tank, unit);
     }
 
     assert_eq!(
@@ -231,9 +231,9 @@ fn load_mode_over_passenger_is_load() {
     app.hud_mut().cursor_mode = max_app::unitmenu::CURSOR_LOAD;
 
     {
-        let mut unit = app.state().unit(carrier).expect("carrier").clone();
+        let mut unit = app.state_ref().unit(carrier).expect("carrier").clone();
         unit.storage = 0;
-        app.state_mut().write_unit(carrier, unit);
+        app.universe_mut().write_unit(carrier, unit);
     }
 
     assert_eq!(
@@ -250,7 +250,7 @@ fn targeting_mode_in_and_out_of_range() {
     let enemy = spawn(&mut app, UnitType::Tank, TeamId::BLUE, Point::new(41, 40)).expect("enemy");
     ready(&mut app, tank);
     ready(&mut app, enemy);
-    app.state_mut().update_visibility_status(true);
+    app.universe_mut().update_visibility_status(true);
     app.hud_mut().select(Some(tank));
     app.hud_mut().targeting_mode = true;
 
@@ -276,7 +276,7 @@ fn military_cursor_marks_far_targets() {
     let enemy = spawn(&mut app, UnitType::Tank, TeamId::BLUE, Point::new(50, 40)).expect("enemy");
     ready(&mut app, tank);
     ready(&mut app, enemy);
-    app.state_mut().update_visibility_status(true);
+    app.universe_mut().update_visibility_status(true);
     app.hud_mut().select(Some(tank));
 
     assert_eq!(
@@ -315,12 +315,12 @@ fn builder_in_build_progress_is_unit_no_go() {
         spawn(&mut app, UnitType::Constructor, TeamId::RED, Point::new(40, 40)).expect("ctor");
 
     {
-        let mut unit = app.state().unit(constructor).expect("ctor").clone();
+        let mut unit = app.state_ref().unit(constructor).expect("ctor").clone();
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.build_list = vec![UnitType::TrainingHall];
         unit.build_time = 5;
-        app.state_mut().write_unit(constructor, unit);
+        app.universe_mut().write_unit(constructor, unit);
     }
     app.hud_mut().select(Some(constructor));
 

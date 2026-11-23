@@ -30,6 +30,7 @@ use max_render::viewport::draw_order;
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::unit::UnitPresentation;
+use max_core::universe::StateRef;
 
 use crate::panels::UiPalette;
 use crate::App;
@@ -212,7 +213,7 @@ pub fn connector_frame_indices(sprite: &crate::assets::LoadedSprite, mask: u16) 
 /// `IsComplexMember()`; `Hash_MapHash` registers all four cells for 2×2 buildings,
 /// so a query by any of them finds the building.
 fn team_building_at(
-    state: &max_core::game::GameState,
+    state: StateRef<'_>,
     team: max_core::team::TeamId,
     x: i16,
     y: i16,
@@ -245,7 +246,7 @@ fn team_building_at(
 /// `(gx-1, gy+1)` — `WEST_BOTTOM`. 1×1 buildings (`POWGEN`) have only
 /// `NORTH_LEFT`/`SOUTH_LEFT`/`EAST_TOP`/`WEST_TOP`.
 pub fn connector_mask_for(
-    state: &max_core::game::GameState,
+    state: StateRef<'_>,
     unit: &max_core::unit::UnitInfo,
 ) -> u16 {
     use max_core::enums::{
@@ -299,7 +300,7 @@ pub fn connector_mask_for(
 /// [`max_core::complex::update_connectors`]); the computed one — [`connector_mask_for`]
 /// (in case the state was loaded without recomputing connectors).
 pub fn drawn_connector_mask(
-    state: &max_core::game::GameState,
+    state: StateRef<'_>,
     unit: &max_core::unit::UnitInfo,
 ) -> u16 {
     unit.connectors | connector_mask_for(state, unit)
@@ -1088,7 +1089,7 @@ impl App {
             }
             _ => {
                 stats.map_tiles =
-                    render_map_into(&mut frame, &self.state().map, self.viewport(), &style);
+                    render_map_into(&mut frame, &self.state_ref().map(), self.viewport(), &style);
             }
         }
 
@@ -1177,7 +1178,7 @@ impl App {
                 stats.map_tiles = assets.terrain.render_into(&mut map, &viewport);
             }
             _ => {
-                stats.map_tiles = render_map_into(&mut map, &self.state().map, &viewport, &style);
+                stats.map_tiles = render_map_into(&mut map, &self.state_ref().map(), &viewport, &style);
             }
         }
 
@@ -1264,7 +1265,7 @@ impl App {
             return;
         };
 
-        menu.draw(frame, assets, self.state());
+        menu.draw(frame, assets, self.state_ref());
     }
 
     /// Draws the open research screen over the frame (P7).
@@ -1273,7 +1274,7 @@ impl App {
             return;
         };
 
-        menu.draw(frame, assets, self.state());
+        menu.draw(frame, assets, self.state_ref());
     }
 
     /// Draws the open mine extraction allocation dialog (C++ `AllocMenu`).
@@ -1291,7 +1292,7 @@ impl App {
             return;
         };
 
-        menu.draw(frame, assets, self.state());
+        menu.draw(frame, assets, self.state_ref());
     }
 
     /// Draws the open `Preferences`/`Setup` dialog (C++ `OptionsMenu`).
@@ -1364,7 +1365,7 @@ impl App {
             return;
         };
 
-        menu.draw(frame, assets, self.state(), self.hud().mouse_position);
+        menu.draw(frame, assets, self.state_ref(), self.hud().mouse_position);
     }
 
     /// Units into the buffer through the camera: only those visible and known to the team.
@@ -1422,8 +1423,8 @@ impl App {
         let range = viewport.visible_tiles();
         let margin = 2;
 
-        for id in self.state().unit_ids_in_order() {
-            let Some(unit) = self.state().unit(id) else {
+        for id in self.state_ref().unit_ids_in_order() {
+            let Some(unit) = self.state_ref().unit(id) else {
                 stats.units_skipped += 1;
                 continue;
             };
@@ -1444,7 +1445,7 @@ impl App {
             if !in_range {
                 continue;
             }
-            if !unit.is_visible_to_team(self.state().player_team) {
+            if !unit.is_visible_to_team(self.state_ref().player_team()) {
                 continue;
             }
             // `UnitInfoGroup::IsRelevant` (`unitinfogroup.cpp:59`): idle units
@@ -1468,7 +1469,7 @@ impl App {
         };
 
         for index in draw_order(&positions) {
-            let Some(unit) = self.state().unit(visible[index]) else {
+            let Some(unit) = self.state_ref().unit(visible[index]) else {
                 continue;
             };
             // Visual position — a fractional cell walking the route
@@ -1489,13 +1490,13 @@ impl App {
             // (half a cell) — to the center of the construction site. This is a frame
             // shift of the sprite, the builder grid does not change.
             let (tape_offset_x, tape_offset_y) =
-                crate::buildsite::tape_center_offset(self.state(), unit);
+                crate::buildsite::tape_center_offset(self.state_ref(), unit);
             let anchor = viewport.world_to_screen(world_x + tape_offset_x, world_y + tape_offset_y);
 
             let image_base = image_base_for(
                 unit,
-                self.state()
-                    .teams
+                self.state_ref()
+                    .teams()
                     .get(unit.team.0 as usize)
                     .map(|team| team.team_clan),
             );
@@ -1512,7 +1513,7 @@ impl App {
             let animation = self.unit_animation(visible[index]);
             // Complex connectors (`UnitInfo::RenderWithConnectors`): the stored
             // mask from the save ∪ computed by neighbors (see [`drawn_connector_mask`]).
-            let connectors = drawn_connector_mask(self.state(), unit);
+            let connectors = drawn_connector_mask(self.state_ref(), unit);
             // C++ `settings["effects"]` (`settings.cpp:128`): `effects = false`
             // disables frame-by-frame sprite animations (`UnitInfo::Animate`,
             // `units_manager.cpp:2857/3030`) — the frame is static.
@@ -1521,7 +1522,7 @@ impl App {
             // Presentation fields (shadow/brightness) — a separate table
             // `GameState::presentation` (phase 5.3/B), not `UnitInfo`.
             let presentation = self
-                .state()
+                .state_ref()
                 .presentation(visible[index])
                 .cloned()
                 .unwrap_or_default();
@@ -1603,9 +1604,9 @@ impl App {
     pub fn selected_surveyor_active(&self) -> bool {
         self.hud()
             .selected
-            .and_then(|id| self.state().unit(id))
+            .and_then(|id| self.state_ref().unit(id))
             .is_some_and(|unit| {
-                unit.team == self.state().player_team
+                unit.team == self.state_ref().player_team()
                     && unit.unit_type == UnitType::Surveyor
                     && unit.orders != UnitOrder::Idle
             })
@@ -1662,10 +1663,10 @@ impl App {
         let (pixels, cells) = render_resources(
             frame,
             assets,
-            &self.state().map,
+            &self.state_ref().map(),
             viewport,
             &style,
-            self.state().player_team.0,
+            self.state_ref().player_team().0,
             // `GameManager_MaxSurvey` — a cheat (`CHEAT_CODE_MAXSURVEY`), not implemented
             // in the port: we show only surveyed cells.
             false,
@@ -1695,14 +1696,14 @@ impl App {
         let Some(selected) = self.hud().selected else {
             return;
         };
-        let Some(unit) = self.state().unit(selected) else {
+        let Some(unit) = self.state_ref().unit(selected) else {
             return;
         };
         let Some(assets) = self.assets() else {
             return;
         };
 
-        let cells = build_marker_cells(self.state(), unit);
+        let cells = build_marker_cells(self.state_ref(), unit);
 
         if cells.is_empty() {
             return;
@@ -1748,10 +1749,10 @@ impl App {
 /// cumulatively; only passable cells get into the list
 /// (`Access_IsAccessible(... AccessModifier_SameClassBlocks)`).
 pub fn build_marker_cells(
-    state: &max_core::game::GameState,
+    state: StateRef<'_>,
     unit: &max_core::unit::UnitInfo,
 ) -> Vec<max_core::geo::Point> {
-    if unit.team != state.player_team {
+    if unit.team != state.player_team() {
         return Vec::new();
     }
 
@@ -1786,10 +1787,8 @@ pub fn build_marker_cells(
         for _ in 0..limit {
             position += max_core::geo::DIRECTION_OFFSETS[direction];
 
-            if max_core::access::is_accessible(
-                state,
-                unit.unit_type,
-                state.player_team,
+            if state.is_accessible(unit.unit_type,
+                state.player_team(),
                 position,
                 max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
             ) > 0
@@ -1999,24 +1998,23 @@ mod tests {
         use max_core::team::TeamId;
 
         let mut app = App::new(AppConfig::default());
-        *app.state_mut() = max_core::game::GameState::new();
+        app.install_universe(max_core::universe::GameUniverse::new(
+            max_core::game::GameState::new(),
+            max_core::universe::LocalDispatcher,
+        ));
 
-        let own = app
-            .state_mut()
-            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
+        let own = app.universe_mut().spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
             .expect("свой танк");
-        let enemy = app
-            .state_mut()
-            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
+        let enemy = app.universe_mut().spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
             .expect("чужой танк");
 
         assert!(app
-            .state()
+            .state_ref()
             .unit(own)
             .unwrap()
             .is_visible_to_team(TeamId::RED));
         assert!(
-            !app.state()
+            !app.state_ref()
                 .unit(enemy)
                 .unwrap()
                 .is_visible_to_team(TeamId::RED),
@@ -2037,7 +2035,7 @@ mod tests {
         );
 
         // Appeared in the FOV (survey/radar) — a foreign one is drawn too.
-        app.state_mut()
+        app.universe_mut()
             .unit_mut(enemy)
             .unwrap()
             .set_visible_to_team(TeamId::RED, true);

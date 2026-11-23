@@ -153,17 +153,17 @@ fn local_update_with_real_dt_animates_move_orders() {
     );
 
     let surveyor = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_type == UnitType::Surveyor
             })
         })
         .expect("Surveyor высажен");
 
-    let from = app.state().unit(surveyor).expect("Surveyor").grid;
+    let from = app.state_ref().unit(surveyor).expect("Surveyor").grid;
     let mut chosen = None;
 
     'search: for dy in [-1i16, 0, 1] {
@@ -174,7 +174,7 @@ fn local_update_with_real_dt_animates_move_orders() {
 
             let destination = Point::new(from.x + dx, from.y + dy);
 
-            if let Some(order) = build_move_order(app.state(), surveyor, destination) {
+            if let Some(order) = build_move_order(app.state_ref(), surveyor, destination) {
                 chosen = Some((destination, order));
                 break 'search;
             }
@@ -228,14 +228,14 @@ fn clan_choice_changes_starting_team_values() {
     app.start_local_game(&setup).expect("локальная партия");
 
     assert_eq!(
-        app.state().teams[0].team_clan,
+        app.state_ref().teams()[0].team_clan,
         max_core::enums::TeamClan::VonGriffin,
         "клан человека сохраняется"
     );
     // The computer player chooses the clan itself (`AiPlayer::SelectTeamClan`), as in
     // C++ — its slot may differ from the setup.
     assert_ne!(
-        app.state().teams[1].team_clan,
+        app.state_ref().teams()[1].team_clan,
         max_core::enums::TeamClan::Random,
         "ИИ получает конкретный клан"
     );
@@ -245,7 +245,7 @@ fn clan_choice_changes_starting_team_values() {
         max_core::unit_values::team_base_values(max_core::enums::TeamClan::VonGriffin)
             [max_core::UnitType::Scout as usize]
             .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
-    let actual = app.state().team_units[0]
+    let actual = app.state_ref().team_units()[0]
         .base_unit_values(max_core::UnitType::Scout as u16)
         .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
     assert_eq!(
@@ -438,17 +438,17 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
         app.local().map(|local| local.phase),
         Some(LocalPhase::PlayerTurn)
     );
-    assert_eq!(app.state().player_team, TeamId::RED);
-    assert_eq!(app.state().turn_counter, 1);
-    assert_eq!(app.state().teams[0].team_type, TeamKind::Player);
-    assert_eq!(app.state().teams[1].team_type, TeamKind::Computer);
+    assert_eq!(app.state_ref().player_team(), TeamId::RED);
+    assert_eq!(app.state_ref().turn_counter(), 1);
+    assert_eq!(app.state_ref().teams()[0].team_type, TeamKind::Player);
+    assert_eq!(app.state_ref().teams()[1].team_type, TeamKind::Computer);
 
     let ai_units_before: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::GREEN)
         })
@@ -463,8 +463,8 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
             Some(LocalPhase::PlayerTurn),
             "ход {turn}: должен ждать игрока"
         );
-        assert_eq!(app.state().active_turn_team, TeamId::RED);
-        assert_eq!(app.state().turn_counter, turn);
+        assert_eq!(app.state_ref().active_turn_team(), TeamId::RED);
+        assert_eq!(app.state_ref().turn_counter(), turn);
 
         app.local_end_turn();
 
@@ -480,19 +480,19 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
     }
 
     assert!(saw_ai_turn, "ИИ должен ходить сам (AiTurn)");
-    assert_eq!(app.state().turn_counter, 6, "5 ходов отыграно");
+    assert_eq!(app.state_ref().turn_counter(), 6, "5 ходов отыграно");
 
     // The AI worked: it has tasks, and its units received orders.
     assert!(
-        app.state().ai.task_manager.task_count() > 0,
+        app.state_ref().ai().task_manager.task_count() > 0,
         "у ИИ должны быть задачи (TaskManager)"
     );
 
     let ai_ordered = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .filter(|unit| unit.team == TeamId::GREEN)
         .any(|unit| {
             !matches!(
@@ -504,12 +504,12 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
     let ai_acted = ai_ordered
         || ai_units_before
             .iter()
-            .any(|id| app.state().unit(*id).is_none())
+            .any(|id| app.state_ref().unit(*id).is_none())
         || app
-            .state()
+            .state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .filter(|unit| unit.team == TeamId::GREEN)
             .count()
             != ai_units_before.len();
@@ -528,7 +528,7 @@ fn simultaneous_moves_mode_also_plays_turns() {
     app.start_local_game(&setup).expect("локальная партия");
 
     for turn in 1..=2 {
-        assert_eq!(app.state().turn_counter, turn);
+        assert_eq!(app.state_ref().turn_counter(), turn);
         app.local_end_turn();
         assert!(
             run_until_player_turn(&mut app, 20_000),
@@ -547,7 +547,7 @@ fn turn_timer_expires_and_closes_the_turn() {
     setup.timer = 2;
     app.start_local_game(&setup).expect("локальная партия");
 
-    let before = app.state().turn_counter;
+    let before = app.state_ref().turn_counter();
 
     // 3 seconds in 1 s frames: the 2 s timer expires and closes the turn.
     app.local_update(1.0);
@@ -556,7 +556,7 @@ fn turn_timer_expires_and_closes_the_turn() {
 
     assert!(run_until_player_turn(&mut app, 20_000));
     assert!(
-        app.state().turn_counter > before,
+        app.state_ref().turn_counter() > before,
         "таймер хода должен закрыть ход"
     );
 }
@@ -602,7 +602,7 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
 
     app.start_local_game(&setup).expect("локальная партия");
 
-    assert_eq!(app.state().player_team, TeamId::GREEN);
+    assert_eq!(app.state_ref().player_team(), TeamId::GREEN);
     assert!(
         matches!(
             app.local().map(|local| local.phase),
@@ -617,14 +617,14 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
         app.local().map(|local| local.phase),
         Some(LocalPhase::PlayerTurn)
     );
-    assert_eq!(app.state().active_turn_team, TeamId::GREEN);
+    assert_eq!(app.state_ref().active_turn_team(), TeamId::GREEN);
 
     app.local_end_turn();
     assert!(
         run_until_player_turn(&mut app, 40_000),
         "следующий раунд снова доходит до игрока"
     );
-    assert!(app.state().turn_counter >= 2);
+    assert!(app.state_ref().turn_counter() >= 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -642,11 +642,11 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
 
     // We destroy all AI units — as if it had been wiped out in battle.
     let ai_units: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::GREEN)
         })
@@ -654,7 +654,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
     assert!(!ai_units.is_empty());
 
     for id in ai_units {
-        app.state_mut().destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     // We close the round: player turn → AI turn (no units) → finish_turn.
@@ -732,12 +732,12 @@ fn local_save_roundtrips_after_a_turn() {
 
     assert_eq!(save.setup, setup_vs_one_ai());
     assert_eq!(save.phase, LocalPhase::PlayerTurn);
-    assert_eq!(save.turn_counter, app.state().turn_counter);
+    assert_eq!(save.turn_counter, app.state_ref().turn_counter());
     assert!(!save.finished);
-    assert_eq!(save.snapshot, app.state().snapshot_bytes());
+    assert_eq!(save.snapshot, app.state_ref().snapshot_bytes());
     assert_eq!(
         save.snapshot_crc,
-        max_core::crc::crc16(&app.state().snapshot_bytes())
+        max_core::crc::crc16(&app.state_ref().snapshot_bytes())
     );
     assert_eq!(save.snapshot_crc, app.digest().state_digest);
 
@@ -784,20 +784,20 @@ fn v70_save_loads_into_the_local_game() {
         .expect("V70-сейв загружается в локальную партию");
 
     assert!(app.local_active(), "локальная партия из V70");
-    assert!(!app.state().network_game, "локальный режим");
-    assert!(app.state().turn_counter >= 1);
-    assert!(!app.state().unit_ids_in_order().is_empty());
+    assert!(!app.state_ref().network_game(), "локальный режим");
+    assert!(app.state_ref().turn_counter() >= 1);
+    assert!(!app.state_ref().unit_ids_in_order().is_empty());
 
     // First turn: we reach the player and close the turn.
     assert!(
         run_until_player_turn(&mut app, 40_000),
         "локальный цикл доходит до хода игрока"
     );
-    let turn = app.state().turn_counter;
+    let turn = app.state_ref().turn_counter();
     app.local_end_turn();
     assert!(run_until_player_turn(&mut app, 40_000));
     assert!(
-        app.state().turn_counter >= turn,
+        app.state_ref().turn_counter() >= turn,
         "счётчик хода не уменьшается"
     );
 }

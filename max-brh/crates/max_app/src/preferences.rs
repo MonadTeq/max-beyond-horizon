@@ -1886,7 +1886,8 @@ impl crate::App {
     ///   unit step (`access.cpp:830`), so the state field is updated
     ///   immediately.
     fn sync_preferences_to_game(&mut self) {
-        self.state_mut().enemy_halt = self.preferences.enemy_halt;
+        let enemy_halt = self.preferences.enemy_halt;
+        self.universe_mut().set_enemy_halt(enemy_halt);
 
         if let Some(local) = self.local.as_mut() {
             local.setup.timer = self.preferences.turn_timer.max(0) as u32;
@@ -1980,7 +1981,7 @@ impl crate::App {
         let mut draft = self.preferences.clone();
 
         if let Some(local) = self.local.as_ref() {
-            draft.player_name = local.display_name(self.state().player_team);
+            draft.player_name = local.display_name(self.state_ref().player_team());
         }
 
         let mut dialog = PreferencesDialog::new(PreferencesVariant::InGame, draft, info);
@@ -2031,7 +2032,7 @@ impl crate::App {
                 // C++ `OptionsMenu` `PREFSPIC` on `Done` writes the entered name
                 // both to `player_name` and to `menu_team_name_setting[team]`
                 // (`optionsmenu.cpp:548-560`): the team name changes immediately.
-                let player_team = self.state().player_team;
+                let player_team = self.state_ref().player_team();
                 if let Some(local) = self.local.as_mut() {
                     local.rename_team(player_team, dialog.draft.player_name.clone());
                 }

@@ -801,7 +801,7 @@ impl crate::App {
         if self.local().is_some_and(|local| local.is_hot_seat()) {
             MissionCategory::HotSeat
         } else {
-            self.state().mission_category
+            self.state_ref().mission_category()
         }
     }
 
@@ -895,7 +895,7 @@ impl crate::App {
     /// V70 save bytes of the current match (with [`SaveMeta`] updated).
     pub fn save_v70_bytes(&mut self, save_name: &str) -> Result<Vec<u8>, String> {
         self.sync_save_meta(save_name);
-        self.state()
+        self.state_ref()
             .to_save_bytes()
             .map_err(|error| format!("V70-запись: {error}"))
     }
@@ -903,7 +903,7 @@ impl crate::App {
     /// Updates the "external" fields of the save before writing: name, turn timer,
     /// the player's UI fields and the team message log.
     fn sync_save_meta(&mut self, save_name: &str) {
-        let team = usize::from(self.state().player_team.0).min(3);
+        let team = usize::from(self.state_ref().player_team().0).min(3);
         let timer_left = self
             .local()
             .map(|local| local.timer_left.ceil().max(0.0) as u16)
@@ -913,7 +913,7 @@ impl crate::App {
         let messages: Vec<String> = self.hud().log.lines().to_vec();
         let camera_x = (center_x / 64).clamp(0, 111) as i16;
         let camera_y = (center_y / 64).clamp(0, 111) as i16;
-        let existing = self.state().save_meta.message_logs[team].len();
+        let existing = self.state_ref().save_meta().message_logs[team].len();
         let zoom_level = zoom.min(u32::from(u16::MAX)) as u16;
 
         let preferences = self.preferences().to_ini();
@@ -939,7 +939,7 @@ impl crate::App {
             self.preferences().turn_timer.max(0),
             self.preferences().endturn.max(0),
         );
-        let meta = &mut self.state_mut().save_meta;
+        let meta = self.universe_mut().save_meta_mut();
         SaveMeta::set_name(&mut meta.save_name, save_name);
         meta.turn_timer = timer_left;
         meta.turn_timer_time = turn_timer.clamp(0, i32::from(u16::MAX)) as u16;
@@ -978,7 +978,7 @@ impl crate::App {
         if !self.config().autosave || !self.preferences().auto_save || !self.local_active() {
             return None;
         }
-        let name = format!("(Turn {})", self.state().turn_counter);
+        let name = format!("(Turn {})", self.state_ref().turn_counter());
         let path = match self.save_game_to_slot(AUTOSAVE_SLOT, &name) {
             Ok(path) => path,
             Err(error) => {

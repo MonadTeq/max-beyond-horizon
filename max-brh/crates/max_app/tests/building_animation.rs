@@ -59,8 +59,8 @@ fn app_with_assets() -> Option<App> {
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
     app.viewport_mut().set_zoom(64);
 
     Some(app)
@@ -85,12 +85,12 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
     };
 
     let mine = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(40, 40), 0)
         .expect("mining station");
     app.viewport_mut().center_on_grid(40, 40);
     {
-        let unit = app.state_mut().unit_mut(mine).expect("mine");
+        let unit = app.universe_mut().unit_mut(mine).expect("mine");
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
     }
@@ -98,7 +98,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
     // `dt = 0` — the static C++ frame (`image_base + 1`), the palette original.
     let statically_powered = app.render_frame();
     assert!(
-        !max_app::render::factory_on_frame_active(app.state().unit(mine).expect("mine")),
+        !max_app::render::factory_on_frame_active(app.state_ref().unit(mine).expect("mine")),
         "шахта не завод — кадр состояния по `POWER_ON`"
     );
     assert!(
@@ -157,7 +157,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
 
     // A powered-off mine is not animated even at a large dt (frame 0).
     {
-        let unit = app.state_mut().unit_mut(mine).expect("mine");
+        let unit = app.universe_mut().unit_mut(mine).expect("mine");
         unit.orders = UnitOrder::PowerOff;
         unit.state = UnitOrderState::ExecutingOrder;
     }
@@ -198,18 +198,18 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
     };
 
     let factory = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(40, 40), 0)
         .expect("training hall");
     app.viewport_mut().center_on_grid(40, 40);
     {
-        let unit = app.state_mut().unit_mut(factory).expect("factory");
+        let unit = app.universe_mut().unit_mut(factory).expect("factory");
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.build_list.push(UnitType::Infantry);
     }
     assert!(max_app::render::factory_on_frame_active(
-        app.state().unit(factory).expect("factory")
+        app.state_ref().unit(factory).expect("factory")
     ));
 
     // `dt = 0` — the C++ frame `image_base + 1` (working factory), the palette original.
@@ -272,13 +272,13 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
     // The queue is empty + `UNIT_READY` — C++ `SpawnNewUnit` draws `image_base`
     // (frame 0), the factory is static.
     {
-        let unit = app.state_mut().unit_mut(factory).expect("factory");
+        let unit = app.universe_mut().unit_mut(factory).expect("factory");
         unit.build_list.clear();
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::UnitReady;
     }
     assert!(!max_app::render::factory_on_frame_active(
-        app.state().unit(factory).expect("factory")
+        app.state_ref().unit(factory).expect("factory")
     ));
     app.update_visual_units(0.0);
     let ready = app.render_frame();
@@ -298,12 +298,12 @@ fn radar_sentry_animation_advances_with_real_dt() {
     };
 
     let radar = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Radar, TeamId::RED, Point::new(40, 40), 0)
         .expect("radar");
     app.viewport_mut().center_on_grid(40, 40);
     {
-        let unit = app.state_mut().unit_mut(radar).expect("radar");
+        let unit = app.universe_mut().unit_mut(radar).expect("radar");
         unit.orders = UnitOrder::Sentry;
         unit.state = UnitOrderState::ExecutingOrder;
     }
@@ -343,20 +343,20 @@ fn animation_clock_does_not_change_the_snapshot() {
     };
 
     let mine = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(40, 40), 0)
         .expect("mining station");
     {
-        let unit = app.state_mut().unit_mut(mine).expect("mine");
+        let unit = app.universe_mut().unit_mut(mine).expect("mine");
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
     }
 
-    let before = app.state().snapshot_bytes();
+    let before = app.state_ref().snapshot_bytes();
     for _ in 0..12 {
         app.update_visual_units(0.1);
     }
-    let after = app.state().snapshot_bytes();
+    let after = app.state_ref().snapshot_bytes();
 
     assert_eq!(before, after, "визуальная анимация не меняет состояние");
     // 12 × 0.1 s = 1.2 s → the palette cycles stepped (the beacons blink), the mine
@@ -387,30 +387,30 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     };
 
     let mine = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(40, 40), 0)
         .expect("mining station");
     let powgen = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(42, 40), 0)
         .expect("power generator");
     app.viewport_mut().center_on_grid(40, 40);
 
     for id in [mine, powgen] {
-        let unit = app.state_mut().unit_mut(id).expect("здание");
+        let unit = app.universe_mut().unit_mut(id).expect("здание");
         unit.orders = UnitOrder::Await;
         unit.state = UnitOrderState::ExecutingOrder;
     }
 
     // Mine 2×2 at (40,40) and POWGEN 1×1 at (42,40): the mine has the east connector
     // (`EAST_TOP`), POWGEN — the west one (`WEST_TOP`, also for a 1×1 building).
-    let mine_mask = connector_mask_for(app.state(), app.state().unit(mine).unwrap());
+    let mine_mask = connector_mask_for(app.state_ref(), app.state_ref().unit(mine).unwrap());
     assert_eq!(
         mine_mask,
         max_core::enums::CONNECTOR_EAST_TOP,
         "шахта: сосед справа"
     );
-    let powgen_mask = connector_mask_for(app.state(), app.state().unit(powgen).unwrap());
+    let powgen_mask = connector_mask_for(app.state_ref(), app.state_ref().unit(powgen).unwrap());
     assert_eq!(
         powgen_mask,
         max_core::enums::CONNECTOR_WEST_TOP,
@@ -418,8 +418,8 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     );
 
     // A lone mine has no connectors.
-    let isolated = max_app::render::connector_mask_for(app.state(), &{
-        let mut unit = app.state().unit(mine).unwrap().clone();
+    let isolated = max_app::render::connector_mask_for(app.state_ref(), &{
+        let mut unit = app.state_ref().unit(mine).unwrap().clone();
         unit.grid = Point::new(80, 80);
         unit
     });
@@ -428,13 +428,13 @@ fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     // Surrounded, POWGEN draws all 4 pipes (N/E/S/W = 2/3/4/5).
     for (x, y) in [(42, 39), (43, 40), (42, 41)] {
         let id = app
-            .state_mut()
+            .universe_mut()
             .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(x, y), 0)
             .expect("сосед");
-        let unit = app.state_mut().unit_mut(id).expect("сосед");
+        let unit = app.universe_mut().unit_mut(id).expect("сосед");
         unit.orders = UnitOrder::Await;
     }
-    let full = connector_mask_for(app.state(), app.state().unit(powgen).unwrap());
+    let full = connector_mask_for(app.state_ref(), app.state_ref().unit(powgen).unwrap());
     assert_eq!(
         full,
         max_core::enums::CONNECTOR_NORTH_LEFT

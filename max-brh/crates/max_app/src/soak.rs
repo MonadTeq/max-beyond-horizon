@@ -292,7 +292,7 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
                     app.local_acknowledge_turn();
                 }
 
-                let before = app.state().turn_counter;
+                let before = app.state_ref().turn_counter();
                 round_started = Instant::now();
                 round_frames = 0;
 
@@ -305,7 +305,7 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
                 app.local_end_turn();
 
                 if app.local().is_some_and(|local| local.finished())
-                    || app.state().turn_counter != before
+                    || app.state_ref().turn_counter() != before
                 {
                     // End Turn instantly closed the round (one team in the round).
                     turns_played += 1;
@@ -334,9 +334,9 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
 
                 if finished || ready {
                     let closed = if finished {
-                        app.state().turn_counter
+                        app.state_ref().turn_counter()
                     } else {
-                        app.state().turn_counter.saturating_sub(1)
+                        app.state_ref().turn_counter().saturating_sub(1)
                     };
                     turns_played += 1;
                     push_turn(
@@ -371,8 +371,8 @@ pub fn run_soak(app: &mut App, options: &SoakOptions) -> Result<SoakReport, Stri
     let total = started.elapsed();
     let mem_end = process_memory();
     let profile = profile::snapshot();
-    let final_turn = app.state().turn_counter;
-    let final_units = app.state().unit_count();
+    let final_turn = app.state_ref().turn_counter();
+    let final_units = app.state_ref().unit_count();
 
     Ok(SoakReport {
         options: *options,
@@ -408,7 +408,7 @@ fn push_turn(
         turn,
         wall,
         frames,
-        units: app.state().unit_count(),
+        units: app.state_ref().unit_count(),
         rss_kb,
     });
 }

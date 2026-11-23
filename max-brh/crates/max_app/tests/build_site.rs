@@ -90,8 +90,8 @@ fn game_app() -> Option<App> {
 fn spawn_builder(app: &mut App) -> (UnitId, Point) {
     let land = max_core::enums::Surface::LAND.bits();
     let free = |app: &App, cell: Point| {
-        app.state().units_at(cell).is_empty()
-            && app.state().map.surface_at(cell.x, cell.y).bits() & land != 0
+        app.state_ref().units_at(cell).is_empty()
+            && app.state_ref().map().surface_at(cell.x, cell.y).bits() & land != 0
     };
     let mut spot = None;
 
@@ -113,7 +113,7 @@ fn spawn_builder(app: &mut App) -> (UnitId, Point) {
     let grid = spot.expect("свободная площадка 2×2 на карте");
     let flags = max_core::access::unit_type_flags(UnitType::Constructor);
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, TeamId::RED, grid, flags)
         .expect("конструктор появился");
 
@@ -153,7 +153,7 @@ fn order_site_selection(app: &mut App, builder: UnitId) -> Point {
     let line = app.commit_build_menu(false).expect("Done обработан");
     assert!(app.build_site().is_some(), "выбор места открыт ({line})");
     assert!(
-        app.state().unit(builder).expect("строитель").orders == UnitOrder::Await,
+        app.state_ref().unit(builder).expect("строитель").orders == UnitOrder::Await,
         "до подтверждения клетки приказ не отдан"
     );
 
@@ -191,7 +191,7 @@ fn open_build_menu_via_key(app: &mut App, builder: UnitId) {
 /// `Build` (`unitmenu::ItemId::Build`) — `open_build_menu`.
 fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
     app.hud_mut().select(Some(builder));
-    let grid = app.state().unit(builder).expect("строитель").grid;
+    let grid = app.state_ref().unit(builder).expect("строитель").grid;
     let (x, y) = screen_point(app, grid);
 
     let _ = handle_session_input(app, InputEvent::MouseMove(x, y), false);
@@ -239,7 +239,7 @@ fn order_site_selection_via(app: &mut App, builder: UnitId, popup: bool) -> Poin
     let line = app.commit_build_menu(false).expect("Done обработан");
     assert!(app.build_site().is_some(), "выбор места открыт ({line})");
     assert!(
-        app.state().unit(builder).expect("строитель").orders == UnitOrder::Await,
+        app.state_ref().unit(builder).expect("строитель").orders == UnitOrder::Await,
         "до подтверждения клетки приказ не отдан"
     );
 
@@ -255,7 +255,7 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
 
     let anchor = order_site_selection(&mut app, builder);
     assert_eq!(anchor, builder_grid, "первый якорь C++ — клетка строителя");
-    assert!(app.build_site().expect("режим").valid(app.state()));
+    assert!(app.build_site().expect("режим").valid(app.state_ref()));
 
     // The cursor left/above the builder moves the 2×2 ghost to the neighboring anchor.
     let target = Point::new(builder_grid.x - 1, builder_grid.y - 1);
@@ -264,9 +264,9 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
     let site = app.build_site().expect("режим");
     assert_eq!(site.anchor, target, "призрак следует за курсором");
     assert_eq!(site.cursor, target);
-    assert!(site.valid(app.state()), "свободная суша — валидно");
+    assert!(site.valid(app.state_ref()), "свободная суша — валидно");
     assert_eq!(
-        site.cursor_id(app.state()),
+        site.cursor_id(app.state_ref()),
         max_app::cursor::CursorId::Map2,
         "CURSOR_MAP2 над валидной клеткой"
     );
@@ -274,8 +274,8 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
     // Water under the 2×2 — invalid (`CURSOR_UNIT_NO_GO`).
     for dy in 0..2 {
         for dx in 0..2 {
-            *app.state_mut()
-                .map
+            *app.universe_mut()
+                .map_mut()
                 .surface
                 .tiles_mut()
                 .get_mut(
@@ -286,9 +286,9 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
                 .unwrap() = max_core::enums::Surface::WATER;
         }
     }
-    assert!(!app.build_site().expect("режим").valid(app.state()));
+    assert!(!app.build_site().expect("режим").valid(app.state_ref()));
     assert_eq!(
-        app.build_site().expect("режим").cursor_id(app.state()),
+        app.build_site().expect("режим").cursor_id(app.state_ref()),
         max_app::cursor::CursorId::UnitNoGo
     );
 }
@@ -321,12 +321,12 @@ fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
 
     assert!(app.build_site().is_none(), "режим закрыт");
     assert_eq!(
-        app.state().unit(builder).expect("строитель").orders,
+        app.state_ref().unit(builder).expect("строитель").orders,
         UnitOrder::Await,
         "приказ не отдан"
     );
     assert!(
-        max_core::production::construction_utility(app.state(), TeamId::RED, anchor).is_none(),
+        app.state_ref().construction_utility( TeamId::RED, anchor).is_none(),
         "площадки в мире нет"
     );
 }
@@ -395,23 +395,23 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
 
     assert!(app.build_site().is_none(), "LMB подтвердил клетку");
     assert_eq!(
-        app.state().unit(builder).expect("строитель").orders,
+        app.state_ref().unit(builder).expect("строитель").orders,
         UnitOrder::Build,
         "ORDER_BUILD с клеткой площадки"
     );
 
     // The site is placed by `UnitInfo::StartBuilding` on the next tick.
     app.tick();
-    let site = max_core::production::construction_utility(app.state(), TeamId::RED, chosen)
+    let site = app.state_ref().construction_utility( TeamId::RED, chosen)
         .expect("лента площадки в выбранной клетке");
 
     assert_eq!(
-        app.state().unit(site).expect("лента").grid,
+        app.state_ref().unit(site).expect("лента").grid,
         chosen,
         "площадка ровно в клетке, куда указал игрок"
     );
     assert_eq!(
-        app.state().unit(builder).expect("строитель").grid,
+        app.state_ref().unit(builder).expect("строитель").grid,
         builder_grid,
         "сетка строителя не меняется (`PositionInTape` двигает только спрайт)"
     );
@@ -419,7 +419,7 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         max_core::production::site_covers(
             UnitType::TrainingHall,
             chosen,
-            app.state().unit(builder).expect("строитель").grid
+            app.state_ref().unit(builder).expect("строитель").grid
         ),
         "якорь 2×2 всегда накрывает клетку строителя (C++ GetBuilderUnitCursor)"
     );
@@ -437,8 +437,8 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     app.tick();
     app.tick();
 
-    let unit = app.state().unit(builder).expect("строитель").clone();
-    let offset = max_app::buildsite::tape_center_offset(app.state(), &unit);
+    let unit = app.state_ref().unit(builder).expect("строитель").clone();
+    let offset = max_app::buildsite::tape_center_offset(app.state_ref(), &unit);
     let center = max_app::buildsite::site_center_world(UnitType::TrainingHall, chosen);
 
     assert_eq!(offset, (-32, -32), "сдвиг 8 px × 4 тика к центру ленты");
@@ -451,7 +451,7 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
         "спрайт строителя — ровно в центре площадки"
     );
     assert_eq!(
-        app.state().unit(builder).expect("строитель").state,
+        app.state_ref().unit(builder).expect("строитель").state,
         max_core::enums::UnitOrderState::BuildInProgress,
         "после позиционирования — рабочий кадр"
     );
@@ -460,12 +460,12 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     // A frame with the builder versus a frame without it (visibility to the team disabled) —
     // the center of the differing pixels must coincide with the 2×2 center.
     let with_builder = app.render_frame();
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, false);
     let without_builder = app.render_frame();
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, true);
@@ -487,12 +487,12 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
 /// with visibility disabled. This measures exactly the sprite, without the tape markup.
 fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
     let with_builder = app.render_frame();
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, false);
     let without_builder = app.render_frame();
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, true);
@@ -522,12 +522,12 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     let _ = click_cell(&mut app, chosen);
     app.tick(); // `StartBuilding`: the site and `AWAIT_TAPE_POSITIONING`/`INIT`
 
-    let initial_angle = app.state().unit(builder).expect("строитель").angle;
+    let initial_angle = app.state_ref().unit(builder).expect("строитель").angle;
     assert_eq!(initial_angle, 0, "конструктор смотрит на север");
 
     // The turn tick: `Paths_UpdateAngle` turns in place, `moved` = 0.
     app.tick();
-    let unit = app.state().unit(builder).expect("строитель").clone();
+    let unit = app.state_ref().unit(builder).expect("строитель").clone();
     assert_eq!(
         unit.state,
         max_core::enums::UnitOrderState::TapePositioningEnter
@@ -535,7 +535,7 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     assert_eq!(unit.angle, 7, "строитель повернулся к центру ленты (NW)");
     assert_eq!(unit.moved, 0, "до доворота спрайт не сдвигается");
     assert_eq!(
-        max_app::buildsite::tape_center_offset(app.state(), &unit),
+        max_app::buildsite::tape_center_offset(app.state_ref(), &unit),
         (0, 0)
     );
 
@@ -554,8 +554,8 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     for step in 1..=4u8 {
         app.tick();
 
-        let unit = app.state().unit(builder).expect("строитель").clone();
-        let offset = max_app::buildsite::tape_center_offset(app.state(), &unit);
+        let unit = app.state_ref().unit(builder).expect("строитель").clone();
+        let offset = max_app::buildsite::tape_center_offset(app.state_ref(), &unit);
         assert_eq!(
             offset,
             (-8 * i32::from(step), -8 * i32::from(step)),
@@ -593,12 +593,12 @@ fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
     // The next tick — `RestoreOrders` and a turn `(angle + 1) & 7`: NW(7) → N(0),
     // the shift remains full (the working pose in the tape center).
     app.tick();
-    let unit = app.state().unit(builder).expect("строитель").clone();
+    let unit = app.state_ref().unit(builder).expect("строитель").clone();
     assert_eq!(unit.orders, UnitOrder::Build);
     assert_eq!(unit.state, max_core::enums::UnitOrderState::BuildInProgress);
     assert_eq!(unit.angle, 0, "C++: Paths_UpdateAngle((angle + 1) & 7)");
     assert_eq!(
-        max_app::buildsite::tape_center_offset(app.state(), &unit),
+        max_app::buildsite::tape_center_offset(app.state_ref(), &unit),
         (-32, -32)
     );
 }
@@ -643,13 +643,13 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
     let mut target = Point::new(builder_grid.x + 1, builder_grid.y);
     let mut attempts = 0;
 
-    while app.build_site().expect("режим").valid(app.state()) && attempts < 8 {
+    while app.build_site().expect("режим").valid(app.state_ref()) && attempts < 8 {
         attempts += 1;
         target = Point::new(builder_grid.x + 1, builder_grid.y + attempts);
         let _ = move_cursor(&mut app, target);
     }
 
-    if app.build_site().expect("режим").valid(app.state()) {
+    if app.build_site().expect("режим").valid(app.state_ref()) {
         // The whole neighborhood is free — the scenario has nothing to check (generator map).
         return;
     }
@@ -659,15 +659,15 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
     // C++ `ManagePlayerAction`: a click on an invalid cell cancels the selection.
     assert!(app.build_site().is_none(), "выбор отменён");
     assert_eq!(
-        app.state().unit(builder).expect("строитель").orders,
+        app.state_ref().unit(builder).expect("строитель").orders,
         UnitOrder::Await,
         "приказ не отдан"
     );
     assert!(
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .all(
                 |unit| !matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape)
                     || unit.team != TeamId::RED
@@ -698,8 +698,8 @@ fn same_input_gives_the_same_site_and_digest() {
         (
             chosen,
             app.digest().state_digest,
-            max_core::production::construction_utility(app.state(), TeamId::RED, chosen),
-            app.state()
+            app.state_ref().construction_utility( TeamId::RED, chosen),
+            app.state_ref()
                 .unit(builder)
                 .map(|unit| (unit.grid, unit.orders, unit.state)),
         )

@@ -1,4 +1,4 @@
-﻿//! Mine extraction allocation dialog — C++ `allocmenu.cpp` (`AllocMenu`), window
+//! Mine extraction allocation dialog — C++ `allocmenu.cpp` (`AllocMenu`), window
 //! `ALLOCFRM` 640×480.
 //!
 //! # Oracle
@@ -63,11 +63,8 @@
 //! * `PauseMenu_Menu()` on `Alt-P` is not ported (as in the rest of the UI).
 
 use max_assets::image::{BigImage, SimpleImage};
-use max_core::alloc::{
-    balance, get_cargo_info, get_cargo_minable, get_cargo_mining, optimize, reduce_production,
-    MiningKind, MINING_CAPACITY,
-};
-use max_core::game::GameState;
+use max_core::alloc::{MiningKind, MINING_CAPACITY};
+use max_core::universe::{Dispatcher, GameUniverse, StateRef};
 use max_core::team::{Cargo, ComplexId, TeamId};
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::victory::CargoType;
@@ -180,8 +177,8 @@ impl AllocMenu {
     /// `None` if the unit is not a mine, not of own team, disabled/idle
     /// (`allocate` in the popup exists only with the `ORDER_POWER_ON` family) or
     /// has no complex.
-    pub fn new(state: &mut GameState, unit_id: UnitId) -> Option<Self> {
-        let unit = state.unit(unit_id)?.clone();
+    pub fn new<D: Dispatcher>(state: &mut GameUniverse<D>, unit_id: UnitId) -> Option<Self> {
+        let unit = state.snapshot().unit(unit_id)?.clone();
 
         if unit.unit_type != max_core::enums::UnitType::MiningStation {
             return None;
@@ -193,9 +190,9 @@ impl AllocMenu {
 
         let complex = unit.complex?;
         let team = unit.team;
-        let (production, capacity) = get_cargo_mining(state, team, complex);
-        let usage = get_cargo_minable(state, team, complex);
-        let (complex_materials, complex_capacity) = get_cargo_info(state, team, complex);
+        let (production, capacity) = state.snapshot().cargo_mining( team, complex);
+        let usage = state.snapshot().cargo_minable( team, complex);
+        let (complex_materials, complex_capacity) = state.snapshot().cargo_info( team, complex);
 
         let mut menu = Self {
             unit: unit_id,
@@ -220,26 +217,23 @@ impl AllocMenu {
     /// side effects of `AllocMenu_Optimize`/`AllocMenu_ReduceProduction`
     /// (the total extraction does not change, but the distribution across the complex's mines
     /// is normalized). Here — at exactly the same moments.
-    pub fn refresh_balance(&mut self, state: &mut GameState) {
+    pub fn refresh_balance<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>) {
         self.balance = Cargo::init();
-        self.balance.raw = balance(
-            state,
+        self.balance.raw = state.allocation_balance(
             self.team,
             self.complex,
             MiningKind::Raw,
             self.production.raw,
             self.capacity.raw,
         );
-        self.balance.fuel = balance(
-            state,
+        self.balance.fuel = state.allocation_balance(
             self.team,
             self.complex,
             MiningKind::Fuel,
             self.production.fuel,
             self.capacity.fuel,
         );
-        self.balance.gold = balance(
-            state,
+        self.balance.gold = state.allocation_balance(
             self.team,
             self.complex,
             MiningKind::Gold,
@@ -249,7 +243,7 @@ impl AllocMenu {
     }
 
     /// `AllocMenu::UpdateRawAllocation`/`UpdateFuelAllocation`/`UpdateGoldAllocation`.
-    fn update(&mut self, state: &mut GameState, kind: MiningKind, material: i32) {
+    fn update<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, kind: MiningKind, material: i32) {
         match kind {
             MiningKind::Raw => {
                 self.production.raw += material;
@@ -278,7 +272,7 @@ impl AllocMenu {
     }
 
     /// `+1` resource unit — C++ `case 1001/1004/1007`.
-    pub fn increase(&mut self, state: &mut GameState, kind: MiningKind) -> bool {
+    pub fn increase<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, kind: MiningKind) -> bool {
         let balanced = match kind {
             MiningKind::Raw => self.balance.raw,
             MiningKind::Fuel => self.balance.fuel,
@@ -294,13 +288,13 @@ impl AllocMenu {
             return false;
         }
 
-        let added = optimize(state, self.team, self.complex, kind, 1);
+        let added = state.optimize_allocation(self.team, self.complex, kind, 1);
         self.update(state, kind, added);
         added > 0
     }
 
     /// `−1` resource unit — C++ `case 1002/1005/1008`.
-    pub fn decrease(&mut self, state: &mut GameState, kind: MiningKind) -> bool {
+    pub fn decrease<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, kind: MiningKind) -> bool {
         let production = match kind {
             MiningKind::Raw => self.production.raw,
             MiningKind::Fuel => self.production.fuel,
@@ -311,14 +305,14 @@ impl AllocMenu {
             return false;
         }
 
-        reduce_production(state, self.team, self.complex, kind, 1);
+        state.reduce_production_allocation(self.team, self.complex, kind, 1);
         self.update(state, kind, -1);
         true
     }
 
     /// `AllocMenu::OnClickRawBar`/`Fuel`/`Gold` with an **absolute** level
     /// (in C++ the level comes from the cursor position).
-    pub fn set_level(&mut self, state: &mut GameState, kind: MiningKind, target: i32) {
+    pub fn set_level<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, kind: MiningKind, target: i32) {
         let production = match kind {
             MiningKind::Raw => self.production.raw,
             MiningKind::Fuel => self.production.fuel,
@@ -331,10 +325,10 @@ impl AllocMenu {
         }
 
         if materials < 0 {
-            reduce_production(state, self.team, self.complex, kind, -materials);
+            state.reduce_production_allocation(self.team, self.complex, kind, -materials);
             self.update(state, kind, materials);
         } else if materials > 0 {
-            let added = optimize(state, self.team, self.complex, kind, materials);
+            let added = state.optimize_allocation(self.team, self.complex, kind, materials);
             self.update(state, kind, added);
         }
     }
@@ -377,7 +371,7 @@ impl AllocMenu {
     }
 
     /// Click in the 640×480 frame.
-    pub fn click(&mut self, state: &mut GameState, x: i32, y: i32) -> AllocAction {
+    pub fn click<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, x: i32, y: i32) -> AllocAction {
         if HELP_RECT.contains(x, y) {
             return AllocAction::Help;
         }
@@ -424,7 +418,7 @@ impl AllocMenu {
     }
 
     /// Keyboard (Rust client; see the module header).
-    pub fn key(&mut self, state: &mut GameState, key: Key) -> AllocAction {
+    pub fn key<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, key: Key) -> AllocAction {
         match key {
             Key::Escape | Key::Enter => AllocAction::Close,
             Key::Char('h' | 'H' | '?') => AllocAction::Help,
@@ -461,7 +455,7 @@ impl AllocMenu {
     }
 
     /// Input event.
-    pub fn input(&mut self, state: &mut GameState, event: crate::ui::InputEvent) -> AllocAction {
+    pub fn input<D: Dispatcher>(&mut self, state: &mut GameUniverse<D>, event: crate::ui::InputEvent) -> AllocAction {
         match event {
             crate::ui::InputEvent::MouseClick(x, y) => self.click(state, x, y),
             crate::ui::InputEvent::Key(key) => self.key(state, key),
@@ -970,7 +964,7 @@ pub fn totals(menu: &AllocMenu) -> [i32; 3] {
 }
 
 /// Resource stock in the complex (for log/QA).
-pub fn stored(state: &GameState, team: TeamId, complex: ComplexId, kind: MiningKind) -> i32 {
+pub fn stored(state: StateRef<'_>, team: TeamId, complex: ComplexId, kind: MiningKind) -> i32 {
     let Some(complex) = state.complex(team, complex.0 as u16) else {
         return 0;
     };
@@ -994,16 +988,27 @@ pub fn is_mining_station(unit: &UnitInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use max_core::game::GameState;
     use super::*;
     use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
     use max_core::geo::Point;
     use max_core::team::Complex;
     use max_core::TeamUnits;
 
-    fn state_with_mine(complex_id: i16) -> (GameState, UnitId, ComplexId) {
-        let mut state = GameState::new();
-        state.teams[0].team_type = max_core::team::TeamKind::Player;
-        state.team_units[0] = TeamUnits::with_clan(max_core::enums::TeamClan::Random);
+    fn state_with_mine(
+        complex_id: i16,
+    ) -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        UnitId,
+        ComplexId,
+    ) {
+        let mut state =
+            max_core::universe::GameUniverse::new(GameState::new(), max_core::universe::LocalDispatcher);
+        let mut raw = GameState::new();
+        raw.teams[0].team_type = max_core::team::TeamKind::Player;
+        raw.team_units[0] = TeamUnits::with_clan(max_core::enums::TeamClan::Random);
+        state.set_teams(raw.teams);
+        state.set_team_units(raw.team_units);
 
         // A 2×2 square around the mine: raw 8+8 (measurement limit 16), fuel 8,
         // gold 8 — like `Survey_GetResourcesInArea(..., 1, 16, ...)`.
@@ -1014,10 +1019,11 @@ mod tests {
             (21, 21, 8, max_core::map::ResourceKind::Fuel),
         ];
         for (x, y, amount, kind) in resources {
-            state
-                .map
-                .resources
-                .set(x, y, max_core::map::ResourceMapEntry::new(amount, Some(kind), 0));
+            state.map_mut().resources.set(
+                x,
+                y,
+                max_core::map::ResourceMapEntry::new(amount, Some(kind), 0),
+            );
         }
 
         // Control data, not classification reading: the mask is an argument of
@@ -1029,9 +1035,11 @@ mod tests {
             .expect("шахта");
 
         let complex = ComplexId(complex_id);
-        state.team_units[0].complexes.push(Complex::new(complex_id));
+        if let Some(units) = state.team_units_mut(TeamId::RED) {
+            units.complexes.push(Complex::new(complex_id));
+        }
 
-        let mut unit = state.unit(id).cloned().expect("unit");
+        let mut unit = state.snapshot().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.complex = Some(complex);
@@ -1109,14 +1117,14 @@ mod tests {
 
         assert!(menu.increase(&mut state, MiningKind::Raw));
         assert_eq!(menu.production_of(MiningKind::Raw), 1);
-        assert_eq!(state.unit(id).unwrap().raw_mining, 1);
-        assert_eq!(state.unit(id).unwrap().total_mining, 1);
+        assert_eq!(state.snapshot().unit(id).unwrap().raw_mining, 1);
+        assert_eq!(state.snapshot().unit(id).unwrap().total_mining, 1);
         assert_eq!(menu.free_capacity(), 15);
 
         assert!(menu.decrease(&mut state, MiningKind::Raw));
         assert_eq!(menu.production_of(MiningKind::Raw), 0);
-        assert_eq!(state.unit(id).unwrap().raw_mining, 0);
-        assert_eq!(state.unit(id).unwrap().total_mining, 0);
+        assert_eq!(state.snapshot().unit(id).unwrap().raw_mining, 0);
+        assert_eq!(state.snapshot().unit(id).unwrap().total_mining, 0);
     }
 
     #[test]
@@ -1131,11 +1139,11 @@ mod tests {
 
         menu.set_level(&mut state, MiningKind::Raw, 3);
         assert_eq!(menu.production_of(MiningKind::Raw), 3);
-        assert_eq!(state.unit(id).unwrap().raw_mining, 3);
+        assert_eq!(state.snapshot().unit(id).unwrap().raw_mining, 3);
 
         menu.set_level(&mut state, MiningKind::Raw, 1);
         assert_eq!(menu.production_of(MiningKind::Raw), 1);
-        assert_eq!(state.unit(id).unwrap().raw_mining, 1);
+        assert_eq!(state.snapshot().unit(id).unwrap().raw_mining, 1);
     }
 
     #[test]
@@ -1269,14 +1277,20 @@ mod tests {
 
         assert_eq!(menu_a.production, menu_b.production);
         assert_eq!(menu_a.balance, menu_b.balance);
-        assert_eq!(a.unit(id_a).unwrap().raw_mining, b.unit(id_b).unwrap().raw_mining);
-        assert_eq!(a.unit(id_a).unwrap().total_mining, b.unit(id_b).unwrap().total_mining);
+        assert_eq!(
+            a.snapshot().unit(id_a).unwrap().raw_mining,
+            b.snapshot().unit(id_b).unwrap().raw_mining
+        );
+        assert_eq!(
+            a.snapshot().unit(id_a).unwrap().total_mining,
+            b.snapshot().unit(id_b).unwrap().total_mining
+        );
         // The state digest (CRC/snapshot) matches too: the value is part of the
         // snapshot via the unit fields.
         assert_eq!(
-            max_core::crc::state_checksum(&a),
-            max_core::crc::state_checksum(&b)
+            a.snapshot().state_checksum(),
+            b.snapshot().state_checksum()
         );
-        assert_eq!(a.snapshot_bytes(), b.snapshot_bytes());
+        assert_eq!(a.snapshot().snapshot_bytes(), b.snapshot().snapshot_bytes());
     }
 }

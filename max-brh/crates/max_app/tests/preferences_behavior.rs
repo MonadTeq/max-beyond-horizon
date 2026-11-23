@@ -93,13 +93,13 @@ fn setup_vs_one_ai() -> LocalSetup {
 /// The first team unit with movement points (`speed > 0`) — it can be ordered
 /// to move this turn.
 fn mobile_unit(app: &App) -> Option<max_core::unit::UnitId> {
-    let team = app.state().player_team;
+    let team = app.state_ref().player_team();
 
-    app.state()
+    app.state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state().unit(*id).is_some_and(|unit| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
                 unit.team == team
                     && unit.speed > 0
                     && matches!(
@@ -216,7 +216,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     assert!(mobile_unit(&fast).is_some());
 
     // The same order: an adjacent passable cell.
-    let from = slow.state().unit(id).expect("юнит").grid;
+    let from = slow.state_ref().unit(id).expect("юнит").grid;
     let mut destination = None;
 
     'search: for dy in [-1i16, 0, 1] {
@@ -227,7 +227,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 
             let target = Point::new(from.x + dx, from.y + dy);
 
-            if build_move_order(slow.state(), id, target).is_some() {
+            if build_move_order(slow.state_ref(), id, target).is_some() {
                 destination = Some(target);
                 break 'search;
             }
@@ -237,7 +237,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     let destination = destination.expect("рядом есть проходимая клетка");
 
     for app in [&mut slow, &mut fast] {
-        let order = build_move_order(app.state(), id, destination).expect("приказ");
+        let order = build_move_order(app.state_ref(), id, destination).expect("приказ");
         app.apply(order.command);
         app.update_visual_units(0.0);
     }
@@ -285,16 +285,16 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
         .expect("локальная партия");
 
     let id = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == TeamId::RED)
         })
         .expect("юнит игрока");
-    let grid = app.state().unit(id).expect("юнит").grid;
+    let grid = app.state_ref().unit(id).expect("юнит").grid;
 
     app.select_unit(Some(id));
     // Move the camera far away so that the unit is outside the map window.
@@ -375,14 +375,14 @@ fn auto_select_picks_the_next_unit_after_a_move() {
     );
     assert!(
         selected
-            .and_then(|id| app.state().unit(id))
+            .and_then(|id| app.state_ref().unit(id))
             .is_some_and(|unit| unit.team == TeamId::RED),
         "новое выделение — юнит игрока, а не пусто: {selected:?}"
     );
 }
 
 fn issue_short_move(app: &mut App, id: max_core::unit::UnitId) {
-    let from = app.state().unit(id).expect("юнит").grid;
+    let from = app.state_ref().unit(id).expect("юнит").grid;
     let mut destination = None;
 
     'search: for dy in [-1i16, 0, 1] {
@@ -393,7 +393,7 @@ fn issue_short_move(app: &mut App, id: max_core::unit::UnitId) {
 
             let target = Point::new(from.x + dx, from.y + dy);
 
-            if build_move_order(app.state(), id, target).is_some() {
+            if build_move_order(app.state_ref(), id, target).is_some() {
                 destination = Some(target);
                 break 'search;
             }
@@ -401,7 +401,7 @@ fn issue_short_move(app: &mut App, id: max_core::unit::UnitId) {
     }
 
     let destination = destination.expect("рядом есть проходимая клетка");
-    let order = build_move_order(app.state(), id, destination).expect("приказ");
+    let order = build_move_order(app.state_ref(), id, destination).expect("приказ");
 
     app.apply(order.command);
     app.update_visual_units(0.0);
@@ -417,17 +417,17 @@ fn finish_path_next_tick(app: &mut App, id: max_core::unit::UnitId) {
     // One tick — so that the simulation issues the path (`Paths_RequestPath`).
     app.local_update(1.0 / 60.0);
 
-    if let Some(mut unit) = app.state().unit(id).cloned() {
+    if let Some(mut unit) = app.state_ref().unit(id).cloned() {
         if let Some(max_core::unit::UnitPath::Ground(path)) = unit.path.as_mut() {
             path.step_index = path.steps.len() as u32;
         }
         unit.speed = 0;
-        app.state_mut().write_unit(id, unit);
+        app.universe_mut().write_unit(id, unit);
     }
 }
 
 fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..600 {
-        let done = app.state().unit(id).is_none_or(|unit| {
+        let done = app.state_ref().unit(id).is_none_or(|unit| {
             matches!(unit.orders, UnitOrder::Await | UnitOrder::Idle) && unit.path.is_none()
         });
 
@@ -459,12 +459,12 @@ fn enemy_halt_reaches_the_simulation() {
     let mut prefs = app.preferences().clone();
     prefs.enemy_halt = false;
     app.set_preferences(prefs);
-    assert!(!app.state().enemy_halt, "выключено в Preferences");
+    assert!(!app.state_ref().enemy_halt(), "выключено в Preferences");
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
     assert!(
-        !app.state().enemy_halt,
+        !app.state_ref().enemy_halt(),
         "старт партии берёт enemy_halt из Preferences (settings.cpp)"
     );
 
@@ -472,7 +472,7 @@ fn enemy_halt_reaches_the_simulation() {
     prefs.enemy_halt = true;
     app.set_preferences(prefs);
     assert!(
-        app.state().enemy_halt,
+        app.state_ref().enemy_halt(),
         "изменение в игре применяется сразу (настройка читается на шаге)"
     );
 }

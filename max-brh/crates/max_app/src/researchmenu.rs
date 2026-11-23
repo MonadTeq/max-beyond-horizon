@@ -1,4 +1,4 @@
-﻿//! Research screen `ResearchMenu` — C++ `researchmenu.cpp` (window `RSRCHPIC`).
+//! Research screen `ResearchMenu` — C++ `researchmenu.cpp` (window `RSRCHPIC`).
 //!
 //! # Oracle
 //!
@@ -56,7 +56,9 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitType, RESEARCH_TOPIC_COUNT};
+#[cfg(test)]
 use max_core::game::GameState;
+use max_core::universe::StateRef;
 use max_core::research::{update_research_progress, RESEARCH_TOPIC_FACTORS};
 use max_core::team::TeamId;
 use max_render::buffer::{PixelRect, RgbaBuffer};
@@ -162,7 +164,7 @@ impl ResearchMenu {
     /// `None` if the team has no enabled `RESEARCH` center:
     /// in C++ the `Research` popup exists only with `ORDER_POWER_ON`, so a screen with
     /// zero centers is unreachable.
-    pub fn new(state: &GameState, team: TeamId) -> Option<Self> {
+    pub fn new(state: StateRef<'_>, team: TeamId) -> Option<Self> {
         let mut values = [0u16; RESEARCH_TOPIC_COUNT];
         let mut active_centers = 0u16;
 
@@ -267,9 +269,9 @@ impl ResearchMenu {
     }
 
     /// Topic level in percent (`research_level * 10`).
-    pub fn topic_percent(&self, state: &GameState, index: usize) -> u32 {
+    pub fn topic_percent(&self, state: StateRef<'_>, index: usize) -> u32 {
         state
-            .teams
+            .teams()
             .get(self.team.0 as usize)
             .and_then(|team| team.research_topics.get(index))
             .map(|topic| topic.research_level * 10)
@@ -283,14 +285,14 @@ impl ResearchMenu {
     /// `(centers + turns_to_complete − 1) / centers` and rolls back `−1`. Here
     /// the change is computed on a copy of `ResearchTopic` — the game state is not
     /// touched.
-    pub fn turns_to_complete(&self, state: &GameState, index: usize) -> Option<u32> {
+    pub fn turns_to_complete(&self, state: StateRef<'_>, index: usize) -> Option<u32> {
         let centers = i32::from(self.value(index));
         if centers <= 0 || index >= RESEARCH_TOPIC_COUNT {
             return None;
         }
 
         let mut topic = *state
-            .teams
+            .teams()
             .get(self.team.0 as usize)?
             .research_topics
             .get(index)?;
@@ -304,7 +306,10 @@ impl ResearchMenu {
     ///
     /// Returns the actual allocation (C++ may also turn centers off
     /// if the target has fewer slots than enabled centers).
-    pub fn commit(&mut self, state: &mut GameState) -> [u32; RESEARCH_TOPIC_COUNT] {
+    pub fn commit<D: max_core::universe::Dispatcher>(
+        &mut self,
+        state: &mut max_core::universe::GameUniverse<D>,
+    ) -> [u32; RESEARCH_TOPIC_COUNT] {
         let target = self.values.map(u32::from);
         let actual = state.set_research_allocation(self.team, target);
 
@@ -415,7 +420,7 @@ impl ResearchMenu {
 
     /// Draws the screen over the 640×480 frame (`ResearchControl::Init/RefreshScreen`
     /// + `win_draw`).
-    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: &GameState) -> u32 {
+    pub fn draw(&self, frame: &mut RgbaBuffer, assets: &Assets, state: StateRef<'_>) -> u32 {
         if frame.width() != 640 || frame.height() != 480 {
             return 0;
         }
@@ -728,6 +733,19 @@ impl ResearchMenuAssets {
 
 #[cfg(test)]
 mod tests {
+    /// Applies the menu allocation through the facade and returns the raw state.
+    fn commit(
+        menu: &mut ResearchMenu,
+        state: GameState,
+    ) -> (GameState, [u32; RESEARCH_TOPIC_COUNT]) {
+        let mut universe = max_core::universe::GameUniverse::new(
+            state,
+            max_core::universe::LocalDispatcher,
+        );
+        let actual = menu.commit(&mut universe);
+        (universe.into_state(), actual)
+    }
+
     use super::*;
     use max_core::enums::ResearchTopic;
     use max_core::geo::Point;
@@ -796,7 +814,7 @@ mod tests {
     #[test]
     fn opening_counts_powered_centers_per_topic() {
         let (state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let menu = ResearchMenu::new(&state, team).expect("menu");
+        let menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
 
         assert_eq!(menu.active_centers, 1);
         assert_eq!(menu.values[ResearchTopic::Attack as usize], 1);
@@ -807,7 +825,7 @@ mod tests {
     #[test]
     fn can_only_redistribute_released_centers() {
         let (state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
 
         // Cannot go up: there are no free centers.
         assert!(!menu.adjust(ResearchTopic::Shots as usize, true));
@@ -827,7 +845,7 @@ mod tests {
     #[test]
     fn slider_maps_pixels_to_centers_like_cpp() {
         let (state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let menu = ResearchMenu::new(&state, team).expect("menu");
+        let menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         let left = WINDOW_RECT.ulx + SLIDER_BG.ulx;
         let right = left + SLIDER_BG.width;
 
@@ -838,10 +856,10 @@ mod tests {
     #[test]
     fn done_reassigns_the_unit_and_keeps_allocation_consistent() {
         let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
         menu.adjust(ResearchTopic::Shots as usize, true);
-        let actual = menu.commit(&mut state);
+        let (mut state, actual) = commit(&mut menu, state);
 
         assert_eq!(actual[ResearchTopic::Attack as usize], 0);
         assert_eq!(actual[ResearchTopic::Shots as usize], 1);
@@ -862,9 +880,9 @@ mod tests {
     #[test]
     fn done_with_released_centers_powers_them_off() {
         let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
-        let actual = menu.commit(&mut state);
+        let (mut state, actual) = commit(&mut menu, state);
 
         assert_eq!(
             actual.iter().sum::<u32>(),
@@ -888,9 +906,9 @@ mod tests {
     #[test]
     fn turns_to_complete_shrink_with_more_centers() {
         let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         let one = menu
-            .turns_to_complete(&state, ResearchTopic::Attack as usize)
+            .turns_to_complete(StateRef::from(&state), ResearchTopic::Attack as usize)
             .unwrap();
         assert!(one > 0);
         assert_eq!(
@@ -908,10 +926,10 @@ mod tests {
         state.write_unit(second, unit);
         state.update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
 
-        menu = ResearchMenu::new(&state, team).expect("menu");
+        menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         assert_eq!(menu.value(ResearchTopic::Attack as usize), 2);
         let two = menu
-            .turns_to_complete(&state, ResearchTopic::Attack as usize)
+            .turns_to_complete(StateRef::from(&state), ResearchTopic::Attack as usize)
             .unwrap();
         assert!(two < one, "два центра быстрее одного: {two} < {one}");
     }
@@ -919,10 +937,10 @@ mod tests {
     #[test]
     fn research_new_turn_uses_the_same_distribution() {
         let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
         menu.adjust(ResearchTopic::Shots as usize, true);
-        menu.commit(&mut state);
+        let (mut state, _) = commit(&mut menu, state);
 
         // `finish_turn`/`advance_research` tick exactly the topic to which
         // the centers were redistributed: Attack stays 0, Shots grows.
@@ -944,7 +962,7 @@ mod tests {
     #[test]
     fn action_keys_and_clicks() {
         let (state, team) = state_with_center(ResearchTopic::Attack, 0);
-        let mut menu = ResearchMenu::new(&state, team).expect("menu");
+        let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
 
         assert_eq!(menu.key(Key::Enter), ResearchAction::Done);
         assert_eq!(menu.key(Key::Escape), ResearchAction::Cancel);
@@ -995,8 +1013,8 @@ mod tests {
         let (mut a, team) = state_with_center(ResearchTopic::Attack, 0);
         let (mut b, _) = state_with_center(ResearchTopic::Attack, 0);
 
-        let mut menu_a = ResearchMenu::new(&a, team).unwrap();
-        let mut menu_b = ResearchMenu::new(&b, team).unwrap();
+        let mut menu_a = ResearchMenu::new(StateRef::from(&a), team).unwrap();
+        let mut menu_b = ResearchMenu::new(StateRef::from(&b), team).unwrap();
         for menu in [&mut menu_a, &mut menu_b] {
             menu.adjust(ResearchTopic::Attack as usize, false);
             menu.adjust(ResearchTopic::Hits as usize, true);
@@ -1005,7 +1023,9 @@ mod tests {
         }
         assert_eq!(menu_a.values, menu_b.values);
         assert_eq!(menu_a.free_capacity, menu_b.free_capacity);
-        assert_eq!(menu_a.commit(&mut a), menu_b.commit(&mut b));
+        let (a, actual_a) = commit(&mut menu_a, a);
+        let (b, actual_b) = commit(&mut menu_b, b);
+        assert_eq!(actual_a, actual_b);
         assert_eq!(a.research_allocation(team), b.research_allocation(team));
     }
 }

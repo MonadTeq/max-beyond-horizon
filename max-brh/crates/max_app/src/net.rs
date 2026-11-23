@@ -1216,7 +1216,7 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     if flushed > 0 {
         tracing::info!("лобби: применено {flushed} команд перед генерацией мира");
     }
-    let supplies = app.state().mission_supplies.clone();
+    let supplies = app.state_ref().mission_supplies().clone();
 
     let teams = (0..PLAYER_TEAM_COUNT)
         .filter(|&team| kinds[team] != TeamKind::None)
@@ -1259,38 +1259,44 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
             tracing::warn!(
                 "не удалось сгенерировать мир из настроек лобби ({error:#}); остаётся пустая карта"
             );
-            app.state_mut().rng.set_seed(settings.rng_seed);
+            app.universe_mut().set_rng_seed(settings.rng_seed);
         }
     }
 
     let play_mode = PlayMode::try_from(u8::try_from(settings.ini_play_mode).unwrap_or(0))
         .unwrap_or(PlayMode::TurnBased);
-    let state = app.state_mut();
-    state.player_team = local_team;
-    state.play_mode = play_mode;
-    state.mission_category = settings.mission_category;
+    let universe = app.universe_mut();
+    universe.set_player_team(local_team);
+    universe.set_play_mode(play_mode);
+    universe.set_mission_category(settings.mission_category);
     if let Ok(victory_type) =
         VictoryType::try_from(u8::try_from(settings.ini_victory_type).unwrap_or(0))
     {
-        state.victory_type = victory_type;
+        universe.set_victory_type(victory_type);
     }
     if settings.ini_victory_limit > 0 {
-        state.victory_limit = settings.ini_victory_limit;
+        universe.set_victory_limit(settings.ini_victory_limit);
     }
 
     for team in 0..PLAYER_TEAM_COUNT {
-        state.teams[team].team_type = kinds[team];
+        let team_id = TeamId(team as u8);
+        if let Some(info) = universe.team_mut(team_id) {
+            info.team_type = kinds[team];
+        }
         if kinds[team] != TeamKind::None {
-            state.team_units[team].gold = settings.ini_start_gold.max(0) as u32;
+            if let Some(units) = universe.team_units_mut(team_id) {
+                units.gold = settings.ini_start_gold.max(0) as u32;
+            }
         }
     }
-    state.mission_supplies = supplies;
+    universe.set_mission_supplies(supplies);
+    let victory_limit = universe.snapshot().victory_limit();
 
     tracing::info!(
         "игра из лобби: local_team={} play_mode={:?} victory_limit={} team_types={:?}",
         local_team.0,
         play_mode,
-        state.victory_limit,
+        victory_limit,
         kinds
     );
 }
@@ -1471,6 +1477,30 @@ async fn flush_hud_orders(app: &mut App, handle: &SessionHandle) -> Result<()> {
     Ok(())
 }
 
+/// Broadcasts the lockstep commands the facade queued (stage B §6b).
+///
+/// `submit(Broadcast)` accumulates `NetworkCommand::Command` in the facade
+/// `drain_outgoing` (the outgoing plan is extended, not replaced, so the packet
+/// survives the following `tick` — decision A2). The driver is the only place
+/// that owns the transport, so it sends them right after `tick`. Barrier packets
+/// stay with the barrier FSM (`wait_barrier`), not on this path.
+async fn broadcast_outgoing(app: &mut App, handle: &SessionHandle) -> Result<()> {
+    for command in app.drain_outgoing() {
+        match command {
+            max_core::universe::NetworkCommand::Command(command) => {
+                let kind = format!("{:?}", command.kind());
+                handle
+                    .send(Packet::Command(command))
+                    .await
+                    .with_context(|| format!("broadcast of {kind}"))?;
+            }
+            // Packet 54 is an FSM packet (A2): it is sent by the barrier phase.
+            max_core::universe::NetworkCommand::StateSync(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// Per-frame barrier 01 (real-time pacing, §8.6).
 async fn send_frame_barrier(
     app: &mut App,
@@ -1621,6 +1651,7 @@ async fn run_game_loop(
                 return Ok(stats);
             }
             app.tick();
+            broadcast_outgoing(app, handle).await?;
             send_frame_barrier(app, handle, local_team, &mut frame_counter).await?;
 
             if let Some(sink) = sink.as_deref_mut() {
@@ -1745,8 +1776,8 @@ async fn run_game_loop(
         }
 
         // finish_turn: 52 is closed, all peers move to the next turn.
-        app.state_mut().enter_end_turn();
-        let game_over = app.state_mut().finish_turn();
+        app.universe_mut().enter_end_turn();
+        let game_over = app.universe_mut().finish_turn();
         fsm.on_turn_finished();
         stats.turns_finished = stats.turns_finished.saturating_add(1);
         tracing::info!(
@@ -1990,13 +2021,13 @@ mod tests {
     fn relayed_00_from_the_server_counts_for_the_payload_team() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
         let mut fsm = NetworkDispatcher::new(local, PlayMode::SimultaneousMoves);
         let mut stats = GameLoopStats::default();
 
         let packets = fsm.begin(app.universe_mut());
         assert_eq!(barrier_counter(&packets[0]), 1, "счётчики с 1");
-        assert_eq!(app.state().frame_sync_counter[local.0 as usize], 1);
+        assert_eq!(app.state_ref().frame_sync_counter()[local.0 as usize], 1);
         assert!(!fsm.reached(app.universe()), "пир ещё не ответил");
 
         let relayed_00 = Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
@@ -2007,7 +2038,7 @@ mod tests {
             .expect("релейный 00");
 
         assert_eq!(
-            app.state().frame_sync_counter[TeamId::GREEN.0 as usize],
+            app.state_ref().frame_sync_counter()[TeamId::GREEN.0 as usize],
             1,
             "team берётся из payload, а не из ENet-отправителя (сервер)"
         );
@@ -2020,7 +2051,7 @@ mod tests {
     fn incoming_18_chat_goes_to_the_simulation_and_hud_logs() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 
@@ -2033,7 +2064,7 @@ mod tests {
             .expect("входящий 18");
 
         assert_eq!(
-            app.state().chat_log,
+            app.state_ref().chat_log(),
             vec![(TeamId::GREEN, "hello".to_string())]
         );
         assert_eq!(
@@ -2075,16 +2106,21 @@ mod tests {
     impl SimClient {
         fn new(base: &GameState, local: TeamId, remotes: &[TeamId]) -> Self {
             let mut app = App::new(AppConfig::default());
-            *app.state_mut() = base.clone();
-            let state = app.state_mut();
+            app.install_universe(max_core::universe::GameUniverse::new(base.clone(), max_core::universe::LocalDispatcher));
             for team in 0..PLAYER_TEAM_COUNT {
-                state.teams[team].team_type = TeamKind::None;
+                if let Some(info) = app.universe_mut().team_mut(TeamId(team as u8)) {
+                    info.team_type = TeamKind::None;
+                }
             }
-            state.teams[local.0 as usize].team_type = TeamKind::Player;
+            if let Some(info) = app.universe_mut().team_mut(local) {
+                info.team_type = TeamKind::Player;
+            }
             for team in remotes {
-                state.teams[team.0 as usize].team_type = TeamKind::Remote;
+                if let Some(info) = app.universe_mut().team_mut(*team) {
+                    info.team_type = TeamKind::Remote;
+                }
             }
-            state.player_team = local;
+            app.universe_mut().set_player_team(local);
             Self {
                 app,
                 fsm: NetworkDispatcher::new(local, PlayMode::SimultaneousMoves),
@@ -2192,28 +2228,24 @@ mod tests {
         // While B is away, A/C change the copy of B's tank (a missed attack order).
         for index in [0usize, 2] {
             clients[index]
-                .app
-                .state_mut()
-                .unit_mut(ids[1])
+                .app.universe_mut().unit_mut(ids[1])
                 .expect("tank B")
                 .hits = 1;
         }
         // And B's copy of A's tank is stale.
         clients[1]
-            .app
-            .state_mut()
-            .unit_mut(ids[0])
+            .app.universe_mut().unit_mut(ids[0])
             .expect("tank A")
             .hits = 2;
         let b_tank_hits = clients[1]
             .app
-            .state()
+            .state_ref()
             .unit(ids[1])
             .expect("tank B")
             .hits;
         let a_tank_hits = clients[0]
             .app
-            .state()
+            .state_ref()
             .unit(ids[0])
             .expect("tank A")
             .hits;
@@ -2235,7 +2267,7 @@ mod tests {
             assert_eq!(
                 clients[index]
                     .app
-                    .state()
+                    .state_ref()
                     .unit(ids[1])
                     .expect("tank B")
                     .hits,
@@ -2259,7 +2291,7 @@ mod tests {
                 .map(|client| (
                     client.fsm.local_team().0,
                     client.fsm.end_counter(),
-                    client.app.state().turn_indices,
+                    client.app.state_ref().turn_indices(),
                 ))
                 .collect::<Vec<_>>()
         );
@@ -2272,7 +2304,7 @@ mod tests {
             .fsm
             .reached(client.app.universe())), "54 с 3 участниками");
         assert_eq!(
-            clients[1].app.state().unit(ids[0]).expect("tank A").hits,
+            clients[1].app.state_ref().unit(ids[0]).expect("tank A").hits,
             a_tank_hits,
             "54 A исправил устаревшую копию танка A у B"
         );
@@ -2290,18 +2322,18 @@ mod tests {
 
         let checksums: Vec<u16> = clients
             .iter()
-            .map(|client| max_core::crc::state_checksum(client.app.state()))
+            .map(|client| client.app.state_ref().state_checksum())
             .collect();
         assert_eq!(checksums[0], checksums[1], "CRC A == B");
         assert_eq!(checksums[0], checksums[2], "CRC A == C");
 
         for client in &mut clients {
-            client.app.state_mut().enter_end_turn();
-            let _ = client.app.state_mut().finish_turn();
+            client.app.universe_mut().enter_end_turn();
+            let _ = client.app.universe_mut().finish_turn();
         }
         let turns: Vec<i32> = clients
             .iter()
-            .map(|client| client.app.state().turn_counter)
+            .map(|client| client.app.state_ref().turn_counter())
             .collect();
         assert_eq!(turns, vec![1, 1, 1], "turn_counter догнал у всех");
     }
@@ -2313,8 +2345,8 @@ mod tests {
             App::new(AppConfig::default()),
             App::new(AppConfig::default()),
         ];
-        *apps[0].state_mut() = synthetic_state(TeamId::RED, &[TeamId::GREEN]);
-        *apps[1].state_mut() = synthetic_state(TeamId::GREEN, &[TeamId::RED]);
+        apps[0].install_universe(max_core::universe::GameUniverse::new(synthetic_state(TeamId::RED, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
+        apps[1].install_universe(max_core::universe::GameUniverse::new(synthetic_state(TeamId::GREEN, &[TeamId::RED]), max_core::universe::LocalDispatcher));
 
         let mut fsms = [
             NetworkDispatcher::new(TeamId::RED, PlayMode::SimultaneousMoves),
@@ -2342,11 +2374,11 @@ mod tests {
             "GREEN ждал FrameSyncCounter[RED] == 1"
         );
         assert_eq!(
-            apps[0].state().frame_sync_counter[TeamId::GREEN.0 as usize],
+            apps[0].state_ref().frame_sync_counter()[TeamId::GREEN.0 as usize],
             1
         );
         assert_eq!(
-            apps[1].state().frame_sync_counter[TeamId::RED.0 as usize],
+            apps[1].state_ref().frame_sync_counter()[TeamId::RED.0 as usize],
             1
         );
     }
@@ -2357,7 +2389,7 @@ mod tests {
     fn disconnect_event_stops_the_handler_without_panicking() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
+        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 

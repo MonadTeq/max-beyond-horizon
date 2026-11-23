@@ -17,6 +17,7 @@ use max_app::AppConfig;
 use max_core::enums::{TeamClan, UnitType};
 use max_core::game::GameState;
 use max_core::geo::Point;
+use max_core::universe::StateRef;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_render::buffer::{PixelRect, RgbaBuffer};
 
@@ -102,11 +103,11 @@ fn list_rows_draw_the_i_star_icons_of_every_visible_building() {
         return;
     };
     let (state, builder) = build_state();
-    let menu = BuildMenu::new(&state, builder).expect("меню конструктора");
+    let menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let background = background(&assets, false);
     let mut frame = RgbaBuffer::new(640, 480);
 
-    let painted = menu.draw(&mut frame, &assets, &state, None);
+    let painted = menu.draw(&mut frame, &assets, StateRef::from(&state), None);
     assert!(painted > 10_000, "экран BuildMenu нарисован: {painted}");
 
     // The first row is selected — it has the white corners of `GameManager_DrawUnitSelector`
@@ -142,13 +143,13 @@ fn list_icons_are_recolored_for_the_team_like_cargo_menu() {
         return;
     };
     let (state, builder) = build_state();
-    let mut menu = BuildMenu::new(&state, builder).expect("меню конструктора");
+    let mut menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let mut red = RgbaBuffer::new(640, 480);
     let mut green = RgbaBuffer::new(640, 480);
 
-    menu.draw(&mut red, &assets, &state, None);
+    menu.draw(&mut red, &assets, StateRef::from(&state), None);
     menu.team = TeamId::GREEN;
-    menu.draw(&mut green, &assets, &state, None);
+    menu.draw(&mut green, &assets, StateRef::from(&state), None);
 
     // The icons are recolored by the team LUT (`ReportStats_DrawListItemIcon` →
     // `color_index_table`), like the `CargoMenu` lists; so the RED/GREEN frames
@@ -171,11 +172,11 @@ fn portrait_is_the_selected_buildings_p_star_big_image() {
         return;
     };
     let (state, builder) = build_state();
-    let menu = BuildMenu::new(&state, builder).expect("меню конструктора");
+    let menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let background = background(&assets, false);
     let mut frame = RgbaBuffer::new(640, 480);
 
-    menu.draw(&mut frame, &assets, &state, None);
+    menu.draw(&mut frame, &assets, StateRef::from(&state), None);
 
     let selected = menu.selected_type().expect("выбранный тип");
     assert_eq!(selected, UnitType::MiningStation, "первая строка списка");
@@ -241,16 +242,16 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
     // For a factory the queue is selected by a click; the portrait — `selector->GetLast()`
     // of the active selector (list or queue).
     state.unit_mut(builder).unwrap().unit_type = UnitType::TrainingHall;
-    let mut menu = BuildMenu::new(&state, builder).expect("меню завода");
+    let mut menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню завода");
     assert!(menu.factory);
 
     let mut first = RgbaBuffer::new(640, 480);
-    menu.draw(&mut first, &assets, &state, None);
+    menu.draw(&mut first, &assets, StateRef::from(&state), None);
 
     // Another list row — another P_* in the portrait window.
     menu.selected = 1;
     let mut second = RgbaBuffer::new(640, 480);
-    menu.draw(&mut second, &assets, &state, None);
+    menu.draw(&mut second, &assets, StateRef::from(&state), None);
 
     assert!(
         changed(&first, &second, PORTRAIT) > 10_000,
@@ -262,7 +263,7 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
     menu.queue_selected = 0;
     menu.queue_active = true;
     let mut queued = RgbaBuffer::new(640, 480);
-    menu.draw(&mut queued, &assets, &state, None);
+    menu.draw(&mut queued, &assets, StateRef::from(&state), None);
 
     assert!(
         changed(&first, &queued, PORTRAIT) > 10_000,
@@ -276,7 +277,7 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
         return;
     };
     let (state, builder) = build_state();
-    let mut menu = BuildMenu::new(&state, builder).expect("меню конструктора");
+    let mut menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let training_hall = menu
         .unit_types
         .iter()
@@ -286,7 +287,7 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
 
     let background = background(&assets, false);
     let mut frame = RgbaBuffer::new(640, 480);
-    menu.draw(&mut frame, &assets, &state, None);
+    menu.draw(&mut frame, &assets, StateRef::from(&state), None);
 
     // C++ `AbstractBuildMenu::Draw`: `stats_background->Write(&window)` +
     // `UnitStats_DrawStats(...)` in (11,293,250,174); the I_* icons — the same as
@@ -294,7 +295,7 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
     let diff = changed(&background, &frame, STATS);
     assert!(diff > 1_000, "таблица характеристик нарисована (diff={diff})");
 
-    let team_units = &state.team_units[0];
+    let team_units = &StateRef::from(&state).team_units()[0];
     let rows = Mobilization::stats_rows_for(
         &team_units.base_values,
         &team_units.current_values,

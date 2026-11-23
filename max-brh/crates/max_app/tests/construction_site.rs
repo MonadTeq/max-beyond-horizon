@@ -66,20 +66,20 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         return;
     };
 
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
-    app.state_mut().team_units[0].set_gold(100);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_units_table_mut()[0].set_gold(100);
 
     let constructor = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(40, 40), 0)
         .expect("constructor");
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(constructor)
         .expect("constructor")
         .storage = 40;
 
-    let site = find_build_site(app.state(), TeamId::RED, UnitType::TrainingHall, Point::new(40, 40))
+    let site = app.state_ref().find_build_site( TeamId::RED, UnitType::TrainingHall, Point::new(40, 40))
         .expect("site");
 
     app.viewport_mut().set_zoom(64);
@@ -87,12 +87,13 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
 
     let (before, before_stats) = app.render_frame_with_stats();
 
-    let mut manager = ProductionManager::new(app.state_mut(), TeamId::RED);
-    manager
-        .enqueue(constructor, UnitType::TrainingHall)
+    app.universe_mut()
+        .enqueue_build(TeamId::RED, constructor, UnitType::TrainingHall)
         .expect("queue");
-    let report = manager.commit(constructor).expect("build order");
-    drop(manager);
+    let report = app
+        .universe_mut()
+        .commit_build(TeamId::RED, constructor)
+        .expect("build order");
 
     assert_eq!(report.site, site, "детерминированная площадка");
 
@@ -118,10 +119,10 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
     // slab are not drawn (e.g. the decal remained `ORDER_IDLE` or is absent
     // in the frame), the frame without it will not change. We check them in turn, like `IsRelevant`
     // for each unit (`unitinfogroup.cpp:59`).
-    let site_units = app.state().units_at(site);
+    let site_units = app.state_ref().units_at(site);
     let find_site_unit = |unit_type: UnitType| {
         site_units.iter().copied().find(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.unit_type == unit_type)
         })
@@ -137,17 +138,17 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         };
 
         let order = app
-            .state()
+            .state_ref()
             .unit(decal)
             .map(|unit| (unit.orders, unit.state))
             .expect("декаль на площадке");
 
-        app.state_mut()
+        app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
             .set_visible_to_team(TeamId::RED, false);
         let without = app.render_frame();
-        app.state_mut()
+        app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
             .set_visible_to_team(TeamId::RED, true);
@@ -166,15 +167,15 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
     // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`, so it is **not visible**
     // (`IsRelevant`), while the tape/cones and the builder are in place.
     for _ in 0..report.turns {
-        max_core::production::progress_build_state(app.state_mut(), TeamId::RED);
+        app.universe_mut().progress_build_state( TeamId::RED);
     }
 
     let (waiting, waiting_stats) = app.render_frame_with_stats();
     let tapes = |app: &App| {
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .filter(|unit| {
                 matches!(
                     unit.unit_type,
@@ -216,10 +217,10 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         "кадр после достройки обязан отличаться от площадки"
     );
     assert!(
-        app.state()
+        app.state_ref()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| app.state().unit(id))
+            .filter_map(|id| app.state_ref().unit(id))
             .any(|unit| unit.unit_type == UnitType::LargeSlab),
         "плита остаётся под зданием (`remove_slabs = false`)"
     );
