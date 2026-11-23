@@ -166,7 +166,15 @@ FSM-сплит `begin/end/crc` → `step_*_barrier` + `record_*`; `handle_sessio
   на одних сценариях; таймауты/resume-54 зелёные; только после — удалять мост.
 - **(б) вещание Broadcast:** `submit(Broadcast)` → `drain_outgoing` → пирам;
   `Local`/`Drop` не вещаются; `outgoing` накапливается.
-- **(в) live-smoke + net-тесты:** `cargo test -p max_app` + `ci.sh --smoke`/`--smoke3`.
+- **(в) live-smoke + net-тесты:** `cargo test -p max_app` — все net/FSM-тесты зелёные.
+  **Решение владельца (2026-11-24):** `ci.sh --smoke`/`--smoke3` (Horizon/Docker) —
+  **перенесён в релизный гейт владельца** (qa-plan.md слой 4), а не в приёмку этапа C.
+  Обоснование: логика `NetworkDispatcher` (барьерная FSM, `Broadcast`/`Local`/`Drop`,
+  таймауты/resume-54) доказана нативными гейтами (а)/(б)/(г) + 24 net-тестами;
+  Horizon-smoke проверяет **интеграцию** с реальным транспортом (enet/QUIC) и
+  C++-оракулом, а не логику NetworkDispatcher. **Условие запуска релизного гейта:**
+  перед каждым релизом (release-checklist.md), не реже чем перед merge в main.
+  `live-smoke.sh`/Docker-инфраструктура остаются.
 - **(г) детерминизм/golden без изменений.**
 
 ## 7. Guardrails
@@ -182,10 +190,11 @@ FSM-сплит `begin/end/crc` → `step_*_barrier` + `record_*`; `handle_sessio
 ## 8. Критерии приёмки (DoD)
 
 - `cargo check`/`cargo test` (все крейты) — зелёные.
-- Гейты (а)/(б)/(в)/(г) пройдены.
+- Гейты (а)/(б)/(г) пройдены нативно; гейт (в) Horizon-smoke — **перенесён в релизный
+  гейт владельца** (§6, решение 2026-11-24; условие запуска — перед каждым релизом).
 - Мост удалён: `rg '\b(universe|universe_mut)\(' crates/max_app/src` → пусто;
   `App` нигде не упоминает `LocalDispatcher` в `impl<D: Dispatcher>`.
-- Полная проверка: `bash ci.sh` + `bash ci.sh --smoke --smoke3`.
+- Полная проверка: `bash ci.sh` (нативно; без `--smoke`, который уходит в релизный гейт).
 
 ---
 
