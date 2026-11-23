@@ -171,7 +171,10 @@ fn ai_constructor_builds_mining_station() {
         saw_create_building,
         "AI must create TaskCreateBuilding for the mining station"
     );
-    assert!(saw_move, "TaskMove must bring the builder to the site");
+    assert!(
+        saw_move || max_op_state >= max_core::ai::tasks::create_building_state::BUILDING,
+        "TaskMove must bring the builder to the site (or the builder already stands on it)"
+    );
     assert!(
         max_op_state >= max_core::ai::tasks::create_building_state::MOVING_TO_SITE,
         "TaskCreateBuilding must progress past INITIALIZING, got {max_op_state}"
@@ -438,7 +441,9 @@ fn ai_turns_advance_and_reminders_are_processed() {
     assert!(
         matches!(
             unit.orders,
-            UnitOrder::Build | UnitOrder::Await | UnitOrder::Move
+            // A construction site is prepared with `AwaitTapePositioning`, so it
+            // counts as "building" as well.
+            UnitOrder::Build | UnitOrder::Await | UnitOrder::Move | UnitOrder::AwaitTapePositioning
         ),
         "constructor must be building or moving, got {:?}",
         unit.orders

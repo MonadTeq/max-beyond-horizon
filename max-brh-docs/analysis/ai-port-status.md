@@ -24,8 +24,8 @@
 | 2 | Выбор стратегии/высадки | закрыто (A.2) | — |
 | 3 | Производство | закрыто (A.3), кроме резерва | эвристика заменена на `PlanNextBuildJob`/`UpdateMiningNeeds`/`CheckPower`/`CheckWorkers`/склады `EndTurn`; производство юнитов по весам; нет `RollTeamMissionSupplies` (стартовая загрузка) и `TaskAttackReserve` (A.4) |
 | 4 | Бой | частично (A.4) | наступление, резерв, ценз целей, `EvaluateAttackReadiness` и `AiAttack_GetTargetFlags` портированы; нет `TransporterMap`/марша, слияния атак и `TaskSupportAttack`; см. ниже |
-| 5 | Разведка | отсутствует | нет целенаправленного исследования карты |
-| 6 | Флот | отсутствует | не строит/не использует морские юниты; нет `AttemptTransport` |
+| 5 | Разведка | закрыто (A.6) | `TaskExplore` целенаправленно исследует карту (`TaskSearchDestination`), запрашивает разведчиков по типам |
+| 6 | Флот | закрыто (A.6) | `AttemptTransport`/`TaskTransport`: переправа наземных юнитов морским транспортом; морская разведка (`FASTBOAT`/`SUBMARNE`) и `SEATRANS` запрашиваются |
 | 7 | Исследования/апгрейды | закрыто (A.5) | `DetermineResearchProjects`, `ChooseUpgrade`, `UpgradeUnitType`, `ChooseInitialUpgrades` портированы |
 | 8 | Детерминизм | не бит-в-бит | другой порядок решений → при том же seed другие ходы |
 
@@ -54,7 +54,8 @@ CRC/replay без изменений; 385 тестов зелёные.
    census целей, `IsReconUnitAvailable`, `IsAttackUnderControl`).
 5. **Исследования/апгрейды** (`DetermineResearchProjects`, `ChooseUpgrade`). —
    **закрыто в A.5** (см. ниже).
-6. **Разведка и флот** (`TaskExplore`, `AttemptTransport`, морские задачи).
+6. **Разведка и флот** (`TaskExplore`, `AttemptTransport`, морские задачи). —
+   **закрыто в A.6** (см. ниже).
 
 Каждый пункт — отдельная задача Разработчику (v4 Flash) со сверкой по
 `aiplayer.cpp`/`task*.cpp` и фиксацией CRC/replay.
@@ -239,6 +240,105 @@ CRC), переназначение темы покрыто сценарием «
 `p7` (`mini_replay_matches_cpp_digest_bit_for_bit`) не изменился: в replay нет
 ходов ИИ. Тесты: 289 unit + интеграционные, все зелёные (10 unit и 3
 интеграционных — новые).
+
+## Фаза A.6 — разведка и флот: `TaskExplore`/`TaskTransport` (закрыто)
+
+Портировано (модули `ai/tasks/search.rs`, `ai/tasks/move_tasks.rs`,
+`ai/tasks/mod.rs`, подключение в `ai/strategy.rs`; последняя фаза полного порта
+ИИ).
+
+### `TaskExplore` и `TaskSearchDestination`
+
+- **`TaskAbstractSearch::EndTurn`** (`taskabstractsearch.cpp:79`) — общий
+  жизненный цикл: готовым юнитам ставится `RemindMoveFinished`, повреждённые
+  (`hits <= base_hits / 2`, противник `APPRENTICE`+) уходят в `TaskRepair`
+  (`RemoveTasks` + `TaskRepair`), а при пустом списке юнитов и нулевом
+  `requestors` создаётся `TaskObtainUnits` (`requestors++`).
+  `BeginTurn` — это `EndTurn()`; `ChildComplete` уменьшает `requestors`.
+- **`TaskExplore`**: флаги запросов — `SCOUT`; `AWAC`, `FASTBOAT` (Rust
+  `Escort`), `SUBMARNE` при доступности постройки; `SUBMARNE` — с
+  `OPPONENT_TYPE_AVERAGE`, `COMMANDO` (Rust `Infiltrator`) — с
+  `OPPONENT_TYPE_EXPERT` (`taskexplore.cpp:36-46`). `IsUnitUsable` берёт только
+  запрошенные типы, `SCOUT`/`FASTBOAT` — до трёх, остальные по одному.
+  `ObtainUnit` выставляет запросы в порядке C++ (`SCOUT`, `AWAC`, `FASTBOAT`,
+  `SUBMARNE`, `COMMANDO`).
+- **Поиск цели** (`TaskSearchDestination`) выполняется синхронно в `Execute`:
+  кольца Чебышёва вокруг юнита, первый подходящий сайт, затем продолжение по
+  направлению от `point` задачи на `radius` шагов (`ATTRIB_SCAN` для
+  разведки, `1` для `TaskSurvey`/`TaskFindMines`). Сайт фильтруется по
+  `IsVisited` подкласса, доступности
+  (`AccessModifier_EnemySameClassBlocks`) и карте урона
+  (`damage_potential_map < 1`). Найденный сайт отдаётся `TaskMove`.
+- **`TaskExplore::IsVisited`** (`taskexplore.cpp:108`): вода/земля по
+  `SurfaceType` (для `FASTBOAT`/`SUBMARNE` — только вода, для остальных —
+  только земля) и `INFO_MAP_EXPLORED` в `AiPlayer::info_map`; юнит, которому
+  некуда идти, освобождается (`OnUnitReleased`: снятие флага типа +
+  `ClearUnitTasksAndRemindAvailable`).
+- **`TaskSurvey`/`TaskFindMines`**: та же механика `FindDestination`, свои
+  `IsVisited` — бит команды в `CargoMap` и `AiPlayer::mine_map`
+  (`tasksurvey.cpp:131`, `taskfindmines.cpp:92`); `TaskFindMines::BeginTurn`
+  оценивает число «ценных» клеток с минами (карта урона) и просит
+  дополнительных сапёров.
+
+### `AttemptTransport` и `TaskTransport`
+
+- **`AttemptTransport`** (`taskmove.cpp:370`): наземный юнит, которому
+  `find_ground_path` не даёт маршрута, делит путь по воде. `transport_route`
+  идёт по прямой от юнита к цели, находит последнюю проходимую клетку перед
+  водой (`transport_waypoint` — посадка) и первую проходимую за ней
+  (`passenger_destination` — высадка). Транспорт выбирается как в C++: `APC`
+  (`CLNTRANS`) для пехоты/коммандос, если он есть у команды и клетка посадки
+  не под наблюдением врага; иначе `SEATRANS`.
+- **`TaskMove`**: после посадки юнит идёт к точке посадки и ждёт; признак
+  «в трюме» — `ORDER_IDLE` + `parent_unit` транспорта (события
+  `EventUnitLoaded/Unloaded` в порте нет). После высадки `TaskMove`
+  продолжает путь к исходной цели.
+- **`TaskTransport`** (`tasktransport.cpp`): `Init` создаёт
+  `TaskObtainUnits` на тип транспорта (это и есть заказ `SEATRANS`/`APC`),
+  `AddUnit` принимает транспорт, `ChooseNewTask` выбирает ближайшего клиента,
+  `Execute` ведёт транспорт к воде у посадки, грузит пассажира
+  (`ORDER_MOVE_TO_UNIT` + одношаговый путь, как `LoadUnit`) и к воде у
+  высадки, выгружает (`ORDER_ACTIVATE` + `move_to`, как
+  `TaskTransport_FinishTransport`), после чего освобождает транспорт и
+  удаляет задачу. `IsNeeded` — «нет транспорта, но есть клиенты».
+- **Флот**: `TaskExplore` запрашивает `FASTBOAT`/`SUBMARNE` (морская
+  разведка), `TaskTransport` — `SEATRANS`; строительство идёт через
+  `TaskCreateBuilding` (`SHIPYARD` — из `PlanNextBuildJob` для `SEA`), наём
+  боевых кораблей — через весовые таблицы (`GetFilteredWeightTable`,
+  `TaskAttackReserve`, `TaskKillUnit`), морская разведка атак — `FASTBOAT`
+  (`UpdateReconUnit`).
+
+Осознанные отклонения:
+
+- кольцевой обход вместо спиральных курсоров `TaskSearchDestination` (набор
+  кандидатов и порядок по радиусу те же);
+- нет `TransporterMap`: точка остановки транспорта — ближайшая проходимая для
+  него клетка у посадки/высадки, а не клетка, найденная `TransporterMap`;
+- `AIRTRANS` не используется потоком переправы (в C++ он предпочтительнее,
+  если построен);
+- при занятой клетке высадки подбирается соседняя свободная (в C++ —
+  `AiPlayer::ClearZone`);
+- `FASTBOAT` добавлен в запросы `TaskExplore`: в C++ конструктор его читает в
+  `ObtainUnit`, но никогда не выставляет (`taskexplore.cpp:35-45`) — здесь
+  реализовано намерение, иначе морская разведка не запрашивается.
+
+### Проверка
+
+| Сценарий (20 ходов) | `state_checksum` до → после | `replay_digest_crc` до → после | CRC снапшота до → после |
+|---|---|---|---|
+| «море»: канал, танк + `SEATRANS`, цель за водой | `0x9D30` → `0x0101` | `0x4E4E` → `0x5D84` | `0x925F` → `0xCDE8` |
+| «земля»: конструктор + скаут, 24×24 | `0x2684` → `0x45C9` | `0x6D92` → `0x0815` | `0x0798` → `0xA9D1` |
+
+Причина: `TaskExplore` больше не удаляет себя при пустом списке юнитов, а
+запрашивает разведчиков (`SCOUT`/`AWAC`/`FASTBOAT`/`SUBMARNE`), поэтому
+меняются состав задач (62 → 85 и 36 → 40 в сценариях), стройка (заводы под
+разведчиков) и путь решений ИИ; в «земля»-сценарии скаут уходит с (11,9) на
+(3,2). `p7` (`mini_replay_matches_cpp_digest_bit_for_bit`) не изменился: в
+replay нет ходов ИИ. Тесты: 294 unit (5 новых — `transport_route` и выбор
+транспорта) + интеграционные, все зелёные (2 новых в `ai_a6.rs`: разведка и
+переправа). Два утверждения `ai_p6.rs` расширены под поведение порта:
+строитель может стоять на площадке (без `TaskMove`) и `AwaitTapePositioning`
+считается фазой стройки.
 
 ## Открытые вопросы владельца
 

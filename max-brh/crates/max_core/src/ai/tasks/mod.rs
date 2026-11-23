@@ -242,6 +242,18 @@ pub struct MoveState {
     pub unit: Option<UnitId>,
     /// The order was issued and a path was requested.
     pub started: bool,
+    /// The request's real destination before the transport split
+    /// (C++ `passenger_destination`/`destination_waypoint`; `AttemptTransport`
+    /// rewrites `destination_waypoint` to the boarding cell).
+    pub final_destination: Point,
+    /// The move needs a transporter (`TaskMove::AttemptTransport`).
+    pub transport_needed: bool,
+    /// The passenger is in the transporter's hold (C++ `ORDER_IDLE` +
+    /// `parent_unit == transporter`); without the `EventUnitLoaded` event the
+    /// task polls this flag.
+    pub transport_loaded: bool,
+    /// The `TaskTransport` that carries the passenger.
+    pub transport_task: Option<u32>,
 }
 
 impl Default for MoveState {
@@ -263,6 +275,10 @@ impl Default for MoveState {
             destination: Point::ZERO,
             unit: None,
             started: false,
+            final_destination: Point::ZERO,
+            transport_needed: false,
+            transport_loaded: false,
+            transport_task: None,
         }
     }
 }
@@ -279,8 +295,6 @@ pub struct SearchState {
     pub units: Vec<UnitId>,
     /// `requestors`.
     pub requestors: i16,
-    /// Units already visited (for `IsVisited`).
-    pub visited: Vec<(UnitId, Point)>,
 }
 
 /// `TaskRepair` (base for `TaskReload`/`TaskUpgrade`) — `taskrepair.hpp:43`.
@@ -701,6 +715,13 @@ pub enum TaskKind {
         task_move: Option<u32>,
         /// `task_obtain_units`.
         task_obtain_units: Option<u32>,
+        /// The transporter's own `TaskMove` child (C++ `TaskMove` created in
+        /// `Execute`); kept so that a new one is not appended every turn.
+        transporter_move: Option<u32>,
+        /// The cell the transporter unloads the current client on
+        /// (`TaskTransport_FinishTransport`); the release is observed here because
+        /// the port has no `EventUnitUnloaded` notification.
+        unload_site: Option<Point>,
     },
     /// `TaskUpdateTerrain`.
     UpdateTerrain {
@@ -751,6 +772,22 @@ impl TaskKind {
             manager,
             needs_water_platforms: false,
             tasks: Vec::new(),
+        }
+    }
+
+    /// `TaskTransport::TaskTransport(TaskMove*, transporter)`
+    /// (`tasktransport.cpp:36`) — the task starts with its first client and the
+    /// transporter type it needs; `Init` requests the transporter when the team
+    /// does not own one yet.
+    pub fn transport(client_task: u32, transporter_unit_type: UnitType) -> Self {
+        Self::Transport {
+            transporter_unit_type,
+            unit_transporter: None,
+            move_tasks: vec![client_task],
+            task_move: Some(client_task),
+            task_obtain_units: None,
+            transporter_move: None,
+            unload_site: None,
         }
     }
 
@@ -1451,6 +1488,33 @@ impl TaskKind {
                 lrx: i32::from(building_site.x),
                 lry: i32::from(building_site.y),
             },
+            // `TaskTransport::GetBounds` (`tasktransport.cpp:400`): the
+            // transporter's cell, or the last boarding waypoint.
+            Self::Transport {
+                unit_transporter,
+                task_move,
+                ..
+            } => {
+                let site = unit_transporter
+                    .and_then(|id| world.unit(id).map(|unit| unit.grid))
+                    .or_else(|| {
+                        task_move.and_then(|id| match world.ai.task_manager.task(id) {
+                            Some(task) => match &task.kind {
+                                Self::Move(state) => Some(state.transport_waypoint),
+                                _ => None,
+                            },
+                            None => None,
+                        })
+                    })
+                    .unwrap_or(Point::ZERO);
+
+                Rect {
+                    ulx: i32::from(site.x),
+                    uly: i32::from(site.y),
+                    lrx: i32::from(site.x) + 1,
+                    lry: i32::from(site.y) + 1,
+                }
+            }
             Self::SupportAttack { .. } | Self::Escort { .. } | Self::DefenseReserve { .. } => {
                 Rect::default()
             }
@@ -1481,7 +1545,7 @@ impl TaskKind {
                 combat::support_attack_is_unit_usable(world, header, self, unit)
             }
             Self::AssistMove { .. } => move_tasks::assist_move_is_unit_usable(world, header, unit),
-            Self::Explore { .. } => search::explore_is_unit_usable(world, header, unit),
+            Self::Explore { .. } => search::explore_is_unit_usable(world, header, self, unit),
             _ => {
                 let _ = (world, header, unit);
                 false
@@ -1497,6 +1561,11 @@ impl TaskKind {
             | Self::FrontalAttack { .. }
             | Self::Retreat { .. } => combat::is_unit_transferable(world, task, unit),
             Self::Repair { .. } | Self::Reload { .. } | Self::Upgrade { .. } => false,
+            // `TaskTransport::IsUnitTransferable` (`tasktransport.cpp:362`):
+            // every unit except the transporter itself is transferable.
+            Self::Transport {
+                unit_transporter, ..
+            } => unit_transporter.map(|id| id != unit.id).unwrap_or(true),
             _ => match task.parent {
                 Some(parent) => match world.ai.task_manager.task(parent) {
                     Some(parent_task) => {
@@ -1518,6 +1587,12 @@ impl TaskKind {
             Self::Attack(_) => true,
             Self::KillUnit(_) => true,
             Self::CreateBuilding { op_state, .. } => *op_state < create_building_state::BUILDING,
+            // `TaskTransport::IsNeeded` (`tasktransport.cpp:419`).
+            Self::Transport {
+                unit_transporter,
+                move_tasks,
+                ..
+            } => unit_transporter.is_none() && !move_tasks.is_empty(),
             _ => true,
         }
     }
@@ -1539,6 +1614,10 @@ impl TaskKind {
             }
             Self::CreateUnit { .. } => true,
             Self::ObtainUnits { .. } => true,
+            // `TaskTransport::IsEndTurnNeeded` (`tasktransport.cpp:494`).
+            Self::Transport {
+                unit_transporter, ..
+            } => unit_transporter.is_some(),
             _ => true,
         }
     }
@@ -1586,6 +1665,18 @@ impl TaskKind {
                 )
             }
             Self::Attack(_) => "Attack".to_string(),
+            // `TaskExplore::WriteStatusLog` (`taskexplore.cpp:81`).
+            Self::Explore { .. } => "Explore map.".to_string(),
+            // `TaskTransport::WriteStatusLog` (`tasktransport.cpp:364`).
+            Self::Transport {
+                unit_transporter, ..
+            } => {
+                if unit_transporter.is_some() {
+                    "Transport units: working.".to_string()
+                } else {
+                    "Transport units: Waiting for a transporter.".to_string()
+                }
+            }
             Self::KillUnit(state) => format!(
                 "Kill unit at [{},{}]",
                 state.target_position.x + 1,

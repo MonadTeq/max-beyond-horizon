@@ -22,19 +22,34 @@
 //! 4. on completion notifies the parent with a [`TASKMOVE_RESULT_*`] code
 //!    (C++ `result_callback`).
 //!
-//! Transport (`AttemptTransport`, `TaskTransport`) and bridges/zones
-//! (`EventZoneCleared`) are ported structurally: their behavior depends on
-//! `AccessMap`/`ZoneWalker` zone clearing (P5/P7), so `TaskTransport`
-//! is created but does not start transporting.
+//! # Transport model
+//!
+//! `TaskMove::AttemptTransport` (`taskmove.cpp:370`) splits a land move at the
+//! water (`transport_route`): the passenger walks to the boarding cell
+//! (`transport_waypoint`), waits in the transporter's hold and continues from the
+//! drop-off cell (`passenger_destination`) after the release. `TaskTransport`
+//! requests the transporter (`TaskObtainUnits`), picks the nearest client, drives
+//! the transporter to the sea-side cell next to the boarding/drop-off cell, loads
+//! (`ORDER_MOVE_TO_UNIT`) and unloads (`ORDER_ACTIVATE` + `move_to`, the
+//! `TaskTransport_FinishTransport` path). The C++ `EventUnitLoaded`/
+//! `EventUnitUnloaded` notifications do not exist in the port, so the hold state
+//! is polled from `parent_unit`/the stored unit and the released passenger is
+//! closed by `transport_cleanup_clients`.
+//!
+//! Bridges/zones (`EventZoneCleared`) stay structural: they depend on
+//! `AccessMap`/`ZoneWalker` zone clearing (P5/P7).
 
+use crate::access;
 use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
-use crate::geo::Point;
-use crate::unit::{UnitId, UnitListKind};
+use crate::geo::{PathStep, Point};
+use crate::team::TeamId;
+use crate::unit::{GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
+use crate::unit_values::ATTRIB_STORAGE;
 
 use super::super::task::{
-    task_remove_movement_tasks, task_should_reserve_shot, TaskHeader,
+    task_remove_movement_tasks, task_retreat_from_danger, task_should_reserve_shot, TaskHeader,
     TASKMOVE_RESULT_ALREADY_IN_RANGE, TASKMOVE_RESULT_BLOCKED, TASKMOVE_RESULT_CANCELLED,
-    TASKMOVE_RESULT_SUCCESS, TASK_PRIORITY_MOVE,
+    TASKMOVE_RESULT_SUCCESS, TASK_PRIORITY_MOVE, TASK_TYPE_TRANSPORT,
 };
 use super::{TaskCtx, TaskKind};
 
@@ -177,6 +192,78 @@ pub(crate) fn move_execute(
         return true;
     };
 
+    // ---- transport phase (`TaskMove::AttemptTransport`) -------------------
+    //
+    // A land passenger that cannot reach the destination on the ground boards a
+    // `TaskTransport` first: it walks to the boarding cell (`transport_waypoint`),
+    // waits in the transporter's hold and continues from the drop-off cell
+    // (`passenger_destination`) once released. The delivery is detected even while
+    // the unit is in the hold and therefore not ready for orders, so this runs
+    // before the readiness check.
+    if state.transport_needed {
+        let loaded = passenger_in_hold(ctx, unit, state);
+
+        if loaded {
+            state.transport_loaded = true;
+            return false;
+        }
+
+        if state.transport_loaded {
+            // Carried and released, or already standing on the far shore: the
+            // rest of the move is an ordinary ground move.
+            state.transport_loaded = false;
+            state.transport_needed = false;
+            state.transporter_unit_type = None;
+            state.transport_task = None;
+            state.destination = state.final_destination;
+        } else {
+            // Waiting at the boarding cell: the transporter picks the unit up.
+            if !transport_client_registered(ctx, header.id, state.transport_task) {
+                state.transport_task = transport_request(
+                    ctx,
+                    header,
+                    unit,
+                    state.transporter_unit_type,
+                    state.transport_waypoint,
+                );
+            }
+
+            if ctx.ready_to_take_orders(unit)
+                && !is_at_destination(ctx, unit, state.destination, state.minimum_distance)
+            {
+                retry_move(kind, ctx);
+            }
+
+            // No self-reminder: the transporter reminds the passenger when it is
+            // loaded/released and `AiPlayer::BeginTurn` polls every unit with a
+            // task, so re-queueing here would spin inside `ExecuteReminders`.
+            return true;
+        }
+    } else if state.transporter_unit_type.is_none()
+        && is_land_passenger(&info)
+        && ctx.ready_to_take_orders(unit)
+    {
+        // `TaskMove::AttemptTransport` on a failed full path: split the trip at
+        // the water and request a transporter.
+        if let Some(route) = transport_route(ctx.world, &info, state.destination) {
+            state.final_destination = state.destination;
+            state.transport_waypoint = route.pickup;
+            state.passenger_destination = route.dropoff;
+            state.transporter_unit_type = Some(route.transporter);
+            state.transport_needed = true;
+            state.transport_loaded = false;
+            state.destination = route.pickup;
+            state.transport_task =
+                transport_request(ctx, header, unit, Some(route.transporter), route.pickup);
+
+            if !is_at_destination(ctx, unit, state.destination, state.minimum_distance) {
+                retry_move(kind, ctx);
+            }
+
+            return true;
+        }
+    }
+
     if !ctx.ready_to_take_orders(unit) {
         return false;
     }
@@ -273,6 +360,951 @@ fn home_site(ctx: &TaskCtx<'_>, team: crate::team::TeamId, from: Point) -> Optio
 }
 
 // ---------------------------------------------------------------------------
+// Transport (`TaskMove::AttemptTransport`, `TaskTransport`)
+// ---------------------------------------------------------------------------
+
+/// A land move split by a water gap — the data `TaskMove::TranscribeTransportPath`
+/// (`taskmove.cpp:847`) writes into `transport_waypoint`/`passenger_destination`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TransportRoute {
+    /// Transporter type the passenger needs (`AttemptTransport`).
+    pub transporter: UnitType,
+    /// `transport_waypoint` — the last reachable cell before the water.
+    pub pickup: Point,
+    /// `passenger_destination` — the first reachable cell behind the water.
+    pub dropoff: Point,
+}
+
+/// In-map check (`Access_IsInsideBounds`).
+fn is_inside_map(site: Point) -> bool {
+    site.x >= 0 && site.y >= 0 && site.x < crate::geo::MAP_WIDTH && site.y < crate::geo::MAP_HEIGHT
+}
+
+/// Types `TaskTransport` operates: `SEATRANS` and the amphibious `CLNTRANS`
+/// (`ArmouredPersonnelCarrier`). Air transport is not used by the AI transport
+/// flow (documented deviation: C++ `AttemptTransport` may pick `AIRTRANS`).
+fn is_transporter_type(unit_type: UnitType) -> bool {
+    matches!(
+        unit_type,
+        UnitType::SeaTransport | UnitType::ArmouredPersonnelCarrier
+    )
+}
+
+/// A passenger whose type cannot enter water (`TaskMove::AttemptTransport`:
+/// `!(GetLandType() & SURFACE_TYPE_WATER)`).
+pub(crate) fn is_land_passenger(unit: &UnitInfo) -> bool {
+    !unit.is_air() && access::unit_type_land_type(unit.unit_type) & access::SURFACE_TYPE_WATER == 0
+}
+
+/// Terrain passability of a cell for a type — the surface rules of
+/// `AccessMap::Init` (`accessmap.cpp:372`).
+fn can_stand(world: &crate::game::GameState, unit_type: UnitType, site: Point) -> bool {
+    if !is_inside_map(site) {
+        return false;
+    }
+
+    let land_type = access::unit_type_land_type(unit_type);
+    let surface = access::modified_surface_type(world, site, false);
+
+    if surface & access::SURFACE_TYPE_WATER != 0 {
+        land_type & access::SURFACE_TYPE_WATER != 0
+    } else if surface & access::SURFACE_TYPE_COAST != 0 {
+        land_type & access::SURFACE_TYPE_COAST != 0
+    } else if surface & access::SURFACE_TYPE_LAND != 0 {
+        land_type & access::SURFACE_TYPE_LAND != 0
+    } else {
+        false
+    }
+}
+
+/// Whether the team owns a unit of the type (`Task_GetReadyUnitsCount`-like;
+/// only alive units count).
+fn team_has_unit(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> bool {
+    for kind in UnitListKind::ALL {
+        for id in world.unit_list(kind) {
+            let Some(unit) = world.unit(*id) else {
+                continue;
+            };
+            if unit.team == team && unit.unit_type == unit_type && unit.hits > 0 {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Whether any enemy heat map covers the cell (`UnitsManager_TeamInfo[team].heat_map`).
+fn cell_seen_by_enemies(world: &crate::game::GameState, team: TeamId, site: Point) -> bool {
+    for other in 0..crate::game::PLAYER_TEAM_COUNT {
+        if crate::team::TeamId(other as u8) == team
+            || world.teams[other].team_type == crate::team::TeamKind::None
+        {
+            continue;
+        }
+
+        if world.ai.heat_maps[other].get_complete(i32::from(site.x), i32::from(site.y)) > 0 {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// `TaskMove::AttemptTransport` transporter choice (`taskmove.cpp:370`).
+///
+/// An infantry man/commando boards an `APC` when the team owns one and the
+/// starting cell is not watched; otherwise the sea transport is used.
+fn choose_transporter(world: &crate::game::GameState, passenger: &UnitInfo) -> UnitType {
+    if matches!(
+        passenger.unit_type,
+        UnitType::Infiltrator | UnitType::Infantry
+    ) && team_has_unit(world, passenger.team, UnitType::ArmouredPersonnelCarrier)
+        && !cell_seen_by_enemies(world, passenger.team, passenger.grid)
+    {
+        return UnitType::ArmouredPersonnelCarrier;
+    }
+
+    UnitType::SeaTransport
+}
+
+/// Splits a land move at the water — the heart of `TaskMove::AttemptTransport`
+/// and `TranscribeTransportPath`.
+///
+/// Returns `None` when the passenger reaches the destination on the ground
+/// (`find_ground_path` succeeds) or when no landing cell exists behind the water.
+pub(crate) fn transport_route(
+    world: &crate::game::GameState,
+    unit: &UnitInfo,
+    destination: Point,
+) -> Option<TransportRoute> {
+    let steps = crate::pathfinding::append_linear_steps(unit.grid, destination);
+    let mut position = unit.grid;
+    let mut pickup: Option<Point> = None;
+    let mut dropoff: Option<Point> = None;
+    let mut saw_water = false;
+
+    for step in steps {
+        let next = Point::new(
+            position.x.wrapping_add(i16::from(step.x)),
+            position.y.wrapping_add(i16::from(step.y)),
+        );
+
+        if !is_inside_map(next) {
+            return None;
+        }
+
+        let stand = can_stand(world, unit.unit_type, next);
+
+        if pickup.is_none() {
+            if !stand {
+                pickup = Some(position);
+            }
+        } else if stand {
+            dropoff = Some(next);
+            break;
+        }
+
+        if !stand
+            && access::modified_surface_type(world, next, false) & access::SURFACE_TYPE_WATER != 0
+        {
+            saw_water = true;
+        }
+
+        position = next;
+    }
+
+    let (pickup, dropoff) = (pickup?, dropoff?);
+
+    if !saw_water {
+        // Blocked by something other than water — a bridge or a zone.
+        return None;
+    }
+
+    // The C++ `AttemptTransport` runs after a failed full path search: a ground
+    // detour around the water makes the transporter unnecessary.
+    if crate::pathfinding::find_ground_path(
+        world,
+        unit,
+        destination,
+        access::ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS,
+        0,
+    )
+    .is_some()
+    {
+        return None;
+    }
+
+    Some(TransportRoute {
+        transporter: choose_transporter(world, unit),
+        pickup,
+        dropoff,
+    })
+}
+
+/// `TaskTransport::WillTransportNewClient` — free capacity of the transporter.
+fn transport_has_room(world: &crate::game::GameState, team: TeamId, kind: &TaskKind) -> bool {
+    let TaskKind::Transport {
+        transporter_unit_type,
+        move_tasks,
+        ..
+    } = kind
+    else {
+        return false;
+    };
+
+    let storage = world.team_units[team.0 as usize]
+        .current_unit_values(*transporter_unit_type as u16)
+        .get_attribute(ATTRIB_STORAGE)
+        .max(1) as usize;
+
+    move_tasks.len() < storage
+}
+
+/// The transporter's current cell, or the boarding cell it heads to.
+fn transport_position(world: &crate::game::GameState, kind: &TaskKind) -> Option<Point> {
+    let TaskKind::Transport {
+        unit_transporter,
+        task_move,
+        ..
+    } = kind
+    else {
+        return None;
+    };
+
+    if let Some(transporter) = unit_transporter {
+        return world.unit(*transporter).map(|unit| unit.grid);
+    }
+
+    task_move.and_then(
+        |id| match world.ai.task_manager.task(id).map(|task| &task.kind) {
+            Some(TaskKind::Move(state)) => Some(state.transport_waypoint),
+            _ => None,
+        },
+    )
+}
+
+/// Joins an existing `TaskTransport` of the team or creates one
+/// (`TaskMove::FindTransport`, `taskmove.cpp:1399`).
+pub(crate) fn transport_request(
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    _unit: UnitId,
+    transporter_type: Option<UnitType>,
+    pickup: Point,
+) -> Option<u32> {
+    let transporter_type = transporter_type?;
+    let team = header.team;
+
+    let mut best: Option<(u32, i32)> = None;
+
+    for task in ctx.tm.tasks() {
+        if task.team != team || task.get_type() != TASK_TYPE_TRANSPORT {
+            continue;
+        }
+
+        let TaskKind::Transport {
+            transporter_unit_type,
+            ..
+        } = &task.kind
+        else {
+            continue;
+        };
+
+        if *transporter_unit_type != transporter_type
+            || !transport_has_room(ctx.world, team, &task.kind)
+        {
+            continue;
+        }
+
+        let site = transport_position(ctx.world, &task.kind).unwrap_or(pickup);
+        let distance = access::squared_distance(site, pickup);
+
+        if best
+            .map(|(_, best_distance)| distance < best_distance)
+            .unwrap_or(true)
+        {
+            best = Some((task.id, distance));
+        }
+    }
+
+    if let Some((task_id, _)) = best {
+        if let Some(task) = ctx.tm.task_mut(task_id) {
+            if let TaskKind::Transport {
+                move_tasks,
+                task_move,
+                ..
+            } = &mut task.kind
+            {
+                if !move_tasks.contains(&header.id) {
+                    move_tasks.push(header.id);
+                }
+
+                if task_move.is_none() {
+                    *task_move = Some(header.id);
+                }
+
+                return Some(task_id);
+            }
+        }
+
+        return None;
+    }
+
+    let priority = ctx.priority_of(header.id);
+    let kind = TaskKind::transport(header.id, transporter_type);
+
+    Some(ctx.append_task(team, None, priority, kind))
+}
+
+/// Whether the move task is still a client of its `TaskTransport`.
+fn transport_client_registered(
+    ctx: &TaskCtx<'_>,
+    client: u32,
+    transport_task: Option<u32>,
+) -> bool {
+    match transport_task.and_then(|id| ctx.tm.task(id)) {
+        Some(task) => {
+            matches!(&task.kind, TaskKind::Transport { move_tasks, .. } if move_tasks.contains(&client))
+        }
+        None => false,
+    }
+}
+
+/// `ORDER_IDLE` with a transporter parent — the passenger is in the hold.
+fn passenger_in_hold(ctx: &TaskCtx<'_>, passenger: UnitId, state: &super::MoveState) -> bool {
+    let Some(info) = ctx.unit(passenger) else {
+        return false;
+    };
+
+    if info.orders != UnitOrder::Idle {
+        return false;
+    }
+
+    let Some(parent) = info.parent_unit else {
+        return false;
+    };
+
+    if let Some(task) = state.transport_task.and_then(|id| ctx.tm.task(id)) {
+        if let TaskKind::Transport {
+            unit_transporter, ..
+        } = &task.kind
+        {
+            return *unit_transporter == Some(parent);
+        }
+    }
+
+    ctx.unit(parent)
+        .map(|unit| is_transporter_type(unit.unit_type))
+        .unwrap_or(false)
+}
+
+/// The current client of a transport task.
+#[derive(Debug, Clone, Copy)]
+struct ClientPlan {
+    passenger: UnitId,
+    pickup: Point,
+    dropoff: Point,
+}
+
+/// Reads the transport data of a client `TaskMove`.
+fn client_plan(ctx: &TaskCtx<'_>, client: Option<u32>) -> Option<ClientPlan> {
+    let task = ctx.tm.task(client?)?;
+
+    let TaskKind::Move(state) = &task.kind else {
+        return None;
+    };
+
+    if !state.transport_needed {
+        return None;
+    }
+
+    Some(ClientPlan {
+        passenger: state.unit?,
+        pickup: state.transport_waypoint,
+        dropoff: state.passenger_destination,
+    })
+}
+
+/// Clears the transport phase of a delivered client and lets its `TaskMove`
+/// continue to the real destination.
+fn clear_client_transport(ctx: &mut TaskCtx<'_>, client: u32) {
+    let Some(passenger) = client_plan(ctx, Some(client)).map(|plan| plan.passenger) else {
+        return;
+    };
+
+    if let Some(task) = ctx.tm.task_mut(client) {
+        if let TaskKind::Move(state) = &mut task.kind {
+            state.transport_needed = false;
+            state.transport_loaded = false;
+            state.transporter_unit_type = None;
+            state.transport_task = None;
+            state.destination = state.final_destination;
+        }
+    }
+
+    ctx.remind_move_finished(passenger, true);
+}
+
+/// Drops stale clients and closes the clients delivered on the far shore
+/// (C++ `TaskTransport::ChildComplete`/`EventUnitUnloaded` without the events).
+fn transport_cleanup_clients(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>) {
+    let TaskKind::Transport {
+        move_tasks,
+        task_move,
+        unload_site,
+        ..
+    } = kind
+    else {
+        return;
+    };
+
+    let mut keep = Vec::new();
+
+    for client in move_tasks.iter().copied() {
+        let Some(plan) = client_plan(ctx, Some(client)) else {
+            // The client finished or no longer needs a transporter.
+            continue;
+        };
+
+        let Some(info) = ctx.unit(plan.passenger) else {
+            continue;
+        };
+
+        if info.hits == 0 {
+            continue;
+        }
+
+        let in_hold = info.orders == UnitOrder::Idle && info.parent_unit.is_some();
+
+        // Released by `UnitsManager_ActivateUnit` on the cell the unload order set.
+        if !in_hold && *unload_site == Some(info.grid) {
+            *unload_site = None;
+            clear_client_transport(ctx, client);
+            continue;
+        }
+
+        keep.push(client);
+    }
+
+    *move_tasks = keep;
+
+    if task_move
+        .map(|id| !move_tasks.contains(&id))
+        .unwrap_or(false)
+    {
+        *task_move = None;
+    }
+
+    if task_move.is_none() {
+        *task_move = move_tasks.first().copied();
+    }
+}
+
+/// The nearest client (`TaskTransport::ChooseNewTask`).
+fn transport_choose_client(ctx: &TaskCtx<'_>, transporter: UnitId, clients: &[u32]) -> Option<u32> {
+    let position = ctx.unit(transporter)?.grid;
+    let mut best: Option<(u32, i32)> = None;
+
+    for client in clients {
+        let Some(plan) = client_plan(ctx, Some(*client)) else {
+            continue;
+        };
+
+        let target = ctx
+            .unit(plan.passenger)
+            .map(|unit| unit.grid)
+            .unwrap_or(plan.pickup);
+        let distance = access::squared_distance(position, target);
+
+        if best
+            .map(|(_, best_distance)| distance < best_distance)
+            .unwrap_or(true)
+        {
+            best = Some((*client, distance));
+        }
+    }
+
+    best.map(|(client, _)| client)
+}
+
+/// A cell the transporter can stand on near `near` — the sea-side stop for a
+/// boarding/drop-off cell (C++ uses a `TransporterMap` for this; the port takes
+/// the nearest water/coast cell reachable by the transporter).
+fn transporter_stop_site(
+    ctx: &TaskCtx<'_>,
+    team: TeamId,
+    transporter_type: UnitType,
+    near: Point,
+) -> Option<Point> {
+    for radius in 0..=3i16 {
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if radius > 0 && dx.abs() != radius && dy.abs() != radius {
+                    continue;
+                }
+
+                let site = Point::new(near.x.wrapping_add(dx), near.y.wrapping_add(dy));
+
+                if !is_inside_map(site) || !can_stand(ctx.world, transporter_type, site) {
+                    continue;
+                }
+
+                if access::is_accessible(
+                    ctx.world,
+                    transporter_type,
+                    team,
+                    site,
+                    access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                ) == 0
+                {
+                    continue;
+                }
+
+                return Some(site);
+            }
+        }
+    }
+
+    None
+}
+
+/// A free cell for the passenger around the planned drop-off
+/// (`TaskTransport_FinishTransport`: "unit in the way" handling reduced to the
+/// nearest free cell instead of `AiPlayer::ClearZone`).
+fn find_dropoff(
+    ctx: &TaskCtx<'_>,
+    team: TeamId,
+    passenger_type: UnitType,
+    site: Point,
+) -> Option<Point> {
+    for radius in 0..=2i16 {
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if radius > 0 && dx.abs() != radius && dy.abs() != radius {
+                    continue;
+                }
+
+                let candidate = Point::new(site.x.wrapping_add(dx), site.y.wrapping_add(dy));
+
+                if !is_inside_map(candidate) {
+                    continue;
+                }
+
+                // `is_accessible` blames occupied cells as well, so a free and
+                // enterable cell is the `TaskTransport_FinishTransport` condition.
+                if access::is_accessible(
+                    ctx.world,
+                    passenger_type,
+                    team,
+                    candidate,
+                    access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                ) == 0
+                {
+                    continue;
+                }
+
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+/// `TaskTransport::LoadUnit` (`tasktransport.cpp:758`).
+///
+/// The passenger walks onto the transporter's cell: C++ builds a one-step
+/// `GroundPath` and issues `ORDER_MOVE_TO_UNIT`/`ORDER_STATE_IN_PROGRESS`, the
+/// order machine stores it in the hold (`ProcessOrderMove`/`ProcessLoading`).
+fn transport_load(ctx: &mut TaskCtx<'_>, transporter: UnitId, passenger: UnitId) -> bool {
+    let Some(transporter_info) = ctx.unit(transporter) else {
+        return false;
+    };
+    let Some(passenger_info) = ctx.unit(passenger) else {
+        return false;
+    };
+
+    if passenger_info.speed == 0 {
+        return false;
+    }
+
+    // Already boarding or carried by another transporter.
+    if passenger_info.orders == UnitOrder::MoveToUnit
+        || (passenger_info.parent_unit.is_some() && passenger_info.parent_unit != Some(transporter))
+    {
+        return false;
+    }
+
+    // `LoadUnit`: a sea transport/APC takes a passenger standing no farther
+    // than `Access_GetApproximateDistance <= 3`.
+    if access::approximate_distance(
+        i32::from(transporter_info.grid.x) - i32::from(passenger_info.grid.x),
+        i32::from(transporter_info.grid.y) - i32::from(passenger_info.grid.y),
+    ) > 3
+    {
+        return false;
+    }
+
+    let dx = transporter_info.grid.x.wrapping_sub(passenger_info.grid.x);
+    let dy = transporter_info.grid.y.wrapping_sub(passenger_info.grid.y);
+
+    let mut info = passenger_info;
+    info.target_grid = transporter_info.grid;
+    info.path = Some(UnitPath::Ground(GroundPath {
+        end_x: transporter_info.grid.x,
+        end_y: transporter_info.grid.y,
+        step_index: 0,
+        steps: vec![PathStep::new(dx as i8, dy as i8)],
+    }));
+    info.orders = UnitOrder::MoveToUnit;
+    info.state = UnitOrderState::InProgress;
+    ctx.write_unit(passenger, info);
+
+    let mut data = ctx.order_data(passenger);
+    data.move_to = transporter_info.grid;
+    ctx.set_order_data(passenger, data);
+
+    true
+}
+
+/// `TaskTransport::UnloadUnit` + `TaskTransport_FinishTransport`
+/// (`tasktransport.cpp:718`): hand the passenger over with
+/// `ORDER_ACTIVATE`/`ORDER_STATE_EXECUTING_ORDER`; `UnitsManager_ActivateUnit`
+/// places it on the cell and releases the hold.
+fn transport_unload(
+    ctx: &mut TaskCtx<'_>,
+    transporter: UnitId,
+    passenger: UnitId,
+    site: Point,
+) -> bool {
+    let Some(passenger_info) = ctx.unit(passenger) else {
+        return false;
+    };
+    let Some(mut transporter_info) = ctx.unit(transporter) else {
+        return false;
+    };
+
+    if passenger_info.orders != UnitOrder::Idle {
+        return false;
+    }
+
+    transporter_info.parent_unit = Some(passenger);
+    transporter_info.target_grid = site;
+    ctx.write_unit(transporter, transporter_info);
+
+    let mut data = ctx.order_data(transporter);
+    data.move_to = site;
+    ctx.set_order_data(transporter, data);
+
+    ctx.set_new_order(
+        transporter,
+        UnitOrder::Activate,
+        UnitOrderState::ExecutingOrder,
+    );
+
+    true
+}
+
+/// `TaskTransport::Init` (`tasktransport.cpp:433`).
+fn transport_init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
+    let TaskKind::Transport {
+        transporter_unit_type,
+        unit_transporter,
+        task_obtain_units,
+        task_move,
+        ..
+    } = kind
+    else {
+        return false;
+    };
+
+    if let Some(transporter) = *unit_transporter {
+        ctx.attach(header.id, transporter);
+        ctx.remind_move_finished(transporter, true);
+        true
+    } else {
+        let point = client_plan(ctx, *task_move)
+            .map(|plan| plan.pickup)
+            .unwrap_or(Point::ZERO);
+
+        let mut obtain_kind = TaskKind::obtain_units(point);
+        super::create::obtain_units_add_type(&mut obtain_kind, *transporter_unit_type);
+
+        let priority = ctx.priority_of(header.id);
+        let id = ctx.append_task(header.team, Some(header.id), priority, obtain_kind);
+        *task_obtain_units = Some(id);
+
+        true
+    }
+}
+
+/// `TaskTransport::AddUnit` (`tasktransport.cpp:421`).
+fn transport_add_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
+    let TaskKind::Transport {
+        transporter_unit_type,
+        unit_transporter,
+        ..
+    } = kind
+    else {
+        return;
+    };
+
+    if unit_transporter.is_some() {
+        return;
+    }
+
+    let Some(info) = ctx.unit(unit) else {
+        return;
+    };
+
+    if info.unit_type != *transporter_unit_type {
+        return;
+    }
+
+    *unit_transporter = Some(unit);
+    ctx.attach(header.id, unit);
+    ctx.remind_move_finished(unit, true);
+}
+
+/// `TaskTransport::EndTurn`/`Execute` (`tasktransport.cpp:485-586`).
+fn transport_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
+    transport_cleanup_clients(kind, ctx);
+
+    let TaskKind::Transport {
+        unit_transporter, ..
+    } = kind
+    else {
+        return false;
+    };
+
+    let Some(transporter) = *unit_transporter else {
+        // Waiting for `TaskObtainUnits`.
+        return true;
+    };
+
+    if ctx.tm.unit_task(transporter) != Some(header.id) || !ctx.ready_to_take_orders(transporter) {
+        return true;
+    }
+
+    if task_retreat_from_danger(
+        ctx.tm,
+        ctx.world,
+        header.id,
+        transporter,
+        CautionLevel::AvoidAllDamage,
+    ) {
+        return true;
+    }
+
+    transport_execute(kind, ctx, header)
+}
+
+/// `TaskTransport::Execute(unit)` (`tasktransport.cpp:496`).
+fn transport_execute(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
+    let TaskKind::Transport {
+        unit_transporter,
+        task_move,
+        move_tasks,
+        transporter_move,
+        task_obtain_units,
+        unload_site,
+        ..
+    } = kind
+    else {
+        return false;
+    };
+
+    let Some(transporter_id) = *unit_transporter else {
+        return false;
+    };
+
+    let Some(transporter) = ctx.unit(transporter_id) else {
+        *unit_transporter = None;
+        return true;
+    };
+
+    if task_move.is_none() {
+        *task_move = transport_choose_client(ctx, transporter_id, move_tasks);
+        *unload_site = None;
+    }
+
+    let Some(client_id) = *task_move else {
+        // `ChooseNewTask`: nothing left to transport — free the transporter and
+        // remove the task (C++ `TaskManager::ClearUnitTasksAndRemindAvailable`,
+        // the obtain request, `TaskManager::RemoveTask(*this)`).
+        ctx.clear_unit_tasks(transporter_id, true);
+
+        if let Some(obtain) = *task_obtain_units {
+            ctx.remove_self(obtain);
+            *task_obtain_units = None;
+        }
+
+        *unit_transporter = None;
+        ctx.set_parent(header.id, None);
+        ctx.remove_self(header.id);
+        return true;
+    };
+
+    let Some(plan) = client_plan(ctx, Some(client_id)) else {
+        *task_move = None;
+        return true;
+    };
+
+    let Some(passenger) = ctx.unit(plan.passenger) else {
+        *task_move = None;
+        return true;
+    };
+
+    let reach = if transporter.unit_type == UnitType::AirTransport {
+        0
+    } else {
+        3
+    };
+
+    let in_hold =
+        passenger.orders == UnitOrder::Idle && passenger.parent_unit == Some(transporter_id);
+
+    if in_hold {
+        // `Execute`: `Access_GetSquaredDistance(transporter, destination) <= distance`.
+        if access::squared_distance(transporter.grid, plan.dropoff) <= reach {
+            if let Some(site) = find_dropoff(ctx, header.team, passenger.unit_type, plan.dropoff) {
+                // The hold is released by `ORDER_ACTIVATE` on the next tick; the
+                // client is closed by `transport_cleanup_clients` once it stands
+                // on the far shore (the `EventUnitUnloaded` notification does not
+                // exist in this port).
+                if transport_unload(ctx, transporter_id, plan.passenger, site) {
+                    *unload_site = Some(site);
+                }
+            }
+
+            *transporter_move = None;
+        } else if transporter_move.is_none() {
+            if let Some(site) =
+                transporter_stop_site(ctx, header.team, transporter.unit_type, plan.dropoff)
+            {
+                let priority = ctx.priority_of(header.id);
+                let move_kind =
+                    TaskKind::move_to(transporter_id, site, 0, CautionLevel::AvoidAllDamage);
+                *transporter_move =
+                    Some(ctx.append_task(header.team, Some(header.id), priority, move_kind));
+            }
+        }
+
+        return true;
+    }
+
+    if passenger.hits == 0 {
+        *task_move = None;
+        return true;
+    }
+
+    // `TaskTransport::LoadUnit`: the sea transport stops within
+    // `Access_GetApproximateDistance <= 3` of the passenger.
+    if access::approximate_distance_points(transporter.grid, plan.pickup) <= reach {
+        transport_load(ctx, transporter_id, plan.passenger);
+    } else if transporter_move.is_none() {
+        if let Some(site) =
+            transporter_stop_site(ctx, header.team, transporter.unit_type, plan.pickup)
+        {
+            let priority = ctx.priority_of(header.id);
+            let move_kind =
+                TaskKind::move_to(transporter_id, site, 0, CautionLevel::AvoidAllDamage);
+            *transporter_move =
+                Some(ctx.append_task(header.team, Some(header.id), priority, move_kind));
+        }
+    }
+
+    true
+}
+
+/// `TaskTransport::RemoveUnit` — the transporter is gone; the clients re-request
+/// a transporter on their next `TaskMove::Execute`.
+fn transport_remove_unit(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) {
+    let TaskKind::Transport {
+        unit_transporter,
+        move_tasks,
+        task_move,
+        ..
+    } = kind
+    else {
+        return;
+    };
+
+    if *unit_transporter != Some(unit) {
+        return;
+    }
+
+    move_tasks.clear();
+    *task_move = None;
+    *unit_transporter = None;
+    ctx.set_parent(header.id, None);
+    ctx.remove_self(header.id);
+}
+
+/// `TaskTransport::RemoveSelf` (`tasktransport.cpp:588`).
+fn transport_remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+    let TaskKind::Transport {
+        unit_transporter,
+        task_obtain_units,
+        ..
+    } = kind
+    else {
+        return;
+    };
+
+    if let Some(transporter) = *unit_transporter {
+        ctx.clear_unit_tasks(transporter, true);
+    }
+
+    if let Some(obtain) = *task_obtain_units {
+        ctx.remove_self(obtain);
+    }
+
+    *unit_transporter = None;
+    *task_obtain_units = None;
+    ctx.set_parent(header.id, None);
+    ctx.remove_self(header.id);
+}
+
+/// `TaskTransport::ChildComplete`/`MoveFinishedCallback` for the transporter's
+/// own `TaskMove`.
+fn transport_move_finished(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    _header: TaskHeader,
+    unit: UnitId,
+    _result: i8,
+) -> bool {
+    let TaskKind::Transport {
+        unit_transporter,
+        transporter_move,
+        ..
+    } = kind
+    else {
+        return false;
+    };
+
+    if *unit_transporter == Some(unit) {
+        *transporter_move = None;
+        ctx.remind_move_finished(unit, true);
+        return true;
+    }
+
+    false
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -321,7 +1353,7 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> b
         }
         TaskKind::Rendezvous { .. } => true,
         TaskKind::AssistMove { .. } => true,
-        TaskKind::Transport { .. } => true,
+        TaskKind::Transport { .. } => transport_init(kind, ctx, header),
         TaskKind::Dump { .. } => true,
         TaskKind::SearchDestination { .. } => true,
         _ => false,
@@ -585,17 +1617,6 @@ fn rendezvous_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskH
     ctx.append_task(header.team, Some(header.id), priority, kind_move);
 }
 
-/// `TaskTransport::EndTurn` — structurally: transportation does not start (see the header).
-fn transport_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-    let TaskKind::Transport { move_tasks, .. } = kind else {
-        return;
-    };
-
-    if move_tasks.is_empty() {
-        ctx.remove_self(header.id);
-    }
-}
-
 /// `EndTurn` for move classes.
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
@@ -641,6 +1662,16 @@ pub fn execute(
             move_home_end_turn(kind, ctx, header);
             true
         }
+        // `TaskTransport::Execute(unit)` — only for the transporter itself.
+        TaskKind::Transport {
+            unit_transporter, ..
+        } => {
+            if *unit_transporter != Some(unit) {
+                return false;
+            }
+
+            transport_execute(kind, ctx, header)
+        }
         _ => false,
     }
 }
@@ -667,12 +1698,8 @@ pub fn add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, 
                 *unit2 = Some(unit);
             }
         }
-        TaskKind::Transport {
-            unit_transporter, ..
-        } => {
-            if unit_transporter.is_none() {
-                *unit_transporter = Some(unit);
-            }
+        TaskKind::Transport { .. } => {
+            transport_add_unit(kind, ctx, header, unit);
         }
         _ => {}
     }
@@ -692,12 +1719,8 @@ pub fn remove_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
                 ctx.remove_self(header.id);
             }
         }
-        TaskKind::Transport {
-            unit_transporter, ..
-        } => {
-            if *unit_transporter == Some(unit) {
-                ctx.remove_self(header.id);
-            }
+        TaskKind::Transport { .. } => {
+            transport_remove_unit(kind, ctx, header, unit);
         }
         _ => {}
     }
@@ -719,11 +1742,14 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
         | TaskKind::FindPath { .. }
         | TaskKind::Rendezvous { .. }
         | TaskKind::AssistMove { .. }
-        | TaskKind::Transport { .. }
         | TaskKind::Dump { .. }
         | TaskKind::SearchDestination { .. } => {
             ctx.set_parent(header.id, None);
             ctx.remove_self(header.id);
+            true
+        }
+        TaskKind::Transport { .. } => {
+            transport_remove_self(kind, ctx, header);
             true
         }
         _ => false,
@@ -738,8 +1764,37 @@ pub fn child_complete(
     child: u32,
 ) -> bool {
     match kind {
-        TaskKind::Transport { move_tasks, .. } => {
+        TaskKind::Transport {
+            move_tasks,
+            task_move,
+            transporter_move,
+            task_obtain_units,
+            unload_site,
+            ..
+        } => {
+            // `TaskTransport::ChildComplete`: a finished `TaskObtainUnits` clears
+            // the pending request, a finished client leaves the dispatch list.
+            if ctx
+                .tm
+                .task(child)
+                .map(|task| task.get_type())
+                .is_some_and(|task_type| task_type == super::super::task::TASK_TYPE_OBTAIN_UNITS)
+            {
+                *task_obtain_units = None;
+            }
+
             move_tasks.retain(|task| *task != child);
+
+            if *task_move == Some(child) {
+                *task_move = None;
+                *unload_site = None;
+            }
+
+            if *transporter_move == Some(child) {
+                *transporter_move = None;
+            }
+
+            let _ = header;
             true
         }
         TaskKind::AssistMove { .. } | TaskKind::Rendezvous { .. } | TaskKind::Dump { .. } => {
@@ -773,6 +1828,7 @@ pub fn move_finished(
             let _ = (unit, result);
             true
         }
+        TaskKind::Transport { .. } => transport_move_finished(kind, ctx, header, unit, result),
         _ => false,
     }
 }
@@ -822,7 +1878,7 @@ pub fn event_unit_destroyed(
             unit_transporter, ..
         } => {
             if *unit_transporter == Some(unit) {
-                ctx.remove_self(header.id);
+                transport_remove_unit(kind, ctx, header, unit);
             }
             true
         }
@@ -904,3 +1960,123 @@ pub const MOVE_RESULTS: [i8; 4] = [
     TASKMOVE_RESULT_BLOCKED,
     TASKMOVE_RESULT_CANCELLED,
 ];
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::enums::Surface;
+    use crate::enums::TeamClan;
+    use crate::game::GameState;
+    use crate::geo::{MAP_HEIGHT, MAP_WIDTH};
+    use crate::team::TeamUnits;
+
+    /// Land on the west side (`x <= 15`), water in `16..=24`, land from `x = 25`.
+    fn channel_state() -> GameState {
+        let mut state = GameState::new();
+        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                let surface = if (16..=24).contains(&x) {
+                    Surface::WATER
+                } else {
+                    Surface::LAND
+                };
+                state.map.surface.set(x, y, surface);
+            }
+        }
+
+        state
+    }
+
+    fn unit_at(state: &mut GameState, unit_type: UnitType, site: Point) -> UnitInfo {
+        let id = state
+            .spawn_unit(unit_type, TeamId::RED, site, 0)
+            .expect("unit spawned");
+        state.unit(id).expect("unit").clone()
+    }
+
+    /// `TranscribeTransportPath`: the boarding cell is the last land cell in
+    /// front of the water, the drop-off cell the first land cell behind it.
+    #[test]
+    fn transport_route_splits_a_land_move_at_the_channel() {
+        let mut state = channel_state();
+        let tank = unit_at(&mut state, UnitType::Tank, Point::new(10, 10));
+
+        let route = transport_route(&state, &tank, Point::new(32, 10)).expect("transport route");
+
+        assert_eq!(route.pickup, Point::new(15, 10));
+        assert_eq!(route.dropoff, Point::new(25, 10));
+        assert_eq!(route.transporter, UnitType::SeaTransport);
+    }
+
+    /// An infantry man boards the APC when the team owns one and nobody watches.
+    #[test]
+    fn transport_route_uses_the_apc_for_infantry_when_it_is_available() {
+        let mut state = channel_state();
+        let _apc = unit_at(
+            &mut state,
+            UnitType::ArmouredPersonnelCarrier,
+            Point::new(13, 10),
+        );
+        let infantry = unit_at(&mut state, UnitType::Infantry, Point::new(10, 10));
+
+        let route =
+            transport_route(&state, &infantry, Point::new(32, 10)).expect("transport route");
+
+        assert_eq!(route.transporter, UnitType::ArmouredPersonnelCarrier);
+    }
+
+    /// A ground detour around the water makes the transporter unnecessary
+    /// (`AttemptTransport` runs only after a failed full path search).
+    #[test]
+    fn transport_route_is_none_when_land_connects_the_points() {
+        let mut state = channel_state();
+
+        // Close the channel above and below the straight route: the tank walks
+        // around the pond.
+        for y in 0..MAP_HEIGHT {
+            for x in 16..=24 {
+                if !(9..=11).contains(&y) {
+                    state.map.surface.set(x, y, Surface::LAND);
+                }
+            }
+        }
+
+        let tank = unit_at(&mut state, UnitType::Tank, Point::new(10, 10));
+
+        assert_eq!(transport_route(&state, &tank, Point::new(32, 10)), None);
+    }
+
+    /// Units that can enter water themselves and aircraft never request a sea
+    /// transporter (`AttemptTransport`).
+    #[test]
+    fn transport_route_is_none_without_a_water_gap() {
+        let mut state = channel_state();
+        let tank = unit_at(&mut state, UnitType::Tank, Point::new(10, 10));
+
+        assert_eq!(transport_route(&state, &tank, Point::new(14, 10)), None);
+    }
+
+    /// `TaskMove::AttemptTransport`: `GetLandType() & SURFACE_TYPE_WATER`.
+    #[test]
+    fn only_land_bound_units_are_passengers() {
+        let mut state = channel_state();
+
+        let tank = unit_at(&mut state, UnitType::Tank, Point::new(10, 10));
+        assert!(is_land_passenger(&tank));
+
+        let ferry = unit_at(&mut state, UnitType::SeaTransport, Point::new(20, 10));
+        assert!(!is_land_passenger(&ferry));
+
+        let apc = unit_at(
+            &mut state,
+            UnitType::ArmouredPersonnelCarrier,
+            Point::new(12, 12),
+        );
+        assert!(!is_land_passenger(&apc));
+
+        let plane = unit_at(&mut state, UnitType::Fighter, Point::new(13, 13));
+        assert!(!is_land_passenger(&plane));
+    }
+}

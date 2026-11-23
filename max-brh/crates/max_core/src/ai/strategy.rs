@@ -1481,20 +1481,6 @@ impl AiPlayer {
             }
         }
 
-        // Reconnaissance and survey.
-        if position.x != 0 || position.y != 0 {
-            let survey_kind = TaskKind::survey(position);
-            world.ai_append_task(
-                team,
-                None,
-                super::task::TASK_PRIORITY_AUTO_SURVEY,
-                survey_kind,
-            );
-
-            let explore_kind = TaskKind::explore(position);
-            world.ai_append_task(team, None, TASK_PRIORITY_EXPLORE, explore_kind);
-        }
-
         // Construction manager.
         let manage_kind = TaskKind::manage_buildings(position);
         world.ai_append_task(team, None, TASK_PRIORITY_MANAGE_BUILDINGS, manage_kind);
@@ -1535,6 +1521,22 @@ impl AiPlayer {
             if unit.team == team && unit.orders == UnitOrder::Build {
                 super::strategy::add_building(world, team, id);
             }
+        }
+
+        // Reconnaissance and survey (`aiplayer.cpp:2318-2333`): created after
+        // the construction manager in C++, so the first `BeginTurn` plans the
+        // initial build jobs before reconnaissance requests its units.
+        if position.x != 0 || position.y != 0 {
+            let survey_kind = TaskKind::survey(position);
+            world.ai_append_task(
+                team,
+                None,
+                super::task::TASK_PRIORITY_AUTO_SURVEY,
+                survey_kind,
+            );
+
+            let explore_kind = TaskKind::explore(position);
+            world.ai_append_task(team, None, TASK_PRIORITY_EXPLORE, explore_kind);
         }
 
         // Mine assistant and terrain update.
