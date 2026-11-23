@@ -76,6 +76,10 @@ impl GameUniverse<LocalDispatcher> {
     // — локальное завершение хода (только LocalDispatcher, этап A) —
     pub fn end_local_turn(&mut self, team: TeamId);
     // 06 немедленно + enter_end_turn() + машина хода до Human/Computer/GameOver (§4)
+
+    // — вход в раунд (старт партии и загрузка V70; только LocalDispatcher, этап A) —
+    pub fn begin_local_round(&mut self);
+    // begin_round() + машина хода до первого действующего Human/Computer/GameOver (§4)
 }
 ```
 
@@ -94,17 +98,39 @@ impl GameUniverse<LocalDispatcher> {
 3. **`seq` — фасадная, не симуляционная величина.** Её **нельзя** добавлять в
    `snapshot_bytes()`/CRC (`game.rs:2750`), иначе сломается детерминизм /
    `crc::state_digest`. `seq` инкрементируется на каждое наблюдаемое изменение
-   состояния: `tick`, `submit_remote(RemoteCommand::StateSync)`, `from_save`.
+   состояния — то есть в каждой мутирующей операции фасада вне `tick()`:
+   `tick`, `submit_remote(RemoteCommand::StateSync)`, `from_save`,
+   `end_local_turn(team)`, `begin_local_round()`. Операции, которые только ставят
+   команду в очередь (`submit`, `submit_remote(RemoteCommand::Command)`), `seq`
+   не меняют — мутация происходит в следующем `tick`.
 4. **`snapshot() -> StateRef`** — заимствование, привязанное к `&self`;
    заимствование заканчивается до следующего `submit`/`tick` (borrow-checker это
    гарантирует). Никакого клона, `Arc`, буфера (Q20).
 5. **Машина хода — фасадная операция, гейтированная политикой, а не фаза `tick()`.**
    `next_team()` вызывается только фасадом и только когда `dispatcher.advances_turns()`
-   (Local = `true`, Network = `false`). Триггер — `end_local_turn(team)` (немедленный `06` +
-   `enter_end_turn()` + прогон `next_team()` до `Human`/`Computer`/`GameOver`), а не каждый
+   (Local = `true`, Network = `false`). Триггеры — `end_local_turn(team)` (немедленный `06` +
+   `enter_end_turn()` + прогон `next_team()` до `Human`/`Computer`/`GameOver`) и
+   `begin_local_round()` (вход в раунд, старт партии / загрузка V70), а не каждый
    тик: сетевой матч продвигает ход барьерной FSM (`net.rs:2020-2024`), а не `next_team()`,
    и одновременный режим требует синхронного `finished_turn` (`are_teams_finished_turn`,
    `game.rs:2277`). Подробно — §2, §3 (`TurnNotice`), §4, §7.1.
+6. **`begin_local_round()` — вход в раунд, в том числе при загрузке V70.** Старт
+   партии (`start_local_game`) и загрузка сейва (`start_local_game_from_save`)
+   входят в раунд через `begin_local_round()`, а не через прямой
+   `state.begin_round()`/`state.next_team()` из приложения: сброс курсора раунда и
+   первый шаг машины неразделимы, а `next_team()` — только фасад (§4).
+   `GameState::begin_round` остаётся `pub` для конфигурационных сценариев.
+   **Известное расхождение load-пути (не регрессия этапа A):** `GameState::load_state`
+   не хранит курсор раунда и начинает новый раунд с `PLAYER_TEAM_RED`
+   (`game.rs:547-549`), поэтому `next_team()` на загрузке повторно применяет
+   `manage_economy` первой команды; C++ в `GAME_STATE_10_LOAD_GAME` возобновляет с
+   `GameManager_ActiveTurnTeam` и пропускает `GameManager_ManageEconomy` /
+   `GameManager_ProgressBuildState` (`game_manager.cpp:458-480`, `:2450/2468/2484`).
+   Приведение load-пути к семантике `GAME_STATE_10_LOAD_GAME` — отдельная задача вне
+   этапа A. Автосейв при этом пишется в момент
+   `GameManager_UpdateGui(enable_autosave=true)` — уже после `manage_economy` первой
+   команды (`game_manager.cpp:2500`, `local_finish_round`) — и совпадает с C++;
+   источником расхождения он не является.
 
 ---
 
@@ -380,8 +406,9 @@ pub enum RemoteCommand {
 | `max_app::local.rs`/`net.rs` (TurnEvent-потребители) | мигрируют на `EventStream` + `drain_outgoing`/`submit_remote` |
 
 **Особо: машина хода — внутри фасада, гейтированная политикой (уточнение решения 1).**
-`next_team()` и эмиссия события вызываются **только** фасадом, но через операцию
-`end_local_turn(team)`, а не безусловно внутри `tick()`. Логика из `local.rs:790-804`
+`next_team()` и эмиссия события вызываются **только** фасадом, но через операции
+`end_local_turn(team)` (закрытие хода) и `begin_local_round()` (вход в раунд), а не
+безусловно внутри `tick()`. Логика из `local.rs:790-804`
 (peek: `previous_player_team` до смены, `evaluate_status` до `finish_turn`) переносится
 в ядро фасада и упаковывается в `TurnNotice`. Прогон идёт до `Human`/`Computer`/`GameOver`
 (по `RoundClosed` — продолжение цикла, как `local.rs:789-826`). `manage_economy` остаётся
@@ -508,7 +535,8 @@ pub enum RemoteCommand {
    и только фасаду (`next_team()` не зовут ни `local.rs`, ни `net.rs`), но это
    **фасадная операция, гейтированная `Dispatcher::advances_turns()`**
    (`LocalDispatcher` → `true`, `NetworkDispatcher` → `false`), а **не фаза каждого
-   `tick()`**. Триггер — `GameUniverse<LocalDispatcher>::end_local_turn(team)`:
+   `tick()`**. Триггеры — `GameUniverse<LocalDispatcher>::end_local_turn(team)` (закрытие хода)
+    и `begin_local_round()` (вход в раунд, старт партии / загрузка V70):
    немедленный `06` + `enter_end_turn()` + прогон `next_team()` до
    `Human`/`Computer`/`GameOver`, с эмиссией `GameEvent::Turn(TurnNotice)` (peek-данные
    `previous_player_team`/`status` считаются **до** перехода). `NetworkDispatcher`

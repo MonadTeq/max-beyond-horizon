@@ -726,6 +726,9 @@ impl GameUniverse<LocalDispatcher> {
         // (`finish_turn` requires the phase; `06` itself sets it only in `TurnBased`).
         self.state.enter_end_turn();
         self.run_turn_machine();
+        // The turn transition is an observable state change (ADR §1.3): bump the
+        // facade version once per atomic facade operation.
+        self.seq += 1;
     }
 
     /// Enters a round of the local team-turn machine and advances it to the first
@@ -743,6 +746,9 @@ impl GameUniverse<LocalDispatcher> {
 
         self.state.begin_round();
         self.run_turn_machine();
+        // Round entry is an observable state change (ADR §1.3): bump the facade
+        // version once per atomic facade operation.
+        self.seq += 1;
     }
 
     /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or
