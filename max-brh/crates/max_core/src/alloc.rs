@@ -883,4 +883,153 @@ mod tests {
         let unit = state.unit(id).cloned().unwrap();
         assert_eq!(cargo_get_net_production(&state, &unit, false).raw, 6);
     }
+
+    #[test]
+    fn mining_kind_parses_every_cargo_spelling() {
+        assert_eq!(MiningKind::parse("Raw"), Some(MiningKind::Raw));
+        assert_eq!(MiningKind::parse("materials"), Some(MiningKind::Raw));
+        assert_eq!(MiningKind::parse(" Material "), Some(MiningKind::Raw));
+        assert_eq!(MiningKind::parse("FUEL"), Some(MiningKind::Fuel));
+        assert_eq!(MiningKind::parse("gold"), Some(MiningKind::Gold));
+        assert_eq!(MiningKind::parse(""), None);
+        assert_eq!(MiningKind::parse("power"), None);
+
+        // `uint8_t` fields in C++: the port clamps a raw setter value to 0..=255
+        // (C++ narrows/truncates; values above 16 never reach the setter from the UI).
+        let mut unit = UnitInfo::new(UnitType::MiningStation, TeamId::RED, UnitId(1));
+        MiningKind::Raw.set(&mut unit, 300);
+        assert_eq!(unit.raw_mining, 255);
+        MiningKind::Fuel.set(&mut unit, -5);
+        assert_eq!(unit.fuel_mining, 0, "clamped to zero, not wrapped");
+    }
+
+    #[test]
+    fn optimize_with_zero_or_negative_material_does_nothing() {
+        let (mut state, id, complex) = state_with_mine();
+
+        assert_eq!(optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 0), 0);
+        assert_eq!(state.unit(id).unwrap().raw_mining, 0);
+        assert_eq!(state.unit(id).unwrap().total_mining, 0);
+    }
+
+    #[test]
+    fn optimize_skips_mines_that_are_not_active() {
+        for order in [UnitOrder::PowerOff, UnitOrder::Disable, UnitOrder::Idle] {
+            let (mut state, id, complex) = state_with_mine();
+            state.unit_mut(id).unwrap().orders = order;
+
+            assert_eq!(
+                optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 4),
+                0,
+                "{order:?} mines are not counted (allocmenu.cpp:454)"
+            );
+            assert_eq!(state.unit(id).unwrap().raw_mining, 0);
+        }
+    }
+
+    #[test]
+    fn reduce_production_beyond_the_allocated_amount_zeroes_the_mine() {
+        let (mut state, id, complex) = state_with_mine();
+        optimize(&mut state, TeamId::RED, complex, MiningKind::Gold, 5);
+
+        reduce_production(&mut state, TeamId::RED, complex, MiningKind::Gold, 99);
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.gold_mining, 0);
+        assert_eq!(unit.total_mining, 0, "total_mining never goes negative");
+    }
+
+    #[test]
+    fn balance_returns_the_requested_value_when_no_optimization_is_needed() {
+        let (mut state, _id, complex) = state_with_mine();
+        // `AllocMenu::Balance`: `material1 >= material2` returns `material2` untouched.
+        assert_eq!(
+            balance(&mut state, TeamId::RED, complex, MiningKind::Raw, 10, 4),
+            4
+        );
+    }
+
+    #[test]
+    fn balance_optimizes_and_then_restores_the_allocation() {
+        let (mut state, id, complex) = state_with_mine();
+        // The mine starts empty, the cell has 16 raw: `Balance` can show 16.
+        let shown = balance(&mut state, TeamId::RED, complex, MiningKind::Raw, 0, 99);
+        assert_eq!(shown, 16);
+        // `AllocMenu_ReduceProduction(extra)` removes the temporary allocation again.
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.raw_mining, 0);
+        assert_eq!(unit.total_mining, 0);
+    }
+
+    #[test]
+    fn cargo_mining_reports_free_capacity_and_cell_maxima() {
+        let (mut state, id, complex) = state_with_mine();
+        {
+            let unit = state.unit_mut(id).unwrap();
+            unit.raw_mining = 4;
+            unit.fuel_mining = 3;
+            unit.gold_mining = 2;
+            unit.total_mining = 9;
+        }
+
+        let (materials, capacity) = get_cargo_mining(&state, TeamId::RED, complex);
+        assert_eq!(materials.raw, 4);
+        assert_eq!(materials.fuel, 3);
+        assert_eq!(materials.gold, 2);
+        assert_eq!(materials.free_capacity, 7, "16 − total_mining");
+        assert_eq!(capacity.raw, 16);
+        assert_eq!(capacity.gold, 8);
+        assert_eq!(capacity.fuel, 8);
+
+        assert_eq!(total_mining(&state, TeamId::RED, complex, MiningKind::Raw), 4);
+        assert_eq!(total_mining(&state, TeamId::RED, complex, MiningKind::Fuel), 3);
+        assert_eq!(total_mining(&state, TeamId::RED, complex, MiningKind::Gold), 2);
+    }
+
+    #[test]
+    fn inventory_and_capacity_helpers_follow_the_cargo_type() {
+        let mut unit = UnitInfo::new(UnitType::FuelTruck, TeamId::RED, UnitId(1));
+        unit.storage = 17;
+
+        let inventory = cargo_get_inventory(&unit);
+        assert_eq!(inventory.fuel, 17);
+        assert_eq!(inventory.raw, 0);
+        assert_eq!(inventory.gold, 0);
+
+        let capacity = cargo_get_cargo_capacity(&unit);
+        assert_eq!(
+            capacity.fuel,
+            unit.base_values.get_attribute(crate::unit_values::ATTRIB_STORAGE)
+        );
+
+        // A type without cargo has no capacity and no inventory.
+        let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        tank.storage = 5;
+        assert_eq!(cargo_get_inventory(&tank), Cargo::init());
+        assert_eq!(cargo_get_cargo_capacity(&tank), Cargo::init());
+    }
+
+    /// Known divergence: the C++ `Allocator::Optimize` gate is
+    /// `!(cargo_material_type & cargo_type)` where `cargo_type` is the **source**
+    /// resource, while the port tests the **target** flag; the target is always in
+    /// the mask, so the "convert other resources" branch is unreachable. Ignored
+    /// until the owner decides whether to fix the port.
+    #[test]
+    #[ignore = "known divergence vs allocmenu.cpp:414 (conversion branch unreachable)"]
+    fn cpp_conversion_of_other_resources_is_not_ported() {
+        let (mut state, id, complex) = state_with_mine();
+        {
+            let unit = state.unit_mut(id).unwrap();
+            unit.raw_mining = 10;
+            unit.fuel_mining = 2;
+            unit.total_mining = 12;
+        }
+
+        // C++: 4 free units, then 2 fuel units are converted to raw → 16 raw, 0 fuel.
+        let added = optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 6);
+        assert_eq!(added, 6);
+        let unit = state.unit(id).unwrap();
+        assert_eq!(unit.raw_mining, 16);
+        assert_eq!(unit.fuel_mining, 0);
+        assert_eq!(unit.total_mining, 16);
+    }
 }

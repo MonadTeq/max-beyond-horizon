@@ -987,4 +987,160 @@ mod tests {
             "на спрос 2 нужны оба генератора"
         );
     }
+
+    #[test]
+    fn totals_first_shortage_follows_the_cpp_validation_order() {
+        // `ValidateIndustry`/`Cargo_ApplyUnitConsumption` order:
+        // materials → power → workers → fuel → gold.
+        let mut totals = EnergyTotals::default();
+        assert!(!totals.has_deficit());
+        assert_eq!(totals.first_shortage(), None);
+
+        totals = EnergyTotals {
+            raw: -1,
+            fuel: -1,
+            gold: -1,
+            power: -1,
+            life: -1,
+        };
+        assert!(totals.has_deficit());
+        assert_eq!(totals.first_shortage(), Some(Shortage::Raw));
+
+        totals.raw = 0;
+        assert_eq!(totals.first_shortage(), Some(Shortage::Power));
+
+        totals.power = 0;
+        assert_eq!(totals.first_shortage(), Some(Shortage::Workers));
+
+        totals.life = 0;
+        assert_eq!(totals.first_shortage(), Some(Shortage::Fuel));
+
+        totals.fuel = 0;
+        assert_eq!(totals.first_shortage(), Some(Shortage::Gold));
+
+        totals.gold = 0;
+        assert!(!totals.has_deficit());
+    }
+
+    #[test]
+    fn shortage_build_error_covers_every_shortage() {
+        use crate::production::BuildError;
+
+        assert_eq!(shortage_build_error(Shortage::Raw), BuildError::NotEnoughMaterials);
+        assert_eq!(shortage_build_error(Shortage::Power), BuildError::NotEnoughPower);
+        assert_eq!(shortage_build_error(Shortage::Workers), BuildError::NotEnoughWorkers);
+        assert_eq!(shortage_build_error(Shortage::Fuel), BuildError::NotEnoughFuel);
+        assert_eq!(shortage_build_error(Shortage::Gold), BuildError::NotEnoughGold);
+    }
+
+    #[test]
+    fn power_tables_match_cargo_cpp() {
+        // `Cargo_GetPowerConsumptionRate` (cargo.cpp:203).
+        assert!(is_power_producer(UnitType::PowerStation));
+        assert!(is_power_producer(UnitType::PowerGenerator));
+        assert!(!is_power_producer(UnitType::MiningStation));
+        assert_eq!(producer_power(UnitType::PowerStation), 6);
+        assert_eq!(producer_power(UnitType::PowerGenerator), 1);
+        assert_eq!(producer_fuel(UnitType::PowerStation), 6);
+        assert_eq!(producer_fuel(UnitType::PowerGenerator), 2);
+        assert_eq!(cargo_power_consumption_rate(UnitType::TrainingHall), 1);
+        assert_eq!(cargo_power_consumption_rate(UnitType::Tank), 0);
+
+        // `OptimizeAuxilaryIndustry`/`OptimizeMiningIndustry` scope.
+        assert!(is_switchable_consumer(UnitType::ResearchCentre));
+        assert!(is_switchable_consumer(UnitType::EcoSphere));
+        assert!(is_switchable_consumer(UnitType::GoldRefinery));
+        assert!(is_switchable_consumer(UnitType::MiningStation));
+        assert!(!is_switchable_consumer(UnitType::TrainingHall));
+        assert_eq!(
+            CONSUMER_OFF_ORDER,
+            [
+                UnitType::ResearchCentre,
+                UnitType::EcoSphere,
+                UnitType::GoldRefinery
+            ]
+        );
+
+        // Message names (`ResourceManager_GetUnit(type).GetSingularName()`).
+        assert_eq!(industry_unit_name(UnitType::ResearchCentre), "Research Center");
+        assert_eq!(industry_unit_name(UnitType::EcoSphere), "Greenhouse");
+        assert_eq!(industry_unit_name(UnitType::GoldRefinery), "Comm Tower");
+        assert_eq!(industry_unit_name(UnitType::Tank), "building");
+    }
+
+    #[test]
+    fn a_producer_is_not_started_without_fuel() {
+        let mut state = state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let generator = spawn(&mut state, UnitType::PowerGenerator, Point::new(9, 10));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(9, 11));
+
+        // `POWGEN` needs 2 fuel (`Cargo_GetFuelConsumptionRate`); only 1 is stocked.
+        state.unit_mut(fuel).unwrap().storage = 1;
+        let complex = state.unit(mine).unwrap().complex.unwrap();
+        assert_eq!(state.unit(generator).unwrap().complex, Some(complex));
+
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+
+        assert_eq!(
+            state.unit(generator).unwrap().orders,
+            UnitOrder::PowerOff,
+            "POWGEN with 1 fuel cannot cover its rate"
+        );
+        assert!(
+            outcome
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("Cannot turn Power Generator on, fuel needed.")),
+            "message: {:?}",
+            outcome.message
+        );
+        // With no producer left the mine becomes the last consumer to switch off.
+        assert_eq!(state.unit(mine).unwrap().orders, UnitOrder::PowerOff);
+    }
+
+    #[test]
+    fn worker_shortage_turns_a_habitat_on() {
+        let mut state = state();
+        let factory = spawn(&mut state, UnitType::TrainingHall, Point::new(12, 11));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 13));
+        let generator = spawn(&mut state, UnitType::PowerGenerator, Point::new(14, 11));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(14, 12));
+        let habitat = spawn(&mut state, UnitType::Habitat, Point::new(11, 12));
+
+        state.unit_mut(dump).unwrap().storage = 20;
+        state.unit_mut(fuel).unwrap().storage = 50;
+        // `DeployUnit` puts `HABITAT` into `POWER_ON`; the C++ optimizer turns it on
+        // only when it was off (`UpdateUnitLifeConsumption`).
+        state.unit_mut(habitat).unwrap().orders = UnitOrder::PowerOff;
+        state.unit_mut(habitat).unwrap().state = UnitOrderState::ExecutingOrder;
+
+        let complex = state.unit(factory).unwrap().complex.unwrap();
+        for id in [dump, generator, fuel, habitat] {
+            assert_eq!(state.unit(id).unwrap().complex, Some(complex));
+        }
+
+        // A factory under construction consumes 1 worker (`Cargo_GetLifeConsumptionRate`).
+        {
+            let unit = state.unit_mut(factory).unwrap();
+            unit.orders = UnitOrder::Build;
+            unit.state = UnitOrderState::Init;
+            unit.build_time = 2;
+            unit.build_rate = 1;
+            unit.build_list = vec![UnitType::Infantry];
+        }
+
+        let totals_before = complex_totals(&state, TeamId::RED, complex);
+        assert_eq!(totals_before.life, -1, "TRAINHAL needs one worker");
+
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+
+        assert_eq!(state.unit(habitat).unwrap().orders, UnitOrder::PowerOn);
+        assert!(outcome.paused.is_empty(), "workers supplied: {outcome:?}");
+        assert!(
+            outcome.powered_on.contains(&habitat),
+            "HABITAT turned on: {outcome:?}"
+        );
+        assert!(outcome.totals.life >= 0);
+    }
 }

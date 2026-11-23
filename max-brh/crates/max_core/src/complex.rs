@@ -897,4 +897,130 @@ mod tests {
         assert!(UnitType::GunTurret.is_building());
         assert!(!UnitType::GunTurret.is_quad());
     }
+
+    #[test]
+    fn connector_order_matches_the_cpp_traversal() {
+        // C++ `UnitInfo::AttachComplex`/`TestConnections`/`AttachToPrimaryComplex`
+        // walk the eight bits in exactly this order (`unitinfo.cpp`).
+        assert_eq!(
+            CONNECTOR_ORDER,
+            [
+                CONNECTOR_NORTH_LEFT,
+                CONNECTOR_NORTH_RIGHT,
+                CONNECTOR_EAST_TOP,
+                CONNECTOR_EAST_BOTTOM,
+                CONNECTOR_SOUTH_RIGHT,
+                CONNECTOR_SOUTH_LEFT,
+                CONNECTOR_WEST_BOTTOM,
+                CONNECTOR_WEST_TOP,
+            ]
+        );
+        assert_eq!(CONNECTOR_ORDER.len(), 8);
+        // The bit list is pairwise distinct.
+        for (index, bit) in CONNECTOR_ORDER.iter().enumerate() {
+            assert!(
+                !CONNECTOR_ORDER[index + 1..].contains(bit),
+                "duplicate connector bit {bit:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn connected_building_offsets_match_cpp_for_a_quad() {
+        let mut state = test_state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(20, 20));
+
+        // C++ `UnitInfo::GetConnectedBuilding` offsets for `grid_size = 2`.
+        let cells = [
+            (CONNECTOR_NORTH_LEFT, Point::new(20, 19)),
+            (CONNECTOR_NORTH_RIGHT, Point::new(21, 19)),
+            (CONNECTOR_EAST_TOP, Point::new(22, 20)),
+            (CONNECTOR_EAST_BOTTOM, Point::new(22, 21)),
+            (CONNECTOR_SOUTH_LEFT, Point::new(20, 22)),
+            (CONNECTOR_SOUTH_RIGHT, Point::new(21, 22)),
+            (CONNECTOR_WEST_TOP, Point::new(19, 20)),
+            (CONNECTOR_WEST_BOTTOM, Point::new(19, 21)),
+        ];
+
+        let mut expected = Vec::new();
+        for (connector, grid) in cells {
+            expected.push((connector, spawn(&mut state, UnitType::Connector, grid)));
+        }
+
+        let unit = state.unit(mine).expect("mine").clone();
+        for (connector, id) in expected {
+            assert_eq!(
+                connected_building(&state, &unit, connector),
+                Some(id),
+                "connector {connector:#x}"
+            );
+        }
+
+        // A bit that is not one of the eight directions has no cell at all.
+        assert_eq!(connected_building(&state, &unit, 0x0200), None);
+    }
+
+    #[test]
+    fn attach_complex_merges_and_deletes_the_empty_source() {
+        let mut state = test_state();
+        let first = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let second = spawn(&mut state, UnitType::MaterialStorage, Point::new(30, 30));
+
+        let first_complex = state.unit(first).expect("first").complex.expect("complex");
+        let second_complex = state.unit(second).expect("second").complex.expect("complex");
+        assert_ne!(first_complex, second_complex);
+
+        attach_complex(&mut state, second, first_complex);
+
+        assert_eq!(state.unit(second).expect("second").complex, Some(first_complex));
+        assert_eq!(
+            state.team_units[0]
+                .get_complex(first_complex)
+                .expect("target")
+                .buildings,
+            2,
+            "Complex::Grow on the target"
+        );
+        assert!(
+            state.team_units[0].get_complex(second_complex).is_none(),
+            "Complex::Shrink removes a complex with zero buildings"
+        );
+    }
+
+    #[test]
+    fn detach_complex_of_an_isolated_building_removes_its_complex() {
+        let mut state = test_state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let complex = state.unit(mine).expect("mine").complex.expect("complex");
+
+        detach_complex(&mut state, mine);
+
+        assert_eq!(state.unit(mine).expect("mine").complex, None);
+        assert!(state.team_units[0].get_complex(complex).is_none());
+        assert!(state.team_units[0].complexes().is_empty());
+    }
+
+    #[test]
+    fn first_untested_connection_skips_marked_buildings() {
+        let mut state = test_state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 10));
+
+        let mine_unit = state.unit(mine).expect("mine").clone();
+        assert_eq!(
+            first_untested_connection(&state, &mine_unit),
+            Some(dump),
+            "the east neighbor is untested"
+        );
+
+        // `TestConnections` marks the whole subgraph as BEING_TESTED; the same
+        // neighbor is then invisible to `GetFirstUntestedConnection`.
+        test_connections(&mut state, mine);
+        assert_eq!(
+            state.unit(dump).expect("dump").connectors & CONNECTION_BEING_TESTED,
+            CONNECTION_BEING_TESTED
+        );
+        let mine_unit = state.unit(mine).expect("mine").clone();
+        assert_eq!(first_untested_connection(&state, &mine_unit), None);
+    }
 }
