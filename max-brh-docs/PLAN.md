@@ -181,3 +181,6 @@
 - Полное автоматическое покрытие движка (фазы 1–5, ~460 новых тестов, всего
   790+ в `max_core`): ядро/юниты/бой/экономика/сейв/детерминизм/ИИ — каждый
   модуль доказан U+I+D. `max-brh-qa/plans/engine-coverage-plan.md`.
+- Фасад ядра `GameUniverse` — утверждён (2026-11-23), этап A в работе:
+  `architecture/client/game-universe-facade.md`, ТЗ —
+  `development/game-universe-stage-a.md`.
