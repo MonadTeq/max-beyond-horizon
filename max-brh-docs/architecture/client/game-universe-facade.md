@@ -579,10 +579,11 @@ pub enum RemoteCommand {
    `CommandRejected` несёт полный контекст: `cmd`, `outcome` (enum целиком),
    `tick`, `source` (DroppedByRoute / RejectedBySimulation).
 8. **Владение диспетчером в `App`.** `App` становится `App<D: Dispatcher = LocalDispatcher>`
-   (продолжение решения 4); поле `universe: GameUniverse<D>`; локальная поверхность —
-   `impl App<LocalDispatcher>`, сетевая — `impl App<NetworkDispatcher>`; переключение
-   режима = создание нового `App<D>`. **Выполняется отдельным этапом сетевой
-   интеграции, не входит в этап B.**
+   (продолжение решения 4); поле `universe: GameUniverse<D>` (публично — фасад и есть
+   документированный конфиг/тестовый слой, ADR §3/А3; внутренние поля `GameUniverse`
+   приватны); локальная поверхность — `impl App<LocalDispatcher>`, сетевая —
+   `impl App<NetworkDispatcher>`; переключение режима = создание нового `App<D>`.
+   **Выполняется отдельным этапом сетевой интеграции, не входит в этап B.**
 
 ---
 
