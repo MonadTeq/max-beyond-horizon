@@ -58,7 +58,7 @@ pub mod weight_tables;
 
 pub use attack::evaluate_attack;
 pub use reminders::Reminder;
-pub use strategy::{AiPlayer, SpottedUnit};
+pub use strategy::{parse_team_strategy, AiPlayer, SpottedUnit, TEAM_STRATEGY_NAMES};
 pub use task::{
     Task, TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_EMERGENCY, TASK_TYPE_ATTACK,
     TASK_TYPE_CREATE_BUILDING, TASK_TYPE_CREATE_UNIT, TASK_TYPE_MOVE, TASK_TYPE_OBTAIN_UNITS,
@@ -68,7 +68,7 @@ pub use tasks::{TaskCtx, TaskKind};
 pub use threat::{HeatMap, ThreatMap, ZoneWalker};
 pub use weight::WeightTable;
 
-use crate::enums::{CautionLevel, Opponent, PlayMode, UnitOrder};
+use crate::enums::{AiStrategy, CautionLevel, Opponent, PlayMode, UnitOrder};
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
@@ -90,13 +90,22 @@ pub enum AiReactionState {
 /// AI settings — `ResourceManager_GetSettings()` in the scope the AI reads.
 ///
 /// Default values come from `settings.cpp`: `max_percent` = 90,
-/// `opponent` = 1 (`OPPONENT_TYPE_APPRENTICE`).
+/// `opponent` = 1 (`OPPONENT_TYPE_APPRENTICE`), `proximity_range` = 14,
+/// `menu_team_strategy_setting[*]` = `random`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AiSettings {
     /// `opponent` (`OpponentType`).
     pub opponent: u8,
     /// `max_percent` (stealth action threshold).
     pub max_percent: i32,
+    /// `proximity_range` — map-cell radius of the continent proximity checks
+    /// (`Continent::IsCloseProximity`/`IsDangerousProximity`).
+    pub proximity_range: i32,
+    /// `menu_team_strategy_setting[team]` (`settings.cpp` keys
+    /// `red_team_strategy` … `alien_team_strategy`) — a forced AI strategy per
+    /// team slot. `None` when the setting is empty, `random` or unknown: in all
+    /// three cases C++ leaves the choice to the score-weighted roll.
+    pub team_strategy: [Option<AiStrategy>; PLAYER_TEAM_COUNT],
 }
 
 impl Default for AiSettings {
@@ -104,6 +113,8 @@ impl Default for AiSettings {
         Self {
             opponent: Opponent::Apprentice as u8,
             max_percent: 90,
+            proximity_range: 14,
+            team_strategy: [None; PLAYER_TEAM_COUNT],
         }
     }
 }
@@ -840,6 +851,8 @@ mod tests {
         assert!(!world.ai.all_visible);
         assert_eq!(world.ai.settings.opponent, Opponent::Apprentice as u8);
         assert_eq!(world.ai.settings.max_percent, 90);
+        assert_eq!(world.ai.settings.proximity_range, 14);
+        assert_eq!(world.ai.settings.team_strategy, [None; PLAYER_TEAM_COUNT]);
     }
 
     #[test]

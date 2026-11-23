@@ -5,9 +5,11 @@
 //! * `AiPlayer::Init` (fields, `need_init`; the 18 weight tables are filled by
 //!   [`super::weight_tables`]), `SelectStrategy`
 //!   **without map regeneration** (DESIGN: `Ai_SetupStrategy` — strategy selection
-//!   only): continents are computed by flood-fill over `SurfaceMap`,
-//!   strategy scores — by `aiplayer.cpp:3770` formulas, the choice — by one weighted
-//!   RNG roll, as in C++;
+//!   only): continents are built from `SurfaceMap` by the `Continent` class logic
+//!   (`IsViableSite`/`IsViableContinent`/`TestIsolated`), strategy scores — by the
+//!   `aiplayer.cpp:3760-3880` formulas, the choice — by the forced
+//!   `menu_team_strategy_setting` or one weighted RNG roll, the landing point — by
+//!   `SelectLandingSite` (`Randomizer_Generate(total_continent_size)`), as in C++;
 //! * `SelectTeamClan`, `RollGreenhouseRatio`, `RollMinefieldDensity` — a port
 //!   of the RNG call order and branches;
 //! * `BeginTurn` (in full by structure): threat map reset, attack task
@@ -35,7 +37,8 @@
 //!    (`BuildMenu_*`, `Builder_*`, upgrade tables — P3/P7) and are
 //!    therefore not ported in P6: `begin_turn` does not purchase factories and does not
 //!    upgrade units; the hooks themselves are present.
-//! 2. `RollTeamMissionSupplies`/`SelectLandingSite` (map setup) — P2, not P6.
+//! 2. `RollTeamMissionSupplies` (the starting loadout) — P2, not P6; the landing
+//!    point itself is ported (`Continent::SelectLandingSite`).
 //! 3. `GetThreatMap` in C++ caches 10 maps and lives on the global
 //!    `AiPlayer_ThreatMaps` array; here the map is computed on demand, so
 //!    reading does not require `&mut`. This does not change the result (the map is a pure
@@ -225,6 +228,37 @@ impl Default for AiPlayer {
     fn default() -> Self {
         Self::new(TeamId::RED)
     }
+}
+
+/// `menu_team_strategy_setting` values in `AiStrategy` order
+/// (`aiplayer.cpp:3886-3888`).
+pub const TEAM_STRATEGY_NAMES: [&str; AI_STRATEGY_MAX as usize] = [
+    "random",
+    "defensive",
+    "missiles",
+    "air",
+    "sea",
+    "scout horde",
+    "tank horde",
+    "fast attack",
+    "combined arms",
+    "espionage",
+];
+
+/// Parses a `menu_team_strategy_setting` value (`settings.cpp` keys
+/// `red_team_strategy` … `alien_team_strategy`) the way `aiplayer.cpp:3893-3905`
+/// does: a case-insensitive comparison with the ten strategy names
+/// (`SDL_strcasecmp`).
+///
+/// Returns `None` for `random` and for unknown names — both leave the strategy to
+/// the score-weighted roll, exactly like the C++ string setting whose `random`
+/// score is always zero.
+pub fn parse_team_strategy(value: &str) -> Option<AiStrategy> {
+    TEAM_STRATEGY_NAMES
+        .iter()
+        .position(|name| value.eq_ignore_ascii_case(name))
+        .and_then(|index| AiStrategy::try_from(index as u8).ok())
+        .filter(|strategy| *strategy != AiStrategy::Random)
 }
 
 impl AiPlayer {
@@ -785,37 +819,42 @@ impl AiPlayer {
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::SelectStrategy` (`aiplayer.cpp:3719`) — **without map
-    /// regeneration**: continents are computed by flood-fill over the ready `SurfaceMap`.
+    /// regeneration**: continents are built from the ready `SurfaceMap` with the
+    /// `Continent` class logic (`continent.cpp`).
+    ///
+    /// The landing point is chosen by `Continent::SelectLandingSite` and written to
+    /// `target_location` and to `TeamMissionSupplies[team].starting_position`
+    /// (C++ writes the latter; `target_location` is the AI-side copy used by the
+    /// port's consumers).
     ///
     /// Returns `false` if there is no suitable continent on the map: in C++ this
     /// switches the team to `TEAM_TYPE_NONE` (and `Ai_SetupStrategy` returns
     /// `false`).
     pub fn select_strategy(&mut self, world: &mut GameState) -> bool {
-        let continents = land_continents(world);
+        let proximity_range = world.ai.settings.proximity_range;
+        let mut continents = land_continents(world);
         let mut strategy_scores = [0i32; AI_STRATEGY_MAX as usize];
 
         let opponent = world.ai.settings.opponent;
 
-        let mut continent_size = 0;
-        for continent in &continents {
-            if continent.size > continent_size {
-                continent_size = continent.size;
-            }
-        }
-
+        // `aiplayer.cpp:3765-3805`: a single viable continent on a map with
+        // continents of at least 80 cells favors a tank horde.
         if opponent >= Opponent::Average as u8 {
-            let mut continent_score = 0;
-            let mut largest = 0;
-
-            for continent in &continents {
-                if continent.size > largest {
-                    largest = continent.size;
-                }
+            let mut continent_size = 0;
+            for continent in &continents.list {
+                continent_size = continent_size.max(continent.size);
             }
 
-            for continent in &continents {
-                if largest <= 80 || continent.size >= 80 {
-                    if continent.viable {
+            let mut continent_score = 0;
+            for index in 0..continents.list.len() {
+                if continent_size <= 80 || continents.list[index].size >= 80 {
+                    if continents.is_viable_continent(
+                        world,
+                        index,
+                        true,
+                        self.player_team,
+                        proximity_range,
+                    ) {
                         continent_score += 1;
                     } else {
                         continent_score = 100;
@@ -824,36 +863,48 @@ impl AiPlayer {
             }
 
             if continent_score == 1 {
-                let score = match opponent {
+                strategy_scores[AiStrategy::TankHorde as usize] = match opponent {
                     value if value == Opponent::Average as u8 => 1,
                     value if value == Opponent::Expert as u8 => 6,
                     value if value == Opponent::Master as u8 => 12,
                     value if value == Opponent::God as u8 => 24,
                     _ => 0,
                 };
-                strategy_scores[AiStrategy::TankHorde as usize] = score;
             }
         }
 
+        // `aiplayer.cpp:3807-3811`: isolation is tested before the proximity filter.
+        for index in 0..continents.list.len() {
+            continents.test_isolated(index, proximity_range);
+        }
+
+        // `aiplayer.cpp:3813-3830`: drop continents without a safe landing site,
+        // then (for maps with a large land mass) the small ones.
         let mut continent_size = 0;
-        for continent in &continents {
-            if continent.viable && continent.size > continent_size {
-                continent_size = continent.size;
+        for index in (0..continents.list.len()).rev() {
+            if continents.is_viable_continent(world, index, true, self.player_team, proximity_range)
+            {
+                continent_size = continent_size.max(continents.list[index].size);
+            } else {
+                continents.list.remove(index);
             }
         }
 
-        let viable: Vec<&Continent> = continents
-            .iter()
-            .filter(|continent| continent.viable)
-            .collect();
+        if continent_size > 80 {
+            continents.list.retain(|continent| continent.size >= 80);
+        }
 
-        let isolated_continents =
-            viable.iter().filter(|continent| continent.isolated).count() as i32;
-        let close_proximity = viable
+        let isolated_continents = continents
+            .list
             .iter()
-            .filter(|continent| continent.close_proximity)
+            .filter(|continent| continent.is_isolated)
             .count() as i32;
-        let count = viable.len() as i32;
+        let continents_in_close_proximity = continents
+            .list
+            .iter()
+            .filter(|continent| is_close_proximity(continent.bounds, proximity_range))
+            .count() as i32;
+        let count = continents.list.len() as i32;
 
         strategy_scores[AiStrategy::Missiles as usize] = count;
 
@@ -878,83 +929,203 @@ impl AiPlayer {
             }
         }
 
-        strategy_scores[AiStrategy::Air as usize] = close_proximity * 2;
+        strategy_scores[AiStrategy::Air as usize] = continents_in_close_proximity * 2;
 
         if opponent >= Opponent::Expert as u8 {
             strategy_scores[AiStrategy::Espionage as usize] = count;
         }
 
         strategy_scores[AiStrategy::Sea as usize] = isolated_continents * 2;
-        strategy_scores[AiStrategy::FastAttack as usize] = count - close_proximity;
-        strategy_scores[AiStrategy::CombinedArms as usize] = (count - close_proximity) * 2;
+        strategy_scores[AiStrategy::FastAttack as usize] = count - continents_in_close_proximity;
+        strategy_scores[AiStrategy::CombinedArms as usize] =
+            (count - continents_in_close_proximity) * 2;
 
         self.strategy = AiStrategy::Random;
 
-        // Teams choose different strategies (C++ excludes foreign ones).
-        let mut potential_strategies =
-            strategy_scores.iter().filter(|score| **score > 0).count() as i32;
-
-        for team in 0..PLAYER_TEAM_COUNT {
-            let team_id = TeamId(team as u8);
-            if team_id == self.player_team {
-                continue;
-            }
-
-            let other = &world.ai.players[team];
-            if world.teams[team].team_type == TeamKind::Computer
-                && other.strategy != AiStrategy::Random
-            {
-                potential_strategies -= 1;
-            }
+        // `aiplayer.cpp:3884-3907`: `menu_team_strategy_setting[player_team]` forces
+        // a strategy only when the name is recognized **and** its score is non-zero;
+        // otherwise C++ falls back to the weighted roll.
+        if let Some(forced) = world
+            .ai
+            .settings
+            .team_strategy
+            .get(self.player_team.0 as usize)
+            .copied()
+            .flatten()
+        {
+            self.strategy = if strategy_scores[forced as usize] == 0 {
+                AiStrategy::Random
+            } else {
+                forced
+            };
         }
 
-        if potential_strategies > 0 {
+        if self.strategy == AiStrategy::Random {
+            // Teams choose different strategies (C++ excludes foreign ones).
+            let mut potential_strategies =
+                strategy_scores.iter().filter(|score| **score > 0).count() as i32;
+
             for team in 0..PLAYER_TEAM_COUNT {
                 let team_id = TeamId(team as u8);
                 if team_id == self.player_team {
                     continue;
                 }
 
-                if world.teams[team].team_type == TeamKind::Computer {
-                    let other_strategy = world.ai.players[team].strategy;
-                    if other_strategy != AiStrategy::Random {
-                        strategy_scores[other_strategy as usize] = 0;
+                let other = &world.ai.players[team];
+                if world.teams[team].team_type == TeamKind::Computer
+                    && other.strategy != AiStrategy::Random
+                {
+                    potential_strategies -= 1;
+                }
+            }
+
+            if potential_strategies > 0 {
+                for team in 0..PLAYER_TEAM_COUNT {
+                    let team_id = TeamId(team as u8);
+                    if team_id == self.player_team {
+                        continue;
                     }
+
+                    if world.teams[team].team_type == TeamKind::Computer {
+                        let other_strategy = world.ai.players[team].strategy;
+                        if other_strategy != AiStrategy::Random {
+                            strategy_scores[other_strategy as usize] = 0;
+                        }
+                    }
+                }
+            }
+
+            let total_score: i32 = strategy_scores.iter().sum();
+
+            if total_score > 0 {
+                // One RNG roll, as in C++ (`Randomizer_Generate(total_score)`).
+                let mut roll = world.rng.generate_i32(total_score) + 1;
+                let mut index = 0usize;
+
+                while index + 1 < strategy_scores.len() && roll > strategy_scores[index] {
+                    roll -= strategy_scores[index];
+                    index += 1;
+                }
+
+                self.strategy = AiStrategy::try_from(index as u8).unwrap_or(AiStrategy::Random);
+            }
+        }
+
+        // `aiplayer.cpp:3957-3982`: strategy-dependent continent filters.
+        match self.strategy {
+            AiStrategy::Sea => {
+                continents.list.retain(|continent| continent.is_isolated);
+            }
+
+            AiStrategy::FastAttack | AiStrategy::CombinedArms => {
+                continents
+                    .list
+                    .retain(|continent| !is_close_proximity(continent.bounds, proximity_range));
+            }
+
+            AiStrategy::Air => {
+                continents
+                    .list
+                    .retain(|continent| is_close_proximity(continent.bounds, proximity_range));
+            }
+
+            _ => {}
+        }
+
+        // `aiplayer.cpp:3984-3998`: avoid landing on a continent already occupied by
+        // another computer team's landing point.
+        for team in 0..PLAYER_TEAM_COUNT {
+            let team_id = TeamId(team as u8);
+            if team_id == self.player_team
+                || continents.list.len() <= 1
+                || world.teams[team].team_type != TeamKind::Computer
+            {
+                continue;
+            }
+
+            let Some(supplies) = world.mission_supplies[team].as_ref() else {
+                continue;
+            };
+
+            if supplies.units.is_empty() {
+                continue;
+            }
+
+            let filler = filler_at(&continents.cells, supplies.starting_position);
+            let mut index = continents.list.len();
+
+            while index > 0 && continents.list.len() > 1 {
+                index -= 1;
+
+                if continents.list[index].filler == filler {
+                    continents.list.remove(index);
                 }
             }
         }
 
-        let total_score: i32 = strategy_scores.iter().sum();
+        let map_center = Point::new(MAP_WIDTH / 2, MAP_HEIGHT / 2);
 
-        if total_score > 0 {
-            // One RNG roll, as in C++ (`Randomizer_Generate(total_score)`).
-            let mut roll = world.rng.generate_i32(total_score) + 1;
+        // `aiplayer.cpp:4000-4026`: defensive strategies land far from the map center.
+        if matches!(
+            self.strategy,
+            AiStrategy::Defensive | AiStrategy::Air | AiStrategy::Sea | AiStrategy::Espionage
+        ) {
+            let mut maximum_distance = 0;
+
+            for continent in &continents.list {
+                maximum_distance = maximum_distance.max(
+                    crate::access::approximate_distance_points(map_center, continent.center()),
+                );
+            }
+
+            continents.list.retain(|continent| {
+                crate::access::approximate_distance_points(map_center, continent.center())
+                    >= maximum_distance / 2
+            });
+        }
+
+        // `aiplayer.cpp:4028-4051`: a scout horde lands near the map center.
+        if self.strategy == AiStrategy::ScoutHorde {
+            let mut minimum_distance = i32::from(MAP_WIDTH) + i32::from(MAP_HEIGHT);
+
+            for continent in &continents.list {
+                minimum_distance = minimum_distance.min(
+                    crate::access::approximate_distance_points(map_center, continent.center()),
+                );
+            }
+
+            continents.list.retain(|continent| {
+                crate::access::approximate_distance_points(map_center, continent.center())
+                    <= minimum_distance * 2
+            });
+        }
+
+        // `aiplayer.cpp:4053-4088`: a size-weighted continent roll, then the landing
+        // point on it (`Randomizer_Generate(total_continent_size)`).
+        let total_continent_size: i32 =
+            continents.list.iter().map(|continent| continent.size).sum();
+
+        if total_continent_size > 0 {
+            let mut roll = world.rng.generate_i32(total_continent_size) + 1;
             let mut index = 0usize;
 
             loop {
-                if index >= strategy_scores.len() {
-                    break;
-                }
+                roll -= continents.list[index].size;
 
-                roll -= strategy_scores[index];
-
-                if roll <= 0 {
+                if roll <= 0 || index + 1 >= continents.list.len() {
                     break;
                 }
 
                 index += 1;
             }
 
-            let index = index.min(AI_STRATEGY_MAX as usize - 1);
-            self.strategy = AiStrategy::try_from(index as u8).unwrap_or(AiStrategy::CombinedArms);
-        }
+            let site =
+                continents.select_landing_site(world, index, self.player_team, proximity_range);
+            self.target_location = site;
 
-        let total_continent_size: i32 = viable.iter().map(|continent| continent.size).sum();
-
-        if total_continent_size > 0 {
-            // C++ rolls a continent and a landing point; in P6 (without setup)
-            // only the strategy matters — we pin the target point to the map center.
-            self.target_location = Point::new(MAP_WIDTH / 2, MAP_HEIGHT / 2);
+            if let Some(supplies) = world.mission_supplies[self.player_team.0 as usize].as_mut() {
+                supplies.starting_position = site;
+            }
 
             let clan = self.select_team_clan(world);
             world.teams[self.player_team.0 as usize].team_clan = clan;
@@ -2395,76 +2566,375 @@ pub fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListK
     Point::new((sum_x / count) as i16, (sum_y / count) as i16)
 }
 
-/// Continent for `SelectStrategy` (flood-fill over `SurfaceMap`).
+/// C++ `class Continent` (`continent.cpp`) — a land mass candidate of `SelectStrategy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Continent {
+    /// `filler` — id in the strategy's access map (`3 + index`, as
+    /// `continents.GetCount() + 3` in `aiplayer.cpp:3750`).
+    filler: u16,
+    /// `continent_size`.
     size: i32,
-    viable: bool,
-    isolated: bool,
-    close_proximity: bool,
+    /// `bounds` — `(ulx, uly, lrx, lry)`; `lrx`/`lry` are **exclusive**
+    /// (`MAXFloodFill::GetBounds` increments the max coordinate).
+    bounds: (i32, i32, i32, i32),
+    /// `is_isolated` — set by [`Continents::test_isolated`].
+    is_isolated: bool,
 }
 
-/// Land flood-fill: 4-connectivity, traversal `x`, then `y` (deterministically).
-fn land_continents(world: &GameState) -> Vec<Continent> {
+impl Continent {
+    /// `Continent::GetCenter` (`continent.cpp:105`).
+    fn center(&self) -> Point {
+        let (ulx, uly, lrx, lry) = self.bounds;
+
+        Point::new(((lrx + ulx) / 2) as i16, ((lry + uly) / 2) as i16)
+    }
+}
+
+/// `Continent::IsCloseProximity` (`continent.cpp:113`).
+fn is_close_proximity(bounds: (i32, i32, i32, i32), proximity_range: i32) -> bool {
+    let proximity_range = proximity_range * 2;
+
+    (bounds.2 - bounds.0) <= proximity_range && (bounds.3 - bounds.1) <= proximity_range
+}
+
+/// Cell value of the strategy access map: a continent filler id, or `0` when the
+/// cell is not part of a viable continent (water, or a rejected land mass).
+fn filler_at(cells: &[u16], site: Point) -> u16 {
+    match crate::map::SurfaceMap::index(site.x, site.y) {
+        Some(index) => cells[index],
+        None => 0,
+    }
+}
+
+/// The `4×4` flat-site part of `Continent::IsViableSite` (`continent.cpp:52-66`).
+fn is_flat_site(cells: &[u16], filler: u16, site: Point) -> bool {
+    if filler_at(cells, site) != filler {
+        return false;
+    }
+
+    for dy in 0..4 {
+        for dx in 0..4 {
+            if filler_at(cells, Point::new(site.x + dx, site.y + dy)) != filler {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// `Continent::IsDangerousProximity` (`continent.cpp:32`).
+fn is_dangerous_proximity(
+    world: &GameState,
+    grid: Point,
+    team: TeamId,
+    proximity_range: i32,
+) -> bool {
+    for other in 0..PLAYER_TEAM_COUNT {
+        if TeamId(other as u8) == team {
+            continue;
+        }
+
+        let Some(supplies) = world.mission_supplies[other].as_ref() else {
+            continue;
+        };
+
+        if supplies.units.is_empty() {
+            continue;
+        }
+
+        let distance_x = i32::from(grid.x) - i32::from(supplies.starting_position.x);
+        let distance_y = i32::from(grid.y) - i32::from(supplies.starting_position.y);
+
+        if distance_x.abs() <= proximity_range && distance_y.abs() <= proximity_range {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// `IsViableContinent(false, team)` (`continent.cpp:121`) for a continent that is
+/// not yet in the list — the constructor check (`aiplayer.cpp:3752`).
+fn has_viable_site(cells: &[u16], filler: u16, bounds: (i32, i32, i32, i32)) -> bool {
+    let (ulx, uly, lrx, lry) = bounds;
+
+    for x in ulx..(lrx - 3) {
+        for y in uly..(lry - 3) {
+            if is_flat_site(cells, filler, Point::new(x as i16, y as i16)) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// `AccessMap` + `SmartArray<Continent>` of `AiPlayer::SelectStrategy`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Continents {
+    /// Per-cell filler id: `0` — not part of a viable continent, `3+` — continent id
+    /// (the analog of the C++ `AccessMap`: `1` water/coast, `2` land, `3+` fillers).
+    cells: Vec<u16>,
+    /// Viable continents in scan order; the filler of `list[i]` is `i + 3`.
+    list: Vec<Continent>,
+}
+
+impl Continents {
+    /// `Continent::IsViableSite` (`continent.cpp:49`).
+    fn is_viable_site(
+        &self,
+        world: &GameState,
+        filler: u16,
+        test_proximity: bool,
+        team: TeamId,
+        site: Point,
+        proximity_range: i32,
+    ) -> bool {
+        if filler_at(&self.cells, site) != filler {
+            return false;
+        }
+
+        if test_proximity && is_dangerous_proximity(world, site, team, proximity_range + 4) {
+            return false;
+        }
+
+        is_flat_site(&self.cells, filler, site)
+    }
+
+    /// `Continent::IsViableContinent` (`continent.cpp:121`).
+    fn is_viable_continent(
+        &self,
+        world: &GameState,
+        index: usize,
+        test_proximity: bool,
+        team: TeamId,
+        proximity_range: i32,
+    ) -> bool {
+        let continent = &self.list[index];
+        let (ulx, uly, lrx, lry) = continent.bounds;
+
+        for x in ulx..(lrx - 3) {
+            for y in uly..(lry - 3) {
+                if self.is_viable_site(
+                    world,
+                    continent.filler,
+                    test_proximity,
+                    team,
+                    Point::new(x as i16, y as i16),
+                    proximity_range,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// `Continent::TestIsolated` (`continent.cpp:146`).
+    ///
+    /// A cost-limited 8-direction flood inside the `bounds + 6` zone. The local
+    /// `AccessMap` is zero-initialized (`accessmap.cpp:39-42`): own land is `0`,
+    /// other zone cells `0x7F`, and everything outside the zone stays `0`
+    /// (not enterable). Orthogonal steps cost `4`, diagonal steps `6`; values are
+    /// capped at `24` and only cells up to `20` are queued. Reaching another
+    /// continent's land (`filler >= 3`) clears the isolated flag; an exhausted
+    /// queue sets it.
+    fn test_isolated(&mut self, index: usize, proximity_range: i32) {
+        let (filler, bounds) = {
+            let continent = &self.list[index];
+            (continent.filler, continent.bounds)
+        };
+
+        if !is_close_proximity(bounds, proximity_range) {
+            return;
+        }
+
+        let (ulx, uly, lrx, lry) = bounds;
+        let zone_ulx = (ulx - 6).max(0);
+        let zone_uly = (uly - 6).max(0);
+        let zone_lrx = (lrx + 6).min(i32::from(MAP_WIDTH));
+        let zone_lry = (lry + 6).min(i32::from(MAP_HEIGHT));
+
+        let mut access_map = vec![0u8; MAP_TILES];
+        let mut points: Vec<Point> = Vec::new();
+
+        for x in zone_ulx..zone_lrx {
+            for y in zone_uly..zone_lry {
+                let site = Point::new(x as i16, y as i16);
+                let site_index = site.index();
+
+                if filler_at(&self.cells, site) == filler {
+                    points.push(site);
+                } else {
+                    access_map[site_index] = 0x7F;
+                }
+            }
+        }
+
+        while let Some(position) = points.pop() {
+            let position_index = position.index();
+            let value = i32::from(access_map[position_index] | 0x01);
+            access_map[position_index] = value as u8;
+
+            for (direction, offset) in crate::geo::DIRECTION_OFFSETS.iter().enumerate() {
+                let next = Point::new(position.x + offset.x, position.y + offset.y);
+                let Some(next_index) = crate::map::SurfaceMap::index(next.x, next.y) else {
+                    continue;
+                };
+
+                let value2 = if direction & 1 != 0 {
+                    value + 6
+                } else {
+                    value + 4
+                };
+
+                if value2 > 24 || value2 >= i32::from(access_map[next_index]) {
+                    continue;
+                }
+
+                let next_filler = self.cells[next_index];
+
+                if next_filler >= 3 && next_filler != filler {
+                    return;
+                }
+
+                let value2 = value2 & 0xFE;
+
+                if access_map[next_index] & 0x01 != 0 && value2 <= 20 {
+                    points.push(next);
+                }
+
+                access_map[next_index] = value2 as u8;
+            }
+        }
+
+        self.list[index].is_isolated = true;
+    }
+
+    /// `Continent::SelectLandingSite` (`continent.cpp:135`) — a random flat `4×4`
+    /// site on the continent, avoiding enemy landing zones.
+    fn select_landing_site(
+        &self,
+        world: &mut GameState,
+        index: usize,
+        team: TeamId,
+        proximity_range: i32,
+    ) -> Point {
+        let (filler, bounds) = {
+            let continent = &self.list[index];
+            (continent.filler, continent.bounds)
+        };
+        let (ulx, uly, lrx, lry) = bounds;
+
+        // `Randomizer_Generate(bounds.lrx - bounds.ulx - 4 + 1)`; the value is at
+        // least 1 for a continent that passed `IsViableContinent`.
+        let width = (lrx - ulx - 3).max(1);
+        let height = (lry - uly - 3).max(1);
+        debug_assert!(
+            lrx - ulx >= 4 && lry - uly >= 4,
+            "a viable continent always has a 4×4 site"
+        );
+
+        loop {
+            let x = ulx + world.rng.generate_i32(width);
+            let y = uly + world.rng.generate_i32(height);
+            let site = Point::new(x as i16, y as i16);
+
+            if self.is_viable_site(world, filler, true, team, site, proximity_range) {
+                return site;
+            }
+        }
+    }
+}
+
+/// Builds the strategy's continent map — `aiplayer.cpp:3727-3757` and the
+/// `Continent` constructor (`continent.cpp:77`).
+///
+/// Land is filled by `MAXFloodFill` with diagonal expansion: vertical runs of
+/// adjacent columns connect when their intervals touch diagonally, i.e. the fill
+/// is 8-connected. Scan order is `x` (column) outer, `y` inner, exactly like C++;
+/// fillers are assigned `3 + list.len()`. A continent without a flat 4×4 site is
+/// not inserted and its filler is cleared back to `0` (`~Continent`,
+/// `clear_on_destroy`), so later continents never reuse those cells.
+fn land_continents(world: &GameState) -> Continents {
     let mut visited = vec![false; MAP_TILES];
-    let mut continents = Vec::new();
+    let mut continents = Continents {
+        cells: vec![0u16; MAP_TILES],
+        list: Vec::new(),
+    };
 
-    for y in 0..MAP_HEIGHT {
-        for x in 0..MAP_WIDTH {
-            let index = y as usize * MAP_WIDTH as usize + x as usize;
-            if visited[index] {
+    for x in 0..MAP_WIDTH {
+        for y in 0..MAP_HEIGHT {
+            let start = Point::new(x, y);
+            let start_index = start.index();
+
+            if visited[start_index]
+                || crate::access::surface_type(world, start) != crate::access::SURFACE_TYPE_LAND
+            {
                 continue;
             }
 
-            visited[index] = true;
-
-            let surface = crate::access::surface_type(world, Point::new(x, y));
-            if surface != crate::access::SURFACE_TYPE_LAND {
-                continue;
-            }
-
-            // BFS in submission order (Vec as a queue).
-            let mut queue = Vec::new();
-            queue.push(Point::new(x, y));
-            let mut size = 0;
+            // BFS with 8-connectivity (`MAXFloodFill` diagonal expansion).
+            let mut queue = vec![start];
             let mut head = 0;
+            let mut component: Vec<Point> = Vec::new();
+            let (mut ulx, mut uly, mut lrx, mut lry) = (x, y, x + 1, y + 1);
+            visited[start_index] = true;
 
             while head < queue.len() {
                 let site = queue[head];
                 head += 1;
-                size += 1;
+                component.push(site);
 
-                for offset in crate::geo::DIRECTION_OFFSETS.iter().take(8).step_by(2) {
+                ulx = ulx.min(site.x);
+                uly = uly.min(site.y);
+                lrx = lrx.max(site.x + 1);
+                lry = lry.max(site.y + 1);
+
+                for offset in crate::geo::DIRECTION_OFFSETS.iter() {
                     let next = Point::new(site.x + offset.x, site.y + offset.y);
-
-                    if next.x < 0 || next.y < 0 || next.x >= MAP_WIDTH || next.y >= MAP_HEIGHT {
+                    let Some(next_index) = crate::map::SurfaceMap::index(next.x, next.y) else {
                         continue;
-                    }
+                    };
 
-                    let next_index = next.y as usize * MAP_WIDTH as usize + next.x as usize;
-                    if visited[next_index] {
+                    if visited[next_index]
+                        || crate::access::surface_type(world, next)
+                            != crate::access::SURFACE_TYPE_LAND
+                    {
                         continue;
                     }
 
                     visited[next_index] = true;
-
-                    let next_surface = crate::access::surface_type(world, next);
-                    if next_surface == crate::access::SURFACE_TYPE_LAND {
-                        queue.push(next);
-                    }
+                    queue.push(next);
                 }
             }
 
-            let viable = size >= 40;
-            let isolated = size < 80;
-            let close_proximity = !isolated;
+            let filler = continents.list.len() as u16 + 3;
+            for site in &component {
+                continents.cells[site.index()] = filler;
+            }
 
-            continents.push(Continent {
-                size,
-                viable,
-                isolated,
-                close_proximity,
-            });
+            let bounds = (
+                i32::from(ulx),
+                i32::from(uly),
+                i32::from(lrx),
+                i32::from(lry),
+            );
+
+            if has_viable_site(&continents.cells, filler, bounds) {
+                continents.list.push(Continent {
+                    filler,
+                    size: component.len() as i32,
+                    bounds,
+                    is_isolated: false,
+                });
+            } else {
+                for site in &component {
+                    continents.cells[site.index()] = 0;
+                }
+            }
         }
     }
 
@@ -2494,7 +2964,30 @@ pub use super::tasks::create::need_to_reserve_raw_materials;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enums::Surface;
+    use crate::input::{MissionSupplyEntry, Packet12MissionSupply};
     use crate::team::TeamUnits;
+
+    /// A map with the given land rectangles `(x0, y0, x1, y1)`; ends are exclusive.
+    fn land_state(rects: &[(i16, i16, i16, i16)]) -> GameState {
+        let mut state = GameState::new();
+
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                state.map.surface.set(x, y, Surface::WATER);
+            }
+        }
+
+        for &(x0, y0, x1, y1) in rects {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    state.map.surface.set(x, y, Surface::LAND);
+                }
+            }
+        }
+
+        state
+    }
 
     /// `ResourceManager_InitClanUnitValues` starts from a clean `SC_ATTRI` base:
     /// a second call (or a clan change) must replace the table, not add to it,
@@ -2517,5 +3010,194 @@ mod tests {
         apply_clan(&mut world, team, TeamClan::VonGriffin);
         assert_eq!(world.team_units[index].base_values, expected);
         assert_eq!(world.team_units[index].current_values, expected);
+    }
+
+    /// `ContinentFiller` builds `MAXFloodFill` with diagonal expansion: runs of
+    /// adjacent columns connect when their intervals touch diagonally, so
+    /// diagonally adjacent land is one continent (not two 4-connected ones).
+    #[test]
+    fn land_continents_connect_diagonally() {
+        let state = land_state(&[(10, 10, 14, 14), (14, 14, 18, 18)]);
+        let continents = land_continents(&state);
+
+        assert_eq!(
+            continents.list.len(),
+            1,
+            "diagonally touching land must be a single continent"
+        );
+        assert_eq!(continents.list[0].size, 32);
+        assert_eq!(continents.list[0].bounds, (10, 10, 18, 18));
+        assert_eq!(continents.list[0].filler, 3);
+    }
+
+    /// `IsViableSite` needs a flat 4×4 area of one continent; a three-column strip
+    /// is rejected and the continent's filler is cleared (`~Continent`).
+    #[test]
+    fn viable_continent_requires_a_flat_four_by_four_site() {
+        let narrow = land_continents(&land_state(&[(10, 10, 13, 20)]));
+        assert!(narrow.list.is_empty(), "a 3×10 strip has no 4×4 site");
+        assert_eq!(filler_at(&narrow.cells, Point::new(10, 10)), 0);
+
+        let state = land_state(&[(10, 10, 14, 20)]);
+        let wide = land_continents(&state);
+        assert_eq!(wide.list.len(), 1);
+        assert_eq!(wide.list[0].bounds, (10, 10, 14, 20));
+
+        let filler = wide.list[0].filler;
+        assert!(is_flat_site(&wide.cells, filler, Point::new(10, 10)));
+        assert!(!is_flat_site(&wide.cells, filler, Point::new(11, 10)));
+        assert!(has_viable_site(&wide.cells, filler, wide.list[0].bounds));
+    }
+
+    /// `TestIsolated`: only close continents are tested, and the flood reaches
+    /// another land mass when it lies inside the `bounds + 6` zone.
+    #[test]
+    fn test_isolated_flags_land_within_the_zone_only() {
+        let proximity_range = 14;
+
+        // Two 10×10 islands two water cells apart: the second is inside the zone
+        // of the first, so the first is not isolated.
+        let mut near = land_continents(&land_state(&[(10, 10, 20, 20), (22, 10, 32, 20)]));
+        assert_eq!(near.list.len(), 2);
+        near.test_isolated(0, proximity_range);
+        assert!(!near.list[0].is_isolated);
+
+        // The same island alone has no other land mass in the zone.
+        let mut alone = land_continents(&land_state(&[(10, 10, 20, 20)]));
+        alone.test_isolated(0, proximity_range);
+        assert!(alone.list[0].is_isolated);
+
+        // Wider than `2 × proximity_range`: `IsCloseProximity` is false and the
+        // test does not run, so the flag keeps its constructor value.
+        let mut wide = land_continents(&land_state(&[(10, 10, 60, 60)]));
+        wide.test_isolated(0, proximity_range);
+        assert!(!wide.list[0].is_isolated);
+    }
+
+    /// `IsViableSite(test_proximity = true)` rejects a site within
+    /// `proximity_range + 4` of another team's landing point (`IsDangerousProximity`).
+    #[test]
+    fn viable_site_rejects_enemy_landing_proximity() {
+        let mut state = land_state(&[(10, 10, 60, 60)]);
+        state.mission_supplies[TeamId::GREEN.0 as usize] = Some(Packet12MissionSupply {
+            team: TeamId::GREEN,
+            round: 0,
+            start_gold: 0,
+            team_gold: 0,
+            units: vec![MissionSupplyEntry {
+                unit_type: UnitType::Constructor,
+                cargo: 0,
+            }],
+            gold_spent_on_upgrades: 0,
+            starting_position: Point::new(20, 20),
+            proximity_alert_ack: 0,
+        });
+
+        let continents = land_continents(&state);
+        assert_eq!(continents.list.len(), 1);
+        let filler = continents.list[0].filler;
+
+        assert!(!continents.is_viable_site(
+            &state,
+            filler,
+            true,
+            TeamId::RED,
+            Point::new(20, 20),
+            14
+        ));
+        assert!(continents.is_viable_site(
+            &state,
+            filler,
+            true,
+            TeamId::RED,
+            Point::new(40, 40),
+            14
+        ));
+        // Without the proximity test the flat-site criterion still accepts the site.
+        assert!(continents.is_viable_site(
+            &state,
+            filler,
+            false,
+            TeamId::RED,
+            Point::new(20, 20),
+            14
+        ));
+    }
+
+    /// A recognized `menu_team_strategy_setting` with a non-zero score forces the
+    /// strategy; the landing point is a flat 4×4 site and is written to both
+    /// `target_location` and `TeamMissionSupplies.starting_position`.
+    #[test]
+    fn select_strategy_honors_forced_strategy_and_selects_a_landing_site() {
+        let mut state = land_state(&[(10, 10, 30, 30)]);
+        state.ai.settings.team_strategy[TeamId::RED.0 as usize] = Some(AiStrategy::Sea);
+        state.mission_supplies[TeamId::RED.0 as usize] = Some(Packet12MissionSupply {
+            team: TeamId::RED,
+            round: 0,
+            start_gold: 0,
+            team_gold: 0,
+            units: Vec::new(),
+            gold_spent_on_upgrades: 0,
+            starting_position: Point::ZERO,
+            proximity_alert_ack: 0,
+        });
+
+        assert!(crate::ai::ai_setup_strategy(&mut state, TeamId::RED));
+        assert_eq!(
+            state.ai.players[TeamId::RED.0 as usize].strategy,
+            AiStrategy::Sea
+        );
+
+        let landing = state.ai.players[TeamId::RED.0 as usize].target_location;
+        assert_eq!(
+            state.mission_supplies[TeamId::RED.0 as usize]
+                .as_ref()
+                .expect("supplies")
+                .starting_position,
+            landing
+        );
+
+        for dy in 0..4 {
+            for dx in 0..4 {
+                assert_eq!(
+                    state.map.surface_at(landing.x + dx, landing.y + dy),
+                    Surface::LAND,
+                    "the landing site must be a flat 4×4 land area"
+                );
+            }
+        }
+    }
+
+    /// A forced strategy whose score is zero does not force anything: C++ falls
+    /// back to the score-weighted roll (`aiplayer.cpp:3896-3897`).
+    #[test]
+    fn forced_strategy_with_zero_score_falls_back_to_the_roll() {
+        // The default map is one huge continent: not close, therefore not isolated
+        // and `AI_STRATEGY_SEA` scores zero.
+        let mut state = GameState::new();
+        state.ai.settings.team_strategy[TeamId::RED.0 as usize] = Some(AiStrategy::Sea);
+
+        assert!(crate::ai::ai_setup_strategy(&mut state, TeamId::RED));
+
+        let strategy = state.ai.players[TeamId::RED.0 as usize].strategy;
+        assert_ne!(strategy, AiStrategy::Sea);
+        assert_ne!(strategy, AiStrategy::Random);
+    }
+
+    /// `menu_team_strategy_setting` values are matched case-insensitively;
+    /// `random` and unknown values leave the strategy to the roll.
+    #[test]
+    fn team_strategy_setting_names_are_case_insensitive() {
+        assert_eq!(
+            parse_team_strategy("combined arms"),
+            Some(AiStrategy::CombinedArms)
+        );
+        assert_eq!(
+            parse_team_strategy("FAST ATTACK"),
+            Some(AiStrategy::FastAttack)
+        );
+        assert_eq!(parse_team_strategy("random"), None);
+        assert_eq!(parse_team_strategy(""), None);
+        assert_eq!(parse_team_strategy("tank"), None);
     }
 }

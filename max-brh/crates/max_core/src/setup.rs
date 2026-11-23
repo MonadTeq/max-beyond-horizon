@@ -8,7 +8,7 @@
 //! | `GameManager_InitGame()` step | Oracle file | What it does | Port |
 //! |---|---|---|---|
 //! | `ResourceManager_InitInGameAssets(world)` | `world.cpp` (LoadTilesAndMetadata) | builds `SurfaceMap` from the planet's `.wrl` file: `surface[i] = PassData[pass_table[tile_ids[i]]]` | [`derive_surface_map`] — a pure function of `tile_ids`/`pass_table` |
-//! | `Ai_SetupStrategy(team)` (for computers) | `aiplayer.cpp` | spends RNG, but **before** reseeding | [`crate::ai::ai_setup_strategy`] (P6: strategy selection only, without map generation) |
+//! | `Ai_SetupStrategy(team)` (for computers) | `aiplayer.cpp` | spends RNG, but **before** reseeding | [`crate::ai::ai_setup_strategy`] (P6: strategy and landing point selection, without map generation) |
 //! | `GameManager_PopulateMapWithResources()` | `game_manager.cpp:4730` + `resource_allocator.cpp` | `Randomizer_SetSeed(Remote_RngSeed)`, 3×`PopulateCargoMap`, `Optimize` at team start positions, `SeparateResources`, 3×`ConcentrateResources`, `SettleMinimumResourceLevels` | [`populate_map_with_resources`] |
 //! | `GameManager_PopulateMapWithAlienUnits(...)` | `game_manager.cpp:4942` | point grid (RNG), `SpawnAlienDerelicts` (RNG: building, bridges, units) | [`populate_map_with_alien_units`] |
 //! | `GameManager_InitMap()` | `game_manager.cpp:1531` | UI only (zoom/render) | not ported |
