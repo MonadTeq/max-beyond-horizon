@@ -8,6 +8,9 @@
 //!   the game;
 //! * `--demo <save> [--turns N]` — headless: V70 save → N ticks → digest;
 //! * `--new-game` — a local match on the planet map + a frame in PPM (`--out`);
+//! * `--host [--listen <ip>] [--host-port <port>]` — P2P host: the ENet server
+//!   and the server-side lobby 28…34 (`PLAN-host-mode.md` §5 H2, headless);
+//! * `--connect <host:port>` (without `--join`) — the direct guest of that host;
 //! * `--connect <horizon> --join <game> [--sdl]` — Horizon + ENet session;
 //!   without `--sdl` the loop is headless, with `--sdl` — an SDL3 window (feature `sdl`).
 //!
@@ -21,6 +24,7 @@
 // Cargo.toml), so one cfg is enough for all windowed features.
 #![cfg_attr(feature = "sdl", windows_subsystem = "windows")]
 
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -29,11 +33,17 @@ use anyhow::{anyhow, bail, Context, Result};
 use max_app::assets::AssetsReport;
 #[cfg(feature = "sdl")]
 use max_app::audio::AudioPlayer;
+use max_app::host::{
+    HostRunOptions, HostSessionSettings, SessionPolicy, DEFAULT_HOST_LOBBY_TIMEOUT,
+    DEFAULT_MIN_PLAYERS,
+};
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
 #[cfg(feature = "sdl")]
 use max_app::net::NetworkDispatcher;
-use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
+use max_app::net::{
+    run_network, DirectEndpoint, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy,
+};
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
 #[cfg(feature = "sdl")]
@@ -44,6 +54,7 @@ use max_app::ui::{
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
 use max_core::setup::ResourceLevel;
+use max_net::DEFAULT_HOST_PORT;
 #[cfg(feature = "sdl")]
 use max_render::sdl_window::{WindowInput, WindowKey};
 
@@ -56,6 +67,8 @@ enum Mode {
     Demo,
     NewGame,
     Connect,
+    /// P2P host: ENet server + server-side lobby (`PLAN-host-mode.md` §5 H2).
+    Host,
     Ui,
 }
 
@@ -68,6 +81,20 @@ struct Cli {
     turns: Option<u32>,
     game_id: Option<String>,
     password: Option<String>,
+    /// `--host` was given (even if another mode flag came after it).
+    host: bool,
+    /// Raw `--connect` value: Horizon (with `--join`) or a direct host endpoint.
+    connect: Option<String>,
+    /// Direct P2P endpoint (`--connect` without `--join`).
+    endpoint: Option<DirectEndpoint>,
+    /// `--listen` address of the host ENet server.
+    listen: Option<Ipv4Addr>,
+    /// `--host-port` UDP port of the host ENet server.
+    host_port: Option<u16>,
+    /// `--min-players` READY threshold of the host lobby.
+    min_players: Option<u32>,
+    /// `--host-policy` session policy.
+    host_policy: Option<SessionPolicy>,
     sdl: bool,
     out: Option<PathBuf>,
     seed: Option<u32>,
@@ -109,6 +136,13 @@ impl Cli {
             turns: None,
             game_id: None,
             password: None,
+            host: false,
+            connect: None,
+            endpoint: None,
+            listen: None,
+            host_port: None,
+            min_players: None,
+            host_policy: None,
             sdl: false,
             out: None,
             seed: None,
@@ -144,17 +178,41 @@ impl Cli {
                     cli.mode = Mode::NewGame;
                     mode_set = true;
                 }
+                "--host" => {
+                    cli.mode = Mode::Host;
+                    cli.host = true;
+                    mode_set = true;
+                }
+                "--listen" => {
+                    let value = args.next().context("--listen требует IPv4-адрес")?;
+                    cli.listen =
+                        Some(value.parse().map_err(|_| {
+                            anyhow!("--listen: ожидался IPv4-адрес, получено {value}")
+                        })?);
+                }
+                "--host-port" => {
+                    let value = parse_u32(&mut args, "--host-port")?;
+                    cli.host_port = Some(u16::try_from(value).map_err(|_| {
+                        anyhow!("--host-port должен быть 1..=65535, получено {value}")
+                    })?);
+                }
+                "--min-players" => {
+                    cli.min_players = Some(parse_u32(&mut args, "--min-players")?);
+                }
+                "--host-policy" => {
+                    let value = args
+                        .next()
+                        .context("--host-policy требует pause|eliminate")?;
+                    cli.host_policy = Some(SessionPolicy::parse(&value).ok_or_else(|| {
+                        anyhow!("--host-policy: ожидалось pause|eliminate, получено {value}")
+                    })?);
+                }
                 "--ui" => {
                     cli.mode = Mode::Ui;
                     mode_set = true;
                 }
                 "--connect" => {
-                    let endpoint = args
-                        .next()
-                        .context("--connect требует <horizon host[:port]>")?;
-                    let (host, port) = parse_endpoint(&endpoint)?;
-                    cli.config.horizon_host = host;
-                    cli.config.horizon_port = port;
+                    cli.connect = Some(args.next().context("--connect требует <host[:port]>")?);
                     cli.mode = Mode::Connect;
                     mode_set = true;
                 }
@@ -268,8 +326,48 @@ impl Cli {
             }
         }
 
+        // `--connect` is finalized here because `--join` may come after it:
+        // with `--join` it is Horizon, without it — a direct P2P host endpoint
+        // (`PLAN-host-mode.md` §5 H2).
+        if cli.mode == Mode::Connect {
+            let value = cli
+                .connect
+                .clone()
+                .context("--connect требует <host[:port]>")?;
+            if cli.game_id.is_some() {
+                let (host, port) = parse_endpoint(&value)?;
+                cli.config.horizon_host = host;
+                cli.config.horizon_port = port;
+            } else {
+                let (host, port) = parse_direct_endpoint(&value)?;
+                cli.endpoint = Some(DirectEndpoint { host, port });
+            }
+        }
+
+        if cli.host && cli.mode != Mode::Host {
+            bail!("--host не сочетается с другими режимами (--demo/--new-game/--connect/--ui)");
+        }
+        if cli.host && (cli.connect.is_some() || cli.game_id.is_some()) {
+            bail!("--host не сочетается с --connect/--join (режим хоста поднимает сервер сам)");
+        }
+        if !cli.host
+            && (cli.listen.is_some()
+                || cli.host_port.is_some()
+                || cli.min_players.is_some()
+                || cli.host_policy.is_some())
+        {
+            bail!("--listen/--host-port/--min-players/--host-policy требуют --host");
+        }
+        if let Some(min_players) = cli.min_players {
+            if !(1..=4).contains(&min_players) {
+                bail!("--min-players должен быть 1..=4, получено {min_players}");
+            }
+        }
         if cli.sdl && cli.mode != Mode::Connect {
-            bail!("--sdl имеет смысл только с --connect <horizon> --join <game>");
+            bail!("--sdl имеет смысл только с --connect <host> --join <game>");
+        }
+        if cli.sdl && cli.endpoint.is_some() {
+            bail!("--sdl не поддерживается для прямого --connect (режим хоста, H2)");
         }
         if (cli.reconnect_attempts.is_some() || cli.reconnect_timeout_secs.is_some())
             && !matches!(cli.mode, Mode::Connect | Mode::Ui)
@@ -280,9 +378,6 @@ impl Cli {
             && !matches!(cli.mode, Mode::Connect | Mode::Ui)
         {
             bail!("--join-retry-* имеет смысл только с --connect/--ui");
-        }
-        if cli.mode == Mode::Connect && cli.game_id.is_none() {
-            bail!("--connect требует --join <game_id>");
         }
         if cli.record.is_some() && cli.mode != Mode::Ui {
             bail!(
@@ -295,6 +390,7 @@ impl Cli {
             Mode::Demo => AppMode::Demo,
             Mode::NewGame => AppMode::NewGame,
             Mode::Connect => AppMode::Connect,
+            Mode::Host => AppMode::Host,
             Mode::Ui => AppMode::Ui,
         };
         cli.config.save = cli.save.clone();
@@ -330,7 +426,8 @@ impl Cli {
                 "GUI-режим (запуск без флагов или --ui) требует сборки с feature sdl \
                  (в default-features), а этот бинарь собран с --no-default-features: \
                  cargo run -p max_app (без --no-default-features)\n\
-                 headless-режимы: --demo <save>, --new-game, --connect <host> --join <game>"
+                 headless-режимы: --demo <save>, --new-game, --host, \
+                 --connect <host> --join <game>"
             );
         }
         Ok(())
@@ -418,6 +515,7 @@ fn run(cli: Cli) -> Result<()> {
             Mode::Demo => run_demo(&cli),
             Mode::NewGame => run_new_game(&cli),
             Mode::Connect => run_connect(&cli).await,
+            Mode::Host => run_host(&cli).await,
             Mode::Ui => unreachable!("--ui разобран выше"),
         }
     })
@@ -533,8 +631,9 @@ async fn run_connect(cli: &Cli) -> Result<()> {
         reconnect.timeout = Duration::from_secs(u64::from(seconds));
     }
     let options = NetworkOptions {
-        game_id: cli.game_id.clone().expect("validated by CLI"),
+        game_id: cli.game_id.clone().unwrap_or_default(),
         password: cli.password.clone(),
+        endpoint: cli.endpoint.clone(),
         max_turns: cli.turns.unwrap_or(0),
         reconnect,
         join_retry: join_retry_policy(cli),
@@ -549,6 +648,55 @@ async fn run_connect(cli: &Cli) -> Result<()> {
     };
 
     print_network(&report);
+
+    Ok(())
+}
+
+/// `--host [--listen <ip>] [--host-port <port>] [--min-players <n>] [--host-policy <p>]`.
+///
+/// H2: the host runs the ENet server and the server-side lobby (28…34). It does
+/// not play the match yet — the host's lockstep loop and relay are H3 — so
+/// `--turns` is accepted for the H3 CLI contract and ignored here.
+async fn run_host(cli: &Cli) -> Result<()> {
+    let game = cli.new_game_config();
+    let options = HostRunOptions {
+        bind_ip: cli.listen.unwrap_or(Ipv4Addr::UNSPECIFIED),
+        port: cli.host_port.unwrap_or(DEFAULT_HOST_PORT),
+        host_name: cli.config.player_name.clone(),
+        host_team: cli.config.team_slot.min(3),
+        min_players: cli
+            .min_players
+            .map_or(DEFAULT_MIN_PLAYERS, |value| value as usize),
+        policy: cli.host_policy.unwrap_or_default(),
+        session: HostSessionSettings {
+            planet: game.planet,
+            seed: game.seed,
+            raw: game.raw.value(),
+            fuel: game.fuel.value(),
+            gold: game.gold.value(),
+            derelicts: game.derelicts.value(),
+            start_gold: game.start_gold,
+        },
+        lobby_timeout: DEFAULT_HOST_LOBBY_TIMEOUT,
+    };
+
+    println!(
+        "host: слушаю {}:{} (min_players={}, policy={})",
+        options.bind_ip, options.port, options.min_players, options.policy
+    );
+
+    let report = max_app::host::run_host(&cli.config, &options).await?;
+    let settings = report.lobby.settings.as_ref();
+    println!(
+        "host: лобби=34 игроков={} (готовы {}) host_node={} team_nodes={:?} rng_seed={} world={} policy={}",
+        report.status.remote_players + 1,
+        report.status.ready_players,
+        report.lobby.host_node,
+        report.lobby.team_nodes,
+        settings.map_or(0, |settings| settings.rng_seed),
+        settings.map_or_else(String::new, |settings| settings.world_name.to_string()),
+        report.policy
+    );
 
     Ok(())
 }
@@ -744,7 +892,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // C++ `settings.json` (`FilePathGamePref`): the player settings survive
     // a restart. The QA driver does not read the file — there the values are default.
     if app.load_preferences_from_disk() {
-        println!("UI: настройки загружены из {}", app.preferences_path().display());
+        println!(
+            "UI: настройки загружены из {}",
+            app.preferences_path().display()
+        );
     }
 
     let mut window = SdlWindow::new_scaled(
@@ -964,9 +1115,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
             // `disable_fx` (`Preferences::sound_enabled`).
             for sound in app.take_unit_sounds() {
                 if app.sound_enabled() {
-                    let _ = ctx
-                        .audio
-                        .play_gain(sound.tag, max_app::audio::PlayMode::Once, sound.gain);
+                    let _ =
+                        ctx.audio
+                            .play_gain(sound.tag, max_app::audio::PlayMode::Once, sound.gain);
                 }
             }
 
@@ -1445,6 +1596,22 @@ fn parse_endpoint(value: &str) -> Result<(String, u16)> {
     }
 }
 
+/// `--connect <host[:port]>` without `--join`: the direct P2P host endpoint.
+///
+/// The fallback port is the host's ENet port ([`DEFAULT_HOST_PORT`] = 31554),
+/// not the Horizon gRPC port: no Horizon RPC is involved in the host mode.
+fn parse_direct_endpoint(value: &str) -> Result<(String, u16)> {
+    match value.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() => {
+            let port: u16 = port
+                .parse()
+                .with_context(|| format!("некорректный порт в {value}"))?;
+            Ok((host.to_string(), port))
+        }
+        _ => Ok((value.to_string(), DEFAULT_HOST_PORT)),
+    }
+}
+
 fn parse_u32(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<u32> {
     let value = args
         .next()
@@ -1496,6 +1663,8 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     max-brh.exe [ОПЦИИ]                     # по умолчанию — GUI (окно SDL3)
     max-brh.exe --demo <save> [--turns N] [ОПЦИИ]
     max-brh.exe --new-game [ОПЦИИ]
+    max-brh.exe --host [--listen <ip>] [--host-port <port>] [--min-players N] [--host-policy pause|eliminate] [ОПЦИИ]
+    max-brh.exe --connect <host:port>                   # прямой гость P2P-хоста (H2)
     max-brh.exe --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
 
 РЕЖИМЫ:
@@ -1505,9 +1674,15 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     --ui                 совместимый alias для запуска по умолчанию (GUI)
     --demo <save>        V70-сейв → N тиков → digest (headless)
     --new-game           локальная партия (setup::generate_map) + кадр
-    --connect <host>     Horizon gRPC (порт по умолчанию {}) + ENet-сессия
-    --join <game_id>     игра для --connect
-    --sdl                окно SDL3 для --connect (feature sdl — в default)
+    --host               сервер P2P-режима: ENet + лобби 28…34 (headless)
+    --listen <ip>        адрес ENet-сервера хоста (по умолчанию 0.0.0.0)
+    --host-port <port>   UDP-порт ENet-сервера хоста (31554)
+    --min-players N      READY-порог лобби, включая хоста (2; 1..=4)
+    --host-policy P      политика сессии: pause (по умолчанию) | eliminate
+    --connect <host>     Horizon gRPC (порт по умолчанию {}) + ENet-сессия;
+                         без --join — прямой адрес ENet-сервера хоста
+    --join <game_id>     игра для --connect (режим Horizon)
+    --sdl                окно SDL3 для --connect --join (feature sdl — в default)
     --record <file.qa>   записать ручную игру в QA-сценарий (GUI; --ui не нужен;
                          существующий файл не перезаписывается — суффикс -1;
                          без SDL запись доступна как API max_app::qa::Recorder)
@@ -1618,7 +1793,88 @@ mod tests {
         assert_eq!(cli.config.horizon_host, "127.0.0.1");
         assert_eq!(cli.config.horizon_port, 8082);
         assert_eq!(cli.game_id.as_deref(), Some("demo"));
+        assert!(cli.endpoint.is_none(), "с --join это режим Horizon");
         assert!(!cli.sdl, "без --sdl сессия остаётся headless");
+    }
+
+    #[test]
+    fn connect_without_join_is_a_direct_host_endpoint() {
+        let cli = parse(&["--connect", "127.0.0.1:31554"]).expect("прямой --connect");
+
+        assert_eq!(cli.mode, Mode::Connect);
+        assert_eq!(cli.game_id, None);
+        assert!(!cli.sdl);
+        let endpoint = cli.endpoint.as_ref().expect("прямой endpoint");
+        assert_eq!(endpoint.host, "127.0.0.1");
+        assert_eq!(endpoint.port, 31554);
+    }
+
+    #[test]
+    fn direct_connect_defaults_to_the_host_port() {
+        let cli = parse(&["--connect", "127.0.0.1"]).expect("прямой --connect без порта");
+
+        assert_eq!(cli.endpoint.expect("endpoint").port, DEFAULT_HOST_PORT);
+    }
+
+    #[test]
+    fn host_flag_selects_the_server_lobby() {
+        let cli = parse(&[
+            "--host",
+            "--listen",
+            "127.0.0.1",
+            "--host-port",
+            "31554",
+            "--min-players",
+            "3",
+            "--host-policy",
+            "eliminate",
+        ])
+        .expect("--host разбирается");
+
+        assert_eq!(cli.mode, Mode::Host);
+        assert_eq!(cli.config.mode, AppMode::Host);
+        assert_eq!(cli.listen, Some(Ipv4Addr::LOCALHOST));
+        assert_eq!(cli.host_port, Some(31554));
+        assert_eq!(cli.min_players, Some(3));
+        assert_eq!(
+            cli.host_policy,
+            Some(SessionPolicy::EliminateAfter {
+                ticks: max_app::host::DEFAULT_ELIMINATION_TICKS
+            })
+        );
+        assert!(cli.endpoint.is_none());
+    }
+
+    #[test]
+    fn host_flags_require_the_host_mode() {
+        let error = parse(&["--demo", "save.cam", "--min-players", "3"])
+            .expect_err("--min-players без --host отклоняется");
+
+        assert!(error.to_string().contains("--min-players"), "{error:#}");
+    }
+
+    #[test]
+    fn host_and_connect_are_mutually_exclusive() {
+        let error = parse(&["--host", "--connect", "127.0.0.1:31554"])
+            .expect_err("--host + --connect отклоняется");
+
+        assert!(error.to_string().contains("--host"), "{error:#}");
+    }
+
+    #[test]
+    fn host_policy_rejects_unknown_values() {
+        let error = parse(&["--host", "--host-policy", "banish"])
+            .expect_err("неизвестная политика отклоняется");
+
+        assert!(error.to_string().contains("pause"), "{error:#}");
+    }
+
+    #[test]
+    fn direct_connect_rejects_sdl() {
+        let error = parse(&["--connect", "127.0.0.1:31554", "--sdl"])
+            .expect_err("--sdl для прямого --connect отклоняется");
+
+        assert!(error.to_string().contains("--sdl"), "{error:#}");
     }
 
     #[test]

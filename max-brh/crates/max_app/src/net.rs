@@ -4,6 +4,9 @@
 //!
 //! 1. [`connect_horizon`] — `Hello` + `JoinGame`; the [`GameJoined`] response carries
 //!    the `host`/`port`/`ticket` of the UDP session (`max-brh-docs/protocol-grpc.md` §4).
+//!    In the P2P host mode (`--connect <host:port>` without `--join`) this step is
+//!    skipped: [`DirectEndpoint`] gives the address of the host's ENet server and
+//!    [`SessionConfig::new`] builds the session without a ticket.
 //! 2. [`SessionConfig::from_joined`] + [`SessionHandle::start`] — ENet connection
 //!    and `TP 00`/`TP 03` (channel 0).
 //! 3. In-game lobby (channel 1): `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`
@@ -20,6 +23,20 @@
 //! `App<NetworkDispatcher>` (`App::new_network` + `App::initialize_game`) and the
 //! whole driver below lives in that `impl` (§4.2): the mode switch is creating
 //! another `App<D>`, never mutating an existing one (ADR §7.8).
+//!
+//! # Host mode (P2P, `PLAN-host-mode.md` §5 H2)
+//!
+//! A guest of the host mode is the ordinary client with a direct endpoint
+//! ([`DirectEndpoint`]): [`SessionConfig::new`] instead of [`SessionConfig::from_joined`],
+//! no Horizon RPC. The in-game lobby is reused unchanged ([`run_lobby`]): the
+//! host answers 28 with 44, assigns a node id on 29 (plus 47 and 30), collects
+//! 35/36/26 and finishes with 32 → 05 → 34. The lobby authority itself lives in
+//! [`crate::host`] (server side), not here.
+//!
+//! In H2 the direct run **stops after 34**: the host does not yet run the
+//! lockstep loop (H3), so the guest initializes the world from the lobby
+//! settings, captures the initial digest and closes the session. The Horizon
+//! path below is unaffected.
 //!
 //! # Barriers
 //!
@@ -107,6 +124,26 @@ pub const DEFAULT_TICK_INTERVAL: Duration = Duration::from_millis(20);
 /// How long to wait for a complete lobby (28 → 34).
 pub const DEFAULT_LOBBY_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Direct P2P endpoint of the host mode (`--connect <host:port>` without `--join`).
+///
+/// `Some` switches [`run_network_with_sink`] from the Horizon path to a direct
+/// ENet connect: the guest performs `TP 00` against the host's `max_net::host`
+/// server and enters its lobby with packet 28. No Horizon `Hello`/`JoinGame`
+/// and no session ticket are involved (`PLAN-host-mode.md` §5 H2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectEndpoint {
+    /// Host name or IPv4 literal.
+    pub host: String,
+    /// UDP port of the host's ENet server (`--host-port`, default 31554).
+    pub port: u16,
+}
+
+impl std::fmt::Display for DirectEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
 /// Network mode parameters (`--connect`).
 #[derive(Debug, Clone)]
 pub struct NetworkOptions {
@@ -114,6 +151,10 @@ pub struct NetworkOptions {
     pub game_id: String,
     /// Game password (optional).
     pub password: Option<String>,
+    /// Direct P2P endpoint (`--connect <host:port>` without `--join`): the guest
+    /// skips Horizon and connects to the host's ENet server (H2).
+    pub endpoint: Option<DirectEndpoint>,
+
     /// How many turns to play; `0` — until a disconnect/stop.
     pub max_turns: u32,
     /// Lobby timeout.
@@ -142,6 +183,7 @@ impl Default for NetworkOptions {
         Self {
             game_id: String::new(),
             password: None,
+            endpoint: None,
             max_turns: 0,
             lobby_timeout: DEFAULT_LOBBY_TIMEOUT,
             tick_interval: DEFAULT_TICK_INTERVAL,
@@ -647,6 +689,50 @@ async fn open_network_session(
     Ok((joined, session_config, handle, hash, attempts))
 }
 
+/// Opens a direct P2P session to a host's ENet server (`--connect` without `--join`).
+///
+/// This is the Horizon-free variant of [`open_network_session`]: the endpoint comes
+/// from the CLI, the ticket is empty (the H1 host accepts any guest), and the
+/// `data_hash` fallback/retry policy is the same. The returned `SessionConfig`
+/// keeps the hash the host accepted, so a reconnect repeats it.
+async fn open_direct_session(
+    config: &AppConfig,
+    endpoint: &DirectEndpoint,
+    options: &NetworkOptions,
+    hashes: &[DataHash],
+    sink: &mut Option<&mut dyn FrameSink>,
+) -> Result<(SessionConfig, SessionHandle, DataHash, u32)> {
+    let mut notify = |progress: JoinProgress| report_join_progress(sink, progress);
+
+    let base_config = SessionConfig::new(
+        endpoint.host.clone(),
+        endpoint.port,
+        String::new(),
+        hashes[0],
+    )
+    .with_player(&config.player_name, config.team_slot.min(3), config.clan);
+
+    let connect = |session_config: SessionConfig| async move {
+        SessionHandle::start(session_config)
+            .await
+            .map_err(JoinAttemptError::from)
+    };
+    let (handle, hash, attempts) = start_with_hash_fallback(
+        &base_config,
+        hashes,
+        options.join_retry,
+        &mut notify,
+        connect,
+    )
+    .await
+    .map_err(|error| anyhow!("не удалось подключиться к хосту {endpoint}: {error}"))?;
+
+    let mut session_config = base_config;
+    session_config.data_hash = hash;
+
+    Ok((session_config, handle, hash, attempts))
+}
+
 /// Reconnect attempt accounting — pure logic without the network.
 ///
 /// Separates "how many and how long to try" from [`SessionHandle::start`] so that
@@ -946,16 +1032,38 @@ pub async fn connect_horizon(
 /// [`App::initialize_game`] directly; `13` is ignored (the world seed comes from
 /// packet 30).
 #[derive(Debug, Clone, Default)]
-struct LobbyInfo {
-    handshake: bool,
-    player_node: u16,
-    host_node: u16,
+pub struct LobbyInfo {
+    /// `TP 00` passed.
+    pub handshake: bool,
+    /// The id assigned to this client (`LobbyWelcome::player_node`, packet 30).
+    pub player_node: u16,
+    /// `Welcome.host_node` — the host's node id.
+    pub host_node: u16,
     /// `Welcome.team_nodes` — which nodes took the team slots.
-    team_nodes: [u16; 4],
-    settings: Option<LobbyGameSettings>,
+    pub team_nodes: [u16; 4],
+    /// Session settings (`LobbyGameSettings` of packet 30).
+    pub settings: Option<LobbyGameSettings>,
     /// Packet `12` (`MissionSupply`) per team slot — the landing point and supply
     /// record the generated world reads (`game-universe-stage-c.md` §4.3).
-    mission_supplies: [Option<Packet12MissionSupply>; TEAM_SLOTS],
+    pub mission_supplies: [Option<Packet12MissionSupply>; TEAM_SLOTS],
+}
+
+impl LobbyInfo {
+    /// One-line identity of the completed lobby.
+    ///
+    /// The host's roster and the guest's `Welcome` must produce the same line
+    /// (`host_node`/`team_nodes`/settings incl. `rng_seed`): this is the
+    /// `PLAN-host-mode.md` §5 H2 gate check, so both sides log it verbatim.
+    pub fn summary(&self) -> String {
+        let settings = self.settings.as_ref();
+        format!(
+            "lobby-identity: host_node={} team_nodes={:?} rng_seed={} settings={:?}",
+            self.host_node,
+            self.team_nodes,
+            settings.map_or(0, |settings| settings.rng_seed),
+            settings
+        )
+    }
 }
 
 /// Collects the setup data a lobby command carries (stage C §4.3, A4).
@@ -978,6 +1086,25 @@ fn note_lobby_command(info: &mut LobbyInfo, command: Command) {
         }
         other => tracing::debug!("лобби: команда {other:?} (настройки берутся из 30)"),
     }
+}
+
+/// Team slot this client takes in the lobby (`NetworkMenu::NetSync`/`EventSetJar`).
+///
+/// The requested slot wins unless another node already holds it; then the first
+/// free slot is taken, exactly as the C++ menu does when the preferred jar is
+/// occupied. A slot is free when its node id is `0` or is our own node.
+fn choose_team_slot(requested: u8, player_node: u16, team_nodes: &[u16; 4]) -> u8 {
+    let requested = requested.min(3) as usize;
+    let free = |slot: usize| team_nodes[slot] == 0 || team_nodes[slot] == player_node;
+
+    if free(requested) {
+        return requested as u8;
+    }
+
+    (0..team_nodes.len())
+        .find(|&slot| free(slot))
+        .map(|slot| slot as u8)
+        .unwrap_or(requested as u8)
 }
 
 /// Runs the lobby `28 → 44 → 29 → 30 → 36 → 35 → 32 → 05 → 34`.
@@ -1041,7 +1168,15 @@ async fn run_lobby(
                     info.team_nodes = welcome.team_nodes;
                     info.settings = Some(welcome.settings.clone());
 
-                    let team_slot = config.team_slot.min(3);
+                    let requested_slot = config.team_slot.min(3);
+                    let team_slot =
+                        choose_team_slot(requested_slot, info.player_node, &info.team_nodes);
+                    if team_slot != requested_slot {
+                        tracing::info!(
+                            "лобби: слот {requested_slot} занят — беру свободный {team_slot} \
+                             (NetworkMenu::NetSync)"
+                        );
+                    }
                     let team_name = format!("{}#{team_slot}", config.player_name);
                     // The own slot is known locally: `Welcome` arrives before our 35.
                     if info.player_node > 4 {
@@ -1152,6 +1287,11 @@ pub async fn run_network(app: &mut App, options: &NetworkOptions) -> Result<Netw
 /// `sink` gets a frame after each turn (an SDL window in the binary). If
 /// [`FrameSink::frame`] returned `false`, the loop ends and the session closes
 /// cleanly.
+///
+/// With [`NetworkOptions::endpoint`] the Horizon step is skipped (P2P host mode):
+/// the guest connects directly to the host's ENet server, reuses [`run_lobby`]
+/// and, in H2, stops after packet 34 with the world initialized from the lobby
+/// settings (`PLAN-host-mode.md` §5 H2).
 pub async fn run_network_with_sink(
     app: &mut App,
     options: &NetworkOptions,
@@ -1167,8 +1307,16 @@ pub async fn run_network_with_sink(
     // only): this way Create game works against a server without PATCHES.RES without
     // a workaround flag.
     let hashes = handshake_data_hashes(&config)?;
-    let (joined, session_config, mut handle, data_hash, join_attempts) =
-        open_network_session(&config, options, &hashes, &mut sink).await?;
+    let (game_id, session_config, mut handle, data_hash, join_attempts) =
+        if let Some(endpoint) = options.endpoint.as_ref() {
+            let (session_config, handle, hash, attempts) =
+                open_direct_session(&config, endpoint, options, &hashes, &mut sink).await?;
+            (endpoint.to_string(), session_config, handle, hash, attempts)
+        } else {
+            let (joined, session_config, handle, hash, attempts) =
+                open_network_session(&config, options, &hashes, &mut sink).await?;
+            (joined.game_id, session_config, handle, hash, attempts)
+        };
 
     // The lobby runs on the local application (`game-universe-stage-c.md` §4.2):
     // it only collects the setup data (A4), no command reaches a dispatcher.
@@ -1196,9 +1344,34 @@ pub async fn run_network_with_sink(
     game.adopt_user_settings(app);
     game.initialize_game(&lobby);
 
+    // H2: the direct (host-mode) run ends at 34. The host is a transport-only
+    // authority until H3 wires its own `App<NetworkDispatcher>` and relay; until
+    // then no barrier can be passed, so the guest reports the initial world.
+    if options.endpoint.is_some() {
+        tracing::info!("{}", lobby.summary());
+        tracing::info!("прямой сеанс (режим хоста): лобби завершено, игра не запущена (H2)");
+        handle.shutdown().await;
+        return Ok(NetworkReport {
+            game_id,
+            handshake: lobby.handshake,
+            lobby_complete: true,
+            local_team,
+            ticks: game.ticks(),
+            commands_applied: game.applied_commands(),
+            turns_finished: 0,
+            barrier_timeouts: 0,
+            reconnects: 0,
+            reconnect_attempts: 0,
+            reconnect_pending_state: false,
+            data_hash: data_hash.to_hex(),
+            join_attempts,
+            digest: game.digest(),
+        });
+    }
+
     tracing::info!(
         "сессия готова: game={} local_team={} лобби={:?}",
-        joined.game_id,
+        game_id,
         local_team.0,
         lobby
             .settings
@@ -1219,7 +1392,7 @@ pub async fn run_network_with_sink(
     }
 
     Ok(NetworkReport {
-        game_id: joined.game_id,
+        game_id,
         handshake: lobby.handshake,
         lobby_complete: true,
         local_team,

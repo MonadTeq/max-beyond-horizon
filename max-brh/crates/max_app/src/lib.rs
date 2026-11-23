@@ -47,6 +47,7 @@ pub mod credits;
 pub mod cursor;
 pub mod dialog;
 pub mod helpmenu;
+pub mod host;
 pub mod hotseat;
 pub mod hud;
 pub mod intro;
@@ -125,7 +126,8 @@ pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LO
 pub use mem::{memory_line, process_memory, ProcessMemory};
 pub use mobilize::Mobilization;
 pub use net::{
-    connect_horizon, run_network, run_network_with_sink, FrameSink, NetworkOptions, NetworkReport,
+    connect_horizon, run_network, run_network_with_sink, DirectEndpoint, FrameSink, LobbyInfo,
+    NetworkOptions, NetworkReport,
 };
 pub use panels::{PanelButton, PanelState, Panels};
 pub use preferences::{
@@ -165,6 +167,8 @@ pub enum AppMode {
     NewGame,
     /// `--connect`: Horizon + ENet session.
     Connect,
+    /// `--host`: ENet server with the server-side lobby (P2P host mode).
+    Host,
     /// `--ui`: interactive menu (create/select a game) and session.
     Ui,
 }
@@ -175,6 +179,7 @@ impl fmt::Display for AppMode {
             Self::Demo => "demo",
             Self::NewGame => "new-game",
             Self::Connect => "connect",
+            Self::Host => "host",
             Self::Ui => "ui",
         })
     }
