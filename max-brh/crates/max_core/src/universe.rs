@@ -39,16 +39,16 @@
 //! The module is I/O-, thread- and float-free (`max_core` rules).
 
 use crate::crc;
-use crate::enums::PlayMode;
+use crate::enums::{GameStateType, PlayMode, UnitOrder, UnitOrderState, UnitType, VictoryType};
 use crate::events::{self, ApplyOutcome, StateSyncPacket};
-use crate::game::{GameState, TurnEvent, UnitSound, TEAM_SLOTS};
+use crate::game::{GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use crate::geo::Point;
 use crate::input::Command;
 use crate::production::ProductionEvent;
 use crate::research::ResearchEvent;
-use crate::team::{TeamId, TeamInfo};
-use crate::unit::{UnitId, UnitListKind, UnitPresentation};
-use crate::victory::{self, WinLossStatus};
+use crate::team::{TeamId, TeamInfo, TeamKind, TeamUnits};
+use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPresentation};
+use crate::victory::{self, MissionCategory, WinLossStatus};
 
 use max_types::map::Map;
 
@@ -385,6 +385,11 @@ impl<'a> StateRef<'a> {
         self.state.presentation(id)
     }
 
+    /// The unit's order data (`game.rs:861`): `move_to`/`fire_on`.
+    pub fn order_data(&self, id: UnitId) -> OrderData {
+        self.state.order_data(id)
+    }
+
     /// `GameManager_TurnCounter`.
     pub fn turn_counter(&self) -> i32 {
         self.state.turn_counter
@@ -408,6 +413,23 @@ impl<'a> StateRef<'a> {
     /// `GameManager_PlayMode`.
     pub fn play_mode(&self) -> PlayMode {
         self.state.play_mode
+    }
+
+    /// `GameManager_IsActiveTurn` (`game.rs:2634`).
+    pub fn is_active_turn(&self, team: TeamId) -> bool {
+        self.state.is_active_turn(team)
+    }
+
+    /// The team the next turn-machine step would start; `None` — the round would
+    /// close (`game.rs:2319`).
+    pub fn upcoming_team(&self) -> Option<TeamId> {
+        self.state.upcoming_team()
+    }
+
+    /// `GameManager_AreTeamsFinishedTurn` — the concurrent round barrier
+    /// (`game.rs:2293`).
+    pub fn are_teams_finished_turn(&self) -> bool {
+        self.state.are_teams_finished_turn()
     }
 
     /// All team slots.
@@ -470,9 +492,41 @@ impl<'a> StateRef<'a> {
         self.state.state_sync_indices
     }
 
+    /// `Remote_TurnIndices` (packet 52 counters, `game.rs:319`).
+    pub fn turn_indices(&self) -> [u8; TEAM_SLOTS] {
+        self.state.turn_indices
+    }
+
+    /// `Remote_FrameSyncCounter` (packet 00 counters, `game.rs:325`).
+    pub fn frame_sync_counter(&self) -> [u8; TEAM_SLOTS] {
+        self.state.frame_sync_counter
+    }
+
+    /// `Remote_NextTurnIndices` (packet 45 indices, `game.rs:321`).
+    pub fn next_turn_indices(&self) -> [u8; TEAM_SLOTS] {
+        self.state.next_turn_indices
+    }
+
     /// `GameState::team_data_crc16` — the peer CRCs of the current 45 round.
     pub fn team_data_crc16(&self) -> [u16; TEAM_SLOTS] {
         self.state.team_data_crc16
+    }
+
+    /// In-game chat (packet 18) — `game.rs:338`; a UI/log report.
+    pub fn chat_log(&self) -> &'a [(TeamId, String)] {
+        &self.state.chat_log
+    }
+
+    /// Mission supplies per team (packet 12) — `game.rs:340`; setup input data.
+    pub fn mission_supplies(
+        &self,
+    ) -> &'a [Option<crate::input::Packet12MissionSupply>; TEAM_SLOTS] {
+        &self.state.mission_supplies
+    }
+
+    /// The canonical replay digest (`crc.rs:242`) — end-to-end parity bytes.
+    pub fn replay_digest_bytes(&self) -> Vec<u8> {
+        crc::replay_digest_bytes(self.state)
     }
 
     /// The canonical state bytes.
@@ -666,6 +720,160 @@ impl<D: Dispatcher> GameUniverse<D> {
         }
     }
 
+    // — stage B: configuration/test layer (stage-b §3, ADR §6 risk 2) —
+    //
+    // Setup mutators have no `Command` equivalent: they configure a match (or a
+    // test fixture) instead of moving the lockstep simulation forward. They stay
+    // `pub` on the facade as a documented config/test surface and are 1:1 calls,
+    // so the behavior of `GameState` and every golden digest is unchanged. None of
+    // them advances `seq`: configuration is not an observable simulation step.
+
+    /// Spawns a unit — `UnitsManager_DeployUnit` (`game.rs:1311`).
+    pub fn spawn_unit(
+        &mut self,
+        unit_type: UnitType,
+        team: TeamId,
+        grid: Point,
+        flags: u32,
+    ) -> Option<UnitId> {
+        self.state.spawn_unit(unit_type, team, grid, flags)
+    }
+
+    /// Destroys a unit — `UnitsManager_DestroyUnit` (`game.rs:1562`).
+    pub fn destroy_unit(&mut self, id: UnitId) {
+        self.state.destroy_unit(id);
+    }
+
+    /// Writes a modified unit copy back (`game.rs:880`).
+    pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
+        self.state.write_unit(id, unit);
+    }
+
+    /// Mutable unit by id — the setup counterpart of [`StateRef::unit`]
+    /// (`game.rs:818`).
+    pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut UnitInfo> {
+        self.state.unit_mut(id)
+    }
+
+    /// Writes the unit presentation (`game.rs:841`).
+    pub fn write_presentation(&mut self, id: UnitId, presentation: UnitPresentation) {
+        self.state.write_presentation(id, presentation);
+    }
+
+    /// Mutable unit presentation — the setup counterpart of
+    /// [`StateRef::presentation`] (`game.rs:835`).
+    pub fn presentation_mut(&mut self, id: UnitId) -> Option<&mut UnitPresentation> {
+        self.state.presentation_mut(id)
+    }
+
+    /// `UnitsManager_SetNewOrderInt` (`game.rs:1626`); returns `true` if a path
+    /// request was removed.
+    pub fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
+        self.state.set_order(id, order, state)
+    }
+
+    /// Order-data write (`game.rs:868`).
+    pub fn set_order_data(&mut self, id: UnitId, data: OrderData) {
+        self.state.set_order_data(id, data);
+    }
+
+    /// Applies a parsed V70 save to the wrapped state (`game.rs:547`) — the
+    /// setup entry that is not a facade version bump (see [`Self::from_save`]).
+    pub fn load_state(&mut self, save: &crate::save::SaveFile) {
+        self.state.load_state(save);
+    }
+
+    /// Replaces the V70 save/service fields (`save_write.rs:851`).
+    pub fn set_save_meta(&mut self, meta: crate::save_write::SaveMeta) {
+        self.state.set_save_meta(meta);
+    }
+
+    /// `Remote_IsNetworkGame` — network mode flag (`game.rs:350`).
+    pub fn set_network_game(&mut self, value: bool) {
+        self.state.network_game = value;
+    }
+
+    /// The `enemy_halt` setting (`game.rs:373`).
+    pub fn set_enemy_halt(&mut self, value: bool) {
+        self.state.enemy_halt = value;
+    }
+
+    /// `GameManager_PlayMode` (`game.rs:258`).
+    pub fn set_play_mode(&mut self, value: PlayMode) {
+        self.state.play_mode = value;
+    }
+
+    /// `GameManager_GameState` (`game.rs:256`).
+    pub fn set_game_state(&mut self, value: GameStateType) {
+        self.state.game_state = value;
+    }
+
+    /// `ini_setting_victory_type` (`game.rs:392`).
+    pub fn set_victory_type(&mut self, value: VictoryType) {
+        self.state.victory_type = value;
+    }
+
+    /// `ini_setting_victory_limit` (`game.rs:393`).
+    pub fn set_victory_limit(&mut self, value: i32) {
+        self.state.victory_limit = value;
+    }
+
+    /// `SaveFormatHeader::mission_index` (`game.rs:387`).
+    pub fn set_mission_index(&mut self, value: u16) {
+        self.state.mission_index = value;
+    }
+
+    /// `MissionManager::GetMission()->GetCategory()` (`game.rs:389`).
+    pub fn set_mission_category(&mut self, value: MissionCategory) {
+        self.state.mission_category = value;
+    }
+
+    /// The `effects` setting (`game.rs:355`).
+    pub fn set_settings_effects(&mut self, value: bool) {
+        self.state.settings_effects = value;
+    }
+
+    /// The `disable_fire` setting (`game.rs:357`).
+    pub fn set_disable_fire(&mut self, value: bool) {
+        self.state.disable_fire = value;
+    }
+
+    /// The `GameManager_RealTime` setting (`game.rs:360`).
+    pub fn set_real_time(&mut self, value: bool) {
+        self.state.real_time = value;
+    }
+
+    /// Re-seeds the simulation RNG — `Randomizer_SetSeed` (`game.rs:226`), the
+    /// same call packet 13 makes (`events.rs:216`).
+    pub fn set_rng_seed(&mut self, seed: u32) {
+        self.state.rng.set_seed(seed);
+    }
+
+    /// `UnitsManager_TeamInfo[PLAYER_TEAM_MAX]` — replaces the team table
+    /// (`game.rs:222`).
+    pub fn set_teams(&mut self, teams: [TeamInfo; TEAM_SLOTS]) {
+        self.state.teams = teams;
+    }
+
+    /// `CTInfo::team_units[PLAYER_TEAM_MAX]` — replaces the team-economy table
+    /// (`game.rs:224`).
+    pub fn set_team_units(&mut self, team_units: [TeamUnits; TEAM_SLOTS]) {
+        self.state.team_units = team_units;
+    }
+
+    /// Per-slot team configuration (`game.rs:222`): the setup counterpart of
+    /// [`StateRef::team`], so a single slot can be edited without rebuilding the
+    /// whole table (the reason [`Self::set_teams`] alone is not enough for §6).
+    pub fn team_mut(&mut self, team: TeamId) -> Option<&mut TeamInfo> {
+        self.state.teams.get_mut(team.0 as usize)
+    }
+
+    /// Per-slot team-economy configuration (`game.rs:224`): the setup counterpart
+    /// of a single `team_units` slot.
+    pub fn team_units_mut(&mut self, team: TeamId) -> Option<&mut TeamUnits> {
+        self.state.team_units.get_mut(team.0 as usize)
+    }
+
     // — stage B: barrier steppers, reachable only through the facade (A1) —
 
     /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[team]` → 00.
@@ -736,6 +944,12 @@ impl<D: Dispatcher> GameUniverse<D> {
 }
 
 impl GameUniverse<LocalDispatcher> {
+    /// A local universe with a map and a set of teams — `GameState::with_setup`
+    /// (`game.rs:486`), the usual test/scenario constructor.
+    pub fn with_setup(map: Map, team_kinds: [TeamKind; PLAYER_TEAM_COUNT]) -> Self {
+        Self::new(GameState::with_setup(map, team_kinds), LocalDispatcher)
+    }
+
     /// A local universe from a V70 save (`from_save` counts as a state version).
     pub fn from_save(save: &crate::save::SaveFile) -> Self {
         Self {
