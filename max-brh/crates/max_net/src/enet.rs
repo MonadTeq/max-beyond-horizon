@@ -20,6 +20,11 @@
 //! (`dependencies/enet-1.3.18.tar.gz`, `ENET_VERSION = 0x010312`); the
 //! handshake compares this value byte-for-byte (`max-brh-docs/protocol.md` §7).
 
+// This is the only module of the crate allowed to use `unsafe`: the crate root
+// denies it (`lib.rs`) and re-enables it here only, where the invariants above
+// are upheld.
+#![allow(unsafe_code)]
+
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::net::Ipv4Addr;
 use std::ptr::NonNull;
@@ -224,6 +229,16 @@ impl Peer {
     /// Raw pointer for ENet calls.
     fn as_ptr(self) -> *mut ENetPeer {
         self.ptr.as_ptr()
+    }
+
+    /// Identity of this peer slot inside its [`Host`].
+    ///
+    /// The value is unique while the slot is occupied and is used by the
+    /// session/host bookkeeping as a map key; ENet may reuse the slot after a
+    /// disconnect, and callers must drop the entry when they observe
+    /// [`EventKind::Disconnect`].
+    pub fn key(self) -> usize {
+        self.ptr.as_ptr() as usize
     }
 }
 

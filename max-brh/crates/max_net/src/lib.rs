@@ -23,14 +23,27 @@
 //!   [`max_types::input::Command`]; lobby/audit packets have their own DTOs.
 //! * [`handshake`] — `TP 00`/`TP 03`, `SHA256(MAX.RES)‖SHA256(PATCHES.RES)`.
 //! * [`session`] — ENet connect, handshake, async command/event loop, barriers.
+//! * [`host`] — ENet **server** for the P2P host mode (`PLAN-host-mode.md` §5
+//!   H1): accept loop, per-peer `TP 00`/`TP 03`, multicast-except-source relay,
+//!   host heartbeat (packet 55). Transport only — no game policy.
 //! * [`enet`] — the only `unsafe` module: a minimal wrapper over the vendored
 //!   C library (see its module docs for the safety argument).
 //! * [`horizon`] — typed async gRPC façade over the generated `horizon.v1`
 //!   stubs (mock-server integration tests included).
+//!
+//! # Safety
+//!
+//! ENet is a C library, so exactly one module — [`enet`] — is allowed to use
+//! `unsafe` (it opts back in with `#![allow(unsafe_code)]`). Every other module,
+//! including the host transport, is covered by the crate-level `deny` below and
+//! by its own `#![forbid(unsafe_code)]`.
+
+#![deny(unsafe_code)]
 
 pub mod enet;
 pub mod handshake;
 pub mod horizon;
+pub mod host;
 pub mod wire;
 
 // Legacy WS JSON lobby (kept for `max_app`; superseded by `horizon`).
@@ -47,14 +60,20 @@ pub use horizon::{
     HorizonError, PingResult, Ticket, TicketKind, CLIENT_NAME,
     PROTOCOL_VERSION as HORIZON_PROTOCOL_VERSION,
 };
+pub use host::{
+    HostConfig, HostError, HostEvent, HostEventKind, HostHandle, HostHeartbeat, HostSession,
+    PeerId, Recipient, DEFAULT_HEARTBEAT_PERIOD, DEFAULT_HOST_PORT, DEFAULT_MAX_PEERS,
+    HOST_HEARTBEAT_PACKET_NUMBER, HOST_HEARTBEAT_TYPE,
+};
 pub use protocol::{GameListing, JoinRequest, LobbyEvent};
 pub use session::{
-    complex_summary_for, crc_barrier_for, payload_team, BarrierAction, BarrierTiming, BarrierTracker,
-    Session, SessionCommand, SessionConfig, SessionError, SessionEvent, SessionHandle,
+    complex_summary_for, crc_barrier_for, payload_team, BarrierAction, BarrierTiming,
+    BarrierTracker, Session, SessionCommand, SessionConfig, SessionError, SessionEvent,
+    SessionHandle,
 };
 pub use wire::{
     decode_network_command, decode_remote_command, encode_network_command, encode_remote_command,
     state_sync_for, GameOptions, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode,
-    Packet, Reader, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, TeamState,
-    UnitState, WireError, WireName, WireResult, Writer, STATE_SYNC_UNITS_PER_PACKET,
+    Packet, Reader, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, TeamState, UnitState,
+    WireError, WireName, WireResult, Writer, STATE_SYNC_UNITS_PER_PACKET,
 };
