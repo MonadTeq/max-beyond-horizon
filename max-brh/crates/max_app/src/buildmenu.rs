@@ -1389,11 +1389,11 @@ impl crate::App {
                 self.hud.mouse_position = Some((x, y));
                 BuildMenuAction::None
             }
-            crate::ui::InputEvent::MouseClick(x, y) => menu.click(&self.state, x, y),
+            crate::ui::InputEvent::MouseClick(x, y) => menu.click(self.state(), x, y),
             // In C++ the right click is not assigned in the menu (`ProcessKey` does not catch
             // `RMB`); here it closes the screen, like `Esc`.
             crate::ui::InputEvent::RightClick(..) => BuildMenuAction::Close,
-            crate::ui::InputEvent::Key(key) => menu.key(&self.state, key),
+            crate::ui::InputEvent::Key(key) => menu.key(self.state(), key),
         };
 
         self.build_menu = Some(menu);
@@ -1426,7 +1426,7 @@ impl crate::App {
         // `UnitsManager_IssueBuildOrder`: there must be a passable 2×2
         // anchor next to the builder, otherwise `BuildMenu` stays open with
         // the message "Invalid square" (`_(1031)`).
-        if let Some((unit_type, build_rate)) = menu.site_selection_target(&self.state, force_path)
+        if let Some((unit_type, build_rate)) = menu.site_selection_target(self.state(), force_path)
         {
             self.build_menu = Some(menu);
 
@@ -1448,7 +1448,7 @@ impl crate::App {
             return Some(menu.status.clone());
         }
 
-        let command = menu.command(&self.state);
+        let command = menu.command(self.state());
         let status = menu.status.clone();
         let head = menu.queue.first().copied().or_else(|| menu.selected_type());
         let build_rate = menu.build_rate;
@@ -1512,7 +1512,7 @@ impl crate::App {
         let Some(mut menu) = self.build_menu.take() else {
             return false;
         };
-        let applied = menu.set_rate(&self.state, rate);
+        let applied = menu.set_rate(self.state(), rate);
         self.build_menu = Some(menu);
         applied
     }

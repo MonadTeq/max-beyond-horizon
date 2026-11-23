@@ -1143,7 +1143,7 @@ impl App {
                 // `GameManager_AutoSelectNext` after an order completes
                 // (`UnitInfo::MoveFinished`): the order snapshot — before the tick.
                 let before = self.selected_order_snapshot();
-                self.state.tick();
+                self.state_mut().tick();
                 // Combat sounds of this tick (`UnitInfo::PrepareFire`/
                 // `StartExplosion`): the queue is taken by `main.rs` (`AudioPlayer`).
                 self.collect_combat_sounds();
@@ -1176,7 +1176,7 @@ impl App {
             }
             LocalPhase::AiTurn(team) => {
                 let before = self.selected_order_snapshot();
-                self.state.tick();
+                self.state_mut().tick();
                 // AI combat is heard by the player the same as own (`PlaySfx` in C++ does not
                 // depend on the unit owner) — the frame queue.
                 self.collect_combat_sounds();

@@ -448,13 +448,13 @@ impl crate::App {
             return false;
         };
         let (builder, team, builder_type) = (menu.unit, menu.team, menu.builder_type);
-        let Some(unit) = self.state.unit(builder) else {
+        let Some(unit) = self.state().unit(builder) else {
             return false;
         };
         let builder_grid = unit.grid;
 
         let Some(anchor) =
-            production::initial_build_site(&self.state, team, unit_type, builder_grid, &[builder])
+            production::initial_build_site(self.state(), team, unit_type, builder_grid, &[builder])
         else {
             return false;
         };
@@ -491,7 +491,7 @@ impl crate::App {
         let (valid, anchor) = {
             let site = self.build_site.as_ref()?;
 
-            (site.valid(&self.state), site.anchor)
+            (site.valid(self.state()), site.anchor)
         };
 
         if !valid {
@@ -502,7 +502,7 @@ impl crate::App {
 
         let site = self.build_site.take()?;
         let command = crate::buildmenu::build_order_command(
-            &self.state,
+            self.state(),
             site.builder,
             site.anchor,
             &[site.unit_type],

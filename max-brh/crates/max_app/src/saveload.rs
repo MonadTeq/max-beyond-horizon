@@ -895,7 +895,7 @@ impl crate::App {
     /// V70 save bytes of the current match (with [`SaveMeta`] updated).
     pub fn save_v70_bytes(&mut self, save_name: &str) -> Result<Vec<u8>, String> {
         self.sync_save_meta(save_name);
-        self.state
+        self.state()
             .to_save_bytes()
             .map_err(|error| format!("V70-запись: {error}"))
     }

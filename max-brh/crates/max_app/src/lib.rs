@@ -97,6 +97,7 @@ use max_core::setup::{
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
+use max_core::universe::{GameEvent, StateRef, SubmitOutcome};
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
 
@@ -540,7 +541,15 @@ impl fmt::Display for AppDigest {
 #[derive(Debug, Clone)]
 pub struct App {
     config: AppConfig,
-    state: GameState,
+    /// The owning facade over the match state (stage A).
+    ///
+    /// The state itself is not a field of `App`: the facade owns it and exposes
+    /// [`App::state`]/[`App::state_mut`] as temporary stage-A delegates
+    /// (`game-universe-stage-a.md` §4).
+    universe: max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    /// The application event cursor (stage A: the combat sounds of a tick are read
+    /// from the facade event stream, see [`App::tick`]).
+    universe_events: max_core::universe::EventStream,
     assets: Option<Assets>,
     viewport: Viewport,
     ticks: u64,
@@ -795,10 +804,16 @@ impl App {
     /// Empty application (no assets; the state — an empty `GameState::new` match).
     pub fn new(config: AppConfig) -> Self {
         let viewport = Viewport::new(config.screen_width, config.screen_height);
+        let universe = max_core::universe::GameUniverse::new(
+            GameState::new(),
+            max_core::universe::LocalDispatcher,
+        );
+        let universe_events = universe.subscribe();
 
         Self {
             config,
-            state: GameState::new(),
+            universe,
+            universe_events,
             assets: None,
             viewport,
             ticks: 0,
@@ -849,13 +864,44 @@ impl App {
     }
 
     /// Match state.
+    ///
+    /// Stage A only: a temporary delegate to the facade (guardrail 2); the
+    /// renderer migrates to [`App::state_ref`] and stage B removes this accessor.
     pub fn state(&self) -> &GameState {
-        &self.state
+        self.universe.state()
     }
 
     /// Editable match state.
+    ///
+    /// Stage A only: a temporary delegate to the facade (guardrail 2).
     pub fn state_mut(&mut self) -> &mut GameState {
-        &mut self.state
+        self.universe.state_mut()
+    }
+
+    /// The facade view of the match state (pull model, stage A).
+    ///
+    /// This is the renderer-facing read path: a borrowed snapshot without a clone.
+    /// The name is `state_ref`, not `snapshot`, because [`App::snapshot`] already
+    /// returns the canonical state bytes and the stage-A task keeps it as is.
+    pub fn state_ref(&self) -> StateRef<'_> {
+        self.universe.snapshot()
+    }
+
+    /// Submits a command through the facade (the single point of change).
+    ///
+    /// Stage A keeps [`App::apply`]/[`App::enqueue`] for the paths that are not
+    /// migrated yet; the migrated paths take this one.
+    pub fn submit(&mut self, command: Command) -> SubmitOutcome {
+        self.universe.submit(command)
+    }
+
+    /// Applies the commands that are already queued (a configuration boundary).
+    ///
+    /// Used where the current code must see a lobby packet before the world is
+    /// regenerated (`net::initialize_game` reads the mission supplies) — the
+    /// equivalent of the first tick's `apply_pending_commands`.
+    pub fn flush_commands(&mut self) -> usize {
+        self.universe.state_mut().apply_pending_commands()
     }
 
     /// Open `BuildMenu` (P2); `None` — the screen is closed.
@@ -877,11 +923,11 @@ impl App {
             return false;
         };
 
-        let Some(menu) = buildmenu::BuildMenu::new(&self.state, id) else {
+        let Some(menu) = buildmenu::BuildMenu::new(self.state(), id) else {
             return false;
         };
 
-        if menu.team != self.state.player_team {
+        if menu.team != self.state().player_team {
             return false;
         }
 
@@ -910,14 +956,14 @@ impl App {
     /// Called by the popup `buy upg` item ([`unitmenu::ItemId::BuyUpgrade`]) and
     /// the `U` key (shortcut) — for a selected unit of own team.
     pub fn open_upgrade_menu(&mut self) -> bool {
-        let Some(team) = self.hud.selected.and_then(|id| self.state.unit(id)) else {
+        let Some(team) = self.hud.selected.and_then(|id| self.state().unit(id)) else {
             return false;
         };
         let team = team.team;
-        if team != self.state.player_team {
+        if team != self.state().player_team {
             return false;
         }
-        let Some(menu) = upgrademenu::UpgradeMenu::new(&self.state, team) else {
+        let Some(menu) = upgrademenu::UpgradeMenu::new(self.state(), team) else {
             return false;
         };
         self.upgrade_menu = Some(menu);
@@ -937,7 +983,7 @@ impl App {
     /// documented in `upgrademenu` (module header).
     pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.upgrade_menu.take()?;
-        let changed = menu.commit(&mut self.state);
+        let changed = menu.commit(self.state_mut());
 
         if online {
             for (unit_type, values) in &changed {
@@ -952,7 +998,7 @@ impl App {
         }
 
         let gold = self
-            .state
+            .state()
             .team_units
             .get(menu.team.0 as usize)
             .map(|units| units.gold)
@@ -974,8 +1020,8 @@ impl App {
             return None;
         };
         let action = match event {
-            InputEvent::MouseClick(x, y) => menu.click(&self.state, x, y),
-            InputEvent::Key(key) => menu.key(&self.state, key),
+            InputEvent::MouseClick(x, y) => menu.click(self.state(), x, y),
+            InputEvent::Key(key) => menu.key(self.state(), key),
             _ => upgrademenu::UpgradeAction::None,
         };
         self.upgrade_menu = Some(menu);
@@ -997,7 +1043,7 @@ impl App {
                 .len()
                 .saturating_sub(crate::upgrademenu::LIST_ROWS as usize),
         );
-        menu.rebuild_controls(&self.state);
+        menu.rebuild_controls(self.state());
         self.upgrade_menu = Some(menu);
         true
     }
@@ -1007,7 +1053,7 @@ impl App {
         let Some(mut menu) = self.upgrade_menu.take() else {
             return false;
         };
-        let changed = menu.adjust(&self.state, row, increase);
+        let changed = menu.adjust(self.state(), row, increase);
         self.upgrade_menu = Some(menu);
         changed
     }
@@ -1034,16 +1080,16 @@ impl App {
         let Some(id) = self.hud.selected else {
             return false;
         };
-        let Some(unit) = self.state.unit(id) else {
+        let Some(unit) = self.state().unit(id) else {
             return false;
         };
-        if unit.team != self.state.player_team
+        if unit.team != self.state().player_team
             || unit.unit_type != UnitType::ResearchCentre
             || unit.orders != max_core::enums::UnitOrder::PowerOn
         {
             return false;
         }
-        let Some(menu) = researchmenu::ResearchMenu::new(&self.state, unit.team) else {
+        let Some(menu) = researchmenu::ResearchMenu::new(self.state(), unit.team) else {
             return false;
         };
 
@@ -1060,7 +1106,7 @@ impl App {
     /// `GameState` (`set_research_allocation`) and close the screen.
     pub fn commit_research_menu(&mut self) -> Option<String> {
         let mut menu = self.research_menu.take()?;
-        let actual = menu.commit(&mut self.state);
+        let actual = menu.commit(self.state_mut());
         let total: u32 = actual.iter().sum();
 
         Some(format!("Research: {} center(s) assigned (Done)", total))
@@ -1122,15 +1168,15 @@ impl App {
         let Some(id) = self.hud.selected else {
             return false;
         };
-        let Some(unit) = self.state.unit(id).cloned() else {
+        let Some(unit) = self.state().unit(id).cloned() else {
             return false;
         };
 
-        if unit.team != self.state.player_team {
+        if unit.team != self.state().player_team {
             return false;
         }
 
-        if unit.team != self.state.active_turn_team {
+        if unit.team != self.state().active_turn_team {
             return false;
         }
 
@@ -1143,7 +1189,7 @@ impl App {
         // (`game_manager.cpp:6918-6926`).
         if unit.orders == UnitOrder::Build && unit.state == UnitOrderState::UnitReady {
             if let Some(stored) = unit.parent_unit {
-                if let Some(stored_unit) = self.state.unit(stored) {
+                if let Some(stored_unit) = self.state().unit(stored) {
                     if stored_unit.orders == UnitOrder::Idle {
                         self.hud.select(Some(stored));
                         self.hud.preview = None;
@@ -1179,7 +1225,7 @@ impl App {
         let zoom = viewport.zoom();
         let anchor = (center_x + zoom as i32 / 2 + area.ulx, center_y + area.uly);
 
-        let Some(mut menu) = unitmenu::UnitMenu::new(&self.state, &unit, anchor, area, zoom) else {
+        let Some(mut menu) = unitmenu::UnitMenu::new(self.state(), &unit, anchor, area, zoom) else {
             return false;
         };
 
@@ -1235,7 +1281,7 @@ impl App {
     pub fn selected_complex(&self) -> Option<u16> {
         let id = self.hud.selected?;
 
-        Some(self.state.unit(id)?.complex?.0 as u16)
+        Some(self.state().unit(id)?.complex?.0 as u16)
     }
 
     /// Complex for QA economic checks: of the selected unit, and if it has no
@@ -1246,9 +1292,9 @@ impl App {
             return Some(complex);
         }
 
-        self.state
+        self.state()
             .team_units
-            .get(self.state.player_team.0 as usize)
+            .get(self.state().player_team.0 as usize)
             .and_then(|units| units.complexes().first())
             .map(|complex| complex.id as u16)
     }
@@ -1267,14 +1313,14 @@ impl App {
         let Some(id) = self.hud.selected else {
             return false;
         };
-        let Some(unit) = self.state.unit(id) else {
+        let Some(unit) = self.state().unit(id) else {
             return false;
         };
-        if unit.team != self.state.player_team {
+        if unit.team != self.state().player_team {
             return false;
         }
 
-        let Some(menu) = allocmenu::AllocMenu::new(&mut self.state, id) else {
+        let Some(menu) = allocmenu::AllocMenu::new(self.state_mut(), id) else {
             return false;
         };
 
@@ -1299,7 +1345,7 @@ impl App {
         let Some(mut menu) = self.alloc_menu.take() else {
             return None;
         };
-        let action = menu.input(&mut self.state, event);
+        let action = menu.input(self.state_mut(), event);
         self.alloc_menu = Some(menu);
         Some(action)
     }
@@ -1309,7 +1355,7 @@ impl App {
         let Some(mut menu) = self.alloc_menu.take() else {
             return false;
         };
-        menu.set_level(&mut self.state, kind, target);
+        menu.set_level(self.state_mut(), kind, target);
         self.alloc_menu = Some(menu);
         true
     }
@@ -1320,9 +1366,9 @@ impl App {
             return false;
         };
         let changed = if increase {
-            menu.increase(&mut self.state, kind)
+            menu.increase(self.state_mut(), kind)
         } else {
-            menu.decrease(&mut self.state, kind)
+            menu.decrease(self.state_mut(), kind)
         };
         self.alloc_menu = Some(menu);
         changed
@@ -1347,13 +1393,13 @@ impl App {
         let complex_id = menu.complex.0;
         let team = menu.team;
         let ids = self
-            .state
+            .state()
             .unit_list(max_core::unit::UnitListKind::Stationary)
             .to_vec();
         let mut packets = Vec::new();
 
         for id in ids {
-            let Some(unit) = self.state.unit(id) else {
+            let Some(unit) = self.state().unit(id) else {
                 continue;
             };
             if unit.team != team
@@ -1370,7 +1416,7 @@ impl App {
                 } else {
                     (unit.orders, unit.state)
                 };
-            let fire_on = self.state.order_data(id).fire_on;
+            let fire_on = self.state().order_data(id).fire_on;
 
             packets.push(max_core::input::Command::Order(
                 max_core::input::Packet08Order {
@@ -1430,11 +1476,11 @@ impl App {
     /// restore the parent). `false` — the window did not open (no
     /// complex/cargo type).
     pub fn open_transfer_menu(&mut self, source: UnitId, target: UnitId) -> bool {
-        let Some(menu) = transfermenu::TransferMenu::new(&self.state, source, target) else {
+        let Some(menu) = transfermenu::TransferMenu::new(self.state(), source, target) else {
             return false;
         };
 
-        if let Some(unit) = self.state.unit_mut(source) {
+        if let Some(unit) = self.state_mut().unit_mut(source) {
             unit.parent_unit = Some(target);
         }
 
@@ -1476,7 +1522,7 @@ impl App {
         }
 
         // `unit1->transfer_cargo = cargo_transferred` before `SendNetPacket_08`.
-        if let Some(unit) = self.state.unit_mut(menu.unit) {
+        if let Some(unit) = self.state_mut().unit_mut(menu.unit) {
             unit.transfer_cargo = amount;
             unit.parent_unit = Some(menu.target);
         }
@@ -1581,7 +1627,7 @@ impl App {
             }
             unitmenu::ItemId::Sentry => {
                 let sentry = self
-                    .state
+                    .state()
                     .unit(unit_id)
                     .is_some_and(|unit| unit.orders == max_core::enums::UnitOrder::Sentry);
 
@@ -1611,7 +1657,7 @@ impl App {
             }
             unitmenu::ItemId::Stop => {
                 let move_to = self
-                    .state
+                    .state()
                     .unit(unit_id)
                     .map(|unit| unit.target_grid)
                     .unwrap_or(Point::ZERO);
@@ -1651,7 +1697,7 @@ impl App {
                 // stack: `Await` + `STATIONARY` → `READY_TO_EXECUTE_ORDER`
                 // (by an order, so that the state goes to the network too), then the selection
                 // is cleared (`auto_select` in C++).
-                let ready = self.state.unit(unit_id).is_some_and(|unit| {
+                let ready = self.state().unit(unit_id).is_some_and(|unit| {
                     unit.orders == max_core::enums::UnitOrder::Await
                         && !unit.is_mobile()
                         && unit.state != max_core::enums::UnitOrderState::ReadyToExecuteOrder
@@ -1663,7 +1709,7 @@ impl App {
                         unit_id,
                         max_core::enums::UnitOrder::Await,
                         max_core::enums::UnitOrderState::ReadyToExecuteOrder,
-                        self.state
+                        self.state()
                             .unit(unit_id)
                             .map(|unit| unit.target_grid)
                             .unwrap_or(Point::ZERO),
@@ -1677,7 +1723,7 @@ impl App {
                 "Done".to_string()
             }
             unitmenu::ItemId::Manual => {
-                let unit = self.state.unit(unit_id).cloned()?;
+                let unit = self.state().unit(unit_id).cloned()?;
                 let order = unit.orders;
                 let order_state = if order == max_core::enums::UnitOrder::Sentry {
                     max_core::enums::UnitOrderState::ExecutingOrder
@@ -1702,7 +1748,7 @@ impl App {
                 }
             }
             unitmenu::ItemId::Auto => {
-                let Some(unit) = self.state.unit_mut(unit_id) else {
+                let Some(unit) = self.state_mut().unit_mut(unit_id) else {
                     return Some("Auto: юнит исчез".to_string());
                 };
                 unit.auto_survey = !unit.auto_survey;
@@ -1785,7 +1831,7 @@ impl App {
                 // `UnitsManager_Popup_OnClick_StopRemove` (`units_manager.cpp:1082`):
                 // `Access_GetRemovableRubble` → `parent = rubble`,
                 // `build_time` 4/1 and `ORDER_CLEAR`/`INIT`.
-                let Some(unit) = self.state.unit(unit_id).cloned() else {
+                let Some(unit) = self.state().unit(unit_id).cloned() else {
                     return Some("remove: юнит исчез".to_string());
                 };
                 let team = unit.team;
@@ -1796,12 +1842,12 @@ impl App {
                 };
 
                 let rubble_is_building = self
-                    .state
+                    .state()
                     .unit(rubble)
                     .is_some_and(|unit| unit.is_quad());
                 let clearing_time = if rubble_is_building { 4 } else { 1 };
 
-                if let Some(unit) = self.state.unit_mut(unit_id) {
+                if let Some(unit) = self.state_mut().unit_mut(unit_id) {
                     unit.parent_unit = Some(rubble);
                     unit.build_time = clearing_time;
                 }
@@ -2018,11 +2064,11 @@ impl App {
     /// Opens the dialog for a building — `UnitsManager_Popup_OnClick_Remove`
     /// (`units_manager.cpp:506`): only for a stationary own unit.
     pub fn open_self_destruct(&mut self, unit_id: UnitId) -> bool {
-        let Some(unit) = self.state.unit(unit_id) else {
+        let Some(unit) = self.state().unit(unit_id) else {
             return false;
         };
 
-        if unit.team != self.state.player_team || unit.is_mobile() {
+        if unit.team != self.state().player_team || unit.is_mobile() {
             return false;
         }
 
@@ -2048,7 +2094,7 @@ impl App {
             }
             selfdestruct::SelfDestructAction::Cancel => {}
             selfdestruct::SelfDestructAction::Explode => {
-                if let Some(command) = unitmenu::explode_order(&self.state, menu.unit) {
+                if let Some(command) = unitmenu::explode_order(self.state(), menu.unit) {
                     self.hud.pending.push(command);
                 }
             }
@@ -2096,13 +2142,43 @@ impl App {
         // does not grow over tens of thousands of soak frames.
         const MAX_QUEUED: usize = 64;
 
-        let events = self.state.take_unit_sounds();
+        let events = self.state_mut().take_unit_sounds();
         let mut added = 0;
 
         for event in events {
             if let Some(sound) = sfx::combat_sound(event) {
                 self.unit_sounds.push(sound);
                 added += 1;
+            }
+        }
+
+        if self.unit_sounds.len() > MAX_QUEUED {
+            let excess = self.unit_sounds.len() - MAX_QUEUED;
+            self.unit_sounds.drain(0..excess);
+        }
+
+        added
+    }
+
+    /// Takes the combat sounds of the facade event stream ([`App::tick`], stage A).
+    ///
+    /// The facade publishes `GameEvent::Sound` from `GameState::unit_sounds`, so the
+    /// frame queue stays exactly the same as with [`App::collect_combat_sounds`].
+    /// Other events are ignored in stage A: the local match still reads its UI
+    /// reports from the state (`local.rs`, the `local_update` tick path).
+    fn collect_facade_sounds(&mut self) -> usize {
+        const MAX_QUEUED: usize = 64;
+
+        // Separate field borrows: the cursor and the facade are disjoint fields.
+        let events = self.universe_events.drain(&mut self.universe);
+        let mut added = 0;
+
+        for event in events {
+            if let GameEvent::Sound(event) = event {
+                if let Some(sound) = sfx::combat_sound(event) {
+                    self.unit_sounds.push(sound);
+                    added += 1;
+                }
             }
         }
 
@@ -2296,8 +2372,8 @@ impl App {
         let Some(id) = self.hud.selected else {
             return false;
         };
-        let player = self.state.player_team;
-        let Some(unit) = self.state.unit(id) else {
+        let player = self.state().player_team;
+        let Some(unit) = self.state().unit(id) else {
             return false;
         };
 
@@ -2305,8 +2381,8 @@ impl App {
             return false;
         }
 
-        let finished_turn = self.state.teams[player.0 as usize].finished_turn;
-        let allowed = self.state.play_mode == max_core::enums::PlayMode::TurnBased
+        let finished_turn = self.state().teams[player.0 as usize].finished_turn;
+        let allowed = self.state().play_mode == max_core::enums::PlayMode::TurnBased
             || unit.team == player
             || finished_turn;
 
@@ -2333,7 +2409,7 @@ impl App {
     /// "the order has just completed" from "the unit stands and waits".
     fn selected_order_snapshot(&self) -> Option<OrderSnapshot> {
         let id = self.hud.selected?;
-        let unit = self.state.unit(id)?;
+        let unit = self.state().unit(id)?;
 
         Some(OrderSnapshot {
             id,
@@ -2391,7 +2467,7 @@ impl App {
             return;
         }
 
-        let finished = match self.state.unit(before.id) {
+        let finished = match self.state().unit(before.id) {
             // The unit was destroyed on this tick (`CheckIfDestroyed` in C++ calls
             // `GameManager_AutoSelectNext` for the selected one).
             None => true,
@@ -2406,7 +2482,7 @@ impl App {
             return;
         }
 
-        if let Some(unit) = self.state.unit(before.id) {
+        if let Some(unit) = self.state().unit(before.id) {
             if unit.hits > 0 && self.is_interactable(unit) {
                 return;
             }
@@ -2427,7 +2503,7 @@ impl App {
             return;
         };
 
-        if let Some(unit) = self.state.unit(id) {
+        if let Some(unit) = self.state().unit(id) {
             if unit.hits > 0 && self.is_interactable(unit) {
                 return;
             }
@@ -2470,8 +2546,8 @@ impl App {
                 i32::from(unit.base_values.get_attribute(max_core::unit_values::ATTRIB_RANGE));
             let squared = range * range;
 
-            for id in self.state.unit_ids_in_order() {
-                let Some(enemy) = self.state.unit(id) else {
+            for id in self.state().unit_ids_in_order() {
+                let Some(enemy) = self.state().unit(id) else {
                     continue;
                 };
 
@@ -2493,14 +2569,14 @@ impl App {
     /// valid team unit in `Access_UnitsLists` order, wrapping to
     /// the start; the camera centers if it is outside the window.
     pub fn select_next_unit(&mut self) -> Option<UnitId> {
-        let player = self.state.player_team;
+        let player = self.state().player_team;
         let current = self.hud.selected;
         let next = self.next_valid_unit(player, current)?;
 
         self.close_unit_menu();
         self.select_unit(Some(next));
 
-        let grid = self.state.unit(next).map(|unit| unit.grid);
+        let grid = self.state().unit(next).map(|unit| unit.grid);
 
         if let Some(grid) = grid {
             if !self.map_viewport().is_tile_visible(grid.x, grid.y) {
@@ -2527,7 +2603,7 @@ impl App {
         let mut flat: Vec<UnitId> = Vec::new();
 
         for kind in ORDER_ {
-            flat.extend_from_slice(self.state.unit_list(kind));
+            flat.extend_from_slice(self.state().unit_list(kind));
         }
 
         let start = current
@@ -2537,7 +2613,7 @@ impl App {
 
         for step in 0..flat.len() {
             let id = flat[(start + step) % flat.len()];
-            let Some(unit) = self.state.unit(id) else {
+            let Some(unit) = self.state().unit(id) else {
                 continue;
             };
 
@@ -2553,8 +2629,8 @@ impl App {
 
         // `GameManager_GetFirstRelevantUnit`: a mine, otherwise the first active unit.
         for kind in ORDER_ {
-            for id in self.state.unit_list(kind) {
-                let Some(unit) = self.state.unit(*id) else {
+            for id in self.state().unit_list(kind) {
+                let Some(unit) = self.state().unit(*id) else {
                     continue;
                 };
 
@@ -2565,8 +2641,8 @@ impl App {
         }
 
         for kind in ORDER_ {
-            for id in self.state.unit_list(kind) {
-                let Some(unit) = self.state.unit(*id) else {
+            for id in self.state().unit_list(kind) {
+                let Some(unit) = self.state().unit(*id) else {
                     continue;
                 };
 
@@ -2667,11 +2743,14 @@ impl App {
     pub fn load_save_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
 
-        self.state = GameState::from_save(&save);
+        // Stage A: the facade owns the state, so a load replaces the universe
+        // (`GameUniverse::from_save` counts the load as a state version).
+        self.universe = max_core::universe::GameUniverse::from_save(&save);
+        self.universe_events = self.universe.subscribe();
         // `SaveLoad_Load` leaves the player `settings` as is: `enemy_halt`
         // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
         // the timers into the settings).
-        self.state.enemy_halt = self.preferences.enemy_halt;
+        self.state_mut().enemy_halt = self.preferences.enemy_halt;
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
@@ -2943,7 +3022,13 @@ impl App {
             report.surface_crc
         );
 
-        self.state = state;
+        // Stage A: the generated state becomes the new facade-owned state; the
+        // event cursor is re-subscribed because the buffer starts empty.
+        self.universe = max_core::universe::GameUniverse::new(
+            state,
+            max_core::universe::LocalDispatcher,
+        );
+        self.universe_events = self.universe.subscribe();
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
@@ -2973,17 +3058,19 @@ impl App {
     /// so the setting works in a lockstep match too.
     pub fn tick(&mut self) -> TickReport {
         let before = self.selected_order_snapshot();
-        self.state.tick();
-        // Combat sounds of this tick (`UnitInfo::PrepareFire`/`StartExplosion`).
-        self.collect_combat_sounds();
+        // Stage A: the tick goes through the facade (the single time-advance point).
+        self.universe.tick();
+        // Combat sounds of this tick (`UnitInfo::PrepareFire`/`StartExplosion`):
+        // the facade moved them from the state into the event stream.
+        self.collect_facade_sounds();
         self.auto_select_after_tick(before);
         self.ticks += 1;
 
         TickReport {
             tick: self.ticks,
-            turn_counter: self.state.turn_counter,
-            game_state: self.state.game_state,
-            units: self.state.unit_count(),
+            turn_counter: self.state().turn_counter,
+            game_state: self.state().game_state,
+            units: self.state().unit_count(),
         }
     }
 
@@ -3007,7 +3094,7 @@ impl App {
     /// If [`App::update_visual_units`] has not been called yet,
     /// the simulation cell is returned — headless frames and tests see exactly `grid`.
     pub fn visual_position(&self, id: UnitId) -> Option<(f32, f32)> {
-        let unit = self.state.unit(id)?;
+        let unit = self.state().unit(id)?;
         Some(
             self.visual_units
                 .get(&id)
@@ -3027,7 +3114,7 @@ impl App {
     /// The value is for drawing only: not part of the snapshot/CRC and does not
     /// change the simulation.
     pub fn visual_angle(&self, id: UnitId) -> Option<u8> {
-        let unit = self.state.unit(id)?;
+        let unit = self.state().unit(id)?;
 
         Some(
             match self.visual_paths.get(&id).and_then(|queue| queue.front()) {
@@ -3194,13 +3281,13 @@ impl App {
             return;
         }
 
-        let ids = self.state.unit_ids_in_order();
+        let ids = self.state().unit_ids_in_order();
         // C++ `settings["effects"]` (`settings.cpp:128`): with effects
         // disabled `UnitsManager_ProcessOrderBuild`/`ProcessOrderSentry`
         // (`units_manager.cpp:2857/3030`) do not advance frames, so our
         // frame clock does not run either — the frame stays static.
         let effects = self.preferences.effects;
-        let state = &self.state;
+        let state = self.universe.snapshot();
 
         self.frame_anims.retain(|id, _| state.unit(*id).is_some());
 
@@ -3246,8 +3333,10 @@ impl App {
         }
 
         // "Growth": start from the simulation `scaler_adjust` (C++ 2^-n).
+        // A field borrow of the facade keeps `growth_anims` disjoint.
+        let universe = &self.universe;
         for id in &ids {
-            let Some(unit) = self.state.unit(*id) else {
+            let Some(unit) = universe.state().unit(*id) else {
                 continue;
             };
 
@@ -3269,7 +3358,7 @@ impl App {
         // reset `scaler_adjust` (in QA the simulation does not tick between frames)
         // would start "growing" anew on every frame.
         self.growth_anims
-            .retain(|id, _| self.state.unit(*id).is_some());
+            .retain(|id, _| universe.state().unit(*id).is_some());
     }
 
     /// Pulls the visual positions toward the simulation ones.
@@ -3303,7 +3392,7 @@ impl App {
         // `SLFDOPN1..6` frames of the self-destruct dialog (`TIMER_FPS_TO_MS(48)`).
         self.advance_self_destruct(dt);
 
-        let ids = self.state.unit_ids_in_order();
+        let ids = self.state().unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
         // `fast_movement` ("Double Unit Steps"): C++ doubles the
         // movement speed (`UnitInfo::Move`: `velocity += FastMovement ? 2 : 1`,
@@ -3319,7 +3408,7 @@ impl App {
         };
 
         // Separate field borrows: `retain` reads the state.
-        let state = &self.state;
+        let state = self.universe.snapshot();
         let visual = &mut self.visual_units;
         let goals = &mut self.visual_goals;
         let paths = &mut self.visual_paths;
@@ -3428,7 +3517,7 @@ impl App {
     /// For the network/lockstep loop commands come in [`max_net::SessionEvent`]
     /// and are applied in receipt order — exactly like `ProcessNetPackets`.
     pub fn apply(&mut self, command: Command) -> ApplyOutcome {
-        let outcome = apply_command(&mut self.state, &command);
+        let outcome = apply_command(self.state_mut(), &command);
 
         if outcome == ApplyOutcome::Applied {
             self.applied_commands += 1;
@@ -3439,12 +3528,12 @@ impl App {
 
     /// Puts a command into the `GameState` queue (applied on the next tick).
     pub fn enqueue(&mut self, command: Command) {
-        self.state.enqueue(command);
+        self.state_mut().enqueue(command);
     }
 
     /// Canonical state digest.
     pub fn digest(&self) -> AppDigest {
-        AppDigest::capture(&self.state, self.ticks)
+        AppDigest::capture(self.state(), self.ticks)
     }
 
     /// Canonical state bytes ([`GameState::snapshot_bytes`]).
@@ -3452,7 +3541,7 @@ impl App {
     /// The same snapshot whose CRC is part of [`AppDigest::state_digest`];
     /// convenient to save to a file and compare two runs byte by byte.
     pub fn snapshot(&self) -> Vec<u8> {
-        self.state.snapshot_bytes()
+        self.state().snapshot_bytes()
     }
 
     /// Headless demo: load a save, run `turns` ticks, return the digest.
@@ -3479,15 +3568,15 @@ impl App {
     /// the neighboring cell with the stationary mine: it was selected, RMB answered
     /// «Unit cannot move (air/stationary)», and the unit did not move.
     pub fn focus_player(&mut self) {
-        let team = self.state.player_team;
+        let team = self.state().player_team;
         let mut grid = None;
 
         // 1. `Access_GetFirstMiningStation`: a team mine in `StationaryUnits`.
         for id in self
-            .state
+            .state()
             .unit_list(max_core::unit::UnitListKind::Stationary)
         {
-            if let Some(unit) = self.state.unit(*id) {
+            if let Some(unit) = self.state().unit(*id) {
                 if unit.team == team && unit.unit_type == UnitType::MiningStation {
                     grid = Some(unit.grid);
                     break;
@@ -3502,8 +3591,8 @@ impl App {
                 max_core::unit::UnitListKind::MobileAir,
                 max_core::unit::UnitListKind::Stationary,
             ] {
-                for id in self.state.unit_list(kind) {
-                    if let Some(unit) = self.state.unit(*id) {
+                for id in self.state().unit_list(kind) {
+                    if let Some(unit) = self.state().unit(*id) {
                         if unit.team == team && unit.orders != max_core::enums::UnitOrder::Idle {
                             grid = Some(unit.grid);
                             break;

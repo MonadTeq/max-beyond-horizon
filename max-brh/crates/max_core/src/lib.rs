@@ -100,6 +100,7 @@ pub mod transfer;
 pub mod unit;
 pub mod unit_order;
 pub mod unit_values;
+pub mod universe;
 pub mod victory;
 
 // Lower-layer types (Infrastructure, F5.2) live in `max_types`; here they are
@@ -240,6 +241,10 @@ pub use unit_values::{
     ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_ATTACK_RADIUS, ATTRIB_COUNT, ATTRIB_FUEL, ATTRIB_HITS,
     ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SCAN, ATTRIB_SPEED, ATTRIB_STORAGE,
     ATTRIB_TURNS, BASE_UNIT_VALUES, CLAN_TRADEOFFS, UNIT_COUNT,
+};
+pub use universe::{
+    BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher, NetworkCommand,
+    RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, StateDelta, StateRef, SubmitOutcome,
 };
 pub use victory::{
     cargo_fuel_consumption_rate, cargo_get_net_production, cargo_gold_consumption_rate,

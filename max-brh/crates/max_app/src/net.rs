@@ -1046,7 +1046,11 @@ async fn run_lobby(
                 other => tracing::debug!("лобби: пакет {other:?}"),
             },
             Some(SessionEvent::Packet(Packet::Command(command))) => {
-                app.apply(command);
+                // Stage A: the lobby command goes through the facade queue instead
+                // of an immediate `apply_command` (single command path). The
+                // configuration boundary flushes the queue before world generation
+                // (`initialize_game`), so packets 12/13 keep their timing.
+                let _ = app.submit(command);
             }
             Some(SessionEvent::Packet(packet)) => {
                 tracing::debug!("лобби: пакет {packet:?}");
@@ -1198,6 +1202,14 @@ fn initialize_game(app: &mut App, lobby: &LobbyInfo, local_team: TeamId) {
     // Commands that arrived in the lobby (12 — mission supplies) belong to the "old"
     // state; after the world generation they must be returned, otherwise the team positions
     // would be lost. The starting point from 12 (if it has already arrived) goes into the generation.
+    //
+    // Stage A: the lobby path only queues the packets, so they are flushed here —
+    // the configuration boundary equivalent to the first tick's
+    // `apply_pending_commands` (gate 3, `max_core/tests/universe_gate3.rs`).
+    let flushed = app.flush_commands();
+    if flushed > 0 {
+        tracing::info!("лобби: применено {flushed} команд перед генерацией мира");
+    }
     let supplies = app.state().mission_supplies.clone();
 
     let teams = (0..PLAYER_TEAM_COUNT)
