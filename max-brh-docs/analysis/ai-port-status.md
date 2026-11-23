@@ -20,9 +20,9 @@
 
 | # | Область | Статус | Что расходится |
 |---|---|---|---|
-| 1 | Вес юнитов / состав армии | отсутствует | 18 `WeightTable` пустые; `UpdateWeightTables`/`RebuildWeightTables` не вызываются; нет `ChooseStrategic/GenericBuildOrders`, `DetermineResearchProjects`, `ChooseUpgrade` |
-| 2 | Выбор стратегии/высадки | расходится | упрощённые критерии континента (`viable=size>=40`, `isolated=size<80`); `target_location` = центр карты; нет `IsViableSite`/`TestIsolated`/`SelectLandingSite`/`Randomizer_Generate(total_continent_size)` |
-| 3 | Производство | частично | жёсткая эвристика (шахта/склад/генератор/радар); не строит заводы/армию; нет `PlanNextBuildJob`/`RollTeamMissionSupplies` |
+| 1 | Вес юнитов / состав армии | частично (A.3) | таблицы заполняются и используются (`GetWeightTable`/`GetFilteredWeightTable`/`GetExtendedWeightTable`, `RollUnitType`); нет `DetermineResearchProjects`, `ChooseUpgrade` (A.5) |
+| 2 | Выбор стратегии/высадки | закрыто (A.2) | — |
+| 3 | Производство | закрыто (A.3), кроме резерва | эвристика заменена на `PlanNextBuildJob`/`UpdateMiningNeeds`/`CheckPower`/`CheckWorkers`/склады `EndTurn`; производство юнитов по весам; нет `RollTeamMissionSupplies` (стартовая загрузка) и `TaskAttackReserve` (A.4) |
 | 4 | Бой | частично | точечная атака в радиусе; нет `EvaluateAssault`/наступления, `GetRequiredDamage`/`GetProjectedDamage` |
 | 5 | Разведка | отсутствует | нет целенаправленного исследования карты |
 | 6 | Флот | отсутствует | не строит/не использует морские юниты; нет `AttemptTransport` |
@@ -48,7 +48,8 @@ CRC/replay без изменений; 385 тестов зелёные.
 2. **Выбор стратегии/высадки** (`SelectStrategy`, континенты, `SelectLandingSite`,
    детерминированный RNG).
 3. **Производство** (`ChooseStrategic/GenericBuildOrders`, `PlanNextBuildJob`,
-   заводы/армия, `RollTeamMissionSupplies`).
+   заводы/армия, `RollTeamMissionSupplies`). — **закрыто в A.3** (кроме
+   `RollTeamMissionSupplies`; см. ниже).
 4. **Бой** (`EvaluateAssault`, `GetRequiredDamage`/`GetProjectedDamage`,
    census целей, `IsReconUnitAvailable`, `IsAttackUnderControl`).
 5. **Исследования/апгрейды** (`DetermineResearchProjects`, `ChooseUpgrade`).
@@ -56,6 +57,65 @@ CRC/replay без изменений; 385 тестов зелёные.
 
 Каждый пункт — отдельная задача Разработчику (v4 Flash) со сверкой по
 `aiplayer.cpp`/`task*.cpp` и фиксацией CRC/replay.
+
+## Фаза A.3 — производство и стройка (закрыто)
+
+Портировано (новый модуль `ai/build_orders.rs`, `ai/tasks/build.rs`):
+
+- **Весовые потребители**: `GetWeightTable` (18 таблиц; `INVALID_ID` —
+  композиция air defense + bomber + submarine + таблицы всех замеченных типов +
+  `COMMANDO` на `OPPONENT_TYPE_EXPERT`), `GetFilteredWeightTable`
+  (`0x01` — `STATIONARY`, `0x02` — `REGENERATING_UNIT`), `GetExtendedWeightTable`
+  (alien + expert → только `COMMANDO`; прочий alien → таблица `ADUMP`; вода у
+  стационарной цели → `CORVETTE`, на `AVERAGE`+ ещё `SUBMARNE`; недостижимые
+  LAND/WATER-типы обнуляются через `IsSurfaceTypePresent`/`ZoneWalker`).
+- **Заказы на стройку**: `AddBuildOrder`, `CheckReconnaissanceNeeds`,
+  `GetMaxSpottedScan`, `ChooseStrategicBuildOrders`, `ProcessBuildOrders`,
+  `ChooseGenericBuildOrders`. `AiPlayer::BeginTurn` строит
+  `strategic_build_orders` и `generic_build_orders` (`aiplayer.cpp:2503-2504`);
+  потребитель — `ChooseUpgrade` (A.5).
+- **`PlanNextBuildJob`**: `GetUnitCount` (units + планы по приоритету),
+  `CreateBuildings`, `CreateBuilding` (buildability, время миссии, ценз
+  строителей `builder_count * 2 + 1`, один план на тип — замена
+  `ClearPlannedBuildings`, поиск площадки), заводы по стратегии
+  (`DEFENSIVE`/`SCOUT_HORDE` → LIGHTPLT, `TANK_HORDE`/`COMBINED_ARMS` → LANDPLT,
+  `AIR` → AIRPLT, `SEA` → SHIPYARD, `ESPIONAGE` → TRAINHAL), гринхаусы/исследования,
+  ремонтные цеха (`DEPOT`/`HANGAR`/`DOCK`/`BARRACKS`) и их ёмкость.
+- **`CheckNeeds`** = `PlanNextBuildJob` → `UpdateMiningNeeds` (потребность в
+  raw/fuel/gold по ставкам `cargo.cpp`, ёмкость шахт, `COMMTWR`) → `MININGST`.
+  `EndTurn` менеджера — склады `ADUMP`/`FDUMP`/`GOLDSM` по заполнению.
+- **Ассистенты**: `CheckPower` (баланс энергии, `POWERSTN`/`POWGEN`) и
+  `CheckWorkers` (`HABITAT`); `TaskRadarAssistant` — порог времени миссии +
+  «радара нет» (полный `EvaluateNeedForRadar` требует `AccessMap`).
+- **Юниты по весам**: ветка фабрики из `TaskAttackReserve::AddUnit`
+  (`taskattackreserve.cpp:136-164`) выполняется менеджером
+  (`plan_unit_production`: `GetFilteredWeightTable(INVALID_ID, 3)` →
+  `RollUnitType` → `TaskObtainUnits`); сам резерв (`TaskAttackReserve`) — A.4.
+  `TaskKillUnit::FindVaildTypes` использует `GetExtendedWeightTable(target, 0x01)`.
+- **Стартовые здания**: `AiPlayer::BeginTurn` регистрирует в менеджере
+  платформы/мосты, все не-idle стационарные здания и строящих строителей
+  (`aiplayer.cpp:2335-2355`); без этого `PlanNextBuildJob` не видел базу.
+
+Осознанные отклонения (те же, что и раньше): площадки ищет `find_build_site`
+(`AccessMap`-разметка P5/P7), `FindSiteForRadar`/`FindDefenseSite`/коннекторы не
+портированы; производство юнитов размещено в менеджере до A.4.
+
+CRC/дайджесты изменились (ожидаемо — ИИ строит иначе). Контрольные сценарии
+(20 ходов, карта 28×28):
+
+| Сценарий | `state_checksum` до → после | `replay_digest_crc` до → после |
+|---|---|---|
+| шахта + конструктор | `0x83cf` → `0x5853` | `0x3bf0` → `0x032f` |
+| армия + замеченный враг | `0x3a33` → `0xde48` | `0x4816` → `0xd955` |
+| завод (average) | `0xa88f` → `0xb557` | `0x9324` → `0xfc1e` |
+| завод (expert) | `0xa88f` → `0xb557` | `0xaeef` → `0x59f0` |
+
+Причина: другой состав задач (ассистенты, `CreateBuilding` заводов и шахт),
+другие решения о стройке (`PlanNextBuildJob`/`UpdateMiningNeeds` вместо
+эвристики по ходам) и новые вызовы RNG в `RollUnitType`; при одинаковом seed
+путь решений расходится, как и ожидалось на этом этапе. `p7`/replay-векторы
+(без ИИ) не изменились. Тесты: 274 unit + 136 интеграционных, все зелёные.
+
 
 ## Открытые вопросы владельца
 

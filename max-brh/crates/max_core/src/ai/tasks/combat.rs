@@ -165,41 +165,20 @@ fn kill_unit_update_demand(ctx: &mut TaskCtx<'_>, team: TeamId, state: &mut supe
     state.required_damage = (i32::from(target.hits) - total).max(0) as u16;
 }
 
-/// `TaskKillUnit::FindVaildTypes` — unit types able to finish the target.
+/// `TaskKillUnit::FindVaildTypes` — unit types able to finish the target
+/// (`taskkillunit.cpp:91`): `AiPlayer::GetExtendedWeightTable(target, 0x01)`.
+///
+/// The C++ request loop that turns the positive-weight entries into
+/// `TaskObtainUnits` belongs to the combat phase (A.4); the table itself is the
+/// phase A.1/A.3 weight-table consumer.
 fn kill_unit_find_valid_types(
     world: &crate::game::GameState,
     team: TeamId,
     state: &mut super::KillUnitState,
+    target: &crate::unit::UnitInfo,
 ) {
-    state.weight_table.clear();
-    state.weight_table.set_team(team.0);
-
-    let Some(target_type) = state.target_type else {
-        return;
-    };
-
-    // The C++ weight table is built by `AiPlayer::GetExtendedWeightTable(target, flags)`;
-    // here — the same types that pass the `Access_IsValidAttackTargetType` check.
-    for unit_type in [
-        UnitType::Tank,
-        UnitType::AssaultGun,
-        UnitType::RocketLauncher,
-        UnitType::MissileCrawler,
-        UnitType::MobileAntiAir,
-        UnitType::Infiltrator,
-        UnitType::Infantry,
-        UnitType::Gunboat,
-        UnitType::MissileCruiser,
-        UnitType::Submarine,
-        UnitType::Fighter,
-        UnitType::Bomber,
-    ] {
-        if crate::access::is_valid_attack_target_type(unit_type, target_type) {
-            state.weight_table.add(unit_type, 1);
-        }
-    }
-
-    let _ = world;
+    state.weight_table =
+        world.ai.players[team.0 as usize].get_extended_weight_table(world, target, 0x01);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +205,18 @@ fn kill_unit_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     }
 
     kill_unit_update_demand(ctx, header.team, state);
-    kill_unit_find_valid_types(ctx.world, header.team, state);
+
+    // `FindVaildTypes` uses the live target (`spotted_unit->GetUnit()`).
+    let target = state
+        .spotted_unit
+        .and_then(|index| spotted_target(ctx, header.team, index))
+        .and_then(|(unit_id, _, _)| ctx.unit(unit_id));
+
+    if let Some(target) = target {
+        kill_unit_find_valid_types(ctx.world, header.team, state, &target);
+    } else {
+        state.weight_table.clear();
+    }
 
     if !state.seek_target {
         return;

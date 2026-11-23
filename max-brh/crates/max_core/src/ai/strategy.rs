@@ -27,16 +27,17 @@
 //!   `UpdateMap`/`UpdateThreatMaps`/`DetermineDefenses`/`DetermineThreats`/
 //!   `NormalizeThreatMap`/`SumUpMaps` (threat maps), `SetInfoMapPoint`,
 //!   `MarkMineMapPoint`, `UpdateMineMap`, `GetMineMapEntry`, `GuessEnemyAttackDirections`
-//!   and `PlanMinefields` (simplified), `GetFilteredWeightTable`,
-//!   `GetExtendedWeightTable`, `ShouldUpgradeUnit`, `MatchPath`.
+//!   and `PlanMinefields` (simplified), `GetWeightTable`, `GetFilteredWeightTable`,
+//!   `GetExtendedWeightTable`, `ChooseStrategicBuildOrders`,
+//!   `ChooseGenericBuildOrders` (see [`super::build_orders`]),
+//!   `ShouldUpgradeUnit`, `MatchPath`.
 //!
 //! # Intentional simplifications (documented in code)
 //!
-//! 1. `ChooseStrategicBuildOrders`/`ChooseGenericBuildOrders`/`ChooseUpgrade`/
-//!    `UpgradeUnitType`/`DetermineResearchProjects` rely on production data
-//!    (`BuildMenu_*`, `Builder_*`, upgrade tables — P3/P7) and are
-//!    therefore not ported in P6: `begin_turn` does not purchase factories and does not
-//!    upgrade units; the hooks themselves are present.
+//! 1. `ChooseUpgrade`/`UpgradeUnitType`/`DetermineResearchProjects` rely on
+//!    production data (`BuildMenu_*`, upgrade tables — P7/A.5) and are not ported
+//!    yet: `begin_turn` plans the build orders (they are kept on the player) but
+//!    does not purchase upgrades. The hooks themselves are present.
 //! 2. `RollTeamMissionSupplies` (the starting loadout) — P2, not P6; the landing
 //!    point itself is ported (`Continent::SelectLandingSite`).
 //! 3. `GetThreatMap` in C++ caches 10 maps and lives on the global
@@ -142,6 +143,12 @@ pub struct AiPlayer {
     pub minefield_density: i16,
     /// `upgrade_cost`.
     pub upgrade_cost: i16,
+    /// `ChooseStrategicBuildOrders(false)` of the current turn
+    /// (`aiplayer.cpp:2503`) — the strategy-driven build orders.
+    pub strategic_build_orders: Vec<super::build_orders::BuildOrder>,
+    /// `ChooseGenericBuildOrders()` of the current turn
+    /// (`aiplayer.cpp:2504`) — the generic build orders.
+    pub generic_build_orders: Vec<super::build_orders::BuildOrder>,
     /// `need_init`.
     pub need_init: bool,
     /// `tasks_pending`.
@@ -272,6 +279,8 @@ impl AiPlayer {
             greenhouse_ratio: -1,
             minefield_density: -1,
             upgrade_cost: 0,
+            strategic_build_orders: Vec::new(),
+            generic_build_orders: Vec::new(),
             need_init: true,
             tasks_pending: true,
             end_turn_retry_counter: 0,
@@ -339,6 +348,8 @@ impl AiPlayer {
         self.end_turn_retry_counter = 0;
         self.transport_orders.clear();
         self.target_location = Point::ZERO;
+        self.strategic_build_orders.clear();
+        self.generic_build_orders.clear();
         self.info_map = vec![INFO_MAP_NO_INFO; MAP_TILES];
         self.mine_map = vec![0; MAP_TILES];
         self.threat_maps.clear();
@@ -1359,6 +1370,13 @@ impl AiPlayer {
             world.set_order(id, UnitOrder::PowerOn, UnitOrderState::Init);
         }
 
+        // Build-order planning (`aiplayer.cpp:2503-2504`): what to upgrade and
+        // which unit types the strategy wants. `ChooseUpgrade` (phase A.5) consumes
+        // both lists; keeping them on the player mirrors the C++ locals of
+        // `BeginTurn` so that the later stage sees exactly the same orders.
+        self.strategic_build_orders = self.choose_strategic_build_orders(world, false);
+        self.generic_build_orders = self.choose_generic_build_orders(world);
+
         self.register_idle_units(world);
 
         // Reminders: movement and attack over mobile lists in C++ order.
@@ -1453,6 +1471,44 @@ impl AiPlayer {
         // Construction manager.
         let manage_kind = TaskKind::manage_buildings(position);
         world.ai_append_task(team, None, TASK_PRIORITY_MANAGE_BUILDINGS, manage_kind);
+
+        // `AiPlayer::AddBuilding` for the units that already exist on the first
+        // turn (`aiplayer.cpp:2335-2355`): platforms/bridges, every non-idle
+        // stationary building and the mobile builders that are already building.
+        // The manager's `units` list drives `PlanNextBuildJob`; without this
+        // registration a mission's starting base would never be counted.
+        for list in [UnitListKind::GroundCover, UnitListKind::Stationary] {
+            let ids: Vec<UnitId> = world.unit_list(list).to_vec();
+
+            for id in ids {
+                let Some(unit) = world.unit(id) else {
+                    continue;
+                };
+
+                if unit.team != team || unit.orders == UnitOrder::Idle {
+                    continue;
+                }
+
+                if list == UnitListKind::GroundCover
+                    && !matches!(unit.unit_type, UnitType::WaterPlatform | UnitType::Bridge)
+                {
+                    continue;
+                }
+
+                super::strategy::add_building(world, team, id);
+            }
+        }
+
+        let builders: Vec<UnitId> = world.unit_list(UnitListKind::MobileLandSea).to_vec();
+        for id in builders {
+            let Some(unit) = world.unit(id) else {
+                continue;
+            };
+
+            if unit.team == team && unit.orders == UnitOrder::Build {
+                super::strategy::add_building(world, team, id);
+            }
+        }
 
         // Mine assistant and terrain update.
         let mine_kind = TaskKind::mine_assistant();
@@ -1775,6 +1831,11 @@ impl AiPlayer {
             )
             .is_some()
         };
+        // The plan is stored in the manager's `tasks` list (`GetUnitCount` and
+        // `ClearPlannedBuildings` rely on it), so write the kind back.
+        if let Some(task) = tm.task_mut(manager) {
+            task.kind = kind;
+        }
         world.ai.task_manager = tm;
 
         result
@@ -2419,25 +2480,6 @@ fn is_able_to_attack(
 
     let _ = world;
     true
-}
-
-/// `AiPlayer::GetFilteredWeightTable` (`aiplayer.cpp:3387`).
-pub fn get_filtered_weight_table(
-    air_table: &WeightTable,
-    ground_table: &WeightTable,
-    flags: u32,
-) -> WeightTable {
-    let mut result = WeightTable::new(0);
-
-    if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
-        result.merge(air_table);
-    }
-
-    if flags & (unit_flags::MOBILE_LAND_UNIT | unit_flags::MOBILE_SEA_UNIT) != 0 {
-        result.merge(ground_table);
-    }
-
-    result
 }
 
 /// `AiPlayer::ChooseUpgrade` (`aiplayer.cpp:4194`) — structurally: choose the research

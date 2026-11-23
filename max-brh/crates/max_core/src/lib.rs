@@ -117,8 +117,8 @@ pub use ai::{
     ai_evaluate_attack_targets, ai_init, ai_is_dangerous_location, ai_remove_unit,
     ai_select_starting_position, ai_set_info_map_point, ai_set_tasks_pending_flag,
     ai_setup_strategy, ai_unit_hidden, ai_unit_spotted, task_manager_need_to_reserve_raw_materials,
-    AiPlayer, AiReactionState, AiSettings, AiState, Reminder, Task, TaskHeader, TaskKind,
-    TaskManager, ThreatMap, WeightTable,
+    AiPlayer, AiReactionState, AiSettings, AiState, BuildOrder, Reminder, Task, TaskHeader,
+    TaskKind, TaskManager, ThreatMap, WeightTable,
 };
 pub use alloc::{
     balance as alloc_balance, cargo_get_cargo_capacity, cargo_get_inventory,

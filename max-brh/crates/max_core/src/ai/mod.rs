@@ -5,6 +5,7 @@
 //! | Module | C++ oracle |
 //! |---|---|
 //! | [`attack`] | `aiattack.cpp` — attack decisions |
+//! | [`build_orders`] | `aiplayer.cpp` — `GetWeightTable`, `GetExtendedWeightTable`, `Choose*BuildOrders` |
 //! | [`reminders`] | `reminders.cpp` — deferred task calls |
 //! | [`strategy`] | `aiplayer.cpp` — `AiPlayer`, strategy, threat maps |
 //! | [`task`] | `task.cpp` — task base, priorities, `Task_*` |
@@ -47,6 +48,7 @@
 //! handlers, see [`tasks::TaskCtx`]).
 
 pub mod attack;
+pub mod build_orders;
 pub mod reminders;
 pub mod strategy;
 pub mod task;
@@ -57,6 +59,7 @@ pub mod weight;
 pub mod weight_tables;
 
 pub use attack::evaluate_attack;
+pub use build_orders::BuildOrder;
 pub use reminders::Reminder;
 pub use strategy::{parse_team_strategy, AiPlayer, SpottedUnit, TEAM_STRATEGY_NAMES};
 pub use task::{
