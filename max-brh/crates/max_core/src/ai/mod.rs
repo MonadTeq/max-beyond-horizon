@@ -7,6 +7,7 @@
 //! | [`attack`] | `aiattack.cpp` — attack decisions |
 //! | [`build_orders`] | `aiplayer.cpp` — `GetWeightTable`, `GetExtendedWeightTable`, `Choose*BuildOrders` |
 //! | [`reminders`] | `reminders.cpp` — deferred task calls |
+//! | [`research`] | `aiplayer.cpp` — `DetermineResearchProjects`, `ChooseUpgrade`, `UpgradeUnitType` |
 //! | [`strategy`] | `aiplayer.cpp` — `AiPlayer`, strategy, threat maps |
 //! | [`task`] | `task.cpp` — task base, priorities, `Task_*` |
 //! | [`task_manager`] | `task_manager.cpp` — queues, `FindTaskForUnit` |
@@ -50,6 +51,7 @@
 pub mod attack;
 pub mod build_orders;
 pub mod reminders;
+pub mod research;
 pub mod strategy;
 pub mod task;
 pub mod task_manager;
@@ -61,6 +63,10 @@ pub mod weight_tables;
 pub use attack::evaluate_attack;
 pub use build_orders::BuildOrder;
 pub use reminders::Reminder;
+pub use research::{
+    choose_initial_upgrades, choose_upgrade, determine_research_projects, purchase_upgrades,
+    upgrade_unit_type, INVALID_UPGRADE_COST,
+};
 pub use strategy::{parse_team_strategy, AiPlayer, SpottedUnit, TEAM_STRATEGY_NAMES};
 pub use task::{
     Task, TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_EMERGENCY, TASK_TYPE_ATTACK,

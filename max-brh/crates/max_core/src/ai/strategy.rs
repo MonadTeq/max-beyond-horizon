@@ -141,8 +141,13 @@ pub struct AiPlayer {
     pub greenhouse_ratio: i16,
     /// `minefield_density` (-1 — not rolled).
     pub minefield_density: i16,
-    /// `upgrade_cost`.
+    /// `upgrade_cost` — the cost of [`Self::build_order`] (`INT16_MAX` when no
+    /// upgrade is planned).
     pub upgrade_cost: i16,
+    /// `build_order` (`aiplayer.hpp:58`) — the upgrade chosen by
+    /// `ChooseUpgrade` (`None` is the C++ `INVALID_ID` unit type). Per-turn
+    /// scratch state; it is recomputed before every use.
+    pub build_order: Option<super::build_orders::BuildOrder>,
     /// `ChooseStrategicBuildOrders(false)` of the current turn
     /// (`aiplayer.cpp:2503`) — the strategy-driven build orders.
     pub strategic_build_orders: Vec<super::build_orders::BuildOrder>,
@@ -279,6 +284,7 @@ impl AiPlayer {
             greenhouse_ratio: -1,
             minefield_density: -1,
             upgrade_cost: 0,
+            build_order: None,
             strategic_build_orders: Vec::new(),
             generic_build_orders: Vec::new(),
             need_init: true,
@@ -348,6 +354,10 @@ impl AiPlayer {
         self.end_turn_retry_counter = 0;
         self.transport_orders.clear();
         self.target_location = Point::ZERO;
+        // Per-turn scratch upgrade state (`ChooseUpgrade` overwrites both
+        // before use; C++ `Init` leaves its POD fields untouched).
+        self.upgrade_cost = 0;
+        self.build_order = None;
         self.strategic_build_orders.clear();
         self.generic_build_orders.clear();
         self.info_map = vec![INFO_MAP_NO_INFO; MAP_TILES];
@@ -1380,13 +1390,21 @@ impl AiPlayer {
         }
 
         // Build-order planning (`aiplayer.cpp:2503-2504`): what to upgrade and
-        // which unit types the strategy wants. `ChooseUpgrade` (phase A.5) consumes
-        // both lists; keeping them on the player mirrors the C++ locals of
-        // `BeginTurn` so that the later stage sees exactly the same orders.
+        // which unit types the strategy wants. `ChooseUpgrade` consumes both
+        // lists; keeping them on the player mirrors the C++ locals of
+        // `BeginTurn` so that the upgrade stage sees exactly the same orders.
         self.strategic_build_orders = self.choose_strategic_build_orders(world, false);
         self.generic_build_orders = self.choose_generic_build_orders(world);
 
+        // `ChooseUpgrade` + the purchase loop (`aiplayer.cpp:2506-2522`): buy
+        // attribute upgrades while the team gold covers the cheapest order.
+        super::research::purchase_upgrades(self, world);
+
         self.register_idle_units(world);
+
+        // `DetermineResearchProjects` (`aiplayer.cpp:2525`): move powered
+        // research centers to the fastest topic.
+        super::research::determine_research_projects(self, world);
 
         // Reminders: movement and attack over mobile lists in C++ order.
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {

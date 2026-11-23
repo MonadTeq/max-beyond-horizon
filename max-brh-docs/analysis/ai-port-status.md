@@ -20,13 +20,13 @@
 
 | # | Область | Статус | Что расходится |
 |---|---|---|---|
-| 1 | Вес юнитов / состав армии | частично (A.3) | таблицы заполняются и используются (`GetWeightTable`/`GetFilteredWeightTable`/`GetExtendedWeightTable`, `RollUnitType`); нет `DetermineResearchProjects`, `ChooseUpgrade` (A.5) |
+| 1 | Вес юнитов / состав армии | частично (A.3) | таблицы заполняются и используются (`GetWeightTable`/`GetFilteredWeightTable`/`GetExtendedWeightTable`, `RollUnitType`); `ChooseUpgrade` портирован в A.5 |
 | 2 | Выбор стратегии/высадки | закрыто (A.2) | — |
 | 3 | Производство | закрыто (A.3), кроме резерва | эвристика заменена на `PlanNextBuildJob`/`UpdateMiningNeeds`/`CheckPower`/`CheckWorkers`/склады `EndTurn`; производство юнитов по весам; нет `RollTeamMissionSupplies` (стартовая загрузка) и `TaskAttackReserve` (A.4) |
 | 4 | Бой | частично (A.4) | наступление, резерв, ценз целей, `EvaluateAttackReadiness` и `AiAttack_GetTargetFlags` портированы; нет `TransporterMap`/марша, слияния атак и `TaskSupportAttack`; см. ниже |
 | 5 | Разведка | отсутствует | нет целенаправленного исследования карты |
 | 6 | Флот | отсутствует | не строит/не использует морские юниты; нет `AttemptTransport` |
-| 7 | Исследования/апгрейды | отсутствует | нет выбора исследований и апгрейдов юнитов |
+| 7 | Исследования/апгрейды | закрыто (A.5) | `DetermineResearchProjects`, `ChooseUpgrade`, `UpgradeUnitType`, `ChooseInitialUpgrades` портированы |
 | 8 | Детерминизм | не бит-в-бит | другой порядок решений → при том же seed другие ходы |
 
 ## Фаза B — закрытые багфиксы (коммит `b9eb781`)
@@ -52,7 +52,8 @@ CRC/replay без изменений; 385 тестов зелёные.
    `RollTeamMissionSupplies`; см. ниже).
 4. **Бой** (`EvaluateAssault`, `GetRequiredDamage`/`GetProjectedDamage`,
    census целей, `IsReconUnitAvailable`, `IsAttackUnderControl`).
-5. **Исследования/апгрейды** (`DetermineResearchProjects`, `ChooseUpgrade`).
+5. **Исследования/апгрейды** (`DetermineResearchProjects`, `ChooseUpgrade`). —
+   **закрыто в A.5** (см. ниже).
 6. **Разведка и флот** (`TaskExplore`, `AttemptTransport`, морские задачи).
 
 Каждый пункт — отдельная задача Разработчику (v4 Flash) со сверкой по
@@ -184,6 +185,60 @@ CRC/дайджесты изменились (ожидаемо — ИИ стро�
 состояние юнитов, а не задачи ИИ; `replay_digest`/снапшот включают AI-состояние.
 `p7` (`mini_replay_matches_cpp_digest_bit_for_bit`) не изменился. Тесты:
 279 unit + интеграционные, все зелёные.
+
+## Фаза A.5 — исследования и апгрейды юнитов (закрыто)
+
+Портировано (новый модуль `ai/research.rs`, подключение в `ai/strategy.rs`):
+
+- **`DetermineResearchProjects`**: тема выбирается по минимальному
+  `turns_to_complete` команды с поправками C++ — `RANGE` делится на 2,
+  `SHOTS` умножается на `5 - (research_level % 5)`, `SPEED` — на 2; начальная
+  тема — `ATTACK` (без поправок), `COST` не рассматривается. Каждый
+  включённый исследовательский центр (`RESEARCH`, `ORDER_POWER_ON`, состояние
+  не `ORDER_STATE_INIT`) переводится на выбранную тему через
+  `ResearchMenu_UpdateResearchProgress(-1/+1)`: обновляются `allocation` и
+  `turns_to_complete`. Ставки — константы `RESEARCH_TOPIC_FACTORS` (как и в
+  остальном `max_core`).
+- **`ChooseUpgrade`**: по стратегическим заказам A.3 выбирается самый дешёвый
+  апгрейд (`TeamUnits_GetUpgradeCost`); generic-заказ заменяет выбор только
+  если он вдвое дешевле, а после первой замены — строго дешевле текущего.
+  Апгрейды `HITS`/`SPEED` пропускаются при текущем значении `UINT8_MAX`
+  (узкая проверка C++); `upgrade_cost` — `INT16_MAX`, если ничего не выбрано.
+- **`UpgradeUnitType`**: шаг — `TeamUnits_UpgradeOffsetFactor` по **базовому**
+  значению атрибута (1/2/5/10); `HITS`/`SPEED` обрезаются до `UINT16_MAX`;
+  копия текущих `UnitValues` получает `UpdateVersion`, `MarkAsNotInUse` и
+  `AddAttribute`, затем заменяет `current_values` команды.
+- **`ChooseInitialUpgrades`**: стартовая закупка (`ChooseStrategicBuildOrders(true)`
+  + пустой generic-список, золото из `TeamMissionSupplies::team_gold`) — для
+  будущего `RollTeamMissionSupplies`.
+- **Жизненный цикл**: `AiPlayer::BeginTurn` строит `strategic_build_orders` и
+  `generic_build_orders`, вызывает `ChooseUpgrade` и цикл покупки
+  (`upgrade_cost <= team_gold`: списание золота, `stats_gold_spent_on_upgrades`,
+  `UpgradeUnitType`, повторный выбор), затем `RegisterIdleUnits` и
+  `DetermineResearchProjects` — порядок `aiplayer.cpp:2503-2525`. Сетевые
+  пакеты 09/10 остаются за транспортным слоем (как и в остальном порте).
+
+Контрольные сценарии (20 ходов; «research-only» — один `BeginTurn` без
+экономики, чтобы центр оставался включённым):
+
+| Сценарий | `state_checksum` до → после | `replay_digest_crc` до → после | CRC снапшота до → после |
+|---|---|---|---|
+| research-only (центр `SPEED` → `SHOTS`) | `0x2670` → `0x2670` | `0x50BA` → `0x081F` | `0x4C7F` → `0x8F34` |
+| research + upgrades (центр + танк в стройке, 500 золота) | `0xDDD4` → `0xDDD4` | `0x139B` → `0x74D9` | `0xF63F` → `0xE837` |
+| шахта + конструктор (контроль) | `0x8F32` → `0x8F32` | `0x68D2` → `0x68D2` | `0x6D79` → `0x6D79` |
+| армия + замеченный враг (контроль) | `0xD2F1` → `0xD2F1` | `0x002C` → `0x002C` | `0x94D2` → `0x94D2` |
+
+Причина: `state_checksum` (пакет 45) несёт только поля юнитов и не меняется —
+апгрейды живут в текущих значениях команды, исследования — в темах команды;
+`replay_digest`/снапшот включают золото команды,
+`stats_gold_spent_on_upgrades`, темы исследований и `research_topic` юнитов.
+В сценарии «research + upgrades» за 20 ходов потрачено 474 золота, 26
+осталось; тема центра в нём не меняется (сценарий проверяет вклад апгрейдов в
+CRC), переназначение темы покрыто сценарием «research-only» и интеграционным
+тестом `begin_turn_moves_powered_research_centres_to_the_fastest_topic`.
+`p7` (`mini_replay_matches_cpp_digest_bit_for_bit`) не изменился: в replay нет
+ходов ИИ. Тесты: 289 unit + интеграционные, все зелёные (10 unit и 3
+интеграционных — новые).
 
 ## Открытые вопросы владельца
 
