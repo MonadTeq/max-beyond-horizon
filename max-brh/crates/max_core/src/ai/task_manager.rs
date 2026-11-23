@@ -219,7 +219,7 @@ impl TaskManager {
 
     /// `UnitInfo::RemoveTask` (`unitinfo.cpp:3739`) with notification of the new
     /// top task (if the unit is ready to accept orders and `mode`).
-    pub fn detach_task_from_unit(
+    pub(crate) fn detach_task_from_unit(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -243,7 +243,7 @@ impl TaskManager {
 
     /// `UnitInfo::RemoveTasks` (`unitinfo.cpp:1325`) — clearing and notifying
     /// each task (`RemoveUnit`).
-    pub fn remove_unit_tasks(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn remove_unit_tasks(&mut self, world: &mut GameState, unit: UnitId) {
         let tasks = self.unit_tasks_of(unit);
         for task_id in tasks {
             if let Some(task) = self.task(task_id) {
@@ -255,7 +255,7 @@ impl TaskManager {
     }
 
     /// `UnitInfo::ClearUnitTasksAndRemindAvailable` (`task_manager.cpp:412`).
-    pub fn clear_unit_tasks_and_remind_available(
+    pub(crate) fn clear_unit_tasks_and_remind_available(
         &mut self,
         world: &mut GameState,
         unit: UnitId,
@@ -286,7 +286,7 @@ impl TaskManager {
     /// list in max_core (only the `OrderContext` layer sets them via
     /// [`Self::remind_move_finished`]), so the second half is ported:
     /// the "movement finished" reminder to the unit's top task.
-    pub fn schedule_delayed_tasks(&mut self, world: &mut GameState, unit: UnitId, priority: bool) {
+    pub(crate) fn schedule_delayed_tasks(&mut self, world: &mut GameState, unit: UnitId, priority: bool) {
         let enabled = world
             .unit(unit)
             .map(|info| info.tasks_enabled)
@@ -302,7 +302,7 @@ impl TaskManager {
     }
 
     /// `Task_RemindMoveFinished` (`task.cpp:99`).
-    pub fn remind_move_finished(&mut self, world: &mut GameState, unit: UnitId, priority: bool) {
+    pub(crate) fn remind_move_finished(&mut self, world: &mut GameState, unit: UnitId, priority: bool) {
         let already = world
             .unit(unit)
             .map(|info| info.ai_state_bits & crate::enums::AI_STATE_MOVE_FINISHED_REMINDER != 0)
@@ -320,7 +320,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AppendTask` (`task_manager.cpp:254`).
-    pub fn append_task(&mut self, world: &mut GameState, mut task: Task) -> u32 {
+    pub(crate) fn append_task(&mut self, world: &mut GameState, mut task: Task) -> u32 {
         let id = self.next_task_id;
         self.next_task_id = self.next_task_id.wrapping_add(1);
 
@@ -342,7 +342,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::RemoveTask` (`task_manager.cpp:603`).
-    pub fn remove_task(&mut self, world: &mut GameState, task_id: u32) {
+    pub(crate) fn remove_task(&mut self, world: &mut GameState, task_id: u32) {
         let is_request = self
             .task(task_id)
             .map(|task| task.get_type() == TASK_TYPE_OBTAIN_UNITS)
@@ -391,7 +391,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AppendReminder` (`task_manager.cpp:266`).
-    pub fn append_reminder(&mut self, world: &mut GameState, reminder: Reminder, priority: bool) {
+    pub(crate) fn append_reminder(&mut self, world: &mut GameState, reminder: Reminder, priority: bool) {
         reminder.on_append(self, world);
 
         if priority {
@@ -402,7 +402,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::AppendDeferredReminder` (`task_manager.cpp:275`).
-    pub fn append_deferred_reminder(&mut self, world: &mut GameState, reminder: Reminder) {
+    pub(crate) fn append_deferred_reminder(&mut self, world: &mut GameState, reminder: Reminder) {
         reminder.on_append(self, world);
         self.deferred_reminders.push(reminder);
     }
@@ -438,7 +438,7 @@ impl TaskManager {
     }
 
     /// The C++ time budget is not modeled (DESIGN §5.1, risk 4).
-    pub fn execute_reminders(&mut self, world: &mut GameState) -> bool {
+    pub(crate) fn execute_reminders(&mut self, world: &mut GameState) -> bool {
         for reminder in std::mem::take(&mut self.deferred_reminders) {
             self.normal_reminders.push(reminder);
         }
@@ -474,7 +474,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::BeginTurn` (`task_manager.cpp:337`).
-    pub fn begin_turn(&mut self, _world: &mut GameState, team: TeamId) {
+    pub(crate) fn begin_turn(&mut self, _world: &mut GameState, team: TeamId) {
         for task in &mut self.tasks {
             if task.team == team && task.get_type() != TASK_TYPE_TRANSPORT {
                 task.needs_processing = true;
@@ -503,7 +503,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::EndTurn` (`task_manager.cpp:377`).
-    pub fn end_turn(&mut self, _world: &mut GameState, team: TeamId) {
+    pub(crate) fn end_turn(&mut self, _world: &mut GameState, team: TeamId) {
         let mut schedule = Vec::new();
         for task in &self.tasks {
             if task.team == team && task.is_end_turn_needed() {
@@ -571,7 +571,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::Clear` (`task_manager.cpp:397`).
-    pub fn clear(&mut self, world: &mut GameState) {
+    pub(crate) fn clear(&mut self, world: &mut GameState) {
         let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
 
         for id in ids {
@@ -593,7 +593,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::AreTasksThinking` (`task_manager.cpp:131`).
-    pub fn are_tasks_thinking(&self, world: &GameState, team: TeamId) -> bool {
+    pub(crate) fn are_tasks_thinking(&self, world: &GameState, team: TeamId) -> bool {
         self.tasks
             .iter()
             .any(|task| task.team == team && task.is_thinking(world))
@@ -606,7 +606,7 @@ impl TaskManager {
     /// (`Ai_SetTasksPendingFlag`/`Ai_ClearTasksPendingFlags`): the static
     /// "there are unfinished tasks" check held the AI turn forever if a unit
     /// ran out of speed and the task waited for the next turn.
-    pub fn has_pending_work(&self, world: &GameState, team: TeamId) -> bool {
+    pub(crate) fn has_pending_work(&self, world: &GameState, team: TeamId) -> bool {
         if !self.normal_reminders.is_empty()
             || !self.priority_reminders.is_empty()
             || !self.deferred_reminders.is_empty()
@@ -632,7 +632,7 @@ impl TaskManager {
     }
 
     /// `TaskManager_IsReadyToReact` (`task_manager.cpp:198`).
-    pub fn is_ready_to_react(world: &GameState, unit: UnitId) -> bool {
+    pub(crate) fn is_ready_to_react(world: &GameState, unit: UnitId) -> bool {
         let Some(info) = world.unit(unit) else {
             return false;
         };
@@ -643,7 +643,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::CheckComputerReactions` (`task_manager.cpp:143`).
-    pub fn check_computer_reactions(&mut self, world: &mut GameState) {
+    pub(crate) fn check_computer_reactions(&mut self, world: &mut GameState) {
         if world.play_mode == crate::enums::PlayMode::Unknown {
             return;
         }
@@ -688,7 +688,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::CheckUnitReaction` (`task_manager.cpp:173`).
-    pub fn check_unit_reaction(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn check_unit_reaction(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
         };
@@ -722,7 +722,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::EnqueueUnitForReactionCheck` (`task_manager.cpp:232`).
-    pub fn enqueue_unit_for_reaction_check(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn enqueue_unit_for_reaction_check(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit) else {
             return;
         };
@@ -741,7 +741,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::CollectPotentialAttackTargets` (`task_manager.cpp:202`).
-    pub fn collect_potential_attack_targets(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn collect_potential_attack_targets(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(attacker) = world.unit(unit).cloned() else {
             return;
         };
@@ -791,7 +791,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::RemoveDestroyedUnit` (`task_manager.cpp:613`).
-    pub fn remove_destroyed_unit(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn remove_destroyed_unit(&mut self, world: &mut GameState, unit: UnitId) {
         self.units_awaiting_reaction.retain(|id| *id != unit);
 
         let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
@@ -803,7 +803,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::AddSpottedUnit` (`task_manager.cpp:619`).
-    pub fn add_spotted_unit(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn add_spotted_unit(&mut self, world: &mut GameState, unit: UnitId) {
         let ids: Vec<u32> = self.tasks.iter().map(|task| task.id).collect();
         for task_id in ids {
             self.task_event_enemy_unit_spotted(world, task_id, unit);
@@ -815,7 +815,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::CreateBuilding` (`task_manager.cpp:240`).
-    pub fn create_building(
+    pub(crate) fn create_building(
         &mut self,
         world: &mut GameState,
         unit_type: UnitType,
@@ -831,7 +831,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::CreateUnit` (`task_manager.cpp:246`).
-    pub fn create_unit(
+    pub(crate) fn create_unit(
         &mut self,
         world: &mut GameState,
         unit_type: UnitType,
@@ -859,7 +859,7 @@ impl TaskManager {
     }
 
     /// `TaskManager::IsUnitNeeded` (`task_manager.cpp:51`).
-    pub fn is_unit_needed(
+    pub(crate) fn is_unit_needed(
         &mut self,
         world: &GameState,
         unit_type: UnitType,
@@ -952,7 +952,7 @@ impl TaskManager {
     // -----------------------------------------------------------------------
 
     /// `TaskManager::FindTaskForUnit` (`task_manager.cpp:430`).
-    pub fn find_task_for_unit(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn find_task_for_unit(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
         };
@@ -1131,21 +1131,21 @@ impl TaskManager {
     }
 
     /// `Task::BeginTurn`.
-    pub fn task_begin_turn(&mut self, world: &mut GameState, task_id: u32) {
+    pub(crate) fn task_begin_turn(&mut self, world: &mut GameState, task_id: u32) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.begin_turn(ctx, header)
         });
     }
 
     /// `Task::EndTurn`.
-    pub fn task_end_turn(&mut self, world: &mut GameState, task_id: u32) {
+    pub(crate) fn task_end_turn(&mut self, world: &mut GameState, task_id: u32) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.end_turn(ctx, header)
         });
     }
 
     /// `Task::Execute(unit)` — returns `true` if the task did something.
-    pub fn task_execute(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) -> bool {
+    pub(crate) fn task_execute(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) -> bool {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.execute(ctx, header, unit)
         })
@@ -1153,21 +1153,21 @@ impl TaskManager {
     }
 
     /// `Task::AddUnit`.
-    pub fn task_add_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
+    pub(crate) fn task_add_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.add_unit(ctx, header, unit)
         });
     }
 
     /// `Task::RemoveUnit`.
-    pub fn task_remove_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
+    pub(crate) fn task_remove_unit(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.remove_unit(ctx, header, unit)
         });
     }
 
     /// `Task::RemoveSelf`.
-    pub fn task_remove_self(&mut self, world: &mut GameState, task_id: u32) {
+    pub(crate) fn task_remove_self(&mut self, world: &mut GameState, task_id: u32) {
         let _ = self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.remove_self(ctx, header)
         });
@@ -1175,14 +1175,14 @@ impl TaskManager {
     }
 
     /// `Task::ChildComplete`.
-    pub fn task_child_complete(&mut self, world: &mut GameState, task_id: u32, child: u32) {
+    pub(crate) fn task_child_complete(&mut self, world: &mut GameState, task_id: u32, child: u32) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.child_complete(ctx, header, child)
         });
     }
 
     /// Notifying the parent about `TaskMove` completion.
-    pub fn task_move_finished(
+    pub(crate) fn task_move_finished(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -1195,7 +1195,7 @@ impl TaskManager {
     }
 
     /// `Task::CheckReactions`.
-    pub fn task_check_reactions(&mut self, world: &mut GameState, task_id: u32) -> bool {
+    pub(crate) fn task_check_reactions(&mut self, world: &mut GameState, task_id: u32) -> bool {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.check_reactions(ctx, header)
         })
@@ -1203,7 +1203,7 @@ impl TaskManager {
     }
 
     /// `Task::ExchangeOperator`.
-    pub fn task_exchange_operator(
+    pub(crate) fn task_exchange_operator(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -1216,14 +1216,14 @@ impl TaskManager {
     }
 
     /// `Task::EventUnitDestroyed`.
-    pub fn task_event_unit_destroyed(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
+    pub(crate) fn task_event_unit_destroyed(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_unit_destroyed(ctx, header, unit)
         });
     }
 
     /// `Task::EventEnemyUnitSpotted`.
-    pub fn task_event_enemy_unit_spotted(
+    pub(crate) fn task_event_enemy_unit_spotted(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -1235,14 +1235,14 @@ impl TaskManager {
     }
 
     /// `Task::EventCargoTransfer`.
-    pub fn task_event_cargo_transfer(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
+    pub(crate) fn task_event_cargo_transfer(&mut self, world: &mut GameState, task_id: u32, unit: UnitId) {
         self.with_task_kind(world, task_id, |kind, ctx, header| {
             kind.event_cargo_transfer(ctx, header, unit)
         });
     }
 
     /// `Task::EventUnitLoaded`.
-    pub fn task_event_unit_loaded(
+    pub(crate) fn task_event_unit_loaded(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -1255,7 +1255,7 @@ impl TaskManager {
     }
 
     /// `Task::EventUnitUnloaded`.
-    pub fn task_event_unit_unloaded(
+    pub(crate) fn task_event_unit_unloaded(
         &mut self,
         world: &mut GameState,
         task_id: u32,
@@ -1268,7 +1268,7 @@ impl TaskManager {
     }
 
     /// `Task::IsUnitUsable`.
-    pub fn task_is_unit_usable(&self, world: &GameState, task_id: u32, unit: UnitId) -> bool {
+    pub(crate) fn task_is_unit_usable(&self, world: &GameState, task_id: u32, unit: UnitId) -> bool {
         match self.task(task_id) {
             Some(task) => {
                 let header = task.header();
@@ -1279,7 +1279,7 @@ impl TaskManager {
     }
 
     /// `Task::GetBounds`.
-    pub fn task_get_bounds(&self, world: &GameState, task_id: u32) -> crate::unit::Rect {
+    pub(crate) fn task_get_bounds(&self, world: &GameState, task_id: u32) -> crate::unit::Rect {
         match self.task(task_id) {
             Some(task) => task.kind.get_bounds(world, task.header()),
             None => crate::unit::Rect::default(),

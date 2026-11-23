@@ -82,12 +82,12 @@ pub fn builder_type_for(unit_type: UnitType) -> UnitType {
 ///
 /// P2: a single formula with `BuildMenu` (`max_core::production::turns_to_build`,
 /// including the computer difficulty multiplier).
-pub fn turns_to_build(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn turns_to_build(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> i32 {
     crate::production::turns_to_build(world, team, unit_type)
 }
 
 /// Team materials (sum over complexes). `None` — no complexes.
-pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i32> {
+pub(crate) fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i32> {
     let complexes = world.team_units[team.0 as usize].complexes();
 
     if complexes.is_empty() {
@@ -98,7 +98,7 @@ pub fn team_materials(world: &crate::game::GameState, team: TeamId) -> Option<i3
 }
 
 /// `TaskCreateBuilding::CheckMaterials` — whether there are enough materials to build.
-pub fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> bool {
+pub(crate) fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> bool {
     const REQUIRED_RAW_MATERIALS: i32 = 10;
 
     let turns = turns_to_build(world, team, unit_type);
@@ -114,7 +114,7 @@ pub fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: 
 ///
 /// A port of `TaskManager_NeedToReserveRawMaterials` (`ai.cpp:434`): raw material
 /// carried by units minus the consumption of the team's buildings.
-pub fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamId) -> bool {
+pub(crate) fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamId) -> bool {
     let mut raw_materials: i32 = -10;
 
     for id in world.unit_list(crate::unit::UnitListKind::MobileLandSea) {
@@ -267,7 +267,7 @@ fn resource_amount(world: &crate::game::GameState, site: Point) -> i32 {
 /// C++ scans the `AccessMap` around the claimed site; here — the square
 /// of radius 8 around the site in `y`, then `x` order (like the C++ `rect` loops),
 /// preferring sites near raw material for an ore station.
-pub fn find_build_site(
+pub(crate) fn find_build_site(
     world: &crate::game::GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -1592,7 +1592,7 @@ fn activate_run(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
 }
 
 /// `TaskActivate_IsComplete` (`taskactivate.cpp`): the cargo is unloaded onto the map.
-pub fn task_activate_is_complete(
+pub(crate) fn task_activate_is_complete(
     world: &crate::game::GameState,
     payload: UnitId,
     container: UnitId,
@@ -2034,7 +2034,7 @@ pub fn event_unit_destroyed(
 }
 
 /// `IsUnitUsable` for `TaskObtainUnits`.
-pub fn obtain_units_is_unit_usable(
+pub(crate) fn obtain_units_is_unit_usable(
     world: &crate::game::GameState,
     _header: TaskHeader,
     kind: &TaskKind,
@@ -2060,7 +2060,7 @@ pub fn obtain_units(kind: &TaskKind) -> Option<(&[UnitType], Point)> {
 }
 
 /// `TaskObtainUnits::IsNeeded`.
-pub fn is_needed(world: &crate::game::GameState, header: TaskHeader) -> bool {
+pub(crate) fn is_needed(world: &crate::game::GameState, header: TaskHeader) -> bool {
     let Some(parent) = header.parent else {
         return false;
     };

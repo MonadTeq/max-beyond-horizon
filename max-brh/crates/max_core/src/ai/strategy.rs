@@ -105,7 +105,7 @@ impl SpottedUnit {
     }
 
     /// `SpottedUnit::GetLastPosition` — visible → current cell, otherwise the last one.
-    pub fn last_position_of(&self, world: &GameState) -> Point {
+    pub(crate) fn last_position_of(&self, world: &GameState) -> Point {
         let Some(unit_id) = self.unit else {
             return self.last_position;
         };
@@ -117,14 +117,14 @@ impl SpottedUnit {
     }
 
     /// `SpottedUnit::UpdatePosition`.
-    pub fn update_position(&mut self, world: &GameState) {
+    pub(crate) fn update_position(&mut self, world: &GameState) {
         if let Some(unit) = self.unit.and_then(|unit_id| world.unit(unit_id)) {
             self.last_position = unit.grid;
         }
     }
 
     /// `SpottedUnit::SetVisible`.
-    pub fn set_visible(&mut self, visible: bool, world: &GameState) {
+    pub(crate) fn set_visible(&mut self, visible: bool, world: &GameState) {
         self.visible_to_team = visible;
         self.update_position(world);
     }
@@ -387,7 +387,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::IsEnemyTeam` (`aiplayer.cpp:2208`).
-    pub fn is_enemy_team(&self, world: &GameState, team: TeamId) -> bool {
+    pub(crate) fn is_enemy_team(&self, world: &GameState, team: TeamId) -> bool {
         team != self.player_team && super::task::is_enemy_team(world, team)
     }
 
@@ -442,7 +442,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::ClearZone` (`aiplayer.cpp:3367`) — zone clearing task.
-    pub fn clear_zone(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn clear_zone(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
         };
@@ -477,7 +477,7 @@ impl AiPlayer {
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::UnitSpotted` (`aiplayer.cpp:3606`).
-    pub fn unit_spotted(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn unit_spotted(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
         };
@@ -530,7 +530,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::UnitHidden` (`aiplayer.cpp:3648`).
-    pub fn unit_hidden(&mut self, world: &GameState, unit: UnitId) {
+    pub(crate) fn unit_hidden(&mut self, world: &GameState, unit: UnitId) {
         if let Some(spot) = self
             .spotted_units
             .iter_mut()
@@ -549,7 +549,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::AddMilitaryUnit` (`aiplayer.cpp:2195`).
-    pub fn add_military_unit(&mut self, world: &GameState, unit: UnitId) {
+    pub(crate) fn add_military_unit(&mut self, world: &GameState, unit: UnitId) {
         let Some(info) = world.unit(unit) else {
             return;
         };
@@ -588,7 +588,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::MineSpotted` (`aiplayer.cpp:1078`) — mine density.
-    pub fn mine_spotted(&mut self, world: &GameState, unit: &UnitInfo) {
+    pub(crate) fn mine_spotted(&mut self, world: &GameState, unit: &UnitInfo) {
         let mut walker = super::threat::ZoneWalker::new(unit.grid, 1);
         let density = self.minefield_density.max(0) as i32;
 
@@ -609,7 +609,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::FindMines` (`aiplayer.cpp:3442`) — create `TaskFindMines`.
-    pub fn find_mines(&mut self, world: &mut GameState, unit: UnitId) {
+    pub(crate) fn find_mines(&mut self, world: &mut GameState, unit: UnitId) {
         let Some(info) = world.unit(unit).cloned() else {
             return;
         };
@@ -634,7 +634,7 @@ impl AiPlayer {
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::GetMilitaryValue` (`aiplayer.cpp:242`).
-    pub fn get_military_value(&self, world: &GameState) -> i32 {
+    pub(crate) fn get_military_value(&self, world: &GameState) -> i32 {
         let mut result = 0;
 
         for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
@@ -659,7 +659,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::UpdatePriorityTasks` (`aiplayer.cpp:258`).
-    pub fn update_priority_tasks(&mut self, world: &mut GameState) {
+    pub(crate) fn update_priority_tasks(&mut self, world: &mut GameState) {
         let military_value = self.get_military_value(world);
         let task_limit = ((military_value + ATTACK_VALUE - 1) / ATTACK_VALUE)
             .clamp(ATTACK_TASK_LIMIT_MIN, ATTACK_TASK_LIMIT_MAX);
@@ -714,7 +714,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::DetermineAttack` (`aiplayer.cpp:194`).
-    pub fn determine_attack(
+    pub(crate) fn determine_attack(
         &mut self,
         world: &mut GameState,
         spotted_index: u32,
@@ -801,7 +801,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetTotalProjectedDamage` (`aiplayer.cpp:531`).
-    pub fn get_total_projected_damage(
+    pub(crate) fn get_total_projected_damage(
         world: &GameState,
         unit: &UnitInfo,
         caution_level: CautionLevel,
@@ -823,7 +823,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetPredictedAttack` (`aiplayer.cpp:3307`).
-    pub fn get_predicted_attack(
+    pub(crate) fn get_predicted_attack(
         &self,
         world: &GameState,
         unit: &UnitInfo,
@@ -860,7 +860,7 @@ impl AiPlayer {
     /// Returns `false` if there is no suitable continent on the map: in C++ this
     /// switches the team to `TEAM_TYPE_NONE` (and `Ai_SetupStrategy` returns
     /// `false`).
-    pub fn select_strategy(&mut self, world: &mut GameState) -> bool {
+    pub(crate) fn select_strategy(&mut self, world: &mut GameState) -> bool {
         let proximity_range = world.ai.settings.proximity_range;
         let mut continents = land_continents(world);
         let mut strategy_scores = [0i32; AI_STRATEGY_MAX as usize];
@@ -1177,7 +1177,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::SelectTeamClan` (`aiplayer.cpp:1109`).
-    pub fn select_team_clan(&mut self, world: &mut GameState) -> TeamClan {
+    pub(crate) fn select_team_clan(&mut self, world: &mut GameState) -> TeamClan {
         let clan = match self.strategy {
             AiStrategy::Defensive => {
                 if world.rng.generate_i32(7) != 0 {
@@ -1238,7 +1238,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::RollGreenhouseRatio` (`aiplayer.cpp:1191`).
-    pub fn roll_greenhouse_ratio(&mut self, world: &mut GameState) {
+    pub(crate) fn roll_greenhouse_ratio(&mut self, world: &mut GameState) {
         self.greenhouse_ratio = match self.strategy {
             AiStrategy::Defensive | AiStrategy::Air | AiStrategy::Sea => {
                 world.rng.generate_i32(6) as i16 + 7
@@ -1253,7 +1253,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::RollMinefieldDensity` (`aiplayer.cpp:1217`).
-    pub fn roll_minefield_density(&mut self, world: &mut GameState) {
+    pub(crate) fn roll_minefield_density(&mut self, world: &mut GameState) {
         if world.ai.settings.opponent >= Opponent::Average as u8 {
             self.minefield_density = match self.strategy {
                 AiStrategy::Air | AiStrategy::Sea => {
@@ -1295,7 +1295,7 @@ impl AiPlayer {
     // -----------------------------------------------------------------------
 
     /// `AiPlayer::BeginTurn` (`aiplayer.cpp:2213`).
-    pub fn begin_turn(&mut self, world: &mut GameState) {
+    pub(crate) fn begin_turn(&mut self, world: &mut GameState) {
         if world.teams[self.player_team.0 as usize].team_type != TeamKind::Computer {
             return;
         }
@@ -1698,7 +1698,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::DetermineTargetLocation` (`aiplayer.cpp:298`).
-    pub fn determine_target_location(&mut self, world: &GameState, position: Point) {
+    pub(crate) fn determine_target_location(&mut self, world: &GameState, position: Point) {
         if self.spotted_units.is_empty() {
             self.target_location = position;
             return;
@@ -1739,7 +1739,7 @@ impl AiPlayer {
     /// every tick in which the unit actually does something, and is reset at
     /// the start of `UnitsManager_ProcessOrders` (`Ai_ClearTasksPendingFlags`).
     /// Therefore a unit that ran out of speed does not hold the turn.
-    pub fn check_end_turn(&mut self, world: &mut GameState) -> bool {
+    pub(crate) fn check_end_turn(&mut self, world: &mut GameState) -> bool {
         if self.need_init {
             self.begin_turn(world);
             return true;
@@ -1839,7 +1839,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::CreateBuilding` (`aiplayer.cpp:2897`).
-    pub fn create_building(
+    pub(crate) fn create_building(
         &mut self,
         world: &mut GameState,
         unit_type: UnitType,
@@ -1890,7 +1890,7 @@ impl AiPlayer {
 
     /// `AiPlayer::FindManager` (`aiplayer.cpp:2141`) — the nearest
     /// `TaskManageBuildings` of the team.
-    pub fn find_manager(&self, world: &GameState, site: Point) -> Option<u32> {
+    pub(crate) fn find_manager(&self, world: &GameState, site: Point) -> Option<u32> {
         let mut best: Option<(i32, u32)> = None;
 
         for task in world.ai.task_manager.tasks() {
@@ -1915,7 +1915,7 @@ impl AiPlayer {
 
     /// `AiPlayer::ShouldUpgradeUnit` (`aiplayer.cpp:3519`) — structurally: the unit is not
     /// in perfect condition and the upgrade is not yet maxed.
-    pub fn should_upgrade_unit(&self, world: &GameState, unit: &UnitInfo) -> bool {
+    pub(crate) fn should_upgrade_unit(&self, world: &GameState, unit: &UnitInfo) -> bool {
         if unit.flags & unit_flags::REGENERATING_UNIT != 0 {
             return false;
         }
@@ -1942,7 +1942,7 @@ impl AiPlayer {
 
     /// `AiPlayer::MatchPath` (`aiplayer.cpp:3660`) — simplified: the request
     /// is accepted if the path leads to the task's target.
-    pub fn match_path(&self, world: &GameState, request: &crate::pathfinding::PathRequest) -> bool {
+    pub(crate) fn match_path(&self, world: &GameState, request: &crate::pathfinding::PathRequest) -> bool {
         let Some(unit) = world.unit(request.unit) else {
             return false;
         };
@@ -1960,7 +1960,7 @@ impl AiPlayer {
 
 /// `AiPlayer_CalculateProjectedDamage` (`aiplayer.cpp`): the damage the target
 /// will deal back to a friendly unit.
-pub fn calculate_projected_damage(
+pub(crate) fn calculate_projected_damage(
     world: &GameState,
     friendly: &UnitInfo,
     enemy: &UnitInfo,
@@ -1981,7 +1981,7 @@ pub fn calculate_projected_damage(
 }
 
 /// `AiPlayer_GetProjectedDamage` — expected damage from `friendly` to `enemy`.
-pub fn get_projected_damage(
+pub(crate) fn get_projected_damage(
     world: &GameState,
     friendly: &UnitInfo,
     enemy: &UnitInfo,
@@ -2002,7 +2002,7 @@ pub fn get_projected_damage(
 }
 
 /// `AiPlayer::GetPredictedAttack` for the team.
-pub fn get_predicted_attack(
+pub(crate) fn get_predicted_attack(
     world: &GameState,
     unit: &UnitInfo,
     caution_level: CautionLevel,
@@ -2023,7 +2023,7 @@ pub fn get_predicted_attack(
 }
 
 /// `AiPlayer::GetDamagePotential` (`aiplayer.cpp:3345`).
-pub fn get_damage_potential(
+pub(crate) fn get_damage_potential(
     world: &GameState,
     team: TeamId,
     unit: &UnitInfo,
@@ -2051,7 +2051,7 @@ pub fn get_damage_potential(
 
 /// `AiPlayer::GetDamagePotentialMap` (`aiplayer.cpp:3312`) — damage map for
 /// the unit risk type and caution level.
-pub fn get_damage_potential_map(
+pub(crate) fn get_damage_potential_map(
     world: &GameState,
     team: TeamId,
     unit: &UnitInfo,
@@ -2073,7 +2073,7 @@ pub fn get_damage_potential_map(
 /// C++ caches up to 10 maps by `(risk_level, caution_level)`; here the map
 /// is built immediately, the traversal order — `spotted_units` (detection order) and
 /// the five unit lists, as in C++.
-pub fn build_threat_map(
+pub(crate) fn build_threat_map(
     world: &GameState,
     team: TeamId,
     risk_level: i32,
@@ -2548,13 +2548,13 @@ pub fn choose_upgrade_topic(team_info: &crate::team::TeamInfo) -> ResearchTopic 
 }
 
 /// `AiPlayer::GetStrategy` for the team.
-pub fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
+pub(crate) fn strategy_of(world: &GameState, team: TeamId) -> AiStrategy {
     world.ai.players[team.0 as usize].strategy
 }
 
 /// `AiPlayer::GetNormalRateBuildCost` (`unitinfo.cpp:3730`) — cost in
 /// raw material units: `turns * consumption`.
-pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = turns_to_build(world, team, unit_type);
     let rate = if unit_type.environment().is_some() {
         super::tasks::create::raw_consumption_rate(UnitType::HeavyVehiclePlant)
@@ -2566,12 +2566,12 @@ pub fn normal_rate_build_cost(world: &GameState, team: TeamId, unit_type: UnitTy
 }
 
 /// Turns to build a type (`BuildMenu_GetTurnsToBuild`).
-pub fn turns_to_build(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn turns_to_build(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     super::tasks::create::turns_to_build(world, team, unit_type)
 }
 
 /// `AiPlayer::CreateBuilding` for the team (a free function).
-pub fn create_building(
+pub(crate) fn create_building(
     world: &mut GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -2585,7 +2585,7 @@ pub fn create_building(
 }
 
 /// `AiPlayer::AddBuilding` (`aiplayer.cpp:68`).
-pub fn add_building(world: &mut GameState, team: TeamId, unit: UnitId) {
+pub(crate) fn add_building(world: &mut GameState, team: TeamId, unit: UnitId) {
     let Some(unit_info) = world.unit(unit).cloned() else {
         return;
     };
@@ -2598,7 +2598,7 @@ pub fn add_building(world: &mut GameState, team: TeamId, unit: UnitId) {
 }
 
 /// `AiPlayer::GetTeamClusterCoordinates` (`aiplayer.cpp:184`).
-pub fn team_cluster_coordinates(world: &GameState, team: TeamId) -> Point {
+pub(crate) fn team_cluster_coordinates(world: &GameState, team: TeamId) -> Point {
     let mut sum_x: i64 = 0;
     let mut sum_y: i64 = 0;
     let mut count: i64 = 0;
@@ -2630,7 +2630,7 @@ pub fn team_cluster_coordinates(world: &GameState, team: TeamId) -> Point {
 }
 
 /// `AiPlayer::GetUnitClusterCoordinates` (`aiplayer.cpp:162`).
-pub fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListKind) -> Point {
+pub(crate) fn unit_cluster_coordinates(world: &GameState, team: TeamId, kind: UnitListKind) -> Point {
     let mut sum_x: i64 = 0;
     let mut sum_y: i64 = 0;
     let mut count: i64 = 0;
@@ -3037,18 +3037,15 @@ fn land_continents(world: &GameState) -> Continents {
 /// before `SetClanUpgradesFromClans` adds the clan deltas, and the result is
 /// written to both base and current values. Calling it again (or with another
 /// clan) therefore cannot stack trade-offs.
-pub fn apply_clan(world: &mut GameState, team: TeamId, clan: TeamClan) {
+pub(crate) fn apply_clan(world: &mut GameState, team: TeamId, clan: TeamClan) {
     let team_index = team.0 as usize;
     world.team_units[team_index].init_clan_unit_values(clan);
 }
 
 /// `Ai_GetNormalRateBuildCost` (`ai.cpp:54`).
-pub fn ai_get_normal_rate_build_cost(world: &GameState, unit_type: UnitType, team: TeamId) -> i32 {
+pub(crate) fn ai_get_normal_rate_build_cost(world: &GameState, unit_type: UnitType, team: TeamId) -> i32 {
     normal_rate_build_cost(world, team, unit_type)
 }
-
-/// `TaskManager_NeedToReserveRawMaterials` — re-export from the create module.
-pub use super::tasks::create::need_to_reserve_raw_materials;
 
 #[cfg(test)]
 mod tests {
@@ -3303,7 +3300,7 @@ mod tests {
         state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
         state.team_units[TeamId::GREEN.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
         state.ai.settings.opponent = crate::enums::Opponent::Average as u8;
-        crate::ai_init(&mut state);
+        crate::ai::ai_init(&mut state);
 
         state
             .spawn_unit(
@@ -3334,10 +3331,10 @@ mod tests {
         info.set_visible_to_team(TeamId::RED, true);
         state.write_unit(enemy, info);
 
-        crate::ai_unit_spotted(&mut state, enemy, TeamId::RED);
-        assert!(crate::ai_setup_strategy(&mut state, TeamId::RED));
+        crate::ai::ai_unit_spotted(&mut state, enemy, TeamId::RED);
+        assert!(crate::ai::ai_setup_strategy(&mut state, TeamId::RED));
 
-        crate::ai_begin_turn(&mut state, TeamId::RED);
+        crate::ai::ai_begin_turn(&mut state, TeamId::RED);
 
         assert!(
             state

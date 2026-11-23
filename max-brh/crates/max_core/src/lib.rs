@@ -109,26 +109,16 @@ pub mod victory;
 pub use max_types::{enums, geo, input, map};
 
 pub use access::{
-    get_attack_target, is_accessible, is_engaged, is_valid_attack_target, unit_type_flags,
-    unit_type_land_type, unit_type_properties, UnitTypeProperties, ACCESS_MODIFIER_NONE,
-    ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
+    unit_type_flags, unit_type_land_type, unit_type_properties, UnitTypeProperties,
+    ACCESS_MODIFIER_NONE, ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
 };
 pub use ai::HeatMap as AiHeatMap;
 pub use ai::{
-    ai_begin_turn, ai_check_end_turn, ai_check_mines, ai_check_reactions,
-    ai_clear_tasks_pending_flags, ai_determine_caution_level, ai_enable_auto_survey,
-    ai_evaluate_attack_targets, ai_init, ai_is_dangerous_location, ai_remove_unit,
-    ai_select_starting_position, ai_set_info_map_point, ai_set_tasks_pending_flag,
-    ai_setup_strategy, ai_unit_hidden, ai_unit_spotted, task_manager_need_to_reserve_raw_materials,
     AiPlayer, AiReactionState, AiSettings, AiState, BuildOrder, Reminder, Task, TaskHeader,
     TaskKind, TaskManager, ThreatMap, WeightTable,
 };
 pub use alloc::{
-    balance as alloc_balance, cargo_get_cargo_capacity, cargo_get_inventory,
-    get_cargo_info as complex_get_cargo_info, get_cargo_minable as complex_get_cargo_minable,
-    get_cargo_mining as complex_get_cargo_mining, is_active_mine, mining_survey,
-    optimize as alloc_optimize, optimize_masked as alloc_optimize_masked, reduce_production,
-    total_mining as complex_total_mining, unit_complex, update_resources_total, MiningKind,
+    cargo_get_cargo_capacity, cargo_get_inventory, is_active_mine, unit_complex, MiningKind,
     MINING_CAPACITY, MINING_SURVEY_LIMIT, MINING_SURVEY_RADIUS,
 };
 pub use classification::{
@@ -136,26 +126,14 @@ pub use classification::{
     UnitTypeClassify, DECORATION_UNIT_TYPES, EFFECT_UNIT_TYPES, PLOT_PROP_UNIT_TYPES,
     PRODUCING_UNIT_TYPES, TURRET_UNIT_TYPES,
 };
-pub use combat::{
-    aim_at_target, assess_attacks, attack, attack_unit, get_attack_damage, prepare_fire,
-    progress_fire, ATTACK_DAMAGE_MIN,
-};
-pub use complex::{
-    attach_complex, attach_to_primary_complex, connected_building, detach_complex,
-    first_untested_connection, remove_connections, team_building_at, test_connections,
-    unit_size as complex_unit_size, update_connectors, CONNECTOR_ORDER,
-};
+pub use combat::{get_attack_damage, ATTACK_DAMAGE_MIN};
+pub use complex::{unit_size as complex_unit_size, CONNECTOR_ORDER};
 pub use crc::{
-    crc16, crc16_update_byte, get_crc16_word, get_unit_list_checksum, replay_digest_bytes,
-    replay_digest_crc, state_checksum, state_digest, CRC16_INITIAL, CRC16_POLYNOMIAL,
-    REPLAY_DIGEST_MAGIC,
+    crc16, crc16_update_byte, get_crc16_word, CRC16_INITIAL, CRC16_POLYNOMIAL, REPLAY_DIGEST_MAGIC,
 };
 pub use deploy::{
-    deploy_starting_units, deploy_starting_units_with, deploy_team_supplies, find_reachable_spot,
-    is_valid_starting_position, set_initial_mining, start_position_mining_station,
-    starting_position_power_generator, survey_resources_in_area, TeamDeployment, TeamSupply,
-    DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD, DEPLOY_SEARCH_RANGE, LARGE_SLAB_IMAGE_COUNT,
-    SMALL_SLAB_IMAGE_COUNT,
+    TeamDeployment, TeamSupply, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD, DEPLOY_SEARCH_RANGE,
+    LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT,
 };
 pub use max_types::enums::{
     AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
@@ -163,7 +141,7 @@ pub use max_types::enums::{
     TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType,
     UnitOrderType, UnitType, VictoryType, WinLossState,
 };
-pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
+pub use events::{ApplyOutcome, CommandQueue, UnitEvent};
 // Stage B §7: `GameState` is **not** re-exported any more — the public entry is
 // `crate::universe::GameUniverse` plus the read-only `StateRef`. The type itself
 // stays `pub(crate)`-visible to the facade and the inline `#[cfg(test)]` modules.
@@ -186,19 +164,14 @@ pub use max_types::input::{
 };
 pub use max_types::map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;
-pub use pathfinding::{
-    find_ground_path, get_missile_path, paths_get_air_path, request_path, PathRequest,
-};
+pub use pathfinding::{get_missile_path, PathRequest};
 pub use power::{
-    complex_totals as complex_energy_totals, industry_unit_name, is_power_producer,
-    is_switchable_consumer, optimize_complex, shortage_build_error, EnergyTotals, IndustryOutcome,
-    Shortage, CONSUMER_OFF_ORDER,
+    industry_unit_name, is_power_producer, is_switchable_consumer, shortage_build_error,
+    EnergyTotals, IndustryOutcome, Shortage, CONSUMER_OFF_ORDER,
 };
 pub use production::{
-    buildable_units, builder_type, can_afford_turn, can_build, complex_raw_materials,
-    cost_per_turn, find_build_site, initial_build_site, is_builder, is_factory, is_mobile_builder,
-    is_site_accessible, is_site_accessible_ignoring, max_possible_build_rate, progress_build_state,
-    site_anchor_for_cursor, site_covers, total_cost, turns_to_build as production_turns_to_build,
+    buildable_units, builder_type, can_build, cost_per_turn, is_builder, is_factory,
+    is_mobile_builder, max_possible_build_rate, site_anchor_for_cursor, site_covers, total_cost,
     BuildError, BuildReport, ProductionEvent, ProductionEventKind, ProductionManager, BUILDABLE,
     FACTORIES, MOBILE_BUILDERS,
 };
@@ -215,7 +188,7 @@ pub use save::{
     SaveError, SaveFile, SaveFormatHeader, SaveTeamUnits, SaveUnit, SavedComplex, SavedUnitValues,
     SpottedUnit, SAVE_VERSION_V70,
 };
-pub use save_write::{build_save_file, SaveMeta, SAVE_UNIT_HASH_SIZE};
+pub use save_write::{SaveMeta, SAVE_UNIT_HASH_SIZE};
 pub use setup::{
     ai_choose_starting_position, ai_is_safe_starting_position, derive_surface_map, generate_map,
     AlienPlacement, AlienUnitCosts, GameSetup, GenerationSettings, ResourceLevel, SetupOutput,
@@ -225,11 +198,7 @@ pub use team::{
     Cargo, Complex, ComplexId, ResearchTopicInfo, ScreenLocation, Team, TeamId, TeamInfo,
     TeamInfoUi, TeamKind, TeamUnits,
 };
-pub use transfer::{
-    complex_free_capacity, complex_income, complex_stored, complex_transfer,
-    find_unit_with_cargo_type, process_transfer, transfer_cargo, transfer_cargo_kind,
-    transfer_menu_cargo_info, unit_cargo,
-};
+pub use transfer::unit_cargo;
 pub use unit::{
     AirPath, BuilderPath, GroundPath, Rect, UnitId, UnitInfo, UnitListKind, UnitPath,
     UnitPresentation,
@@ -251,17 +220,10 @@ pub use universe::{
     TurnNotice,
 };
 pub use victory::{
-    cargo_fuel_consumption_rate, cargo_get_net_production, cargo_gold_consumption_rate,
-    cargo_life_consumption_rate, cargo_power_consumption_rate, cargo_raw_consumption_rate,
-    cargo_type_of, check_end_game_conditions, count_casualties, count_damaged_units,
-    count_ready_units, count_total_mining, count_units_above_attrib_level,
-    count_units_with_reduced_attrib, default_win_loss_conditions, evaluate_status,
-    get_normal_rate_build_cost, get_research_level, get_total_consumption, get_total_mining,
-    get_total_power_consumption, get_total_units_being_constructed, get_total_worth_of_assets,
-    get_worth_of_assets, has_attack_power, has_construction_infrastructure, has_materials,
-    has_production_infrastructure, has_unit_above_mark_level, has_unit_experience,
-    mission_win_loss, relevant_list, CargoType, MissionCategory, NetProduction, UnitClass,
-    WinLossStatus, PLAYING_TEAMS,
+    cargo_fuel_consumption_rate, cargo_gold_consumption_rate, cargo_life_consumption_rate,
+    cargo_power_consumption_rate, cargo_raw_consumption_rate, cargo_type_of,
+    get_normal_rate_build_cost, relevant_list, CargoType, MissionCategory, NetProduction,
+    UnitClass, WinLossStatus, PLAYING_TEAMS,
 };
 
 #[cfg(test)]

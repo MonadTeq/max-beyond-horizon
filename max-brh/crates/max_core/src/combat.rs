@@ -97,7 +97,7 @@ pub fn get_attack_damage(attacker: &UnitInfo, target: &UnitInfo, attack_potentia
 /// UI messages and AI notifications (`GameManager_NotifyEvent`,
 /// `Ai_AddUnitToTrackerList`, `Ai_UnitSpotted`) are not ported; visibility
 /// is updated via [`spot_unit`].
-pub fn attack_unit(
+pub(crate) fn attack_unit(
     state: &mut GameState,
     target_id: UnitId,
     attacker_id: UnitId,
@@ -186,7 +186,7 @@ pub fn attack_unit(
 /// `UnitInfo::GainExperience` (`unitinfo.cpp:1468`) — the
 /// `REGENERATING_UNIT` branch (alien units) is ported; upgrade topics (`Randomizer_Generate`) —
 /// P3/P6, marked TODO(risk 1).
-pub fn gain_experience(state: &mut GameState, id: UnitId, gain: i32) {
+pub(crate) fn gain_experience(state: &mut GameState, id: UnitId, gain: i32) {
     let Some(mut unit) = state.unit(id).cloned() else {
         return;
     };
@@ -204,7 +204,7 @@ pub fn gain_experience(state: &mut GameState, id: UnitId, gain: i32) {
 
 /// `Ai_UnitSpotted`/`UnitInfo::SpotByTeam` — the minimal simulation part:
 /// the unit becomes visible and "spotted" for the team.
-pub fn spot_unit(state: &mut GameState, id: UnitId, team: TeamId) {
+pub(crate) fn spot_unit(state: &mut GameState, id: UnitId, team: TeamId) {
     let Some(mut unit) = state.unit(id).cloned() else {
         return;
     };
@@ -363,7 +363,7 @@ pub fn zone_cells(grid: Point, range: i32) -> Vec<Point> {
 
 /// `UnitInfo::GetAreaAttackTargets` (`unitinfo.cpp:3919`): unique targets within
 /// the radius, with a minimal `Access_GetApproximateDistance` to the center.
-pub fn get_area_attack_targets(
+pub(crate) fn get_area_attack_targets(
     state: &GameState,
     unit: &UnitInfo,
     grid: Point,
@@ -410,7 +410,7 @@ pub fn get_area_attack_targets(
 }
 
 /// `UnitInfo::AttackAreaTargets` (`unitinfo.cpp:3961`).
-pub fn attack_area_targets(state: &mut GameState, attacker_id: UnitId, grid: Point) {
+pub(crate) fn attack_area_targets(state: &mut GameState, attacker_id: UnitId, grid: Point) {
     let Some(attacker) = state.unit(attacker_id).cloned() else {
         return;
     };
@@ -434,7 +434,7 @@ pub fn attack_area_targets(state: &mut GameState, attacker_id: UnitId, grid: Poi
 /// `UnitInfo::Attack` (`unitinfo.cpp:2700`) — a shot at a cell.
 ///
 /// Called from `ProgressFire` after `EndAttack` (not from the FIRE order).
-pub fn attack(state: &mut GameState, id: UnitId, grid: Point) {
+pub(crate) fn attack(state: &mut GameState, id: UnitId, grid: Point) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -502,7 +502,7 @@ pub fn attack(state: &mut GameState, id: UnitId, grid: Point) {
 ///
 /// Deducts ammo and, with `FIRES_MISSILES`, creates a projectile and moves
 /// `live_attack` onto it, moving the order to `FIRE_IN_PROGRESS`.
-pub fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
+pub(crate) fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
     unit.firing_recoil_frames = 3;
     if unit.unit_type == UnitType::AntiAir {
         unit.firing_recoil_frames *= 5;
@@ -593,7 +593,7 @@ pub fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
 ///
 /// Returns `true` when the recoil has ended and damage is due (at that moment
 /// C++ calls `Attack(fire_on)`); `false` — the animation is still running.
-pub fn progress_fire(state: &mut GameState, unit: &mut UnitInfo) -> bool {
+pub(crate) fn progress_fire(state: &mut GameState, unit: &mut UnitInfo) -> bool {
     unit.firing_recoil_frames = unit.firing_recoil_frames.wrapping_sub(1);
 
     if unit.firing_recoil_frames != 0 {
@@ -616,7 +616,7 @@ pub fn progress_fire(state: &mut GameState, unit: &mut UnitInfo) -> bool {
 ///
 /// Rotates the hull/turret one step toward `fire_on`; `true` when the angle
 /// matches (the order moves to `READY_TO_FIRE`).
-pub fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> bool {
+pub(crate) fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> bool {
     let unit_angle = if unit.flags & TURRET_SPRITE != 0 {
         i32::from(unit.turret_angle)
     } else {
@@ -668,7 +668,7 @@ pub fn aim_at_target(state: &GameState, unit: &mut UnitInfo, fire_on: Point) -> 
 // ---------------------------------------------------------------------------
 
 /// `UnitsManager_ShouldAttack` (`units_manager.cpp:4623`).
-pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
+pub(crate) fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
     if (unit1.unit_type == UnitType::MobileAntiAir
         || unit1.unit_type == UnitType::AntiAir
         || unit1.unit_type == UnitType::Escort)
@@ -743,7 +743,7 @@ pub fn should_attack(state: &GameState, unit1: &UnitInfo, unit2: &UnitInfo) -> b
 
 /// `UnitsManager_CheckReaction` (`units_manager.cpp:4709`): the target is in range and
 /// worth attacking — issue `ORDER_FIRE`.
-pub fn check_reaction(state: &mut GameState, unit1_id: UnitId, unit2_id: UnitId) -> bool {
+pub(crate) fn check_reaction(state: &mut GameState, unit1_id: UnitId, unit2_id: UnitId) -> bool {
     let Some(unit1) = state.unit(unit1_id).cloned() else {
         return false;
     };
@@ -774,7 +774,7 @@ pub fn check_reaction(state: &mut GameState, unit1_id: UnitId, unit2_id: UnitId)
 
 /// `UnitsManager_IsReactionPending` (`units_manager.cpp:4749`): whether there is
 /// a unit in the list ready to react to `unit`.
-pub fn is_reaction_pending(state: &mut GameState, owner: TeamId, unit_id: UnitId) -> bool {
+pub(crate) fn is_reaction_pending(state: &mut GameState, owner: TeamId, unit_id: UnitId) -> bool {
     let candidates = state
         .delayed_attack_targets
         .get(owner.0 as usize)
@@ -808,7 +808,7 @@ fn is_team_reaction_pending(
 }
 
 /// `UnitsManager_CheckDelayedReactions(team)` (`units_manager.cpp:4888`).
-pub fn check_delayed_reactions(state: &mut GameState, team: TeamId) -> bool {
+pub(crate) fn check_delayed_reactions(state: &mut GameState, team: TeamId) -> bool {
     // C++ (`units_manager.cpp:4891`): reaction fire only for teams with
     // `team_type != TEAM_TYPE_NONE`. `PLAYER_TEAM_ALIEN` has type `NONE`, but in
     // max_core the slot is marked `Computer`, so we check the index explicitly:
@@ -893,7 +893,7 @@ pub fn check_delayed_reactions(state: &mut GameState, team: TeamId) -> bool {
 }
 
 /// `UnitsManager_IsAttackScheduled` (`units_manager.cpp:4822`).
-pub fn is_attack_scheduled(state: &GameState) -> bool {
+pub(crate) fn is_attack_scheduled(state: &GameState) -> bool {
     for kind in [
         UnitListKind::MobileAir,
         UnitListKind::MobileLandSea,
@@ -912,7 +912,7 @@ pub fn is_attack_scheduled(state: &GameState) -> bool {
 
 /// `UnitsManager_AssessAttacks` (`units_manager.cpp:4490`) — the local part
 /// without network synchronization of delayed reactions.
-pub fn assess_attacks(state: &mut GameState) -> bool {
+pub(crate) fn assess_attacks(state: &mut GameState) -> bool {
     if state.disable_fire {
         return false;
     }
@@ -965,7 +965,7 @@ pub fn assess_attacks(state: &mut GameState) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `UnitsManager_GetStealthChancePercentage` (`units_manager.cpp:1354`).
-pub fn get_stealth_chance_percentage(
+pub(crate) fn get_stealth_chance_percentage(
     state: &GameState,
     unit: &UnitInfo,
     target: &UnitInfo,
@@ -1002,7 +1002,7 @@ fn is_adjacent(unit: &UnitInfo, target: &UnitInfo) -> bool {
 }
 
 /// `UnitsManager_IsValidStealthTarget` (`units_manager.cpp:1370`).
-pub fn is_valid_stealth_target(
+pub(crate) fn is_valid_stealth_target(
     state: &GameState,
     unit: &UnitInfo,
     target: &UnitInfo,
@@ -1040,7 +1040,7 @@ pub fn is_valid_stealth_target(
 /// `Randomizer_Generate(101)` for `stealth_dice_roll` (`aiattack.cpp:421`).
 ///
 /// Used by the AI layer (P6) and tests; the attack itself does not consume RNG.
-pub fn roll_stealth_dice(state: &mut GameState) -> u8 {
+pub(crate) fn roll_stealth_dice(state: &mut GameState) -> u8 {
     state.rng.generate_i64(101) as u8
 }
 
@@ -1049,7 +1049,7 @@ pub fn roll_stealth_dice(state: &mut GameState) -> u8 {
 /// Returns `true` if the action succeeded. `unit` is the saboteur (its
 /// `parent_unit` is the target). The result (capture/disable) is applied by the caller
 /// layer ([`capture_unit`]/[`disable_unit`]), as in `UnitsManager_ProcessOrder`.
-pub fn attempt_stealth_action(state: &mut GameState, unit: &mut UnitInfo) -> bool {
+pub(crate) fn attempt_stealth_action(state: &mut GameState, unit: &mut UnitInfo) -> bool {
     let Some(parent_id) = unit.parent_unit else {
         return false;
     };
@@ -1085,7 +1085,7 @@ pub fn attempt_stealth_action(state: &mut GameState, unit: &mut UnitInfo) -> boo
 
 /// `UnitsManager_CaptureUnit` (`units_manager.cpp:4339`): the target comes under
 /// the saboteur's team control.
-pub fn capture_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
+pub(crate) fn capture_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
     let (new_team, parent_order) = match (state.unit(unit_id), state.unit(parent_id)) {
         (Some(unit), Some(parent)) => (unit.team, parent.orders),
         _ => return,
@@ -1106,7 +1106,7 @@ pub fn capture_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
 
 /// `UnitInfo::ChangeTeam` (`unitinfo.cpp`) — the simulation part: changing the team
 /// while resetting path/target/parent/group and visibility.
-pub fn change_team(state: &mut GameState, target_id: UnitId, target_team: TeamId) {
+pub(crate) fn change_team(state: &mut GameState, target_id: UnitId, target_team: TeamId) {
     let Some(mut unit) = state.unit(target_id).cloned() else {
         return;
     };
@@ -1138,7 +1138,7 @@ pub fn change_team(state: &mut GameState, target_id: UnitId, target_team: TeamId
 
 /// `UnitsManager_DisableUnit` (`units_manager.cpp:4395`): the target is disabled for
 /// `service_disable_turns` turns; path/order are reset.
-pub fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
+pub(crate) fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: UnitId) {
     let Some(infiltrator) = state.unit(unit_id).cloned() else {
         return;
     };

@@ -1000,7 +1000,7 @@ impl ThreatMap {
 
     /// `ThreatMap::GetRiskLevel(UnitInfo*)` — lowering risk for
     /// spotted/disarmed units.
-    pub fn get_risk_level_for_unit(world: &GameState, unit: &UnitInfo) -> i32 {
+    pub(crate) fn get_risk_level_for_unit(world: &GameState, unit: &UnitInfo) -> i32 {
         let mut result = Self::get_risk_level_for_type(unit.unit_type);
 
         if result >= 4 {

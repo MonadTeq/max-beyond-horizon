@@ -60,7 +60,7 @@ pub(crate) fn spotted_target(
 }
 
 /// The `SpottedUnit` target without `TaskCtx` (for the `aiattack.cpp` layer).
-pub fn spotted_target_for_ai(
+pub(crate) fn spotted_target_for_ai(
     world: &crate::game::GameState,
     team: TeamId,
     index: u32,
@@ -96,7 +96,7 @@ fn kill_unit_target(
 /// multiplied by the attacker's rounds; a target that cannot answer (immobile and
 /// outranged, or a type the attacker cannot be hit by) additionally yields
 /// `hits - 1`, as in C++.
-pub fn get_projected_damage(
+pub(crate) fn get_projected_damage(
     world: &crate::game::GameState,
     attacker: &UnitInfo,
     target: &UnitInfo,
@@ -3679,7 +3679,7 @@ pub fn event_unit_unloaded(
 
 /// `TaskAttack::GetCautionLevel` (`taskattack.cpp:77`) — depends on the unit's
 /// role in the group and on the attack phase.
-pub fn attack_caution_level(
+pub(crate) fn attack_caution_level(
     world: &crate::game::GameState,
     state: &super::AttackState,
     unit: &UnitInfo,
@@ -3731,7 +3731,7 @@ mod tests {
         let mut info = state.unit(unit).expect("unit").clone();
         info.set_visible_to_team(team, true);
         state.write_unit(unit, info);
-        crate::ai_unit_spotted(state, unit, team);
+        crate::ai::ai_unit_spotted(state, unit, team);
     }
 
     #[test]
@@ -3885,7 +3885,7 @@ mod tests {
             info.set_visible_to_team(TeamId::RED, true);
             world.write_unit(target, info);
         }
-        crate::ai_unit_spotted(&mut world, target, TeamId::RED);
+        crate::ai::ai_unit_spotted(&mut world, target, TeamId::RED);
 
         world.with_task_manager(|tm, world| {
             let attack_id = tm.append_task(

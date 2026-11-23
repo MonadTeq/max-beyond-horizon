@@ -350,7 +350,7 @@ impl Task {
     ///
     /// Outside the `±TASK_PRIORITY_TOLERANCE` window — saturation `±1` by the static
     /// priority, inside the window — the difference of the dynamic `GetPriority()`.
-    pub fn compare_priority(&self, world: &GameState, task_priority: u16) -> i32 {
+    pub(crate) fn compare_priority(&self, world: &GameState, task_priority: u16) -> i32 {
         let base = i32::from(self.base_priority);
         let tolerance = i32::from(TASK_PRIORITY_TOLERANCE);
         let argument = i32::from(task_priority);
@@ -367,19 +367,19 @@ impl Task {
     }
 
     /// `GetPriority()` — base by default; overridden in subclasses.
-    pub fn get_priority(&self, world: &GameState) -> u16 {
+    pub(crate) fn get_priority(&self, world: &GameState) -> u16 {
         self.kind.get_priority(world, self)
     }
 
     /// `GetCautionLevel(unit)` — `Task::GetCautionLevel` by default.
-    pub fn get_caution_level(&self, world: &GameState, unit: &UnitInfo) -> CautionLevel {
+    pub(crate) fn get_caution_level(&self, world: &GameState, unit: &UnitInfo) -> CautionLevel {
         self.kind
             .get_caution_level(world, self, unit)
             .unwrap_or_else(|| default_caution_level(world, unit))
     }
 
     /// `DeterminePosition()` — `GetBounds().ul`, unless overridden.
-    pub fn determine_position(&self, world: &GameState) -> Point {
+    pub(crate) fn determine_position(&self, world: &GameState) -> Point {
         let bounds = self.kind.get_bounds(world, self.header());
         Point::new(bounds.ulx as i16, bounds.uly as i16)
     }
@@ -390,7 +390,7 @@ impl Task {
     }
 
     /// `Task::IsThinking()` — `false` by default.
-    pub fn is_thinking(&self, world: &GameState) -> bool {
+    pub(crate) fn is_thinking(&self, world: &GameState) -> bool {
         let _ = world;
         self.kind.is_thinking_kind()
     }
@@ -444,7 +444,7 @@ impl Task {
 }
 
 /// `Task::GetCautionLevel` (`task.cpp:583`).
-pub fn default_caution_level(world: &GameState, unit: &UnitInfo) -> CautionLevel {
+pub(crate) fn default_caution_level(world: &GameState, unit: &UnitInfo) -> CautionLevel {
     let opponent = world.ai.settings.opponent;
 
     if unit
@@ -487,7 +487,7 @@ pub fn task_unit_list_kind(unit_type: UnitType) -> crate::unit::UnitListKind {
 }
 
 /// `Task_GetReadyUnitsCount` (`task.cpp:557`).
-pub fn task_get_ready_units_count(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn task_get_ready_units_count(world: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut count = 0;
 
     for id in world.unit_list(task_unit_list_kind(unit_type)) {
@@ -507,7 +507,7 @@ pub fn task_get_ready_units_count(world: &GameState, team: TeamId, unit_type: Un
 }
 
 /// `Task_IsReadyToTakeOrders` (`task.cpp:105`).
-pub fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool {
+pub(crate) fn task_is_ready_to_take_orders(world: &GameState, unit_id: UnitId) -> bool {
     let Some(unit) = world.unit(unit_id) else {
         return false;
     };
@@ -565,7 +565,7 @@ pub fn task_is_repair_due(unit: &UnitInfo, is_lead_unit: bool) -> bool {
 /// here the C++ default limit is used (1000 turns minus the current turn).
 /// The Score mode formula (by greenhouses) repeats C++ and is called when
 /// `victory_type == Score` becomes part of `GameState`.
-pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
+pub(crate) fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
     const VICTORY_LIMIT_DEFAULT: i32 = 1000;
 
     let mut remaining_turns = VICTORY_LIMIT_DEFAULT;
@@ -610,7 +610,7 @@ pub fn task_estimate_turns_till_mission_end(world: &GameState) -> i32 {
 }
 
 /// `AIPlayer::IsEnemyTeam` (`aiplayer.cpp:2208`).
-pub fn is_enemy_team(world: &GameState, team: TeamId) -> bool {
+pub(crate) fn is_enemy_team(world: &GameState, team: TeamId) -> bool {
     let kind = world.teams[team.0 as usize].team_type;
 
     kind != TeamKind::None && kind != TeamKind::Eliminated
@@ -618,7 +618,7 @@ pub fn is_enemy_team(world: &GameState, team: TeamId) -> bool {
 
 /// `Task_IsRecruitable` (`task.cpp:331`) — the only test by which attacks
 /// take units.
-pub fn task_is_recruitable(
+pub(crate) fn task_is_recruitable(
     manager: &super::task_manager::TaskManager,
     world: &GameState,
     unit_id: UnitId,
@@ -656,7 +656,7 @@ pub fn task_is_recruitable(
 /// The structure is ported: checking team stealth maps, cell danger and
 /// the absence of threats with a longer range. The loop over spotted units goes in
 /// `AiPlayer::spotted_units` order (detection order).
-pub fn task_should_reserve_shot(world: &GameState, unit: &UnitInfo, site: Point) -> bool {
+pub(crate) fn task_should_reserve_shot(world: &GameState, unit: &UnitInfo, site: Point) -> bool {
     use crate::unit_values::{
         ATTRIB_ATTACK_RADIUS, ATTRIB_MOVE_AND_FIRE, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED,
     };
@@ -768,7 +768,7 @@ fn access_modified_surface_is_water(world: &GameState, site: Point) -> bool {
 /// Simplification: the `ZoneWalker` walk uses `Access_IsAccessible`, as C++;
 /// without a damage map (`GetDamagePotentialMap` == `None`) the result is
 /// `false` (the C++ branch).
-pub fn task_is_unit_doomed_to_destruction(
+pub(crate) fn task_is_unit_doomed_to_destruction(
     world: &mut GameState,
     unit_id: UnitId,
     caution_level: CautionLevel,
@@ -834,7 +834,7 @@ pub fn task_is_unit_doomed_to_destruction(
 }
 
 /// `Task_RetreatIfNecessary` (`task.cpp:468`).
-pub fn task_retreat_if_necessary(
+pub(crate) fn task_retreat_if_necessary(
     manager: &mut super::task_manager::TaskManager,
     world: &mut GameState,
     task: Option<u32>,
@@ -924,7 +924,7 @@ pub fn task_retreat_if_necessary(
 }
 
 /// The unit's team.
-pub fn team_of(world: &GameState, unit_id: UnitId) -> TeamId {
+pub(crate) fn team_of(world: &GameState, unit_id: UnitId) -> TeamId {
     world
         .unit(unit_id)
         .map(|unit| unit.team)
@@ -932,7 +932,7 @@ pub fn team_of(world: &GameState, unit_id: UnitId) -> TeamId {
 }
 
 /// `Task_RetreatFromDanger` (`task.cpp:520`).
-pub fn task_retreat_from_danger(
+pub(crate) fn task_retreat_from_danger(
     manager: &mut super::task_manager::TaskManager,
     world: &mut GameState,
     task_id: u32,
@@ -958,7 +958,7 @@ pub fn task_retreat_from_danger(
 }
 
 /// `Task_RemindMoveFinished` (`task.cpp:99`) — a wrapper over the manager.
-pub fn task_remind_move_finished(
+pub(crate) fn task_remind_move_finished(
     manager: &mut super::task_manager::TaskManager,
     world: &mut GameState,
     unit_id: UnitId,
@@ -968,7 +968,7 @@ pub fn task_remind_move_finished(
 }
 
 /// `Task_RemoveMovementTasks` (`task.cpp:125`).
-pub fn task_remove_movement_tasks(
+pub(crate) fn task_remove_movement_tasks(
     manager: &mut super::task_manager::TaskManager,
     world: &mut GameState,
     unit_id: UnitId,

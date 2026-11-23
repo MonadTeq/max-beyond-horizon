@@ -35,8 +35,8 @@
 //! `&mut GameState` at the same time. Since the manager lives **inside** `GameState`, it is
 //! temporarily taken out:
 //!
-//! ```
-//! # use max_core::game::GameState;
+//! ```text
+//! // Crate-internal idiom: `GameState` is `pub(crate)`, so this example is not a doctest.
 //! let mut world = GameState::new();
 //! world.with_task_manager(|tm, world| {
 //!     let _ = tm.task_count();
@@ -61,13 +61,9 @@ pub mod threat;
 pub mod weight;
 pub mod weight_tables;
 
-pub use attack::evaluate_attack;
 pub use build_orders::BuildOrder;
 pub use reminders::Reminder;
-pub use research::{
-    choose_initial_upgrades, choose_upgrade, determine_research_projects, purchase_upgrades,
-    upgrade_unit_type, INVALID_UPGRADE_COST,
-};
+pub use research::INVALID_UPGRADE_COST;
 pub use strategy::{parse_team_strategy, AiPlayer, SpottedUnit, TEAM_STRATEGY_NAMES};
 pub use task::{
     Task, TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_EMERGENCY, TASK_PRIORITY_MOVE,
@@ -451,7 +447,7 @@ fn world_is_computer(world: &GameState, team: TeamId) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `Ai_Init` (`ai.cpp:154`).
-pub fn ai_init(world: &mut GameState) {
+pub(crate) fn ai_init(world: &mut GameState) {
     world.with_task_manager(|task_manager, world| {
         task_manager.clear(world);
     });
@@ -465,7 +461,7 @@ pub fn ai_init(world: &mut GameState) {
 
 /// `Ai_SetupStrategy` (`ai.cpp:116`) — strategy selection only, without
 /// regenerating the map.
-pub fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
+pub(crate) fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
     let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
 
     let result = player.select_strategy(world);
@@ -475,22 +471,22 @@ pub fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
 }
 
 /// `Ai_SetInfoMapPoint` (`ai.cpp:122`).
-pub fn ai_set_info_map_point(world: &mut GameState, point: Point, team: TeamId) {
+pub(crate) fn ai_set_info_map_point(world: &mut GameState, point: Point, team: TeamId) {
     world.ai_set_info_map_point(team, point);
 }
 
 /// `Ai_MarkMineMapPoint` (`ai.cpp:128`).
-pub fn ai_mark_mine_map_point(world: &mut GameState, point: Point, team: TeamId) {
+pub(crate) fn ai_mark_mine_map_point(world: &mut GameState, point: Point, team: TeamId) {
     world.ai_mark_mine_map_point(team, point);
 }
 
 /// `Ai_UpdateMineMap` (`ai.cpp:134`).
-pub fn ai_update_mine_map(world: &mut GameState, point: Point, team: TeamId) {
+pub(crate) fn ai_update_mine_map(world: &mut GameState, point: Point, team: TeamId) {
     world.ai_update_mine_map(team, point);
 }
 
 /// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) — the "has work" flag for computers.
-pub fn ai_set_tasks_pending_flag(world: &mut GameState) {
+pub(crate) fn ai_set_tasks_pending_flag(world: &mut GameState) {
     for team in 0..PLAYER_TEAM_COUNT {
         if world.teams[team].team_type == TeamKind::Computer {
             world.ai.players[team].change_tasks_pending_flag(true);
@@ -499,29 +495,29 @@ pub fn ai_set_tasks_pending_flag(world: &mut GameState) {
 }
 
 /// `Ai_ClearTasksPendingFlags` (`ai.cpp:273`).
-pub fn ai_clear_tasks_pending_flags(world: &mut GameState) {
+pub(crate) fn ai_clear_tasks_pending_flags(world: &mut GameState) {
     for player in &mut world.ai.players {
         player.change_tasks_pending_flag(false);
     }
 }
 
 /// `Ai_BeginTurn` (`ai.cpp:148`).
-pub fn ai_begin_turn(world: &mut GameState, team: TeamId) {
+pub(crate) fn ai_begin_turn(world: &mut GameState, team: TeamId) {
     world.ai_begin_turn(team);
 }
 
 /// `Ai_CheckEndTurn` (`ai.cpp:239`).
-pub fn ai_check_end_turn(world: &mut GameState) {
+pub(crate) fn ai_check_end_turn(world: &mut GameState) {
     world.ai_check_end_turn();
 }
 
 /// `Ai_AddUnitToTrackerList` (`ai.cpp:182`).
-pub fn ai_add_unit_to_tracker_list(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_add_unit_to_tracker_list(world: &mut GameState, unit: UnitId) {
     world.ai_add_unit_to_tracker_list(unit);
 }
 
 /// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — create `TaskAutoSurvey`.
-pub fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
@@ -556,7 +552,7 @@ impl GameState {
 }
 
 /// `Ai_IsDangerousLocation` (`ai.cpp:190`).
-pub fn ai_is_dangerous_location(
+pub(crate) fn ai_is_dangerous_location(
     world: &GameState,
     unit: &UnitInfo,
     destination: Point,
@@ -580,7 +576,7 @@ pub fn ai_is_dangerous_location(
 /// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) — in max_core
 /// `TerrainDistanceField` is not set up (P5 — only `pathfinding::TerrainDistanceField`
 /// within path search), so the second half is ported: accounting for military strength.
-pub fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
@@ -607,7 +603,7 @@ pub fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
 }
 
 /// `Ai_DetermineCautionLevel` (`ai.cpp:279`).
-pub fn ai_determine_caution_level(world: &GameState, unit: UnitId) -> CautionLevel {
+pub(crate) fn ai_determine_caution_level(world: &GameState, unit: UnitId) -> CautionLevel {
     let Some(info) = world.unit(unit) else {
         return CautionLevel::AvoidNextTurnsFire;
     };
@@ -626,7 +622,7 @@ pub fn ai_determine_caution_level(world: &GameState, unit: UnitId) -> CautionLev
 }
 
 /// `Ai_RemoveUnit` (`ai.cpp:295`).
-pub fn ai_remove_unit(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_remove_unit(world: &mut GameState, unit: UnitId) {
     for team in 0..PLAYER_TEAM_COUNT {
         world.ai.players[team].remove_unit(unit);
     }
@@ -637,7 +633,7 @@ pub fn ai_remove_unit(world: &mut GameState, unit: UnitId) {
 }
 
 /// `Ai_UnitSpotted` (`ai.cpp:347`).
-pub fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId) {
+pub(crate) fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
@@ -660,7 +656,7 @@ pub fn ai_unit_spotted(world: &mut GameState, unit: UnitId, team: TeamId) {
 }
 
 /// `Ai_UnitHidden` (`ai.cpp:355`).
-pub fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
+pub(crate) fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
@@ -679,17 +675,17 @@ pub fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) {
 }
 
 /// `Ai_EvaluateAttackTargets` (`ai.cpp:361`).
-pub fn ai_evaluate_attack_targets(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_evaluate_attack_targets(world: &mut GameState, unit: UnitId) {
     world.ai_evaluate_attack_targets(unit);
 }
 
 /// `Ai_CheckComputerReactions` (`ai.cpp:363`).
-pub fn ai_check_computer_reactions(world: &mut GameState) {
+pub(crate) fn ai_check_computer_reactions(world: &mut GameState) {
     world.ai_check_computer_reactions();
 }
 
 /// `Ai_CheckMines` (`ai.cpp:365`) — the minelayer reports mines to teams.
-pub fn ai_check_mines(world: &mut GameState, unit: UnitId) {
+pub(crate) fn ai_check_mines(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
     };
@@ -711,14 +707,14 @@ pub fn ai_check_mines(world: &mut GameState, unit: UnitId) {
 }
 
 /// `Ai_AreThereActiveCombatEffects` (`ai.cpp:374`).
-pub fn ai_are_there_active_combat_effects(world: &GameState) -> bool {
+pub(crate) fn ai_are_there_active_combat_effects(world: &GameState) -> bool {
     world.unit_list(UnitListKind::Particle).is_empty() == false
         || !world.pending_attacks.is_empty()
         || world.combat_effects_active
 }
 
 /// `Ai_AreThereMovingUnits` (`ai.cpp:387`).
-pub fn ai_are_there_moving_units(world: &GameState) -> bool {
+pub(crate) fn ai_are_there_moving_units(world: &GameState) -> bool {
     for kind in [UnitListKind::MobileLandSea, UnitListKind::MobileAir] {
         for id in world.unit_list(kind) {
             let Some(unit) = world.unit(*id) else {
@@ -741,22 +737,22 @@ pub fn ai_are_there_moving_units(world: &GameState) -> bool {
 }
 
 /// `Ai_CheckReactions` (`ai.cpp:407`).
-pub fn ai_check_reactions(world: &mut GameState) {
+pub(crate) fn ai_check_reactions(world: &mut GameState) {
     world.ai_check_reactions();
 }
 
 /// `Ai_GetReactionState`.
-pub fn ai_get_reaction_state(world: &GameState) -> AiReactionState {
+pub(crate) fn ai_get_reaction_state(world: &GameState) -> AiReactionState {
     world.ai.reaction_state
 }
 
 /// `Ai_SetReactionState`.
-pub fn ai_set_reaction_state(world: &mut GameState, state: AiReactionState) {
+pub(crate) fn ai_set_reaction_state(world: &mut GameState, state: AiReactionState) {
     world.ai.reaction_state = state;
 }
 
 /// `TaskManager_NeedToReserveRawMaterials` (`ai.cpp:434`).
-pub fn task_manager_need_to_reserve_raw_materials(world: &GameState, team: TeamId) -> bool {
+pub(crate) fn task_manager_need_to_reserve_raw_materials(world: &GameState, team: TeamId) -> bool {
     tasks::create::need_to_reserve_raw_materials(world, team)
 }
 
@@ -764,7 +760,7 @@ pub fn task_manager_need_to_reserve_raw_materials(world: &GameState, team: TeamI
 ///
 /// Part of setup (P2), but entirely on RNG and `TeamMissionSupplies`: ported
 /// 1:1 — up to 64 attempts to find a safe point in `[3, size-3]`.
-pub fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
+pub(crate) fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     let mut position = Point::ZERO;
     let mut attempts = 0;
 

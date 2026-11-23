@@ -364,7 +364,7 @@ impl Layout {
 /// All objects are renumbered in the C++ writer's traversal order (see the module
 /// documentation), so a reference save loaded and immediately written
 /// comes out byte-identical (see `tests/save_write.rs`).
-pub fn build_save_file(state: &GameState) -> SaveFile {
+pub(crate) fn build_save_file(state: &GameState) -> SaveFile {
     let meta = &state.save_meta;
     let mut layout = Layout::new();
 

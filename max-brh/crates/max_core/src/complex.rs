@@ -80,7 +80,7 @@ pub fn unit_size(footprint: Footprint) -> i16 {
 /// `ORDER_IDLE` is filtered out on purpose: a completed building on a site
 /// (`ORDER_IDLE`/`BUILDING_READY`) does not join the complex until
 /// `UnitsManager_BuildingReady` returns an order to it.
-pub fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
+pub(crate) fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
     state.units_at(grid).iter().copied().find(|id| {
         state.unit(*id).is_some_and(|unit| {
             unit.team == team && unit.orders != UnitOrder::Idle && unit.is_complex_member()
@@ -92,7 +92,7 @@ pub fn team_building_at(state: &GameState, team: TeamId, grid: Point) -> Option<
 ///
 /// Offsets — exactly the C++ switch: for a building (`grid_size = 2`) the south-east
 /// pairs are shifted by 2 cells.
-pub fn connected_building(state: &GameState, unit: &UnitInfo, connector: u16) -> Option<UnitId> {
+pub(crate) fn connected_building(state: &GameState, unit: &UnitInfo, connector: u16) -> Option<UnitId> {
     let size = unit_size(unit.footprint());
     let x = unit.grid.x;
     let y = unit.grid.y;
@@ -152,7 +152,7 @@ fn complex_shrink(state: &mut GameState, team: TeamId, complex: ComplexId) {
 /// an empty old complex is deleted) and recursively — all connected neighbors.
 /// The recursion stops at a building already attached to `complex`, so
 /// cycles in the connector graph are safe.
-pub fn attach_complex(state: &mut GameState, id: UnitId, complex: ComplexId) {
+pub(crate) fn attach_complex(state: &mut GameState, id: UnitId, complex: ComplexId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -193,7 +193,7 @@ pub fn attach_complex(state: &mut GameState, id: UnitId, complex: ComplexId) {
 /// (`Complex::GetId`); if there are no neighbors, a new one is created
 /// (`TeamUnits::CreateComplex`). Then [`attach_complex`] merges the whole connected
 /// subgraph into the chosen complex.
-pub fn attach_to_primary_complex(state: &mut GameState, id: UnitId) {
+pub(crate) fn attach_to_primary_complex(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -238,7 +238,7 @@ pub fn attach_to_primary_complex(state: &mut GameState, id: UnitId) {
 
 /// `UnitInfo::TestConnections()` (`unitinfo.cpp:2133`): mark
 /// the whole connected subgraph as `CONNECTION_BEING_TESTED`, starting from `id`.
-pub fn test_connections(state: &mut GameState, id: UnitId) {
+pub(crate) fn test_connections(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -263,7 +263,7 @@ pub fn test_connections(state: &mut GameState, id: UnitId) {
 }
 
 /// `UnitInfo::GetFirstUntestedConnection()` (`unitinfo.cpp:2205`).
-pub fn first_untested_connection(state: &GameState, unit: &UnitInfo) -> Option<UnitId> {
+pub(crate) fn first_untested_connection(state: &GameState, unit: &UnitInfo) -> Option<UnitId> {
     for connector in CONNECTOR_ORDER {
         if unit.connectors & connector == 0 {
             continue;
@@ -287,7 +287,7 @@ pub fn first_untested_connection(state: &GameState, unit: &UnitInfo) -> Option<U
 /// `UnitInfo::DetachComplex()` (`unitinfo.cpp:2275`): the building leaves the
 /// complex, and the remaining connected groups get their own complexes
 /// (`CreateComplex` + `AttachComplex`) and recomputed stocks.
-pub fn detach_complex(state: &mut GameState, id: UnitId) {
+pub(crate) fn detach_complex(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -369,7 +369,7 @@ pub fn detach_complex(state: &mut GameState, id: UnitId) {
 ///
 /// Called before the building is deleted: `DetachComplex` goes first (it needs the
 /// building's own bits), then the pair bits are cleared on neighbors — exactly the C++ order.
-pub fn remove_connections(state: &mut GameState, id: UnitId) {
+pub(crate) fn remove_connections(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -540,7 +540,7 @@ fn is_standalone_or_connector(state: &GameState, building: UnitId) -> bool {
 /// during deployment ([`crate::deploy`]), because in the model there is more than one
 /// `UpdateConnectors` call (spawn + scaling completion), and a repeated
 /// increment would diverge from the oracle.
-pub fn update_connectors(state: &mut GameState, id: UnitId) {
+pub(crate) fn update_connectors(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };

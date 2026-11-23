@@ -214,7 +214,7 @@ pub enum TeamTurnEntry {
 /// Game state — the analog of the C++ globals (`UnitsManager_*`, `GameManager_*`,
 /// `UnitEvent_UnitEvents`) in one object (DESIGN §1.4 item 5).
 #[derive(Debug, Clone)]
-pub struct GameState {
+pub(crate) struct GameState {
     // --- map and teams ---
     /// The game map.
     pub(crate) map: Map,

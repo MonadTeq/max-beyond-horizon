@@ -477,7 +477,7 @@ pub(crate) fn explore_init_obtain_requests(
 ///
 /// Only a type the task currently requests is usable; a `SCOUT` or a `FASTBOAT`
 /// is taken up to three times, every other type only once.
-pub fn explore_is_unit_usable(
+pub(crate) fn explore_is_unit_usable(
     world: &crate::game::GameState,
     _header: TaskHeader,
     kind: &TaskKind,

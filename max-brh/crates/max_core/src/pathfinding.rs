@@ -88,7 +88,7 @@ impl PathRequest {
 /// Returns `true` if the request was enqueued. With an invalid
 /// destination the unit receives `BlockedOnPathRequest(false)` and the function
 /// returns `false` (as in C++).
-pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
+pub(crate) fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
     };
@@ -159,11 +159,11 @@ pub fn request_path(state: &mut GameState, id: UnitId, mode: u32) -> bool {
 
 /// `PathsManager::DispatchJobs` — in the synchronous model the work is done in
 /// [`poll_results`]; the call site is kept for tick order (DESIGN §5.1).
-pub fn dispatch_jobs(_state: &mut GameState) {}
+pub(crate) fn dispatch_jobs(_state: &mut GameState) {}
 
 /// `PathsManager::PollResults` — computes and applies all requests in
 /// submission order.
-pub fn poll_results(state: &mut GameState) {
+pub(crate) fn poll_results(state: &mut GameState) {
     let mut requests: Vec<PathRequest> = Vec::new();
     while let Some(request) = state.path_requests.pop_front() {
         requests.push(request);
@@ -309,7 +309,7 @@ fn assign_ground_path(unit: &mut UnitInfo, steps: &[PathStep], destination: Poin
 
 /// Builds the entry-cost map for a unit — a port of `AccessMap::Init`
 /// (`accessmap.cpp:372`). `0` — impassable.
-pub fn build_access_costs(state: &GameState, unit: &UnitInfo, flags: u32) -> [u8; MAP_TILES] {
+pub(crate) fn build_access_costs(state: &GameState, unit: &UnitInfo, flags: u32) -> [u8; MAP_TILES] {
     let mut costs = [0u8; MAP_TILES];
     let is_air = unit.is_air();
 
@@ -543,7 +543,7 @@ fn process_stationary_units(state: &GameState, unit: &UnitInfo, costs: &mut [u8;
 
 /// `GroundPath::GetPosition` (`groundpath.cpp:94`) — predicted position of a moving
 /// unit for the current turn (to block its "future" cell).
-pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
+pub(crate) fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
     let mut position = unit.grid;
     let speed = i32::from(unit.speed) * 4;
 
@@ -603,7 +603,7 @@ pub fn ground_path_position(state: &GameState, unit: &UnitInfo) -> Point {
 ///
 /// `minimum_distance` — the squared radius: the search stops at any cell
 /// from which the target is already reachable (C++ `BuildAccessMap` + `IsProcessed`).
-pub fn find_ground_path(
+pub(crate) fn find_ground_path(
     state: &GameState,
     unit: &UnitInfo,
     destination: Point,
@@ -838,7 +838,7 @@ pub fn scaled_distance4(distance_x: i32, distance_y: i32) -> i32 {
 /// `Paths_GetAirPath` (`paths.cpp:97`) — a straight air segment.
 ///
 /// Mutates the unit's `speed`/`move_fraction`/`max_velocity`, as C++ does.
-pub fn paths_get_air_path(
+pub(crate) fn paths_get_air_path(
     state: &GameState,
     unit: &mut UnitInfo,
     target: Point,
@@ -1035,10 +1035,6 @@ pub fn is_processed(costs: &[u8; MAP_TILES], grid: Point) -> bool {
 /// re-exported for path-calling modules.
 pub use crate::unit_order::paths_calculate_step;
 
-/// `Paths_IsOccupied` — a re-export from [`crate::access`] (occupancy of
-/// a cell by a stealthy unit; DESIGN §2 assigns this to access).
-pub use crate::access::paths_is_occupied;
-
 // ---------------------------------------------------------------------------
 // BuilderPath (P5: minimal port)
 // ---------------------------------------------------------------------------
@@ -1046,7 +1042,7 @@ pub use crate::access::paths_is_occupied;
 /// `BuilderPath::Execute` (`builderpath.cpp`) — the builder's path: movement to
 /// the target along one axis (direction `(1,1)` by default). Returns the step to
 /// the target if it is passable.
-pub fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Point) -> Option<PathStep> {
+pub(crate) fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Point) -> Option<PathStep> {
     let dx = i32::from(target.x) - i32::from(unit.grid.x);
     let dy = i32::from(target.y) - i32::from(unit.grid.y);
 
@@ -1065,7 +1061,7 @@ pub fn builder_path_step(state: &GameState, unit: &UnitInfo, target: Point) -> O
 }
 
 /// Path cost `GroundPath::GetMovementCost` (`groundpath.cpp:178`).
-pub fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
+pub(crate) fn ground_path_movement_cost(state: &GameState, unit: &UnitInfo) -> i32 {
     let Some(UnitPath::Ground(path)) = unit.path.as_ref() else {
         return 0;
     };
@@ -1118,12 +1114,12 @@ pub fn missile_path(unit: &UnitInfo, fire_on: Point) -> Option<UnitPath> {
 }
 
 /// Units that currently need a path (for debugging/tests).
-pub fn pending_request_count(state: &GameState) -> usize {
+pub(crate) fn pending_request_count(state: &GameState) -> usize {
     state.path_requests.len()
 }
 
 /// The request queue, unchanged (for tests/dump).
-pub fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
+pub(crate) fn request_for(state: &GameState, unit: UnitId) -> Option<&PathRequest> {
     state
         .path_requests
         .iter()

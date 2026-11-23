@@ -54,7 +54,7 @@ use crate::victory::{cargo_type_of, CargoType};
 /// The order is `UnitsManager_StationaryUnits` (`UnitListKind::Stationary`), as
 /// in C++; the team is not checked because `ComplexId` is unique only
 /// within a team and the caller passes the complex of an already found building.
-pub fn find_unit_with_cargo_type(
+pub(crate) fn find_unit_with_cargo_type(
     state: &GameState,
     team: TeamId,
     complex: ComplexId,
@@ -78,7 +78,7 @@ pub fn find_unit_with_cargo_type(
 /// `amount` is an in/out parameter: how much was transferred. With
 /// `amount >= 0` the building is filled up to `ATTRIB_STORAGE`; with a negative one it
 /// gives from its `storage` until it runs out.
-pub fn transfer_cargo(
+pub(crate) fn transfer_cargo(
     state: &mut GameState,
     unit_id: UnitId,
     cargo_type: CargoType,
@@ -137,7 +137,7 @@ fn complex_field(state: &mut GameState, team: TeamId, complex: ComplexId, cargo:
 /// First the complex fields change, then **in stationary-list order**
 /// each member building with the matching cargo type receives/is charged a share
 /// (`Complex::TransferCargo`). The `TransferRaw` excess is distributed the same way.
-pub fn complex_transfer(
+pub(crate) fn complex_transfer(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,
@@ -180,7 +180,7 @@ pub fn complex_transfer(
 ///
 /// Public wrapper: `cargo` must match the unit's cargo type, otherwise
 /// nothing happens (like `if (GetCargoType() == ...)` in C++).
-pub fn transfer_cargo_kind(
+pub(crate) fn transfer_cargo_kind(
     state: &mut GameState,
     unit_id: UnitId,
     cargo: CargoType,
@@ -256,7 +256,7 @@ fn unit_storage(state: &GameState, unit_id: UnitId) -> i16 {
 ///
 /// At the end — `RestoreOrders`; the target task receives `EventCargoTransfer` (in
 /// the task port this event is not implemented, see `ai`).
-pub fn process_transfer(state: &mut GameState, unit_id: UnitId) {
+pub(crate) fn process_transfer(state: &mut GameState, unit_id: UnitId) {
     let Some(unit) = state.unit(unit_id).cloned() else {
         return;
     };
@@ -324,7 +324,7 @@ pub fn process_transfer(state: &mut GameState, unit_id: UnitId) {
 /// shows the **whole complex stock** (`Complex::GetCargoInfo`); otherwise —
 /// only the building's `storage` and its `ATTRIB_STORAGE`. Returns
 /// `(materials, capacity)` for cargo type `cargo`.
-pub fn transfer_menu_cargo_info(
+pub(crate) fn transfer_menu_cargo_info(
     state: &GameState,
     source: UnitId,
     destination: UnitId,
@@ -360,7 +360,7 @@ pub fn transfer_menu_cargo_info(
 }
 
 /// Complex stock by cargo type — for QA/debug checks.
-pub fn complex_stored(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
+pub(crate) fn complex_stored(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
     let (materials, _) = get_cargo_info(state, team, complex);
 
     match cargo {
@@ -373,7 +373,7 @@ pub fn complex_stored(state: &GameState, team: TeamId, complex: ComplexId, cargo
 
 /// Free complex capacity by cargo type — the sum of `ATTRIB_STORAGE` of all
 /// member buildings with this cargo type minus the occupied amount (`Complex::GetCargoInfo`).
-pub fn complex_free_capacity(
+pub(crate) fn complex_free_capacity(
     state: &GameState,
     team: TeamId,
     complex: ComplexId,
@@ -393,7 +393,7 @@ pub fn complex_free_capacity(
 
 /// Total complex production per turn by cargo type (for QA of storage
 /// limits): `Complex::GetCargoMining` → `materials`.
-pub fn complex_income(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
+pub(crate) fn complex_income(state: &GameState, team: TeamId, complex: ComplexId, cargo: CargoType) -> i32 {
     let (materials, _) = get_cargo_mining(state, team, complex);
 
     match cargo {

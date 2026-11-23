@@ -55,7 +55,7 @@ pub const INVALID_UPGRADE_COST: i16 = i16::MAX;
 /// Picks the fastest research topic for the team and re-assigns every powered
 /// research center to it. The C++ `Remote_SendNetPacket_09` is left to the
 /// transport layer.
-pub fn determine_research_projects(player: &AiPlayer, world: &mut GameState) {
+pub(crate) fn determine_research_projects(player: &AiPlayer, world: &mut GameState) {
     let team = player.player_team;
     let team_index = team.0 as usize;
 
@@ -137,7 +137,7 @@ pub fn determine_research_projects(player: &AiPlayer, world: &mut GameState) {
 /// Returns the chosen order (`None` is C++ `build_order.unit_type == INVALID_ID`)
 /// and its cost (`INT16_MAX` when nothing is chosen). The caller stores both on
 /// [`AiPlayer`] (`build_order`/`upgrade_cost`), as C++ does.
-pub fn choose_upgrade(
+pub(crate) fn choose_upgrade(
     player: &AiPlayer,
     world: &GameState,
     strategic_orders: &[BuildOrder],
@@ -213,7 +213,7 @@ fn upgrade_allowed(team_units: &crate::team::TeamUnits, order: &BuildOrder) -> b
 
 /// `UpgradeUnitType` (`aiplayer.cpp:2075`) — apply the stored `build_order` to
 /// the team's current unit values.
-pub fn upgrade_unit_type(player: &AiPlayer, world: &mut GameState) {
+pub(crate) fn upgrade_unit_type(player: &AiPlayer, world: &mut GameState) {
     let Some(order) = player.build_order else {
         return;
     };
@@ -252,7 +252,7 @@ pub fn upgrade_unit_type(player: &AiPlayer, world: &mut GameState) {
 /// `generic_build_orders`, then buys while the team gold covers the cost. Each
 /// purchase spends gold, adds to `stats_gold_spent_on_upgrades` and applies
 /// [`upgrade_unit_type`]; the next `ChooseUpgrade` sees the updated values.
-pub fn purchase_upgrades(player: &mut AiPlayer, world: &mut GameState) {
+pub(crate) fn purchase_upgrades(player: &mut AiPlayer, world: &mut GameState) {
     let team_index = player.player_team.0 as usize;
 
     choose_and_store(player, world);
@@ -276,7 +276,7 @@ pub fn purchase_upgrades(player: &mut AiPlayer, world: &mut GameState) {
 /// variant (`RollTeamMissionSupplies`, phase A.3+): the strategic orders are
 /// recomputed in `mode = true` after every purchase and the gold comes from
 /// `TeamMissionSupplies::team_gold`, not from the team treasury.
-pub fn choose_initial_upgrades(player: &mut AiPlayer, world: &mut GameState, team_gold: i32) {
+pub(crate) fn choose_initial_upgrades(player: &mut AiPlayer, world: &mut GameState, team_gold: i32) {
     let team_index = player.player_team.0 as usize;
     let mut team_gold = team_gold;
 

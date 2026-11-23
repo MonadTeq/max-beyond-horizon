@@ -118,7 +118,7 @@ pub const DEFAULT_MISSION_LOADOUT: [TeamSupply; 3] = [
 ///
 /// Returns `(raw, gold, fuel)` — the C++ output-parameter order. `mode =
 /// true` in C++ means `mask = 0xFFFF`, i.e. the team's explored state does not matter.
-pub fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> (i32, i32, i32) {
+pub(crate) fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> (i32, i32, i32) {
     let mut raw = 0i32;
     let mut gold = 0i32;
     let mut fuel = 0i32;
@@ -172,7 +172,7 @@ pub fn survey_resources_in_area(state: &GameState, grid: Point, radius: i32) -> 
 ///
 /// The 4×4 area around the point (`x-1..=x+2`) must be land according to
 /// `Access_GetModifiedSurfaceType` (including alien-debris bridges).
-pub fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
+pub(crate) fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
     let grid_x = i32::from(position.x);
     let grid_y = i32::from(position.y);
 
@@ -199,7 +199,7 @@ pub fn is_valid_starting_position(state: &GameState, position: Point) -> bool {
 
 /// `GameManager_FindValidStartingPosition` (`game_manager.cpp:4712`), the variant with
 /// `GameState` (takes into account units already on the map).
-pub fn find_valid_starting_position(state: &GameState, position: &mut Point) {
+pub(crate) fn find_valid_starting_position(state: &GameState, position: &mut Point) {
     if is_valid_starting_position(state, *position) {
         return;
     }
@@ -229,7 +229,7 @@ pub fn find_valid_starting_position(state: &GameState, position: &mut Point) {
 /// If the starting cell (and around it) lacks materials/fuel, the point
 /// is searched in an expanding spiral, as in C++. `max_resources` is the generation
 /// setting (`GenerationSettings::max_resources`).
-pub fn start_position_mining_station(
+pub(crate) fn start_position_mining_station(
     state: &GameState,
     starting_position: Point,
     max_resources: i32,
@@ -274,7 +274,7 @@ pub fn start_position_mining_station(
 /// mine — this is a normal base layout; the visual sprite "overlap"
 /// is handled in the renderer: buildings with the `BUILDING` flag have their anchor shifted by +31 px
 /// (`max_app::render::BUILDING_ANCHOR_OFFSET`, C++ `UnitInfo::SetPosition`).
-pub fn starting_position_power_generator(
+pub(crate) fn starting_position_power_generator(
     state: &GameState,
     team: TeamId,
     mut point: Point,
@@ -307,7 +307,7 @@ pub fn starting_position_power_generator(
 }
 
 /// `UnitsManager_SetInitialMining` (`units_manager.cpp:1484`).
-pub fn set_initial_mining(state: &mut GameState, id: UnitId, grid: Point) {
+pub(crate) fn set_initial_mining(state: &mut GameState, id: UnitId, grid: Point) {
     let (raw, gold, fuel) = survey_resources_in_area(state, grid, SURVEY_RADIUS);
     let fuel_mining = cargo_fuel_consumption_rate(UnitType::PowerGenerator).min(fuel);
     let mut free_capacity = 16 - fuel_mining;
@@ -382,7 +382,7 @@ fn find_reachable_spot_int(
 ///
 /// Mutates `position` as C++ does: on each iteration `--x`, `--y`, then
 /// a walk of four directions. Returns `true` if a cell is found.
-pub fn find_reachable_spot(
+pub(crate) fn find_reachable_spot(
     state: &GameState,
     unit_type: UnitType,
     team: TeamId,
@@ -439,7 +439,7 @@ fn apply_deploy_orders(
 /// resource minimums at the mine are computed from it).
 ///
 /// Returns the ids of landed units in C++ order (`DeployUnit`).
-pub fn deploy_team_supplies(
+pub(crate) fn deploy_team_supplies(
     state: &mut GameState,
     team: TeamId,
     team_gold: u32,
@@ -651,7 +651,7 @@ impl TeamDeployment {
 /// landed (the caller layer gave it no starting point).
 ///
 /// Returns the number of landed units (all teams).
-pub fn deploy_starting_units(
+pub(crate) fn deploy_starting_units(
     state: &mut GameState,
     start_gold: u32,
     max_resources: i32,
@@ -671,7 +671,7 @@ pub fn deploy_starting_units(
 /// Traversal order is ascending team index (as in `GameManager_InitGame`),
 /// so the RNG stream (slab frames, two per team) matches
 /// [`deploy_starting_units`].
-pub fn deploy_starting_units_with(
+pub(crate) fn deploy_starting_units_with(
     state: &mut GameState,
     max_resources: i32,
     deployments: &[TeamDeployment],

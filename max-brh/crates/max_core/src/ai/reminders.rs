@@ -82,7 +82,7 @@ impl Reminder {
     }
 
     /// Side effects of the C++ constructor (performed when the reminder is enqueued).
-    pub fn on_append(&self, manager: &mut TaskManager, world: &mut GameState) {
+    pub(crate) fn on_append(&self, manager: &mut TaskManager, world: &mut GameState) {
         match self {
             Self::TurnStart { task } => {
                 if let Some(task) = manager.task_mut(*task) {
@@ -112,7 +112,7 @@ impl Reminder {
     }
 
     /// `Reminder::Execute` — the action of a concrete reminder.
-    pub fn execute(&self, manager: &mut TaskManager, world: &mut GameState) {
+    pub(crate) fn execute(&self, manager: &mut TaskManager, world: &mut GameState) {
         match self {
             Self::TurnStart { task } => {
                 if let Some(task) = manager.task_mut(*task) {

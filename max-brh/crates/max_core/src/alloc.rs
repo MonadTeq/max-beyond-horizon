@@ -194,7 +194,7 @@ fn stationary_ids(state: &GameState) -> Vec<UnitId> {
 /// `Survey_GetTotalResourcesInArea`).
 ///
 /// Returns `(raw, gold, fuel)` — the C++ output-parameter order.
-pub fn mining_survey(state: &GameState, grid: Point) -> (i32, i32, i32) {
+pub(crate) fn mining_survey(state: &GameState, grid: Point) -> (i32, i32, i32) {
     let (raw, gold, fuel) = crate::deploy::survey_resources_in_area(state, grid, MINING_SURVEY_RADIUS);
 
     (
@@ -359,7 +359,7 @@ impl Allocator {
 /// `cargo_material_type` of the nested allocator).
 ///
 /// Returns how many units were actually added.
-pub fn optimize_masked(
+pub(crate) fn optimize_masked(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,
@@ -436,7 +436,7 @@ pub fn optimize_masked(
 
 /// `AllocMenu_Optimize(complex, kind, material, kind)` — the public form
 /// (`AllocMenu::OnClick*Bar`, `Run` case 1001/1004/1007).
-pub fn optimize(
+pub(crate) fn optimize(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,
@@ -448,7 +448,7 @@ pub fn optimize(
 
 /// `AllocMenu_ReduceProduction(complex, cargo_type, amount)`
 /// (`allocmenu.cpp:525`) — disable `amount` units of `kind` mining in the complex.
-pub fn reduce_production(
+pub(crate) fn reduce_production(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,
@@ -495,7 +495,7 @@ pub fn reduce_production(
 ///
 /// Needed only for the dialog bar: reallocates mining to show
 /// the achievable level, and returns it.
-pub fn balance(
+pub(crate) fn balance(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,
@@ -522,7 +522,7 @@ pub fn balance(
 ///
 /// `materials` — the sum of `raw/fuel/gold_mining` (+ `free_capacity` free
 /// mining units), `capacity` — the sum of cell maximums.
-pub fn get_cargo_mining(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
+pub(crate) fn get_cargo_mining(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
     let mut materials = Cargo::init();
     let mut capacity = Cargo::init();
 
@@ -553,7 +553,7 @@ pub fn get_cargo_mining(state: &GameState, team: TeamId, complex: ComplexId) -> 
 
 /// `Complex::GetCargoMinable(capacity)` (`complex.cpp:87`) — "occupied"
 /// by the production of the other complex buildings (consumption).
-pub fn get_cargo_minable(state: &GameState, team: TeamId, complex: ComplexId) -> Cargo {
+pub(crate) fn get_cargo_minable(state: &GameState, team: TeamId, complex: ComplexId) -> Cargo {
     let mut capacity = Cargo::init();
 
     for id in stationary_ids(state) {
@@ -590,7 +590,7 @@ pub fn get_cargo_minable(state: &GameState, team: TeamId, complex: ComplexId) ->
 
 /// `Complex::GetCargoInfo(materials, capacity)` (`complex.cpp:136`) — what is
 /// in the complex and how much it can store.
-pub fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
+pub(crate) fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
     let mut materials = Cargo::init();
     let mut capacity = Cargo::init();
 
@@ -635,7 +635,7 @@ pub fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (C
 /// stocks and charges the rate in [`crate::production`] with a pause. Therefore for
 /// the complex cache [`cargo_get_net_production_for_total`] is used — the same
 /// formula without the factory's `raw` consumption (see its documentation).
-pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, complex: ComplexId) {
+pub(crate) fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, complex: ComplexId) {
     let mut material = 0i32;
     let mut fuel = 0i32;
     let mut gold = 0i32;
@@ -672,7 +672,7 @@ pub fn update_resources_total(state: &mut GameState, team: crate::team::TeamId, 
 
 /// Total complex mining by resource — what the dialog shows
 /// (`production.raw` in `AllocMenu`).
-pub fn total_mining(state: &GameState, team: TeamId, complex: ComplexId, kind: MiningKind) -> i32 {
+pub(crate) fn total_mining(state: &GameState, team: TeamId, complex: ComplexId, kind: MiningKind) -> i32 {
     let mut total = 0i32;
 
     for id in stationary_ids(state) {

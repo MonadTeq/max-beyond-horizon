@@ -321,14 +321,14 @@ pub fn unit_type_land_type(unit_type: UnitType) -> u8 {
 
 /// `Access_GetSurfaceType` (`access.cpp:936`) — the raw surface of a cell.
 #[inline]
-pub fn surface_type(state: &GameState, grid: Point) -> u8 {
+pub(crate) fn surface_type(state: &GameState, grid: Point) -> u8 {
     state.map.surface_at(grid.x, grid.y).bits()
 }
 
 /// `Access_GetModifiedSurfaceType` (`access.cpp:950`): a bridge/platform changes
 /// the cell surface for paths. `mode == true` — from a naval unit's point of view
 /// (a bridge does not hide water), otherwise a ground one (both bridge and platform = land).
-pub fn modified_surface_type(state: &GameState, grid: Point, mode: bool) -> u8 {
+pub(crate) fn modified_surface_type(state: &GameState, grid: Point, mode: bool) -> u8 {
     let mut surface = surface_type(state, grid);
 
     if surface == SURFACE_TYPE_WATER || surface == SURFACE_TYPE_COAST {
@@ -362,7 +362,7 @@ pub fn modified_surface_type(state: &GameState, grid: Point, mode: bool) -> u8 {
 ///
 /// This is an exact port of the loop over `Hash_MapHash[Point(grid)]`: the unit order in
 /// a cell is the insertion order in the [`crate::hash::MapHash`] bucket.
-pub fn is_accessible(
+pub(crate) fn is_accessible(
     state: &GameState,
     unit_type: UnitType,
     team: TeamId,
@@ -378,7 +378,7 @@ pub fn is_accessible(
 /// remove the unit (and the builder parent) from `Hash_MapHash`, otherwise the unit's own
 /// mobile unit blocks the 2×2 area of the future building. The same technique is used here without
 /// changing state: the listed ids are skipped in the cell loop.
-pub fn is_accessible_ignoring(
+pub(crate) fn is_accessible_ignoring(
     state: &GameState,
     unit_type: UnitType,
     team: TeamId,
@@ -536,7 +536,7 @@ pub fn is_accessible_ignoring(
 
 /// Accessibility for a concrete unit (type and team are taken from it).
 #[inline]
-pub fn is_accessible_unit(state: &GameState, unit: &UnitInfo, grid: Point, flags: u32) -> u32 {
+pub(crate) fn is_accessible_unit(state: &GameState, unit: &UnitInfo, grid: Point, flags: u32) -> u32 {
     is_accessible(state, unit.unit_type, unit.team, grid, flags)
 }
 
@@ -565,7 +565,7 @@ pub fn squared_distance(first: Point, second: Point) -> i32 {
 /// Needed by `enemy_halt`: `Access_UpdateMapStatus` compares the class of spotted
 /// enemies with the class of the unit itself (and its group) so as not to stop
 /// movement because of a target it cannot attack anyway.
-pub fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
+pub(crate) fn target_class(state: &GameState, unit: &UnitInfo) -> u32 {
     if unit.unit_type == UnitType::Infiltrator || state.is_unit_under_water(unit) {
         for team_index in 0..crate::game::PLAYER_TEAM_COUNT {
             let team = TeamId(team_index as u8);
@@ -621,7 +621,7 @@ pub fn approximate_distance_points(first: Point, second: Point) -> i32 {
 ///
 /// For submarines and corvettes it is additionally checked that the line of fire does not
 /// cross land: C++ walks the pixel line and checks `Access_GetSurfaceType`.
-pub fn is_within_attack_range(state: &GameState, unit: &UnitInfo, grid: Point, range: i32) -> bool {
+pub(crate) fn is_within_attack_range(state: &GameState, unit: &UnitInfo, grid: Point, range: i32) -> bool {
     let attack_range = (range * 64) * (range * 64);
     let mut distance_x = (i32::from(grid.x) - i32::from(unit.grid.x)) * 64;
     let mut distance_y = (i32::from(grid.y) - i32::from(unit.grid.y)) * 64;
@@ -716,7 +716,7 @@ pub fn is_valid_attack_target_type(attacker: UnitType, target: UnitType) -> bool
 }
 
 /// `Access_IsValidAttackTargetEx` (`access.cpp:1922`).
-pub fn is_valid_attack_target_ex(
+pub(crate) fn is_valid_attack_target_ex(
     state: &GameState,
     attacker: UnitType,
     target: UnitType,
@@ -736,7 +736,7 @@ pub fn is_valid_attack_target_ex(
 }
 
 /// `Access_IsValidAttackTarget(attacker, target, point)` (`access.cpp:1968`).
-pub fn is_valid_attack_target_point(
+pub(crate) fn is_valid_attack_target_point(
     state: &GameState,
     attacker: &UnitInfo,
     target: &UnitInfo,
@@ -766,12 +766,12 @@ pub fn is_valid_attack_target_point(
 
 /// `Access_IsValidAttackTarget(attacker, target)` (`access.cpp:1995`).
 #[inline]
-pub fn is_valid_attack_target(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
+pub(crate) fn is_valid_attack_target(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
     is_valid_attack_target_point(state, attacker, target, target.grid)
 }
 
 /// `Access_IsUnitBusyAtLocation` (`access.cpp:1949`).
-pub fn is_unit_busy_at_location(state: &GameState, unit: &UnitInfo) -> bool {
+pub(crate) fn is_unit_busy_at_location(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.units_at(unit.grid).iter().copied() {
         let Some(other) = state.unit(id) else {
             continue;
@@ -787,7 +787,7 @@ pub fn is_unit_busy_at_location(state: &GameState, unit: &UnitInfo) -> bool {
 }
 
 /// `Access_GetAttackTarget` (`access.cpp:1999`).
-pub fn get_attack_target(
+pub(crate) fn get_attack_target(
     state: &GameState,
     unit: &UnitInfo,
     grid: Point,
@@ -846,7 +846,7 @@ pub fn get_attack_target(
 
 /// `Access_GetAttackTarget2` (`access.cpp:2077`) — a target not yet visible
 /// to the attacker (spotting on fire).
-pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
+pub(crate) fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
     if grid.x < 0
         || grid.y < 0
         || grid.x >= crate::geo::MAP_WIDTH
@@ -872,7 +872,7 @@ pub fn get_attack_target2(state: &GameState, unit: &UnitInfo, grid: Point) -> Op
 }
 
 /// `Access_GetTeamUnit` (`access.cpp:1804`).
-pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -> Option<UnitId> {
+pub(crate) fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -> Option<UnitId> {
     get_team_unit_matching(state, grid, team, |other| other.flags & flags != 0)
 }
 
@@ -893,7 +893,7 @@ pub fn get_team_unit(state: &GameState, grid: Point, team: TeamId, flags: u32) -
 /// `MOBILE_LAND_UNIT` bit would match in C++. In `SC_UNITS` and at runtime such flags
 /// do not occur (`HOVERING` is a separate flight bit), so in-game behavior does not
 /// change.
-pub fn get_team_unit_by_environments(
+pub(crate) fn get_team_unit_by_environments(
     state: &GameState,
     grid: Point,
     team: TeamId,
@@ -968,7 +968,7 @@ fn get_team_unit_matching(
 }
 
 /// `Access_GetActiveUnitWithFlags` (`access.cpp:1492`).
-pub fn get_active_unit_with_flags(state: &GameState, grid: Point, flags: u32) -> Option<UnitId> {
+pub(crate) fn get_active_unit_with_flags(state: &GameState, grid: Point, flags: u32) -> Option<UnitId> {
     if grid.x < 0
         || grid.y < 0
         || grid.x >= crate::geo::MAP_WIDTH
@@ -991,7 +991,7 @@ pub fn get_active_unit_with_flags(state: &GameState, grid: Point, flags: u32) ->
 }
 
 /// `Access_GetEnemyMineOnSentry` (`access.cpp:2050`).
-pub fn get_enemy_mine_on_sentry(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
+pub(crate) fn get_enemy_mine_on_sentry(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
     for id in state.units_at(grid).iter().copied() {
         let Some(unit) = state.unit(id) else { continue };
         if (unit.unit_type == UnitType::LandMine || unit.unit_type == UnitType::SeaMine)
@@ -1005,7 +1005,7 @@ pub fn get_enemy_mine_on_sentry(state: &GameState, team: TeamId, grid: Point) ->
 }
 
 /// `Access_TriggerEnemyMine` (`access.cpp:2068`): a detected mine explodes.
-pub fn trigger_enemy_mine(state: &mut GameState, team: TeamId, grid: Point) {
+pub(crate) fn trigger_enemy_mine(state: &mut GameState, team: TeamId, grid: Point) {
     let Some(mine) = get_enemy_mine_on_sentry(state, team, grid) else {
         return;
     };
@@ -1031,7 +1031,7 @@ pub fn can_receive_units(receiver: &UnitInfo) -> bool {
 }
 
 /// `Access_GetReceiverUnit` (`access.cpp:2100`).
-pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
+pub(crate) fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Option<UnitId> {
     if grid.x < 0
         || grid.y < 0
         || grid.x >= crate::geo::MAP_WIDTH
@@ -1081,7 +1081,7 @@ pub fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point) -> Opt
 }
 
 /// `Access_GetStoredUnitCount` (`access.cpp:1291`).
-pub fn get_stored_unit_count(state: &GameState, receiver: &UnitInfo) -> i32 {
+pub(crate) fn get_stored_unit_count(state: &GameState, receiver: &UnitInfo) -> i32 {
     let list = if receiver.unit_type == UnitType::Hangar {
         crate::unit::UnitListKind::MobileAir
     } else {
@@ -1126,7 +1126,7 @@ pub fn is_stealth_action_in_progress(unit: &UnitInfo) -> bool {
 
 /// `UnitsManager_IsEngagedByInfiltrator` (`units_manager.cpp:1408`): a saboteur
 /// holds the target from the order until the action resolves.
-pub fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
+pub(crate) fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileLandSea) {
         let Some(other) = state.unit(*id) else {
             continue;
@@ -1142,12 +1142,12 @@ pub fn is_engaged_by_infiltrator(state: &GameState, unit: &UnitInfo) -> bool {
 }
 
 /// `UnitsManager_IsEngaged` (`units_manager.cpp:1422`).
-pub fn is_engaged(state: &GameState, unit: &UnitInfo) -> bool {
+pub(crate) fn is_engaged(state: &GameState, unit: &UnitInfo) -> bool {
     are_there_pins(unit) || is_engaged_by_infiltrator(state, unit)
 }
 
 /// `UnitsManager_GetAttackPosition` (`units_manager.cpp:4847`).
-pub fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> Point {
+pub(crate) fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> Point {
     if target.unit_type == UnitType::Constructor && target.orders == UnitOrder::Build {
         // `Access_GetConstructionUtility` — a P5 simplification: the build site itself.
     }
@@ -1186,7 +1186,7 @@ pub fn get_attack_position(state: &GameState, attacker: &UnitInfo, target: &Unit
 /// `Paths_IsOccupied` (`paths.cpp:439`): a stealthy unit (submarine/saboteur/
 /// transport) on a path cell tries to step aside; otherwise it is revealed and
 /// blocks movement. Returns `true` if the cell is considered occupied.
-pub fn paths_is_occupied(state: &mut GameState, grid: Point, angle: i32, team: TeamId) -> bool {
+pub(crate) fn paths_is_occupied(state: &mut GameState, grid: Point, angle: i32, team: TeamId) -> bool {
     let Some(ids) = state.units_at_opt(grid).map(|units| units.to_vec()) else {
         return false;
     };
@@ -1356,7 +1356,7 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
 ///
 /// Returns `true` if the cell "yields" (the unit will move away or there is a bridge), and
 /// `false` if the path must be found anew.
-pub fn set_unit_destination(
+pub(crate) fn set_unit_destination(
     state: &mut GameState,
     _unit: &UnitInfo,
     from: Point,
@@ -1428,7 +1428,7 @@ fn path_is_in_path(unit: &UnitInfo, grid: Point) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `Access_ProcessGroupAirPath` (`access.cpp`): the air path of a group member.
-pub fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
+pub(crate) fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
     };
@@ -1452,7 +1452,7 @@ pub fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
 /// In C++ a group is a `SmartList<UnitInfo>`; here — `GameState::groups`.
 /// Returns `false` if the path is still being built (the leader stays in
 /// `PendingAirGroupLeader`), `true` if the group order is allowed.
-pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
+pub(crate) fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
     let Some(group) = state.group_members(leader) else {
         return false;
     };
@@ -1491,7 +1491,7 @@ pub fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
 
 /// Assign units to the group led by `leader` (`AllocateUnitList` +
 /// `AssignUnitList`). Returns the group number.
-pub fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitId]) -> u32 {
+pub(crate) fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitId]) -> u32 {
     clear_unit_group(state, leader);
     let group_id = state.create_group_with_leader(leader);
     for id in members {
@@ -1501,13 +1501,13 @@ pub fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitI
 }
 
 /// `UnitInfo::ClearUnitList` — remove a unit from a group list.
-pub fn clear_unit_group(state: &mut GameState, id: UnitId) {
+pub(crate) fn clear_unit_group(state: &mut GameState, id: UnitId) {
     state.clear_group_member(id);
 }
 
 /// `Access_GroupAttackOrder` (`access.cpp`): a group attack order. In C++
 /// it walks the group list; here — only member routes (without `Ai_*`).
-pub fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
+pub(crate) fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
     let Some(group) = state.group_members(leader) else {
         return;
     };
@@ -1529,7 +1529,7 @@ pub fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
 
 /// The unit's group (a copy of the list).
 #[inline]
-pub fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<UnitId>> {
+pub(crate) fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<UnitId>> {
     state.group_members(id)
 }
 
@@ -1538,7 +1538,7 @@ pub fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<UnitId>> {
 // ---------------------------------------------------------------------------
 
 /// `Access_IsTeamInUnitLists` (`access.cpp`) — whether the team has a unit in the lists.
-pub fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
+pub(crate) fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
     for kind in crate::unit::UnitListKind::ALL {
         for id in state.unit_list(kind) {
             if let Some(unit) = state.unit(*id) {
@@ -1553,12 +1553,12 @@ pub fn is_team_in_unit_lists(state: &GameState, team: TeamId) -> bool {
 
 /// An `Access_GetUnit2`-like search: the first live unit on the cell.
 #[inline]
-pub fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
+pub(crate) fn first_unit_at(state: &GameState, grid: Point) -> Option<UnitId> {
     state.units_at(grid).first().copied()
 }
 
 /// `Access_IsAnyLandPresent` (`access.cpp:1030`) — whether there is land in the 2×2 area.
-pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
+pub(crate) fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
     if Footprint::from_flags(flags).is_quad() {
@@ -1572,7 +1572,7 @@ pub fn is_any_land_present(state: &GameState, grid: Point, flags: u32) -> bool {
 }
 
 /// `Access_IsFullyLandCovered` (`access.cpp:1050`).
-pub fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool {
+pub(crate) fn is_fully_land_covered(state: &GameState, grid: Point, flags: u32) -> bool {
     let is_land = |x: i16, y: i16| surface_type(state, Point::new(x, y)) == SURFACE_TYPE_LAND;
 
     if Footprint::from_flags(flags).is_single()
@@ -1611,7 +1611,7 @@ pub fn get_attack_range(unit: &UnitInfo) -> i32 {
 
 /// `UnitsManager_IsAccessible` (`units_manager.cpp:4987`): the 2×2 site for
 /// a building (all four cells are passable for its type).
-pub fn is_accessible_for_building(
+pub(crate) fn is_accessible_for_building(
     state: &GameState,
     unit_type: UnitType,
     team: TeamId,
@@ -1657,7 +1657,7 @@ pub fn is_accessible_for_building(
 
 /// `Access_IsWithinMovementRange` (`access.cpp`): whether the remaining speed is enough
 /// for the current path.
-pub fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
+pub(crate) fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
     if unit.speed == 0 {
         return false;
     }
@@ -1687,7 +1687,7 @@ pub fn is_within_movement_range(state: &GameState, unit: &UnitInfo) -> bool {
 }
 
 /// `Access_GetRepairShopClientCount` (`access.cpp:1300`) — for P3 repair.
-pub fn get_repair_shop_client_count(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn get_repair_shop_client_count(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     use crate::enums::unit_flags::ELECTRONIC_UNIT;
     let (list, flags) = match unit_type {
         UnitType::Depot => (
@@ -1736,7 +1736,7 @@ pub fn is_transporter_full(unit: &UnitInfo) -> bool {
 
 /// `Access_DestroyUtilities` (`access.cpp`): removes utilities from a cell —
 /// tapes/cones always, road/slabs/rubble/connectors — by flags.
-pub fn destroy_utilities(
+pub(crate) fn destroy_utilities(
     state: &mut GameState,
     grid: Point,
     remove_slabs: bool,
@@ -1785,7 +1785,7 @@ pub fn destroy_utilities(
 /// Mines leave no rubble (`rubble_type = INVALID_ID`, `units_manager.cpp:3720`).
 ///
 /// Returns the id of the created rubble (for tests/log).
-pub fn build_clearing(
+pub(crate) fn build_clearing(
     state: &mut GameState,
     unit_id: crate::unit::UnitId,
     mode: bool,
@@ -1856,7 +1856,7 @@ pub fn build_clearing(
 
 /// `Access_DestroyGroundCovers` (`access.cpp`): removes the road/site/
 /// platform/bridge under the unit (a building occupies 2×2).
-pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
+pub(crate) fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
     let footprint = unit.footprint();
     let positions = if footprint.is_quad() {
         [
@@ -1896,7 +1896,7 @@ pub fn destroy_ground_covers(state: &mut GameState, unit: &UnitInfo) {
 ///
 /// Ported fully: a walk over `UnitsManager_MobileAirUnits` in
 /// insertion order.
-pub fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
+pub(crate) fn is_unload_site_taken(state: &GameState, unit: &UnitInfo) -> bool {
     for id in state.unit_list(crate::unit::UnitListKind::MobileAir) {
         let Some(other) = state.unit(*id) else {
             continue;

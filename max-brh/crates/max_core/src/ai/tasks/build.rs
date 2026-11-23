@@ -2022,7 +2022,7 @@ mod tests {
             state.teams[team].team_type = TeamKind::Computer;
             state.teams[team].team_clan = TeamClan::Musashi;
         }
-        crate::ai_init(&mut state);
+        crate::ai::ai_init(&mut state);
         state.ai.settings.opponent = crate::enums::Opponent::Expert as u8;
 
         state

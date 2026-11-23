@@ -150,7 +150,7 @@ pub enum UnitClass {
 
 /// `HasMaterials()` (`scripter.cpp:159`): the sum of `storage` of the team's units with
 /// the given cargo type over the `Stationary` and `MobileLandSea` lists.
-pub fn has_materials(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
+pub(crate) fn has_materials(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut cargo_sum = 0i32;
 
     for kind in [UnitListKind::Stationary, UnitListKind::MobileLandSea] {
@@ -167,7 +167,7 @@ pub fn has_materials(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
 
 /// `CountReadyUnits()` (`scripter.cpp:204`): units of the type that are **ready** (state
 /// is not `ORDER_STATE_BUILDING_READY`).
-pub fn count_ready_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn count_ready_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut ready_units = 0i32;
 
     for &id in state.unit_list(relevant_list(unit_type)) {
@@ -185,7 +185,7 @@ pub fn count_ready_units(state: &GameState, team: TeamId, unit_type: UnitType) -
 
 /// `HasAttackPower()` (`scripter.cpp:244`): there is a unit of the class with `ammo > 0`,
 /// not `SUBMARNE` and not `COMMANDO`.
-pub fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bool {
+pub(crate) fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bool {
     let kind = match class {
         UnitClass::MobileLandSea => UnitListKind::MobileLandSea,
         UnitClass::MobileAir => UnitListKind::MobileAir,
@@ -209,7 +209,7 @@ pub fn has_attack_power(state: &GameState, team: TeamId, class: UnitClass) -> bo
 /// `HasProductionInfrastructure()` (`scripter.cpp:296`): a factory + fuel ≥ 8 and
 /// materials ≥ 24, otherwise a mine; it covers the power demand (`power_demand`
 /// 1 or 2).
-pub fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
+pub(crate) fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
     let has_plant = state.unit_list(UnitListKind::Stationary).iter().any(|id| {
         state.unit(*id).is_some_and(|unit| {
             unit.team == team
@@ -263,7 +263,7 @@ pub fn has_production_infrastructure(state: &GameState, team: TeamId) -> bool {
 /// `HasConstructionInfrastructure()` (`scripter.cpp:372`): constructor +
 /// engineer + enough materials (38, 8 with a mine, −8 with own
 /// generation).
-pub fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool {
+pub(crate) fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool {
     let has_constructor = state
         .unit_list(UnitListKind::MobileLandSea)
         .iter()
@@ -313,7 +313,7 @@ pub fn has_construction_infrastructure(state: &GameState, team: TeamId) -> bool 
 
 /// `CountTotalMining()` (`scripter.cpp:454`): the total **maximums** of mining
 /// of enabled mines (`ORDER_POWER_ON`) — `(raw, fuel, gold)`.
-pub fn count_total_mining(state: &GameState, team: TeamId) -> (i32, i32, i32) {
+pub(crate) fn count_total_mining(state: &GameState, team: TeamId) -> (i32, i32, i32) {
     let mut raw = 0i32;
     let mut fuel = 0i32;
     let mut gold = 0i32;
@@ -338,7 +338,7 @@ pub fn count_total_mining(state: &GameState, team: TeamId) -> (i32, i32, i32) {
 /// A curious C++ detail: if the **constructed** type is stationary, the list of
 /// mobile ground/naval units is iterated, and vice versa (the list contains
 /// "producers").
-pub fn get_total_units_being_constructed(
+pub(crate) fn get_total_units_being_constructed(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -367,7 +367,7 @@ pub fn get_total_units_being_constructed(
 
 /// `GetTotalPowerConsumption()` (`scripter.cpp:547`) — the number of stationary units
 /// of the type in state `POWER_ON`/`BUILD`.
-pub fn get_total_power_consumption(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn get_total_power_consumption(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut result = 0i32;
 
     for &id in state.unit_list(UnitListKind::Stationary) {
@@ -384,7 +384,7 @@ pub fn get_total_power_consumption(state: &GameState, team: TeamId, unit_type: U
 }
 
 /// `GetTotalMining()` (`scripter.cpp:588`) — the actual mining of enabled mines.
-pub fn get_total_mining(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
+pub(crate) fn get_total_mining(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut result = 0i32;
 
     for &id in state.unit_list(UnitListKind::Stationary) {
@@ -407,7 +407,7 @@ pub fn get_total_mining(state: &GameState, team: TeamId, cargo: CargoType) -> i3
 
 /// `GetTotalConsumption()` (`scripter.cpp:638`) — the total consumption
 /// (negative components of `Cargo_GetNetProduction`).
-pub fn get_total_consumption(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
+pub(crate) fn get_total_consumption(state: &GameState, team: TeamId, cargo: CargoType) -> i32 {
     let mut result = 0i32;
 
     for &id in state.unit_list(UnitListKind::Stationary) {
@@ -430,7 +430,7 @@ pub fn get_total_consumption(state: &GameState, team: TeamId, cargo: CargoType) 
 
 /// `HasUnitAboveMarkLevel()` (`scripter.cpp:699`) — the unit version (mark level)
 /// is above the given one; **only** the `MobileLandSea` list is checked (as in C++).
-pub fn has_unit_above_mark_level(
+pub(crate) fn has_unit_above_mark_level(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -451,7 +451,7 @@ pub fn has_unit_above_mark_level(
 
 /// `HasUnitExperience()` (`scripter.cpp:741`): there is a unit of the type with `storage > 0`
 /// (for `COMMANDO`/`REGENERATING_UNIT` `storage` is experience).
-pub fn has_unit_experience(state: &GameState, team: TeamId, unit_type: UnitType) -> bool {
+pub(crate) fn has_unit_experience(state: &GameState, team: TeamId, unit_type: UnitType) -> bool {
     for &id in state.unit_list(relevant_list(unit_type)) {
         let Some(unit) = state.unit(id) else { continue };
         if unit.team == team && unit.unit_type == unit_type && unit.storage > 0 {
@@ -463,7 +463,7 @@ pub fn has_unit_experience(state: &GameState, team: TeamId, unit_type: UnitType)
 }
 
 /// `CountCasualties()` (`scripter.cpp:780`).
-pub fn count_casualties(state: &GameState, team: TeamId, unit_type: UnitType) -> u32 {
+pub(crate) fn count_casualties(state: &GameState, team: TeamId, unit_type: UnitType) -> u32 {
     state
         .teams
         .get(team.0 as usize)
@@ -472,7 +472,7 @@ pub fn count_casualties(state: &GameState, team: TeamId, unit_type: UnitType) ->
 }
 
 /// `CountDamangedUnits()` (`scripter.cpp:809`) — units with `hits != base hits`.
-pub fn count_damaged_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn count_damaged_units(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let mut result = 0i32;
 
     for &id in state.unit_list(relevant_list(unit_type)) {
@@ -489,7 +489,7 @@ pub fn count_damaged_units(state: &GameState, team: TeamId, unit_type: UnitType)
 }
 
 /// `CountUnitsAboveAttribLevel()` (`scripter.cpp:850`).
-pub fn count_units_above_attrib_level(
+pub(crate) fn count_units_above_attrib_level(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -513,7 +513,7 @@ pub fn count_units_above_attrib_level(
 
 /// `CountUnitsWithReducedAttrib()` (`scripter.cpp:900`): a unit attribute is below
 /// the base (`ammo`, `speed`, `shots`/`rounds`, `hits`, `storage`).
-pub fn count_units_with_reduced_attrib(
+pub(crate) fn count_units_with_reduced_attrib(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -547,7 +547,7 @@ pub fn count_units_with_reduced_attrib(
 }
 
 /// `GetResearchLevel()` (`scripter.cpp:976`).
-pub fn get_research_level(state: &GameState, team: TeamId, topic: ResearchTopic) -> u32 {
+pub(crate) fn get_research_level(state: &GameState, team: TeamId, topic: ResearchTopic) -> u32 {
     state
         .teams
         .get(team.0 as usize)
@@ -664,7 +664,7 @@ fn max_allowed_build_rate(unit: &UnitInfo) -> i32 {
 }
 
 /// `Cargo_GetNetProduction` (`cargo.cpp:70`).
-pub fn cargo_get_net_production(
+pub(crate) fn cargo_get_net_production(
     state: &GameState,
     unit: &UnitInfo,
     current_order: bool,
@@ -748,7 +748,7 @@ pub fn cargo_get_net_production(
 /// `raw`** of the factory under construction is returned from the complex cache; `power`/`life`/`fuel`/`gold` remain
 /// C++-exact and are checked by [`crate::power::optimize_complex`] (see the
 /// `production` header). A pause (`build_paused`) excludes the consumption entirely.
-pub fn cargo_get_net_production_for_total(
+pub(crate) fn cargo_get_net_production_for_total(
     state: &GameState,
     unit: &UnitInfo,
     current_order: bool,
@@ -797,7 +797,7 @@ pub fn get_normal_rate_build_cost(unit: &UnitInfo) -> i32 {
 
 /// `WinLoss_GetWorthOfAssets` (`winloss.cpp:33`) — the total worth of the team's
 /// units in one list.
-pub fn get_worth_of_assets(state: &GameState, team: TeamId, kind: UnitListKind) -> i32 {
+pub(crate) fn get_worth_of_assets(state: &GameState, team: TeamId, kind: UnitListKind) -> i32 {
     let mut sum = 0i32;
 
     for &id in state.unit_list(kind) {
@@ -812,7 +812,7 @@ pub fn get_worth_of_assets(state: &GameState, team: TeamId, kind: UnitListKind) 
 
 /// `WinLoss_GetTotalWorthOfAssets` (`winloss.cpp:47`): mobile ground/naval
 /// + air + stationary (ground cover is not included).
-pub fn get_total_worth_of_assets(state: &GameState, team: TeamId) -> i32 {
+pub(crate) fn get_total_worth_of_assets(state: &GameState, team: TeamId) -> i32 {
     get_worth_of_assets(state, team, UnitListKind::MobileLandSea)
         + get_worth_of_assets(state, team, UnitListKind::MobileAir)
         + get_worth_of_assets(state, team, UnitListKind::Stationary)
@@ -877,7 +877,7 @@ fn survival_status(state: &GameState, team: TeamId, alive_state: WinLossState) -
 ///
 /// `GENERIC` means: the generic rules apply from now on
 /// ([`check_end_game_conditions`]); `LOST` — the team is out of the game.
-pub fn default_win_loss_conditions(state: &GameState, team: TeamId) -> WinLossState {
+pub(crate) fn default_win_loss_conditions(state: &GameState, team: TeamId) -> WinLossState {
     survival_status(state, team, WinLossState::Generic)
 }
 
@@ -905,7 +905,7 @@ fn team_turn_victory_limit(state: &GameState) -> i64 {
 ///
 /// Each branch is a verbatim translation of a Lua script from `assets/PATCHES.RES`
 /// (the resource code is given in the comment).
-pub fn mission_win_loss(
+pub(crate) fn mission_win_loss(
     state: &GameState,
     category: MissionCategory,
     mission_index: u16,
@@ -1408,7 +1408,7 @@ pub fn mission_win_loss(
 ///
 /// `turn_counter` is kept for C++ signature compatibility; the predicates read
 /// [`GameState::turn_counter`] (like `MAX_REGISTRY.TeamTurnValue`).
-pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
+pub(crate) fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
     let _ = turn_counter;
 
     let mut status = WinLossStatus {
@@ -1503,7 +1503,7 @@ pub fn evaluate_status(state: &GameState, turn_counter: i32) -> WinLossStatus {
 /// marked `TeamKind::Eliminated`.
 ///
 /// Returns `true` if the game is over (`menu_wrap_up_game`).
-pub fn check_end_game_conditions(state: &mut GameState) -> bool {
+pub(crate) fn check_end_game_conditions(state: &mut GameState) -> bool {
     let status = evaluate_status(state, state.turn_counter);
     let player_team = state.player_team.0 as usize;
 

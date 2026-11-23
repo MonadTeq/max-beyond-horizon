@@ -283,7 +283,7 @@ pub fn industry_unit_name(unit_type: UnitType) -> &'static str {
 /// team ownership follows from the complex itself, but in `max_core`
 /// `ComplexId` is unique only within a team, so the team is checked
 /// explicitly.
-pub fn complex_units(state: &GameState, team: TeamId, complex: ComplexId) -> Vec<UnitId> {
+pub(crate) fn complex_units(state: &GameState, team: TeamId, complex: ComplexId) -> Vec<UnitId> {
     state
         .unit_list(UnitListKind::Stationary)
         .iter()
@@ -303,7 +303,7 @@ pub fn complex_units(state: &GameState, team: TeamId, complex: ComplexId) -> Vec
 ///
 /// For a pause (`build_paused`) the consumption of the factory under construction is already excluded by
 /// [`cargo_get_net_production`] itself, so no separate filtering is needed.
-pub fn complex_totals(state: &GameState, team: TeamId, complex: ComplexId) -> EnergyTotals {
+pub(crate) fn complex_totals(state: &GameState, team: TeamId, complex: ComplexId) -> EnergyTotals {
     let mut totals = EnergyTotals::default();
 
     for id in complex_units(state, team, complex) {
@@ -583,7 +583,7 @@ fn settle_workers(
 /// construction (`BuildMenu::Build` → `StartBuilding`): a check whether the order fits.
 /// `show_messages` — composition of [`IndustryOutcome::message`] for the top
 /// map line (C++ `is_player`/`show_messages`).
-pub fn optimize_complex(
+pub(crate) fn optimize_complex(
     state: &mut GameState,
     team: TeamId,
     complex: ComplexId,

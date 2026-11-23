@@ -100,7 +100,7 @@ pub fn get_reach(unit: &UnitInfo) -> i32 {
 }
 
 /// `AiAttack_IsWithinReach` (`aiattack.cpp:279`) — whether there is an own building nearby.
-pub fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::TeamId) -> bool {
+pub(crate) fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::TeamId) -> bool {
     if unit.team == crate::team::TeamId::ALIEN {
         return false;
     }
@@ -124,7 +124,7 @@ pub fn is_within_reach(world: &GameState, unit: &UnitInfo, team: crate::team::Te
 }
 
 /// `AiAttack_IsValidSabotageTarget` (`aiattack.cpp:314`).
-pub fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &UnitInfo) -> bool {
+pub(crate) fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &UnitInfo) -> bool {
     unit.unit_type == UnitType::Infiltrator
         && target.flags & crate::enums::unit_flags::ELECTRONIC_UNIT != 0
         && target.flags & crate::enums::unit_flags::HOVERING == 0
@@ -133,7 +133,7 @@ pub fn is_valid_sabotage_target(world: &GameState, unit: &UnitInfo, target: &Uni
 }
 
 /// `AiAttack_CanAttack` (`aiattack.cpp:455`).
-pub fn can_attack(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
+pub(crate) fn can_attack(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> bool {
     if attacker.unit_type == UnitType::Infiltrator {
         if is_valid_sabotage_target(world, attacker, target)
             && task_is_adjacent(target, attacker.grid.x, attacker.grid.y)
@@ -161,7 +161,7 @@ pub fn can_attack(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> 
 }
 
 /// `AiAttack_GetAttackPotential` (`aiattack.cpp:683`).
-pub fn get_attack_potential(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> i32 {
+pub(crate) fn get_attack_potential(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> i32 {
     if is_valid_sabotage_target(world, attacker, target) {
         let chance = crate::combat::get_stealth_chance_percentage(
             world,
@@ -177,7 +177,7 @@ pub fn get_attack_potential(world: &GameState, attacker: &UnitInfo, target: &Uni
 }
 
 /// `AiAttack_SetAttackTargetCooldown` (`aiattack.cpp:697`).
-pub fn set_attack_target_cooldown(world: &mut GameState, unit: UnitId) {
+pub(crate) fn set_attack_target_cooldown(world: &mut GameState, unit: UnitId) {
     if let Some(mut info) = world.unit(unit).cloned() {
         info.ai_state_bits |= crate::enums::AI_STATE_TARGET_COOLDOWN_MASK;
         world.write_unit(unit, info);
@@ -205,7 +205,7 @@ pub fn estimate_attack_value(unit: &UnitInfo, predicted_damage: i32) -> i32 {
 }
 
 /// `AiAttack_IsAttackProfitable` (`aiattack.cpp:514`) with explicit damage to the target.
-pub fn is_attack_profitable_with(
+pub(crate) fn is_attack_profitable_with(
     world: &GameState,
     friendly_unit: &UnitInfo,
     enemy_unit: &UnitInfo,
@@ -244,7 +244,7 @@ pub fn is_attack_profitable_with(
 
 /// `AiAttack_IsAttackProfitable` (`aiattack.cpp:546`) — damage to the target is computed
 /// `GetPredictedAttack`.
-pub fn is_attack_profitable(
+pub(crate) fn is_attack_profitable(
     world: &GameState,
     friendly_unit: &UnitInfo,
     enemy_unit: &UnitInfo,
@@ -266,7 +266,7 @@ pub fn is_attack_profitable(
 }
 
 /// `AiAttack_DecideDesperationAttack` (`aiattack.cpp:68`).
-pub fn decide_desperation_attack(world: &mut GameState, attacker: UnitId, target: UnitId) -> bool {
+pub(crate) fn decide_desperation_attack(world: &mut GameState, attacker: UnitId, target: UnitId) -> bool {
     let Some(target_info) = world.unit(target).cloned() else {
         return false;
     };
@@ -323,7 +323,7 @@ pub fn decide_desperation_attack(world: &mut GameState, attacker: UnitId, target
 // ---------------------------------------------------------------------------
 
 /// `AiAttack_GetTargetWorth` (`aiattack.cpp:1292`).
-pub fn get_target_worth(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> u32 {
+pub(crate) fn get_target_worth(world: &GameState, attacker: &UnitInfo, target: &UnitInfo) -> u32 {
     if !crate::access::is_valid_attack_target(world, attacker, target) || target.hits == 0 {
         return 0;
     }
@@ -346,7 +346,7 @@ pub fn get_target_worth(world: &GameState, attacker: &UnitInfo, target: &UnitInf
 }
 
 /// `AiAttack_IsPriorityTarget` (`aiattack.cpp:1323`).
-pub fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::team::TeamId) -> bool {
+pub(crate) fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::team::TeamId) -> bool {
     (target.unit_type == UnitType::EcoSphere || target.unit_type == UnitType::MiningStation)
         && world.teams[target.team.0 as usize].team_points
             > world.teams[team.0 as usize].team_points
@@ -357,7 +357,7 @@ pub fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::tea
 /// `attacker` is optional: C++ passes `nullptr` when the flags are computed for
 /// task priority (`TaskKillUnit::GetPriority`), so only the target-only part
 /// contributes in that case.
-pub fn get_target_flags(
+pub(crate) fn get_target_flags(
     world: &GameState,
     attacker: Option<&UnitInfo>,
     target: &UnitInfo,
@@ -431,7 +431,7 @@ pub fn get_target_flags(
 /// Returns the `SpottedUnit` index in `AiPlayer::spotted_units` — the
 /// iteration order and the selection rule (`score`, then `damage_potential`, then `hits`)
 /// are preserved as in C++.
-pub fn select_target_to_attack(
+pub(crate) fn select_target_to_attack(
     world: &GameState,
     unit: UnitId,
     range: i32,
@@ -603,7 +603,7 @@ fn append_wait_to_attack(
 /// `AiAttack_ProcessAttack` (`aiattack.cpp:330`).
 ///
 /// Returns `true` if the order was issued (or `TaskWaitToAttack` was set).
-pub fn process_attack(
+pub(crate) fn process_attack(
     tm: &mut TaskManager,
     world: &mut GameState,
     attacker: UnitId,
@@ -759,7 +759,7 @@ pub fn process_attack(
 }
 
 /// `AiAttack_FindAttackSupport` (`aiattack.cpp:473`).
-pub fn find_attack_support(
+pub(crate) fn find_attack_support(
     tm: &mut TaskManager,
     world: &mut GameState,
     target: UnitId,
@@ -824,7 +824,7 @@ pub fn find_attack_support(
 }
 
 /// `AiAttack_ChooseSiteForAttacker` (`aiattack.cpp:176`) — the cell to attack from.
-pub fn choose_site_for_attacker(
+pub(crate) fn choose_site_for_attacker(
     world: &GameState,
     unit: &UnitInfo,
     target: Point,
@@ -898,7 +898,7 @@ pub fn choose_site_for_attacker(
 }
 
 /// `AiAttack_ChooseSiteToSabotage` (`aiattack.cpp:105`) — a cell near the target.
-pub fn choose_site_to_sabotage(
+pub(crate) fn choose_site_to_sabotage(
     world: &GameState,
     unit: &UnitInfo,
     target: &UnitInfo,
@@ -980,7 +980,7 @@ pub fn choose_site_to_sabotage(
 ///
 /// `mode` — "attack after movement" (C++ `mode = true`); it affects the
 /// preparation and reserve branch.
-pub fn evaluate_attack(
+pub(crate) fn evaluate_attack(
     tm: &mut TaskManager,
     world: &mut GameState,
     unit: UnitId,

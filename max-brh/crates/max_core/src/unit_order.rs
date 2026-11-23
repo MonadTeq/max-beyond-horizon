@@ -217,7 +217,7 @@ pub fn finish_unit_scaling(unit: &mut UnitInfo) {
 /// `UnitsManager_FinishUnitScaling` with game access: if the container can
 /// accept the unit (`Access_CanReceiveUnits`, `storage < ATTRIB_STORAGE`, same
 /// team), the unit goes into the hold (`ORDER_IDLE` + `Hash_MapHash.Remove`).
-pub fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo) {
+pub(crate) fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo) {
     restore_orders(unit);
 
     if unit.orders != UnitOrder::Idle {
@@ -401,7 +401,7 @@ pub fn power_up(unit: &mut UnitInfo, _factor: i32) {
 }
 
 /// `UnitInfo::PowerDown` (`unitinfo.cpp:5123`).
-pub fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
+pub(crate) fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
     ai_task_flag(state, "Power Down");
     power_up(unit, 1);
 
@@ -419,7 +419,7 @@ pub fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
 /// `BuildMenu`) and `events::apply_command` (packet 08/P4 after a map click)
 /// already place the site synchronously, so here on the next tick there is no
 /// repeated spawn — only `ORDER_STATE_BUILD_IN_PROGRESS` and `PositionInTape`.
-pub fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
+pub(crate) fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
     // `SDL_assert(build_list.GetCount() > 0)`: the first type in the queue.
     let Some(unit_to_build) = unit.build_list.first().copied() else {
         return;
@@ -581,7 +581,7 @@ pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
 ///   of the difference on each axis independently; the builder's pixel position — the center
 ///   of its cell (`UnitInfo::SetPosition`; in the port `x/y` are not recomputed when
 ///   walking, so the cell is used).
-pub fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to: Point) -> i32 {
+pub(crate) fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to: Point) -> i32 {
     const UNIT_ANGLE_NE: i32 = 1;
     const UNIT_ANGLE_SE: i32 = 3;
     const UNIT_ANGLE_SW: i32 = 5;
@@ -679,7 +679,7 @@ fn tape_leave_shift(enter: i32, leave: i32) -> i16 {
 /// LEAVE completion C++ recomputes the cell from the pixel position
 /// (`grid_x = x / GFX_MAP_TILE_SIZE`) — the builder ends up in the tape cell
 /// closest to the target, and then walks (`ActivateEngineer` → `ORDER_MOVE`).
-pub fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_to: Point) {
+pub(crate) fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_to: Point) {
     ai_task_flag(state, "Positioning in tape");
 
     if unit.state == UnitOrderState::TapePositioningInit {
@@ -930,7 +930,7 @@ pub fn paths_calculate_step(
 /// Working copy of the unit and game state access during order processing.
 pub struct OrderContext<'a> {
     /// The game (for inter-unit effects).
-    pub world: &'a mut GameState,
+    pub(crate) world: &'a mut GameState,
     /// Id of the unit being processed.
     pub id: UnitId,
     /// Working copy of the unit.
@@ -2276,7 +2276,7 @@ fn activate_engineer(ctx: &mut OrderContext<'_>) {
 /// directions (`N, E, S, W` — `direction += 2`) for `unit_size + 1` steps
 /// cumulatively; the first cell passable for the **exiting** type
 /// (`Access_IsAccessible(client->type, …, SameClassBlocks)`) becomes the target.
-pub fn activation_exit_cell(
+pub(crate) fn activation_exit_cell(
     state: &GameState,
     client: &UnitInfo,
     container: &UnitInfo,
@@ -2328,7 +2328,7 @@ pub fn activation_exit_cell(
 /// The AI has no click: `TaskCreateBuilding::Activate` attaches `TaskActivate`, which
 /// searches the first passable cell around the building (`builder_exit_cell`) and issues
 /// the same order. `true` — the order was set.
-pub fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
+pub(crate) fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
     let Some(builder) = state.unit(builder_id).cloned() else {
         return false;
     };
@@ -2377,7 +2377,7 @@ pub fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
 /// `unitinfo.cpp:3513`), after which `UnitsManager_ActivateUnit` brings the unit out.
 ///
 /// `true` — the order was set.
-pub fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> bool {
+pub(crate) fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> bool {
     let Some(factory) = state.unit(factory_id).cloned() else {
         return false;
     };
@@ -3324,7 +3324,7 @@ fn pick_up_mine(state: &mut GameState, unit: &mut UnitInfo) {
 /// `ORDER_STATE_10` (0xA) and `ORDER_STATE_21` (0x15) are declared in
 /// `enums.hpp`, but the C++ port never uses them, so there are no branches for them
 /// (a full match, not an omission).
-pub fn process_order(state: &mut GameState, id: UnitId) {
+pub(crate) fn process_order(state: &mut GameState, id: UnitId) {
     let Some(unit) = state.unit(id).cloned() else {
         return;
     };
@@ -3394,13 +3394,13 @@ pub fn process_order(state: &mut GameState, id: UnitId) {
 
 /// `UnitsManager_ProcessUnitOrders` (`units_manager.cpp:3401`) — a walk over one
 /// list; extracted into [`GameState::process_unit_orders`].
-pub fn process_unit_orders(state: &mut GameState, kind: UnitListKind) {
+pub(crate) fn process_unit_orders(state: &mut GameState, kind: UnitListKind) {
     state.process_unit_orders(kind);
 }
 
 /// `UnitsManager_ProcessOrders` (`units_manager.cpp:1860`) — extracted into
 /// [`GameState::process_orders`].
-pub fn process_orders(state: &mut GameState) {
+pub(crate) fn process_orders(state: &mut GameState) {
     state.process_orders();
 }
 

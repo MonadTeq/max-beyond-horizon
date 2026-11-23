@@ -135,7 +135,7 @@ pub fn get_crc16_word(data: u16, crc_checksum: u16) -> u16 {
 ///
 /// The caller's `team` condition (`team_type != NONE || team == ALIEN`) is checked by
 /// [`state_checksum`], as in `GameManager_CheckDesync`.
-pub fn get_unit_list_checksum(
+pub(crate) fn get_unit_list_checksum(
     state: &GameState,
     kind: UnitListKind,
     team: TeamId,
@@ -176,7 +176,7 @@ pub fn get_unit_list_checksum(
 /// The outer loop is teams `RED..ALIEN`, the inner loop is the four lists
 /// (`GroundCover`, `MobileLandSea`, `Stationary`, `MobileAir`); the
 /// `ParticleUnits` list does **not** enter the CRC (as in C++). Initial value `0xFFFF`.
-pub fn state_checksum(state: &GameState) -> u16 {
+pub(crate) fn state_checksum(state: &GameState) -> u16 {
     let mut crc_checksum = CRC16_INITIAL;
 
     for kind in [
@@ -202,7 +202,7 @@ pub fn state_checksum(state: &GameState) -> u16 {
 ///
 /// Used by determinism tests as a "desync detector": any change to a
 /// simulation field changes the value.
-pub fn state_digest(state: &GameState) -> u16 {
+pub(crate) fn state_digest(state: &GameState) -> u16 {
     crc16(&state.snapshot_bytes())
 }
 
@@ -239,7 +239,7 @@ pub const REPLAY_DIGEST_MAGIC: &[u8; 8] = b"MAXRPL1\0";
 /// raw/fuel/gold_mining, raw/fuel/gold_mining_max, build_rate, ai_state_bits,
 /// connectors, 14 `base_values` attributes, path (kind + data), parent/enemy,
 /// build_list`.
-pub fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
+pub(crate) fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 * 1024);
 
     out.extend_from_slice(REPLAY_DIGEST_MAGIC);
@@ -361,7 +361,7 @@ pub fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
 
 /// CRC16 of the canonical replay digest (the last two bytes
 /// [`replay_digest_bytes`]).
-pub fn replay_digest_crc(state: &GameState) -> u16 {
+pub(crate) fn replay_digest_crc(state: &GameState) -> u16 {
     let bytes = replay_digest_bytes(state);
     u16::from_le_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]])
 }

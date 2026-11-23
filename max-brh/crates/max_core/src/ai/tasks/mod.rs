@@ -1027,12 +1027,12 @@ pub struct TaskCtx<'a> {
     /// Task manager (queues, lists, registration).
     pub tm: &'a mut TaskManager,
     /// Game state.
-    pub world: &'a mut GameState,
+    pub(crate) world: &'a mut GameState,
 }
 
 impl<'a> TaskCtx<'a> {
     /// Creates the context.
-    pub fn new(tm: &'a mut TaskManager, world: &'a mut GameState) -> Self {
+    pub(crate) fn new(tm: &'a mut TaskManager, world: &'a mut GameState) -> Self {
         Self { tm, world }
     }
 
@@ -1267,7 +1267,7 @@ impl<'a> TaskCtx<'a> {
 }
 
 /// Task registration (a free function for `task.rs`).
-pub fn append_task(
+pub(crate) fn append_task(
     manager: &mut TaskManager,
     world: &mut GameState,
     team: TeamId,
@@ -1279,17 +1279,17 @@ pub fn append_task(
 }
 
 /// `RemindTurnStart` handler (a wrapper for `reminders.rs`).
-pub fn task_begin_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
+pub(crate) fn task_begin_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
     manager.task_begin_turn(world, task_id);
 }
 
 /// `RemindTurnEnd` handler (a wrapper for `reminders.rs`).
-pub fn task_end_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
+pub(crate) fn task_end_turn(manager: &mut TaskManager, world: &mut GameState, task_id: u32) {
     manager.task_end_turn(world, task_id);
 }
 
 /// `RemindMoveFinished` handler (a wrapper for `reminders.rs`).
-pub fn task_execute(manager: &mut TaskManager, world: &mut GameState, task_id: u32, unit: UnitId) {
+pub(crate) fn task_execute(manager: &mut TaskManager, world: &mut GameState, task_id: u32, unit: UnitId) {
     manager.task_execute(world, task_id, unit);
 }
 
@@ -1335,7 +1335,7 @@ impl Default for RetreatState {
 
 impl TaskKind {
     /// `Task::GetPriority()` — base by default; overridden in classes.
-    pub fn get_priority(&self, world: &GameState, task: &Task) -> u16 {
+    pub(crate) fn get_priority(&self, world: &GameState, task: &Task) -> u16 {
         match self {
             // `TaskCreateUnit::GetPriority` (`taskcreateunit.cpp:56`).
             Self::CreateUnit { .. } => match task.parent {
@@ -1416,7 +1416,7 @@ impl TaskKind {
     }
 
     /// `Task::GetCautionLevel(unit)` — class overrides.
-    pub fn get_caution_level(
+    pub(crate) fn get_caution_level(
         &self,
         world: &GameState,
         task: &Task,
@@ -1436,7 +1436,7 @@ impl TaskKind {
     }
 
     /// `Task::GetBounds(Rect*)`.
-    pub fn get_bounds(&self, world: &GameState, header: TaskHeader) -> Rect {
+    pub(crate) fn get_bounds(&self, world: &GameState, header: TaskHeader) -> Rect {
         let _ = world;
         let _ = header;
         match self {
@@ -1523,7 +1523,7 @@ impl TaskKind {
     }
 
     /// `Task::IsUnitUsable(unit)` — `false` by default.
-    pub fn is_unit_usable(&self, world: &GameState, header: TaskHeader, unit: UnitId) -> bool {
+    pub(crate) fn is_unit_usable(&self, world: &GameState, header: TaskHeader, unit: UnitId) -> bool {
         match self {
             Self::Attack(state) => combat::attack_is_unit_usable(world, header, state, unit),
             Self::KillUnit(state) => combat::kill_unit_is_unit_usable(world, header, state, unit),
@@ -1554,7 +1554,7 @@ impl TaskKind {
     }
 
     /// `Task::IsUnitTransferable(unit)` — `true` by default, considering the parent.
-    pub fn is_unit_transferable(&self, world: &GameState, task: &Task, unit: &UnitInfo) -> bool {
+    pub(crate) fn is_unit_transferable(&self, world: &GameState, task: &Task, unit: &UnitInfo) -> bool {
         match self {
             Self::Attack(_)
             | Self::KillUnit(_)
@@ -1581,7 +1581,7 @@ impl TaskKind {
     }
 
     /// `Task::IsNeeded()` — overrides (CreateBuilding, ObtainUnits, …).
-    pub fn is_needed_kind(&self, world: &GameState) -> bool {
+    pub(crate) fn is_needed_kind(&self, world: &GameState) -> bool {
         let _ = world;
         match self {
             Self::Attack(_) => true,

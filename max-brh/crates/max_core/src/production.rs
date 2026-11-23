@@ -309,7 +309,7 @@ pub fn is_builder(unit_type: UnitType) -> bool {
 ///
 /// For a computer the difficulty multiplier applies (`opponent`), as in C++.
 /// `quick_build` (training missions) is not modeled in the port.
-pub fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
+pub(crate) fn turns_to_build(state: &GameState, team: TeamId, unit_type: UnitType) -> i32 {
     let turns = state
         .team_units
         .get(team.0 as usize)
@@ -364,7 +364,7 @@ pub fn total_cost(builder: UnitType, turns: i32) -> i32 {
 ///   (`INT16_MAX` for stationary ones): `min(build_speed_multiplier, limit)`;
 /// * consumption — `Cargo_GetRawConsumptionRate(builder, effective_rate)`, the storage
 ///   decreases by it (at a mobile builder, like C++ `storage -= ...`).
-pub fn turns_and_consumption(
+pub(crate) fn turns_and_consumption(
     state: &GameState,
     builder: &UnitInfo,
     unit_type: UnitType,
@@ -667,7 +667,7 @@ pub fn footprint(unit_type: UnitType) -> i16 {
 /// `Access_IsAccessible(..., AccessModifier_SameClassBlocks)`, so a construction
 /// can be laid out over own mobile units — C++ does not consider them
 /// an obstacle to the building (`flags & STATIONARY` branch in `Access_IsAccessible`).
-pub fn is_site_accessible(
+pub(crate) fn is_site_accessible(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -679,7 +679,7 @@ pub fn is_site_accessible(
 /// [`is_site_accessible`] with units C++ removed from the hash during
 /// the check (`UnitsManager_MoveUnitAndParent`/`IssueBuildOrder` remove
 /// the builder and the temporary tape, otherwise the 2×2 is "occupied" by the builder itself).
-pub fn is_site_accessible_ignoring(
+pub(crate) fn is_site_accessible_ignoring(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -720,7 +720,7 @@ pub fn is_site_accessible_ignoring(
 /// (shift of at most one cell per axis):
 /// `(x, y)`, `(x, y-1)`, `(x-1, y-1)`, `(x-1, y)` — the order matters because
 /// the first passable anchor becomes the ghost's initial position.
-pub fn initial_build_site(
+pub(crate) fn initial_build_site(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -797,7 +797,7 @@ pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
 ///
 /// The traversal order is deterministic: by ascending distance, then `y`,
 /// then `x` (no hash tables), so two runs match.
-pub fn find_build_site(
+pub(crate) fn find_build_site(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
@@ -888,7 +888,7 @@ pub struct ConstructionSite {
 
 /// The team's site tape on a cell (`Access_GetConstructionUtility`,
 /// `access.cpp:1773`).
-pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Option<UnitId> {
+pub(crate) fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Option<UnitId> {
     state.units_at(site).iter().copied().find(|id| {
         state.unit(*id).is_some_and(|unit| {
             unit.team == team && matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape)
@@ -911,7 +911,7 @@ pub fn construction_utility(state: &GameState, team: TeamId, site: Point) -> Opt
 /// The function is idempotent per cell: `StartBuilding` is called once in C++,
 /// but the port also calls it from `ProductionManager::commit` (the order applies immediately,
 /// not on the next frame) and from the order machine — a second site is not needed.
-pub fn deploy_construction_site(
+pub(crate) fn deploy_construction_site(
     state: &mut GameState,
     builder: UnitId,
     unit_type: UnitType,
@@ -1004,7 +1004,7 @@ fn set_site_unit_orders(state: &mut GameState, id: UnitId, parent: Option<UnitId
 /// the AI — `TaskCreateBuilding::Activate`/`TaskActivate` (`taskactivate.cpp:104`).
 ///
 /// Returns the parent building id while the builder stands on the site.
-pub fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<UnitId> {
+pub(crate) fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<UnitId> {
     let builder = state.unit(builder_id)?;
 
     if builder.orders != UnitOrder::Build || builder.state != UnitOrderState::UnitReady {
@@ -1029,7 +1029,7 @@ pub fn builder_awaiting_exit(state: &GameState, builder_id: UnitId) -> Option<Un
 /// the first passable cell becomes the target. This is the **AI** target (`TaskActivate`);
 /// the player sets any cell by clicking (`move_to` = click), so for them
 /// `builder_exit_cell` is not used.
-pub fn builder_exit_cell(
+pub(crate) fn builder_exit_cell(
     state: &GameState,
     builder: &UnitInfo,
     building: &UnitInfo,
@@ -1061,7 +1061,7 @@ pub fn unit_bounds_contains(unit: &UnitInfo, grid: Point) -> bool {
 /// Returns `None` if there is no passable cell nearby — then C++
 /// (`UnitsManager_ActivateUnit`, `units_manager.cpp:3832-3836`) does not
 /// execute the order and returns the previous one.
-pub fn factory_exit_cell(
+pub(crate) fn factory_exit_cell(
     state: &GameState,
     container: &UnitInfo,
     client: &UnitInfo,
@@ -1080,7 +1080,7 @@ pub fn factory_exit_cell(
 /// `CARGO_TYPE_RAW` (`victory::cargo_type_of`): mines, `ADUMP`, greenhouses and
 /// barracks. This "common pool" is what the factory spends
 /// (`UnitInfo::StartBuilding`, `unitinfo.cpp:2757`).
-pub fn complex_raw_materials(
+pub(crate) fn complex_raw_materials(
     state: &GameState,
     team: TeamId,
     complex: crate::team::ComplexId,
@@ -1159,7 +1159,7 @@ pub struct ProductionManager<'a> {
 
 impl<'a> ProductionManager<'a> {
     /// A manager for the team.
-    pub fn new(state: &'a mut GameState, team: TeamId) -> Self {
+    pub(crate) fn new(state: &'a mut GameState, team: TeamId) -> Self {
         Self { state, team }
     }
 
@@ -1973,7 +1973,7 @@ impl<'a> ProductionManager<'a> {
 ///
 /// C++ order 1:1: `ManageEconomy` (charging) → `SpawnNewUnits` over the lists
 /// `GroundCover → MobileLandSea → Stationary → MobileAir`.
-pub fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<ProductionEvent> {
+pub(crate) fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<ProductionEvent> {
     ProductionManager::new(state, team).progress()
 }
 
@@ -1983,7 +1983,7 @@ pub fn progress_build_state(state: &mut GameState, team: TeamId) -> Vec<Producti
 /// (`Cargo_GetRawConsumptionRate` → `UnitInfo::UpdateProduction`), for
 /// factories — the materials of **their own complex** ([`complex_raw_materials`],
 /// C++ `complex->material`).
-pub fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
+pub(crate) fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) -> bool {
     let Some(unit) = state.unit(unit_id) else {
         return false;
     };

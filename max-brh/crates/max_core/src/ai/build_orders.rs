@@ -77,7 +77,7 @@ pub(crate) fn is_buildable(unit_type: UnitType) -> bool {
 /// `unit_type == None` — C++ `INVALID_ID`: the composed table (air defense +
 /// bomber + submarine, the commando table for expert opponents, and the table of
 /// every spotted enemy type). Unknown types fall through to the generic table.
-pub fn get_weight_table(
+pub(crate) fn get_weight_table(
     player: &AiPlayer,
     world: &crate::game::GameState,
     unit_type: Option<UnitType>,
@@ -145,7 +145,7 @@ pub fn get_weight_table(
 /// `flags`:
 /// * `0x01` — zero the weights of stationary types (`STATIONARY`);
 /// * `0x02` — zero the weights of regenerating alien types (`REGENERATING_UNIT`).
-pub fn get_filtered_weight_table(
+pub(crate) fn get_filtered_weight_table(
     player: &AiPlayer,
     world: &crate::game::GameState,
     unit_type: Option<UnitType>,
@@ -174,7 +174,7 @@ pub fn get_filtered_weight_table(
 
 /// `AiPlayer::IsSurfaceTypePresent` (`aiplayer.cpp:3481`): whether a cell of
 /// `surface_type` is within `range` of `site`.
-pub fn is_surface_type_present(
+pub(crate) fn is_surface_type_present(
     world: &crate::game::GameState,
     site: Point,
     range: i32,
@@ -202,7 +202,7 @@ pub fn is_surface_type_present(
 /// stationary target that touches water adds a corvette (and a submarine for
 /// average opponents and above); finally, land/water attack types whose weapon
 /// range does not reach the target's surface are disabled.
-pub fn get_extended_weight_table(
+pub(crate) fn get_extended_weight_table(
     player: &AiPlayer,
     world: &crate::game::GameState,
     target: &UnitInfo,
@@ -292,7 +292,7 @@ fn unit_bounds(unit: &UnitInfo) -> (i32, i32, i32, i32) {
 
 /// `AiPlayer::GetMaxSpottedScan` (`aiplayer.cpp:1686`) — the best scan of the
 /// spotted enemy units of a type (0 if none).
-pub fn get_max_spotted_scan(
+pub(crate) fn get_max_spotted_scan(
     player: &AiPlayer,
     world: &crate::game::GameState,
     unit_type: UnitType,
@@ -324,7 +324,7 @@ pub fn add_build_order(build_orders: &mut Vec<BuildOrder>, unit_type: UnitType, 
 /// A reconnaissance type is ordered when the spotted armed enemy units outrange
 /// the type's scan. `mode` — only faster-than-zero armed enemies count (mobile
 /// C++ call sites), `false` — every armed enemy.
-pub fn check_reconnaissance_needs(
+pub(crate) fn check_reconnaissance_needs(
     player: &AiPlayer,
     world: &crate::game::GameState,
     build_orders: &mut Vec<BuildOrder>,
@@ -381,7 +381,7 @@ pub fn check_reconnaissance_needs(
 /// Keeps only orders whose type some team unit is constructing right now
 /// (`ORDER_BUILD`, not `ORDER_STATE_UNIT_READY`). Stationary factories and
 /// mobile builders are both scanned.
-pub fn process_build_orders(
+pub(crate) fn process_build_orders(
     player: &AiPlayer,
     world: &crate::game::GameState,
     build_orders: &mut Vec<BuildOrder>,
@@ -423,7 +423,7 @@ pub fn process_build_orders(
 /// combat orders (used by `ChooseInitialUpgrades`); `mode == false` — the full
 /// list, including the generic recon needs and the low-priority extras (used by
 /// `BeginTurn`).
-pub fn choose_strategic_build_orders(
+pub(crate) fn choose_strategic_build_orders(
     player: &AiPlayer,
     world: &crate::game::GameState,
     mode: bool,
@@ -689,7 +689,7 @@ fn strategic_build_orders_for_strategy(
 
 /// `AiPlayer::ChooseGenericBuildOrders` (`aiplayer.cpp:1969`) — the fallback
 /// order list shared by every strategy.
-pub fn choose_generic_build_orders(
+pub(crate) fn choose_generic_build_orders(
     player: &AiPlayer,
     world: &crate::game::GameState,
 ) -> Vec<BuildOrder> {
@@ -785,7 +785,7 @@ pub fn choose_generic_build_orders(
 
 impl AiPlayer {
     /// `AiPlayer::GetWeightTable` (`aiplayer.cpp:945`).
-    pub fn get_weight_table(
+    pub(crate) fn get_weight_table(
         &self,
         world: &crate::game::GameState,
         unit_type: Option<UnitType>,
@@ -794,7 +794,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetFilteredWeightTable` (`aiplayer.cpp:3387`).
-    pub fn get_filtered_weight_table(
+    pub(crate) fn get_filtered_weight_table(
         &self,
         world: &crate::game::GameState,
         unit_type: Option<UnitType>,
@@ -804,7 +804,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetExtendedWeightTable` (`aiplayer.cpp:3459`).
-    pub fn get_extended_weight_table(
+    pub(crate) fn get_extended_weight_table(
         &self,
         world: &crate::game::GameState,
         target: &UnitInfo,
@@ -814,12 +814,12 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::GetMaxSpottedScan` (`aiplayer.cpp:1686`).
-    pub fn get_max_spotted_scan(&self, world: &crate::game::GameState, unit_type: UnitType) -> i32 {
+    pub(crate) fn get_max_spotted_scan(&self, world: &crate::game::GameState, unit_type: UnitType) -> i32 {
         get_max_spotted_scan(self, world, unit_type)
     }
 
     /// `AiPlayer::ChooseStrategicBuildOrders` (`aiplayer.cpp:1700`).
-    pub fn choose_strategic_build_orders(
+    pub(crate) fn choose_strategic_build_orders(
         &self,
         world: &crate::game::GameState,
         mode: bool,
@@ -828,7 +828,7 @@ impl AiPlayer {
     }
 
     /// `AiPlayer::ChooseGenericBuildOrders` (`aiplayer.cpp:1969`).
-    pub fn choose_generic_build_orders(&self, world: &crate::game::GameState) -> Vec<BuildOrder> {
+    pub(crate) fn choose_generic_build_orders(&self, world: &crate::game::GameState) -> Vec<BuildOrder> {
         choose_generic_build_orders(self, world)
     }
 }

@@ -83,7 +83,7 @@ impl UnitEvent {
 }
 
 /// `UnitEvent::Process` — applies the event to the game.
-pub fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
+pub(crate) fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
     match event {
         UnitEvent::EmergencyStop { unit } => {
             let Some(target) = state.unit(*unit).cloned() else {
@@ -179,7 +179,7 @@ pub enum ApplyOutcome {
 ///
 /// Returns the number of applied commands (as `Remote_ProcessNetPackets`
 /// drains the queue to `REMOTE_RECEIVE_EMPTY`).
-pub fn apply_pending(state: &mut GameState) -> usize {
+pub(crate) fn apply_pending(state: &mut GameState) -> usize {
     let mut applied = 0;
 
     while let Some(command) = state.commands.pop_front() {
@@ -191,7 +191,7 @@ pub fn apply_pending(state: &mut GameState) -> usize {
 }
 
 /// Applies one command to the state — the analog of `Remote_ReceiveNetPacket_*`.
-pub fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
+pub(crate) fn apply_command(state: &mut GameState, command: &Command) -> ApplyOutcome {
     match command {
         Command::Order(order) => apply_packet_08(state, order),
         Command::Move(movement) => apply_packet_38(state, movement),
@@ -697,7 +697,7 @@ pub use max_types::events::{StateSyncPacket, TeamStateSyncTail, UnitStatePacket}
 ///
 /// Accepts only a unit of its own team and type; nonexistent/exploded
 /// units and orders outside `ORDER_COUNT_MAX` are ignored — as in C++.
-pub fn apply_unit_state(
+pub(crate) fn apply_unit_state(
     state: &mut GameState,
     team: TeamId,
     unit_id: UnitId,
@@ -784,7 +784,7 @@ pub fn apply_unit_state(
 /// aligns id counters/gold/research on the last chunk. The
 /// round index is written to [`GameState::state_sync_indices`], which closes
 /// the 54 barrier.
-pub fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> ApplyOutcome {
+pub(crate) fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) -> ApplyOutcome {
     if !is_valid_team_index(packet.team) {
         return ApplyOutcome::Ignored;
     }
@@ -1037,7 +1037,7 @@ pub fn command_end_turn_barrier(team: TeamId, counter: u8) -> Command {
 }
 
 /// The order data that came with the packet (for tests and debugging).
-pub fn order_data_of(unit: &UnitInfo, state: &GameState) -> OrderData {
+pub(crate) fn order_data_of(unit: &UnitInfo, state: &GameState) -> OrderData {
     state.order_data(unit.id)
 }
 

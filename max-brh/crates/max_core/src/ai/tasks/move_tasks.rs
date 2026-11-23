@@ -1935,7 +1935,7 @@ pub fn event_unit_unloaded(
 }
 
 /// `TaskAssistMove::IsUnitUsable` — a transport unit of the team.
-pub fn assist_move_is_unit_usable(
+pub(crate) fn assist_move_is_unit_usable(
     world: &crate::game::GameState,
     header: TaskHeader,
     unit: UnitId,
