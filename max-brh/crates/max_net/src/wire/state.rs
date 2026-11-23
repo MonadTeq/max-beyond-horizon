@@ -505,6 +505,46 @@ impl UnitState {
         }
     }
 
+    /// Wire form of a canonical unit state — the inverse of [`Self::to_core`].
+    ///
+    /// Used by the facade transport DTOs (`NetworkCommand`/`RemoteCommand`):
+    /// the facade hands packet 54 as [`max_types::events::StateSyncPacket`], the
+    /// wire codec needs this struct.
+    pub fn from_core(packet: &max_types::events::UnitStatePacket) -> Self {
+        Self {
+            orders: packet.orders,
+            state: packet.state,
+            prior_orders: packet.prior_orders,
+            prior_state: packet.prior_state,
+            disabled_reaction_fire: packet.disabled_reaction_fire,
+            parent_unit_id: packet.parent_unit_id,
+            experience: packet.experience,
+            move_to_grid_x: packet.move_to_grid_x,
+            move_to_grid_y: packet.move_to_grid_y,
+            fire_on_grid_x: packet.fire_on_grid_x,
+            fire_on_grid_y: packet.fire_on_grid_y,
+            enemy_unit_id: packet.enemy_unit_id,
+            transfer_cargo: packet.transfer_cargo,
+            stealth_dice_roll: packet.stealth_dice_roll,
+            total_mining: packet.total_mining,
+            raw_mining: packet.raw_mining,
+            fuel_mining: packet.fuel_mining,
+            gold_mining: packet.gold_mining,
+            build_time: packet.build_time,
+            build_rate: packet.build_rate,
+            unit_type: packet.unit_type,
+            unit_id: packet.unit_id,
+            grid_x: packet.grid_x,
+            grid_y: packet.grid_y,
+            team: packet.team,
+            hits: packet.hits,
+            speed: packet.speed,
+            shots: packet.shots,
+            storage: packet.storage,
+            ammo: packet.ammo,
+        }
+    }
+
     /// Canonical form for [`max_core::events::apply_unit_state`].
     pub fn to_core(&self) -> max_types::events::UnitStatePacket {
         max_types::events::UnitStatePacket {
@@ -570,6 +610,34 @@ impl StateSyncTail {
             unit_counters,
         }
     }
+
+    /// Wire form of a canonical tail — the inverse of [`Self::to_core`].
+    ///
+    /// `i32` on the wire and `u32` in `max_core` are the same bits (C++ puts
+    /// `int32_t` into `uint32_t`/`memcpy`), so the conversion is a type cast.
+    pub fn from_core(tail: &max_types::events::TeamStateSyncTail) -> Self {
+        let mut research = [ResearchTopicWire::default(); RESEARCH_TOPIC_COUNT];
+        for (destination, source) in research.iter_mut().zip(tail.research.iter()) {
+            *destination = ResearchTopicWire {
+                research_level: source.research_level as i32,
+                turns_to_complete: source.turns_to_complete as i32,
+                allocation: source.allocation as i32,
+            };
+        }
+
+        let mut unit_counters = [0u32; UNIT_END];
+        for (destination, source) in unit_counters.iter_mut().zip(tail.unit_counters.iter()) {
+            *destination = *source;
+        }
+
+        Self {
+            gold: tail.gold,
+            gold_spent_on_upgrades: tail.gold_spent_on_upgrades,
+            research,
+            number_of_objects_created: tail.number_of_objects_created,
+            unit_counters,
+        }
+    }
 }
 
 impl StateSync {
@@ -585,6 +653,25 @@ impl StateSync {
                 .map(|(unit, state)| (*unit, state.to_core()))
                 .collect(),
             tail: self.tail.as_ref().map(StateSyncTail::to_core),
+        }
+    }
+
+    /// Wire form of a canonical packet 54 — the inverse of [`Self::to_core`].
+    ///
+    /// The facade and the transport exchange [`max_types::events::StateSyncPacket`]
+    /// (ADR §3); the encoder needs the wire layout, so the DTO is projected back
+    /// here without any simulation access.
+    pub fn from_core(packet: max_types::events::StateSyncPacket) -> Self {
+        Self {
+            team: packet.team,
+            sync_index: packet.sync_index,
+            is_last: packet.is_last,
+            units: packet
+                .units
+                .iter()
+                .map(|(unit, state)| (*unit, UnitState::from_core(state)))
+                .collect(),
+            tail: packet.tail.as_ref().map(StateSyncTail::from_core),
         }
     }
 }

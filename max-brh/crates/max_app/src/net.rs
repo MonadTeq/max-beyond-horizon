@@ -19,16 +19,21 @@
 //! remote team** has sent a counter equal to its own (`Remote_Wait*`,
 //! `remote.cpp`). Therefore:
 //!
-//! * [`TurnBarrierFsm`] keeps separate counters 00/52/54/45, all
+//! * [`dispatcher::NetworkDispatcher`] keeps separate counters 00/52/54/45, all
 //!   pre-increment (the first report is **1**, like `++Remote_FrameSyncCounter` in C++);
 //! * each barrier is actually awaited (`wait_barrier`) with a retry every 3 s and
 //!   a 30 s timeout; after passing, the counters/tracker are cleared;
 //! * retries go through [`SessionHandle::send_untracked`] so that the session
 //!   tracker does not get a second record for each retransmission
 //!   (`max-brh-docs/barrier-flow.md` §6.8);
-//! * the incoming 54 is applied to [`max_core::game::GameState`]
-//!   (`max_core::events::apply_state_sync`), after the 45 barrier the team CRCs
-//!   are compared with its own (`Remote_TeamDataCrc16`).
+//! * the incoming 54 is applied through the facade DTO
+//!   (`App::submit_remote(RemoteCommand::StateSync)`), after the 45 barrier the
+//!   team CRCs are compared with its own (`Remote_TeamDataCrc16`).
+//!
+//! The barrier FSM itself lives in [`dispatcher`] (stage B, `game-universe-stage-b.md`
+//! §2): it steps the counters through the facade passthroughs
+//! ([`max_core::universe::GameUniverse::step_begin_turn_barrier`] and friends) and
+//! never mutates `GameState` directly.
 //!
 //! # Reconnect
 //!
@@ -36,7 +41,7 @@
 //! does an ENet connect + `TP 00` with the same ticket (with the timeout and number of
 //! attempts from `--reconnect-attempts`/`--reconnect-timeout`), without a second lobby.
 //! The local lockstep state is not reset: while the client was offline,
-//! the peers/server waited for its barrier. After `TP 00` [`TurnBarrierFsm::resume_state_sync`]
+//! the peers/server waited for its barrier. After `TP 00` [`dispatcher::NetworkDispatcher::resume_state_sync`]
 //! publishes its team's 54 (units+economy, the last `sync_index`),
 //! the peers' 54 correct the remote teams, then 52/54/45 and `finish_turn`
 //! are replayed; `reconnect_pending_state=false`.
@@ -60,28 +65,29 @@
 //! variant (same ticket — Horizon `JoinGame` is not repeated). Any other
 //! `TP 03` (`Version`, `SessionTicket`) does not start the fallback.
 
+pub mod dispatcher;
+
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use max_core::enums::{Planet, PlayMode, VictoryType};
-use max_core::events::apply_state_sync;
-use max_core::game::{GameState, PLAYER_TEAM_COUNT};
+use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
-use max_core::input::{
-    Command, Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn,
-    Packet52EndTurnBarrier,
-};
+use max_core::input::{Command, Packet01FrameBarrier, Packet06FinishedTurn};
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
+use max_core::universe::RemoteCommand;
 use max_net::handshake::{DataHash, HandshakeError, RejectReason};
-use max_net::session::{DEFAULT_BARRIER_REPEAT, DEFAULT_BARRIER_TIMEOUT};
 use max_net::{
-    complex_summary_for, crc_barrier_for, state_sync_for, GameJoined, HorizonClient,
-    LobbyGameSettings, LobbyPacket, Packet, SessionConfig, SessionError, SessionEvent,
-    SessionHandle, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
+    GameJoined, HorizonClient, LobbyGameSettings, LobbyPacket, Packet, SessionConfig, SessionError,
+    SessionEvent, SessionHandle, CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
 };
 use tokio::time::Instant;
 
+use self::dispatcher::{
+    BarrierPending, BarrierPhase, BarrierPoll, NetworkDispatcher, WaitOutcome,
+    BARRIER_TIMEOUT,
+};
 use crate::{App, AppConfig, AppDigest, NewGameConfig, WORLD_ASSETS};
 
 /// How long to wait for one session event before ticking the simulation.
@@ -1351,296 +1357,13 @@ struct GameLoopStats {
     reconnect_pending_state: bool,
 }
 
-/// Barrier repeat (`REMOTE_PING_TIME_PERIOD`).
-const BARRIER_RETRY: Duration = DEFAULT_BARRIER_REPEAT;
-/// Peer wait timeout (`REMOTE_RESPONSE_TIMEOUT`).
-const BARRIER_TIMEOUT: Duration = DEFAULT_BARRIER_TIMEOUT;
-
-/// Barrier FSM phase of the current turn (`max-brh-docs/barrier-flow.md` §3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BarrierPhase {
-    /// 00 — entering the round.
-    Begin,
-    /// 53 — base totals at the start of the turn.
-    Play,
-    /// 52 — end of the turn.
-    End,
-    /// 54 — team state sync.
-    Sync,
-    /// 45 — CRC barrier.
-    Crc,
-}
-
-impl BarrierPhase {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Begin => "00",
-            Self::Play => "53",
-            Self::End => "52",
-            Self::Sync => "54",
-            Self::Crc => "45",
-        }
-    }
-}
-
-/// Client barrier FSM of a turn: `00 → 53 → 06 → 52 → 54 → 45`.
-///
-/// The counters are separate (`Remote_FrameSyncCounter`, `Remote_TurnIndices`,
-/// `Remote_StateSyncIndex`, `Remote_NextTurnIndices`), all pre-increment: the first
-/// report is **1**. `GameManager_TurnCounter` in C++ starts at 1, while
-/// `GameState::turn_counter` — at 0, so 53 carries `turn_counter + 1`.
-#[derive(Debug)]
-struct TurnBarrierFsm {
-    local_team: TeamId,
-    /// In `SimultaneousMoves` the 00 barrier is needed every turn, in `TurnBased` — once
-    /// at the start (`game_manager.cpp:496`).
-    simultaneous: bool,
-    phase: BarrierPhase,
-    begin_counter: u8,
-    end_counter: u8,
-    sync_index: u8,
-    crc_index: u8,
-    /// `GameManager_TurnCounter` for 53 (1-based).
-    complex_turn: i32,
-    /// Which `turn` the last 53 came with for each team.
-    received_complex: [Option<i32>; PLAYER_TEAM_COUNT],
-    /// Own world CRC in the current 45 round.
-    crc_checksum: u16,
-    /// 06 sent once per turn.
-    local_finished_sent: bool,
-}
-
-impl TurnBarrierFsm {
-    fn new(local_team: TeamId, play_mode: PlayMode) -> Self {
-        Self {
-            local_team,
-            simultaneous: play_mode == PlayMode::SimultaneousMoves,
-            phase: BarrierPhase::Begin,
-            begin_counter: 0,
-            end_counter: 0,
-            sync_index: 0,
-            crc_index: 0,
-            complex_turn: 0,
-            received_complex: [None; PLAYER_TEAM_COUNT],
-            crc_checksum: 0,
-            local_finished_sent: false,
-        }
-    }
-
-    /// C++ turn number (1-based `GameManager_TurnCounter`).
-    fn cxx_turn(state: &GameState) -> i32 {
-        state.turn_counter + 1
-    }
-
-    /// Peer teams: those whose barriers must be awaited (`TEAM_TYPE_REMOTE`).
-    fn remote_teams<'a>(&'a self, state: &'a GameState) -> impl Iterator<Item = usize> + 'a {
-        (0..PLAYER_TEAM_COUNT).filter(move |&team| state.teams[team].team_type == TeamKind::Remote)
-    }
-
-    /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[own]` → 00.
-    ///
-    /// The counter lives in `GameState` (`snapshot_bytes`), so the increment is a
-    /// core transition ([`GameState::step_begin_turn_barrier`]); the FSM keeps the
-    /// packet, the wait and the retransmit.
-    fn begin(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let counter = state.step_begin_turn_barrier(self.local_team);
-        self.begin_counter = counter;
-        self.phase = BarrierPhase::Begin;
-
-        vec![Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
-            team: self.local_team,
-            counter,
-        }))]
-    }
-
-    fn begin_reached(&self, state: &GameState) -> bool {
-        state.begin_turn_barrier_reached(self.begin_counter)
-    }
-
-    /// `Remote_WaitComplexTotals`: own team's 53 for the current turn.
-    fn complex(&mut self, state: &GameState) -> Vec<Packet> {
-        self.complex_turn = Self::cxx_turn(state);
-        self.phase = BarrierPhase::Play;
-
-        vec![complex_summary_for(
-            state,
-            self.local_team,
-            self.complex_turn,
-        )]
-    }
-
-    /// Remembers an incoming 53 (called for all teams, including own).
-    fn note_complex(&mut self, team: TeamId, turn: i32) {
-        if let Some(slot) = self.received_complex.get_mut(team.0 as usize) {
-            *slot = Some(turn);
-        }
-    }
-
-    fn complex_reached(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| self.received_complex[team] == Some(self.complex_turn))
-    }
-
-    /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[own]` → 52.
-    fn end(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let counter = state.step_end_turn_barrier(self.local_team);
-        self.end_counter = counter;
-        self.phase = BarrierPhase::End;
-
-        vec![Packet::Command(Command::EndTurnBarrier(
-            Packet52EndTurnBarrier {
-                team: self.local_team,
-                counter,
-            },
-        ))]
-    }
-
-    fn end_reached(&self, state: &GameState) -> bool {
-        state.end_turn_barrier_reached(self.end_counter)
-    }
-
-    /// `Remote_SynchronizeUnitStates`: `++Remote_StateSyncIndex` → 54.
-    fn sync(&mut self, state: &GameState) -> Vec<Packet> {
-        self.sync_index = self.sync_index.wrapping_add(1);
-        self.phase = BarrierPhase::Sync;
-
-        state_sync_for(state, self.local_team, self.sync_index)
-            .into_iter()
-            .map(Packet::StateSync)
-            .collect()
-    }
-
-    fn sync_reached(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| state.state_sync_indices[team] == self.sync_index)
-    }
-
-    /// Own team state for restoration after a reconnect.
-    ///
-    /// Packet 54 is the only "snapshot" in the protocol (`max-brh-docs/protocol.md` §8.5,
-    /// §9): it carries the units, gold, research and id counters of one
-    /// team. After a disconnect the client re-publishes **its own** state with
-    /// the last completed `sync_index`: the server and peers apply it as
-    /// authoritative (`Remote_ReceiveNetPacket_54`), while the peers' 54
-    /// correct the remote teams on our side. There is no full map/SNAP in the
-    /// protocol — see §9 of protocol.md about the limits.
-    fn resume_state_sync(&self, state: &GameState) -> Vec<Packet> {
-        state_sync_for(state, self.local_team, self.sync_index)
-            .into_iter()
-            .map(Packet::StateSync)
-            .collect()
-    }
-
-    /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[own]` → 45.
-    fn crc(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let index = state.step_crc_barrier(self.local_team);
-        self.crc_index = index;
-        self.crc_checksum = max_core::crc::state_checksum(state);
-        self.phase = BarrierPhase::Crc;
-
-        vec![crc_barrier_for(self.local_team, index, state)]
-    }
-
-    fn crc_reached(&self, state: &GameState) -> bool {
-        state.crc_barrier_reached(self.crc_index)
-    }
-
-    /// CRC comparison after the 45 barrier: all peers have the same `crc16`.
-    fn crc_matches(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| state.team_data_crc16[team] == self.crc_checksum)
-    }
-
-    /// The current phase is complete (all peers sent the expected value).
-    fn reached(&self, state: &GameState) -> bool {
-        match self.phase {
-            BarrierPhase::Begin => self.begin_reached(state),
-            BarrierPhase::Play => self.complex_reached(state),
-            BarrierPhase::End => self.end_reached(state),
-            BarrierPhase::Sync => self.sync_reached(state),
-            BarrierPhase::Crc => self.crc_reached(state),
-        }
-    }
-
-    fn mark_local_finished(&mut self) {
-        self.local_finished_sent = true;
-    }
-
-    fn local_finished_sent(&self) -> bool {
-        self.local_finished_sent
-    }
-
-    /// The turn is closed (`GameManager_TeamTurnFinish`): reset the local flag,
-    /// the next 00 — only in `SimultaneousMoves`.
-    fn on_turn_finished(&mut self) {
-        self.local_finished_sent = false;
-        self.phase = if self.simultaneous {
-            BarrierPhase::Begin
-        } else {
-            BarrierPhase::Play
-        };
-    }
-}
-
-/// Outcome of waiting for a barrier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WaitOutcome {
-    /// The barrier is complete.
-    Reached,
-    /// The session ended.
-    Stopped,
-}
-
-/// Deferred barrier send: retry every 3 s, timeout log after 30 s.
-///
-/// Unlike [`max_net::BarrierTracker`], the record does **not** disappear after
-/// the timeout: C++ keeps pinging the lagging team, Rust logs and waits
-/// (`max-brh-docs/barrier-flow.md` §3).
-struct BarrierPending {
-    packets: Vec<Packet>,
-    first_sent: Instant,
-    last_sent: Instant,
-    attempts: u32,
-    timeout_reported: bool,
-}
-
-impl BarrierPending {
-    fn new(packets: Vec<Packet>, now: Instant) -> Self {
-        Self {
-            packets,
-            first_sent: now,
-            last_sent: now,
-            attempts: 0,
-            timeout_reported: false,
-        }
-    }
-
-    fn poll(&mut self, now: Instant) -> Option<BarrierPoll> {
-        if !self.timeout_reported && now.duration_since(self.first_sent) >= BARRIER_TIMEOUT {
-            self.timeout_reported = true;
-            return Some(BarrierPoll::TimedOut);
-        }
-        if now.duration_since(self.last_sent) >= BARRIER_RETRY {
-            self.last_sent = now;
-            self.attempts = self.attempts.saturating_add(1);
-            return Some(BarrierPoll::Retransmit);
-        }
-        None
-    }
-}
-
-enum BarrierPoll {
-    Retransmit,
-    TimedOut,
-}
-
 /// Drains session events; `false` — the session/loop is finished.
 async fn pump_events(
     app: &mut App,
     handle: &mut SessionHandle,
     session_config: &SessionConfig,
     stats: &mut GameLoopStats,
-    fsm: &mut TurnBarrierFsm,
+    fsm: &mut NetworkDispatcher,
     options: &NetworkOptions,
 ) -> Result<bool> {
     loop {
@@ -1665,7 +1388,7 @@ async fn pump_events(
                         // our 54 (the server and peers apply the owner's state),
                         // the peers' 54 will correct the remote teams
                         // at the nearest SYNC; 53/52/45 are caught up by repeats.
-                        let packets = fsm.resume_state_sync(app.state());
+                        let packets = fsm.resume_state_sync(app.universe());
                         send_barrier(handle, &packets)
                             .await
                             .context("reconnect: публикация своего 54 после TP00")?;
@@ -1673,8 +1396,8 @@ async fn pump_events(
                         tracing::warn!(
                             "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}); \
                              партия продолжена, отправлен resume-54 команды {} (index {}, {} пакет(ов))",
-                            fsm.local_team.0,
-                            fsm.sync_index,
+                            fsm.local_team().0,
+                            fsm.sync_index(),
                             packets.len()
                         );
                     }
@@ -1778,7 +1501,7 @@ async fn wait_barrier(
     handle: &mut SessionHandle,
     session_config: &SessionConfig,
     stats: &mut GameLoopStats,
-    fsm: &mut TurnBarrierFsm,
+    fsm: &mut NetworkDispatcher,
     frame_counter: &mut u8,
     options: &NetworkOptions,
     phase: BarrierPhase,
@@ -1790,7 +1513,7 @@ async fn wait_barrier(
         if !pump_events(app, handle, session_config, stats, fsm, options).await? {
             return Ok(WaitOutcome::Stopped);
         }
-        if fsm.reached(app.state()) {
+        if fsm.reached(app.universe()) {
             return Ok(WaitOutcome::Reached);
         }
 
@@ -1815,7 +1538,7 @@ async fn wait_barrier(
             None => {}
         }
 
-        send_frame_barrier(app, handle, fsm.local_team, frame_counter).await?;
+        send_frame_barrier(app, handle, fsm.local_team(), frame_counter).await?;
         tokio::time::sleep(options.event_wait).await;
     }
 }
@@ -1830,20 +1553,18 @@ async fn run_game_loop(
     sink: &mut Option<&mut dyn FrameSink>,
 ) -> Result<GameLoopStats> {
     let mut stats = GameLoopStats::default();
-    let mut fsm = TurnBarrierFsm::new(local_team, app.state().play_mode);
+    let mut fsm = NetworkDispatcher::new(local_team, app.state_ref().play_mode());
     let mut frame_counter: u8 = 0;
 
     tracing::info!(
         "игровой цикл: local_team={} play_mode={:?} пиров={}",
         local_team.0,
-        app.state().play_mode,
-        (0..PLAYER_TEAM_COUNT)
-            .filter(|&team| app.state().teams[team].team_type == TeamKind::Remote)
-            .count()
+        app.state_ref().play_mode(),
+        fsm.remote_teams(app.universe()).count()
     );
 
     // BEGIN (00): loading the match and every turn in SimultaneousMoves.
-    let packets = fsm.begin(app.state_mut());
+    let packets = fsm.begin(app.universe_mut());
     send_barrier(handle, &packets).await?;
     if wait_barrier(
         app,
@@ -1866,7 +1587,7 @@ async fn run_game_loop(
 
     loop {
         // PLAY (53): base totals at the start of the turn, then one tick and 06.
-        let packets = fsm.complex(app.state());
+        let packets = fsm.complex(app.universe());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
             app,
@@ -1885,7 +1606,7 @@ async fn run_game_loop(
             return Ok(stats);
         }
         handle.clear_barriers().await?;
-        tracing::debug!("барьер 53 (итоги баз) пройден: turn={}", fsm.complex_turn);
+        tracing::debug!("барьер 53 (итоги баз) пройден: turn={}", fsm.complex_turn());
 
         // Turn ticks. Headless (no window or no `--turn-wait`) — one tick and
         // immediately 06: the turn closes as soon as the command queue is drained.
@@ -1939,7 +1660,7 @@ async fn run_game_loop(
         }
 
         // END (52).
-        let packets = fsm.end(app.state_mut());
+        let packets = fsm.end(app.universe_mut());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
             app,
@@ -1961,7 +1682,7 @@ async fn run_game_loop(
         tracing::debug!("барьер 52 (конец хода) пройден");
 
         // SYNC (54): the authoritative state of the own team.
-        let packets = fsm.sync(app.state());
+        let packets = fsm.sync(app.universe());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
             app,
@@ -1983,7 +1704,7 @@ async fn run_game_loop(
         tracing::debug!("барьер 54 (состояние команды) пройден");
 
         // CRC (45): the own CRC after the 54 correction, then the comparison with the peers.
-        let packets = fsm.crc(app.state_mut());
+        let packets = fsm.crc(app.universe_mut());
         send_barrier(handle, &packets).await?;
         if wait_barrier(
             app,
@@ -2003,16 +1724,22 @@ async fn run_game_loop(
         }
         handle.clear_barriers().await?;
 
-        if fsm.crc_matches(app.state()) {
-            tracing::debug!("барьер 45 (CRC 0x{:04X}) пройден", fsm.crc_checksum);
+        if fsm.crc_matches(app.universe()) {
+            tracing::debug!("барьер 45 (CRC 0x{:04X}) пройден", fsm.crc_checksum());
         } else {
             let peers: Vec<String> = fsm
-                .remote_teams(app.state())
-                .map(|team| format!("{}:0x{:04X}", team, app.state().team_data_crc16[team]))
+                .remote_teams(app.universe())
+                .map(|team| {
+                    format!(
+                        "{}:0x{:04X}",
+                        team,
+                        app.state_ref().team_data_crc16()[team]
+                    )
+                })
                 .collect();
             tracing::warn!(
                 "CRC 45: свой 0x{:04X}, у пиров [{}] — десинк (ждём 51/desync-отчёт)",
-                fsm.crc_checksum,
+                fsm.crc_checksum(),
                 peers.join(", ")
             );
         }
@@ -2024,7 +1751,7 @@ async fn run_game_loop(
         stats.turns_finished = stats.turns_finished.saturating_add(1);
         tracing::info!(
             "ход закрыт: turn_counter={} (всего {})",
-            app.state().turn_counter,
+            app.state_ref().turn_counter(),
             stats.turns_finished
         );
 
@@ -2039,8 +1766,8 @@ async fn run_game_loop(
         }
 
         // 00 of the next turn — only in SimultaneousMoves.
-        if fsm.simultaneous {
-            let packets = fsm.begin(app.state_mut());
+        if fsm.simultaneous() {
+            let packets = fsm.begin(app.universe_mut());
             send_barrier(handle, &packets).await?;
             if wait_barrier(
                 app,
@@ -2073,7 +1800,7 @@ fn handle_session_event(
     app: &mut App,
     event: SessionEvent,
     stats: &mut GameLoopStats,
-    fsm: &mut TurnBarrierFsm,
+    fsm: &mut NetworkDispatcher,
 ) -> Result<bool> {
     match event {
         SessionEvent::Packet(Packet::Command(command)) => {
@@ -2108,14 +1835,15 @@ fn handle_session_event(
                     barrier.counter
                 );
             }
-            app.apply(command);
+            // The facade DTO is the only entry point for a peer packet (stage B §2.3).
+            app.submit_remote(RemoteCommand::Command(command));
         }
         SessionEvent::Packet(Packet::StateSync(sync)) => {
             // A port of `Remote_ReceiveNetPacket_54`: we apply the authoritative
             // team state, otherwise the worlds diverge and the CRC barrier honestly
             // shows a desync.
             let packet = sync.to_core();
-            let outcome = apply_state_sync(app.state_mut(), &packet);
+            let outcome = app.submit_remote(RemoteCommand::StateSync(packet));
             tracing::debug!(
                 "54: команда {} индекс {} ({} юнитов, last={}) → {:?}",
                 sync.team.0,
@@ -2186,7 +1914,8 @@ impl TicketKindShort for max_net::Ticket {
 mod tests {
     use super::*;
     use max_core::enums::{TeamClan, UnitType};
-    use max_core::input::{Packet18Chat, Packet45CrcBarrier};
+    use max_core::game::GameState;
+    use max_core::input::{Packet00TurnBarrier, Packet18Chat};
     use max_core::team::TeamUnits;
 
     /// Synthetic world: local RED (Player), peers GREEN/BLUE (Remote).
@@ -2211,273 +1940,6 @@ mod tests {
             Packet::Command(Command::CrcBarrier(barrier)) => barrier.next_turn_index,
             other => panic!("not a counter barrier: {other:?}"),
         }
-    }
-
-    #[test]
-    fn counters_start_at_one_and_are_pre_incremented_per_team() {
-        let local = TeamId::RED;
-        let mut state = synthetic_state(local, &[TeamId::GREEN, TeamId::BLUE]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-
-        let begin = fsm.begin(&mut state);
-        assert_eq!(begin.len(), 1);
-        assert_eq!(barrier_counter(&begin[0]), 1, "первый 00 = 1");
-        assert_eq!(state.frame_sync_counter[local.0 as usize], 1);
-        // The own counter is not yet agreed with the peers.
-        assert!(!fsm.begin_reached(&state));
-        state.frame_sync_counter[TeamId::GREEN.0 as usize] = 1;
-        assert!(!fsm.begin_reached(&state), "нужны все пиры");
-        state.frame_sync_counter[TeamId::BLUE.0 as usize] = 1;
-        assert!(fsm.begin_reached(&state));
-
-        let end = fsm.end(&mut state);
-        assert_eq!(barrier_counter(&end[0]), 1, "первый 52 = 1");
-        assert_eq!(state.turn_indices[local.0 as usize], 1);
-        assert!(!fsm.end_reached(&state));
-        state.turn_indices[TeamId::GREEN.0 as usize] = 1;
-        state.turn_indices[TeamId::BLUE.0 as usize] = 1;
-        assert!(fsm.end_reached(&state));
-
-        let sync = fsm.sync(&state);
-        assert!(!sync.is_empty());
-        match &sync[0] {
-            Packet::StateSync(packet) => {
-                assert_eq!(packet.sync_index, 1, "первый 54 = 1");
-                assert_eq!(packet.team, local);
-                assert!(packet.is_last, "у пустой команды один last-чанк");
-            }
-            other => panic!("expected 54, got {other:?}"),
-        }
-        assert!(!fsm.sync_reached(&state));
-        state.state_sync_indices[TeamId::GREEN.0 as usize] = 1;
-        state.state_sync_indices[TeamId::BLUE.0 as usize] = 1;
-        assert!(fsm.sync_reached(&state));
-
-        let crc = fsm.crc(&mut state);
-        assert_eq!(barrier_counter(&crc[0]), 1, "первый 45 = 1");
-        assert_eq!(state.next_turn_indices[local.0 as usize], 1);
-        let own_crc = match &crc[0] {
-            Packet::Command(Command::CrcBarrier(barrier)) => barrier.crc16,
-            other => panic!("expected 45, got {other:?}"),
-        };
-        assert_eq!(own_crc, max_core::crc::state_checksum(&state));
-        assert!(!fsm.crc_reached(&state));
-        state.next_turn_indices[TeamId::GREEN.0 as usize] = 1;
-        state.next_turn_indices[TeamId::BLUE.0 as usize] = 1;
-        assert!(fsm.crc_reached(&state));
-        assert!(!fsm.crc_matches(&state), "CRC пиров ещё не пришли");
-        state.team_data_crc16[TeamId::GREEN.0 as usize] = own_crc;
-        state.team_data_crc16[TeamId::BLUE.0 as usize] = own_crc;
-        assert!(fsm.crc_matches(&state));
-    }
-
-    #[test]
-    fn fsm_walks_the_full_turn_sequence() {
-        let local = TeamId::RED;
-        let mut state = synthetic_state(local, &[TeamId::GREEN]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-
-        // 00
-        let begin = fsm.begin(&mut state);
-        assert_eq!(fsm.phase, BarrierPhase::Begin);
-        assert_eq!(barrier_counter(&begin[0]), 1);
-        state.frame_sync_counter[TeamId::GREEN.0 as usize] = 1;
-        assert!(fsm.reached(&state));
-
-        // 53
-        let play = fsm.complex(&state);
-        assert_eq!(fsm.phase, BarrierPhase::Play);
-        assert!(matches!(
-            &play[0],
-            Packet::Command(Command::ComplexSummary(summary)) if summary.turn == 1
-        ));
-        fsm.note_complex(TeamId::GREEN, 1);
-        assert!(fsm.reached(&state));
-
-        // 06 — local end of the turn (exactly once).
-        fsm.mark_local_finished();
-        assert!(fsm.local_finished_sent());
-
-        // 52
-        let end = fsm.end(&mut state);
-        assert_eq!(fsm.phase, BarrierPhase::End);
-        assert_eq!(barrier_counter(&end[0]), 1);
-        state.turn_indices[TeamId::GREEN.0 as usize] = 1;
-        assert!(fsm.reached(&state));
-
-        // 54
-        let sync = fsm.sync(&state);
-        assert_eq!(fsm.phase, BarrierPhase::Sync);
-        assert!(matches!(&sync[0], Packet::StateSync(packet) if packet.sync_index == 1));
-        state.state_sync_indices[TeamId::GREEN.0 as usize] = 1;
-        assert!(fsm.reached(&state));
-
-        // 45
-        let crc = fsm.crc(&mut state);
-        assert_eq!(fsm.phase, BarrierPhase::Crc);
-        assert_eq!(barrier_counter(&crc[0]), 1);
-        state.next_turn_indices[TeamId::GREEN.0 as usize] = 1;
-        state.team_data_crc16[TeamId::GREEN.0 as usize] = fsm.crc_checksum;
-        assert!(fsm.reached(&state));
-        assert!(fsm.crc_matches(&state));
-
-        // finish_turn → the next turn starts with a clean 06.
-        fsm.on_turn_finished();
-        assert!(!fsm.local_finished_sent());
-    }
-
-    #[test]
-    fn same_kind_barriers_use_separate_counters() {
-        let local = TeamId::RED;
-        let mut state = synthetic_state(local, &[TeamId::GREEN]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-
-        fsm.begin(&mut state);
-        fsm.end(&mut state);
-        fsm.sync(&state);
-        fsm.crc(&mut state);
-        assert_eq!(fsm.begin_counter, 1);
-        assert_eq!(fsm.end_counter, 1);
-        assert_eq!(fsm.sync_index, 1);
-        assert_eq!(fsm.crc_index, 1);
-
-        // Next turn: each counter has its own pre-increment (2).
-        fsm.on_turn_finished();
-        let begin = fsm.begin(&mut state);
-        assert_eq!(barrier_counter(&begin[0]), 2);
-        let end = fsm.end(&mut state);
-        assert_eq!(barrier_counter(&end[0]), 2);
-        let sync = fsm.sync(&state);
-        assert!(matches!(
-            &sync[0],
-            Packet::StateSync(packet) if packet.sync_index == 2
-        ));
-        let crc = fsm.crc(&mut state);
-        assert_eq!(barrier_counter(&crc[0]), 2);
-
-        // 52 and 45 are different C++ arrays, not a shared counter.
-        assert_eq!(state.turn_indices[local.0 as usize], 2);
-        assert_eq!(state.next_turn_indices[local.0 as usize], 2);
-        assert_eq!(state.frame_sync_counter[local.0 as usize], 2);
-    }
-
-    #[test]
-    fn complex_barrier_needs_53_from_every_peer_for_the_current_turn() {
-        let local = TeamId::RED;
-        let mut state = synthetic_state(local, &[TeamId::GREEN, TeamId::BLUE]);
-        // Rust turn_counter = 0 → C++ GameManager_TurnCounter = 1.
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-        let packet = fsm.complex(&state);
-        assert!(matches!(
-            &packet[0],
-            Packet::Command(Command::ComplexSummary(summary)) if summary.turn == 1
-        ));
-        assert!(!fsm.complex_reached(&state));
-
-        fsm.note_complex(TeamId::GREEN, 1);
-        assert!(!fsm.complex_reached(&state), "BLUE ещё не прислал 53");
-        fsm.note_complex(TeamId::BLUE, 1);
-        assert!(fsm.complex_reached(&state));
-
-        // 53 of the previous turn does not close the new one.
-        state.turn_counter = 1;
-        let packet = fsm.complex(&state);
-        assert!(matches!(
-            &packet[0],
-            Packet::Command(Command::ComplexSummary(summary)) if summary.turn == 2
-        ));
-        assert!(!fsm.complex_reached(&state));
-        fsm.note_complex(TeamId::GREEN, 2);
-        fsm.note_complex(TeamId::BLUE, 2);
-        assert!(fsm.complex_reached(&state));
-    }
-
-    #[test]
-    fn single_player_barriers_pass_immediately() {
-        let local = TeamId::RED;
-        let mut state = synthetic_state(local, &[]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-
-        let packets = fsm.begin(&mut state);
-        assert!(!packets.is_empty());
-        assert!(fsm.reached(&state), "00 без пиров");
-
-        let packets = fsm.complex(&state);
-        assert!(!packets.is_empty());
-        assert!(fsm.reached(&state), "53 без пиров");
-
-        let packets = fsm.end(&mut state);
-        assert!(!packets.is_empty());
-        assert!(fsm.reached(&state), "52 без пиров");
-
-        let packets = fsm.sync(&state);
-        assert!(!packets.is_empty());
-        assert!(fsm.reached(&state), "54 без пиров");
-
-        let packets = fsm.crc(&mut state);
-        assert!(!packets.is_empty());
-        assert!(fsm.reached(&state), "45 без пиров");
-        assert!(fsm.crc_matches(&state));
-    }
-
-    #[test]
-    fn turn_based_runs_begin_once_simultaneous_every_turn() {
-        let local = TeamId::RED;
-
-        let turn_based = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-        assert!(!turn_based.simultaneous);
-
-        let simultaneous = TurnBarrierFsm::new(local, PlayMode::SimultaneousMoves);
-        assert!(simultaneous.simultaneous);
-    }
-
-    #[test]
-    fn local_06_is_sent_once_per_turn_and_reset_on_finish() {
-        let local = TeamId::RED;
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
-
-        assert!(!fsm.local_finished_sent());
-        fsm.mark_local_finished();
-        assert!(fsm.local_finished_sent());
-
-        // A new turn resets the flag: 06 will be sent again.
-        fsm.on_turn_finished();
-        assert!(!fsm.local_finished_sent(), "новый ход — новый 06");
-    }
-
-    #[test]
-    fn barrier_pending_repeats_every_three_seconds_and_reports_timeout_once() {
-        let start = Instant::now();
-        let packet = Packet::Command(Command::CrcBarrier(Packet45CrcBarrier {
-            team: TeamId::RED,
-            next_turn_index: 1,
-            crc16: 0,
-        }));
-        let mut pending = BarrierPending::new(vec![packet], start);
-
-        assert!(pending.poll(start).is_none());
-        assert!(matches!(
-            pending.poll(start + Duration::from_secs(3)),
-            Some(BarrierPoll::Retransmit)
-        ));
-        assert_eq!(pending.attempts, 1);
-        assert!(matches!(
-            pending.poll(start + Duration::from_secs(6)),
-            Some(BarrierPoll::Retransmit)
-        ));
-        assert_eq!(pending.attempts, 2);
-
-        // The timeout is logged once, but the record does not disappear — the barrier
-        // keeps repeating, like a C++ ping.
-        assert!(matches!(
-            pending.poll(start + Duration::from_secs(30)),
-            Some(BarrierPoll::TimedOut)
-        ));
-        assert!(matches!(
-            pending.poll(start + Duration::from_secs(31)),
-            Some(BarrierPoll::Retransmit)
-        ));
-        assert!(pending.poll(start + Duration::from_secs(32)).is_none());
     }
 
     #[test]
@@ -2529,13 +1991,13 @@ mod tests {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
         *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::SimultaneousMoves);
+        let mut fsm = NetworkDispatcher::new(local, PlayMode::SimultaneousMoves);
         let mut stats = GameLoopStats::default();
 
-        let packets = fsm.begin(app.state_mut());
+        let packets = fsm.begin(app.universe_mut());
         assert_eq!(barrier_counter(&packets[0]), 1, "счётчики с 1");
         assert_eq!(app.state().frame_sync_counter[local.0 as usize], 1);
-        assert!(!fsm.reached(app.state()), "пир ещё не ответил");
+        assert!(!fsm.reached(app.universe()), "пир ещё не ответил");
 
         let relayed_00 = Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
             team: TeamId::GREEN,
@@ -2549,7 +2011,7 @@ mod tests {
             1,
             "team берётся из payload, а не из ENet-отправителя (сервер)"
         );
-        assert!(fsm.reached(app.state()), "00-барьер проходит по team=1");
+        assert!(fsm.reached(app.universe()), "00-барьер проходит по team=1");
     }
 
     /// The incoming 18 is applied (`GameState::chat_log`) and gets into the HUD
@@ -2559,7 +2021,7 @@ mod tests {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
         *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
+        let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 
         let incoming = Packet::Command(Command::Chat(Packet18Chat {
@@ -2607,7 +2069,7 @@ mod tests {
 
     struct SimClient {
         app: App,
-        fsm: TurnBarrierFsm,
+        fsm: NetworkDispatcher,
     }
 
     impl SimClient {
@@ -2625,7 +2087,7 @@ mod tests {
             state.player_team = local;
             Self {
                 app,
-                fsm: TurnBarrierFsm::new(local, PlayMode::SimultaneousMoves),
+                fsm: NetworkDispatcher::new(local, PlayMode::SimultaneousMoves),
             }
         }
     }
@@ -2690,25 +2152,25 @@ mod tests {
 
         // 00: all three.
         send_all(&mut clients, &mut stats, |client| {
-            client.fsm.begin(client.app.state_mut())
+            client.fsm.begin(client.app.universe_mut())
         });
         assert!(clients.iter().all(|client| client
             .fsm
-            .reached(client.app.state())), "00 с 3 участниками");
+            .reached(client.app.universe())), "00 с 3 участниками");
 
         // 53: all three.
         send_all(&mut clients, &mut stats, |client| {
-            client.fsm.complex(client.app.state())
+            client.fsm.complex(client.app.universe())
         });
         assert!(clients.iter().all(|client| client
             .fsm
-            .reached(client.app.state())), "53 с 3 участниками");
+            .reached(client.app.universe())), "53 с 3 участниками");
 
         // 06: local end of the turn, relay to the others.
         let mut finish_packets = Vec::new();
         for client in &mut clients {
             let finish = Command::FinishedTurn(Packet06FinishedTurn {
-                team: client.fsm.local_team,
+                team: client.fsm.local_team(),
             });
             client.app.apply(finish.clone());
             client.fsm.mark_local_finished();
@@ -2721,11 +2183,11 @@ mod tests {
         // is lost. Without B the barrier does not close — this is lockstep.
         let mut packets: Vec<Vec<Packet>> = Vec::new();
         for client in &mut clients {
-            packets.push(client.fsm.end(client.app.state_mut()));
+            packets.push(client.fsm.end(client.app.universe_mut()));
         }
         relay(&packets, &[0, 2], &mut clients, &mut stats);
-        assert!(!clients[0].fsm.reached(clients[0].app.state()));
-        assert!(!clients[2].fsm.reached(clients[2].app.state()));
+        assert!(!clients[0].fsm.reached(clients[0].app.universe()));
+        assert!(!clients[2].fsm.reached(clients[2].app.universe()));
 
         // While B is away, A/C change the copy of B's tank (a missed attack order).
         for index in [0usize, 2] {
@@ -2757,7 +2219,9 @@ mod tests {
             .hits;
 
         // Reconnect: B publishes its 54 (sync_index still 0), A/C apply it.
-        let resume = clients[1].fsm.resume_state_sync(clients[1].app.state());
+        let resume = clients[1]
+            .fsm
+            .resume_state_sync(clients[1].app.universe());
         assert!(
             resume.iter().any(
                 |packet| matches!(packet, Packet::StateSync(sync) if sync.team == TeamId::GREEN)
@@ -2788,13 +2252,13 @@ mod tests {
         assert!(
             clients.iter().all(|client| client
                 .fsm
-                .reached(client.app.state())),
+                .reached(client.app.universe())),
             "52 после возврата B: {:?}",
             clients
                 .iter()
                 .map(|client| (
-                    client.fsm.local_team.0,
-                    client.fsm.end_counter,
+                    client.fsm.local_team().0,
+                    client.fsm.end_counter(),
                     client.app.state().turn_indices,
                 ))
                 .collect::<Vec<_>>()
@@ -2802,11 +2266,11 @@ mod tests {
 
         // 54 of all teams: B gets the current state of A/C, A/C — of B.
         send_all(&mut clients, &mut stats, |client| {
-            client.fsm.sync(client.app.state())
+            client.fsm.sync(client.app.universe())
         });
         assert!(clients.iter().all(|client| client
             .fsm
-            .reached(client.app.state())), "54 с 3 участниками");
+            .reached(client.app.universe())), "54 с 3 участниками");
         assert_eq!(
             clients[1].app.state().unit(ids[0]).expect("tank A").hits,
             a_tank_hits,
@@ -2815,13 +2279,13 @@ mod tests {
 
         // 45: each client's CRC matches everyone's.
         send_all(&mut clients, &mut stats, |client| {
-            client.fsm.crc(client.app.state_mut())
+            client.fsm.crc(client.app.universe_mut())
         });
         assert!(clients.iter().all(|client| client
             .fsm
-            .reached(client.app.state())), "45 с 3 участниками");
+            .reached(client.app.universe())), "45 с 3 участниками");
         for client in &clients {
-            assert!(client.fsm.crc_matches(client.app.state()), "CRC 45");
+            assert!(client.fsm.crc_matches(client.app.universe()), "CRC 45");
         }
 
         let checksums: Vec<u16> = clients
@@ -2842,29 +2306,6 @@ mod tests {
         assert_eq!(turns, vec![1, 1, 1], "turn_counter догнал у всех");
     }
 
-    /// Resume-54 after a reconnect: own team, the last sync_index and the full
-    /// set of team units (including the economy tail in the last chunk).
-    #[test]
-    fn resume_state_sync_publishes_the_last_completed_index() {
-        let (base, ids) = three_team_state();
-        let client = SimClient::new(&base, TeamId::GREEN, &[TeamId::RED, TeamId::BLUE]);
-        let mut fsm = TurnBarrierFsm::new(TeamId::GREEN, PlayMode::SimultaneousMoves);
-        fsm.sync_index = 7;
-
-        let packets = fsm.resume_state_sync(client.app.state());
-        assert_eq!(packets.len(), 1, "один юнит — один last-чанк");
-        match &packets[0] {
-            Packet::StateSync(sync) => {
-                assert_eq!(sync.team, TeamId::GREEN);
-                assert_eq!(sync.sync_index, 7, "последний завершённый раунд");
-                assert!(sync.is_last);
-                assert_eq!(sync.units.len(), 1);
-                assert_eq!(sync.units[0].0, ids[1], "только юниты своей команды");
-            }
-            other => panic!("expected 54, got {other:?}"),
-        }
-    }
-
     /// Two peers, the relay packets come from the server — barrier 00 converges.
     #[test]
     fn two_peers_pass_the_relayed_begin_barrier() {
@@ -2876,13 +2317,13 @@ mod tests {
         *apps[1].state_mut() = synthetic_state(TeamId::GREEN, &[TeamId::RED]);
 
         let mut fsms = [
-            TurnBarrierFsm::new(TeamId::RED, PlayMode::SimultaneousMoves),
-            TurnBarrierFsm::new(TeamId::GREEN, PlayMode::SimultaneousMoves),
+            NetworkDispatcher::new(TeamId::RED, PlayMode::SimultaneousMoves),
+            NetworkDispatcher::new(TeamId::GREEN, PlayMode::SimultaneousMoves),
         ];
         let mut stats = GameLoopStats::default();
 
-        let red = fsms[0].begin(apps[0].state_mut());
-        let green = fsms[1].begin(apps[1].state_mut());
+        let red = fsms[0].begin(apps[0].universe_mut());
+        let green = fsms[1].begin(apps[1].universe_mut());
         assert_eq!(barrier_counter(&red[0]), 1);
         assert_eq!(barrier_counter(&green[0]), 1);
 
@@ -2893,11 +2334,11 @@ mod tests {
             .expect("00 GREEN → RED");
 
         assert!(
-            fsms[0].reached(apps[0].state()),
+            fsms[0].reached(apps[0].universe()),
             "RED ждал FrameSyncCounter[GREEN] == 1"
         );
         assert!(
-            fsms[1].reached(apps[1].state()),
+            fsms[1].reached(apps[1].universe()),
             "GREEN ждал FrameSyncCounter[RED] == 1"
         );
         assert_eq!(
@@ -2917,7 +2358,7 @@ mod tests {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
         *app.state_mut() = synthetic_state(local, &[TeamId::GREEN]);
-        let mut fsm = TurnBarrierFsm::new(local, PlayMode::TurnBased);
+        let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 
         let keep_going =

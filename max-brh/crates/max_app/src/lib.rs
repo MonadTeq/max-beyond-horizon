@@ -85,7 +85,7 @@ use anyhow::{Context, Result};
 use max_core::crc;
 use max_core::deploy::TeamDeployment;
 use max_core::enums::{GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState};
-use max_core::events::{apply_command, ApplyOutcome};
+use max_core::events::{apply_command, apply_state_sync, ApplyOutcome};
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
 use max_core::geo::Point;
 use max_core::input::Command;
@@ -97,7 +97,9 @@ use max_core::setup::{
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
-use max_core::universe::{GameEvent, StateRef, SubmitOutcome};
+use max_core::universe::{
+    GameEvent, GameUniverse, LocalDispatcher, RemoteCommand, StateRef, SubmitOutcome,
+};
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
 
@@ -902,6 +904,42 @@ impl App {
     /// migrated yet; the migrated paths take this one.
     pub fn submit(&mut self, command: Command) -> SubmitOutcome {
         self.universe.submit(command)
+    }
+
+    /// The facade instance (stage B step 1, temporary access for the network driver).
+    ///
+    /// `NetworkDispatcher` is not the universe dispatcher yet — §6 switches the
+    /// network path to `GameUniverse<NetworkDispatcher>` and drops this access.
+    /// Until then the barrier FSM reads the counters through [`App::state_ref`]
+    /// and steps them through the facade passthroughs
+    /// (`GameUniverse::step_*_barrier`), which needs a direct facade reference.
+    pub(crate) fn universe(&self) -> &GameUniverse<LocalDispatcher> {
+        &self.universe
+    }
+
+    /// The facade instance, mutable (stage B step 1, see [`App::universe`]).
+    pub(crate) fn universe_mut(&mut self) -> &mut GameUniverse<LocalDispatcher> {
+        &mut self.universe
+    }
+
+    /// Applies a transport DTO that arrived from a peer (stage B step 1).
+    ///
+    /// The network driver no longer calls `apply`/`apply_state_sync` directly: a
+    /// peer packet enters the application as the facade `RemoteCommand`.
+    ///
+    /// **Behaviour bridge (§2.3 of the stage B task).** The facade receive policy
+    /// (`NetworkDispatcher::receive` → `Replay`) queues a command until the next
+    /// `tick`, while the barrier-consent counters (00/52/45) must be visible to
+    /// the barrier wait immediately — `net::wait_barrier` does not tick. Routing
+    /// peer packets through `GameUniverse::submit_remote` therefore becomes
+    /// possible only when the universe itself owns `NetworkDispatcher` (§6).
+    /// Until then the DTO keeps the current immediate semantics, in the same place
+    /// `handle_session_event` had it before.
+    pub fn submit_remote(&mut self, command: RemoteCommand) -> ApplyOutcome {
+        match command {
+            RemoteCommand::Command(command) => self.apply(command),
+            RemoteCommand::StateSync(packet) => apply_state_sync(self.state_mut(), &packet),
+        }
     }
 
     /// Applies the commands that are already queued (a configuration boundary).

@@ -449,6 +449,46 @@ impl<'a> StateRef<'a> {
         crc::state_digest(self.state)
     }
 
+    /// The common packet 00 counter (`GameState::begin_turn_barrier`).
+    pub fn begin_turn_barrier(&self) -> Option<u8> {
+        self.state.begin_turn_barrier()
+    }
+
+    /// The common packet 52 counter (`GameState::end_turn_barrier`).
+    pub fn end_turn_barrier(&self) -> Option<u8> {
+        self.state.end_turn_barrier()
+    }
+
+    /// The common packet 45 index (`GameState::crc_barrier`).
+    pub fn crc_barrier(&self) -> Option<u8> {
+        self.state.crc_barrier()
+    }
+
+    /// Packet 00 consent predicate (`GameState::begin_turn_barrier_reached`).
+    pub fn begin_turn_barrier_reached(&self, counter: u8) -> bool {
+        self.state.begin_turn_barrier_reached(counter)
+    }
+
+    /// Packet 52 consent predicate (`GameState::end_turn_barrier_reached`).
+    pub fn end_turn_barrier_reached(&self, counter: u8) -> bool {
+        self.state.end_turn_barrier_reached(counter)
+    }
+
+    /// Packet 45 consent predicate (`GameState::crc_barrier_reached`).
+    pub fn crc_barrier_reached(&self, index: u8) -> bool {
+        self.state.crc_barrier_reached(index)
+    }
+
+    /// `GameState::state_sync_indices` — the last applied 54 index per team.
+    pub fn state_sync_indices(&self) -> [u8; TEAM_SLOTS] {
+        self.state.state_sync_indices
+    }
+
+    /// `GameState::team_data_crc16` — the peer CRCs of the current 45 round.
+    pub fn team_data_crc16(&self) -> [u16; TEAM_SLOTS] {
+        self.state.team_data_crc16
+    }
+
     /// The canonical state bytes.
     pub fn snapshot_bytes(&self) -> Vec<u8> {
         self.state.snapshot_bytes()
@@ -638,6 +678,33 @@ impl<D: Dispatcher> GameUniverse<D> {
             }
             RemoteHandling::Ignore => {}
         }
+    }
+
+    // — stage B: barrier steppers, reachable only through the facade (A1) —
+
+    /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[team]` → 00.
+    ///
+    /// Stage B decision A1 (`game-universe-stage-b.md` §0.2): `GameState`'s
+    /// steppers become `pub(crate)` in the final visibility cut, so the barrier FSM
+    /// (`max_app::NetworkDispatcher`) steps them **only through this facade
+    /// passthrough**. The body is a 1:1 call — the counter stays simulation state
+    /// (`snapshot_bytes`). Returns the new counter.
+    pub fn step_begin_turn_barrier(&mut self, team: TeamId) -> u8 {
+        self.state.step_begin_turn_barrier(team)
+    }
+
+    /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[team]` → 52.
+    ///
+    /// See [`Self::step_begin_turn_barrier`] (A1). Returns the new counter.
+    pub fn step_end_turn_barrier(&mut self, team: TeamId) -> u8 {
+        self.state.step_end_turn_barrier(team)
+    }
+
+    /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[team]` → 45.
+    ///
+    /// See [`Self::step_begin_turn_barrier`] (A1). Returns the new index.
+    pub fn step_crc_barrier(&mut self, team: TeamId) -> u8 {
+        self.state.step_crc_barrier(team)
     }
 
     // — stage A only: temporary accesses, removed in stage B —

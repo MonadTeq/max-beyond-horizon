@@ -20,12 +20,16 @@
 
 pub mod command;
 pub mod lobby;
+pub mod network;
 pub mod reader;
 pub mod state;
 
 pub use command::{decode_command, encode_command};
 pub use lobby::{
     decode_lobby, encode_lobby, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode,
+};
+pub use network::{
+    decode_network_command, decode_remote_command, encode_network_command, encode_remote_command,
 };
 pub use reader::{Reader, WireError, WireName, WireResult, Writer};
 pub use state::{

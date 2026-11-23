@@ -8,7 +8,10 @@
 #   * five projections: `UnitState::from_unit`, `state_sync_for`,
 #     `state_sync_tail`, `crc_barrier_for`, `complex_summary_for`;
 #   * data imports: `use max_core::unit::UnitInfo`,
-#     `use max_core::team::TeamUnits`.
+#     `use max_core::team::TeamUnits`;
+#   * facade transport DTOs (stage B, `game-universe-stage-b.md` §2.1):
+#     `use max_core::universe::{NetworkCommand, RemoteCommand}` in
+#     `wire/network.rs` — data-only, no simulation call, no `GameState` access.
 #
 # Everything else (especially `max_core::events::apply_*`, `GameState` mutations)
 # voids the decision: see `max-brh-docs/development/PLAN-refactor.md` Phase 5.3 and
@@ -80,8 +83,8 @@ scan() {
                 next
             }
 
-            # Allowed imports of simulation data.
-            if (line ~ /^[ \t]*(pub[ \t]+)?use[ \t]+max_core::(unit::UnitInfo|team::TeamUnits)([;{ \t]|$)/) {
+            # Allowed imports of simulation data and facade transport DTOs.
+            if (line ~ /^[ \t]*(pub[ \t]+)?use[ \t]+max_core::(unit::UnitInfo|team::TeamUnits|universe::[{]NetworkCommand, RemoteCommand[}])([;{ \t]|$)/) {
                 next
             }
 
