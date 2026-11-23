@@ -353,9 +353,13 @@ pub fn is_priority_target(world: &GameState, target: &UnitInfo, team: crate::tea
 }
 
 /// `AiAttack_GetTargetFlags` (`aiattack.cpp:1244`) — smaller is better.
+///
+/// `attacker` is optional: C++ passes `nullptr` when the flags are computed for
+/// task priority (`TaskKillUnit::GetPriority`), so only the target-only part
+/// contributes in that case.
 pub fn get_target_flags(
     world: &GameState,
-    attacker: &UnitInfo,
+    attacker: Option<&UnitInfo>,
     target: &UnitInfo,
     team: crate::team::TeamId,
 ) -> u32 {
@@ -380,35 +384,37 @@ pub fn get_target_flags(
         result += 0x08;
     }
 
-    if is_valid_sabotage_target(world, attacker, target) {
-        result += (crate::combat::get_stealth_chance_percentage(
-            world,
-            attacker,
-            target,
-            UnitOrder::AwaitDisableUnit,
-        ) / 13) as u32;
+    if let Some(attacker) = attacker {
+        if is_valid_sabotage_target(world, attacker, target) {
+            result += (crate::combat::get_stealth_chance_percentage(
+                world,
+                attacker,
+                target,
+                UnitOrder::AwaitDisableUnit,
+            ) / 13) as u32;
 
-        if target.is_mobile() {
-            result += 0x40;
-        }
-    } else {
-        result += get_target_worth(world, attacker, target);
+            if target.is_mobile() {
+                result += 0x40;
+            }
+        } else {
+            result += get_target_worth(world, attacker, target);
 
-        let shots = i32::from(attacker.shots);
-        let damage = crate::combat::get_attack_damage(attacker, target, 0);
+            let shots = i32::from(attacker.shots);
+            let damage = crate::combat::get_attack_damage(attacker, target, 0);
 
-        if shots * damage >= i32::from(target.hits) {
-            result += 0x40;
+            if shots * damage >= i32::from(target.hits) {
+                result += 0x40;
 
-            if matches!(
-                target.unit_type,
-                UnitType::RepairUnit
-                    | UnitType::MiningStation
-                    | UnitType::Scanner
-                    | UnitType::Radar
-                    | UnitType::EcoSphere
-            ) {
-                result += 0x38;
+                if matches!(
+                    target.unit_type,
+                    UnitType::RepairUnit
+                        | UnitType::MiningStation
+                        | UnitType::Scanner
+                        | UnitType::Radar
+                        | UnitType::EcoSphere
+                ) {
+                    result += 0x38;
+                }
             }
         }
     }
@@ -522,7 +528,7 @@ pub fn select_target_to_attack(
             }
         }
 
-        score |= get_target_flags(world, &attacker, target, team);
+        score |= get_target_flags(world, Some(&attacker), target, team);
 
         let mut damage_potential = 0;
 
@@ -574,6 +580,26 @@ pub fn select_target_to_attack(
 // Attack order
 // ---------------------------------------------------------------------------
 
+/// `TaskWaitToAttack(unit)` (`taskwaittoattack.cpp:29`) — the parent is the
+/// unit's current task and the priority follows it.
+fn append_wait_to_attack(
+    tm: &mut TaskManager,
+    world: &mut GameState,
+    unit: UnitId,
+    team: crate::team::TeamId,
+) {
+    let parent = tm.unit_task(unit);
+    let priority = parent
+        .and_then(|task_id| tm.task(task_id))
+        .map(|task| task.get_priority(world))
+        .unwrap_or(super::task::TASK_PRIORITY_MOVE);
+
+    tm.append_task(
+        world,
+        super::Task::new(0, team, parent, priority, TaskKind::wait_to_attack(unit)),
+    );
+}
+
 /// `AiAttack_ProcessAttack` (`aiattack.cpp:330`).
 ///
 /// Returns `true` if the order was issued (or `TaskWaitToAttack` was set).
@@ -594,17 +620,7 @@ pub fn process_attack(
     if attacker_info.delayed_reaction != 0
         || world.ai.reaction_state == AiReactionState::AnimationsActive
     {
-        let kind = TaskKind::wait_to_attack(attacker);
-        tm.append_task(
-            world,
-            super::Task::new(
-                0,
-                attacker_info.team,
-                None,
-                super::task::TASK_PRIORITY_ATTACK_DEFAULT,
-                kind,
-            ),
-        );
+        append_wait_to_attack(tm, world, attacker, attacker_info.team);
         return true;
     }
 
@@ -991,17 +1007,7 @@ pub fn evaluate_attack(
     }
 
     if info.delayed_reaction != 0 || world.ai.reaction_state == AiReactionState::AnimationsActive {
-        let kind = TaskKind::wait_to_attack(unit);
-        tm.append_task(
-            world,
-            super::Task::new(
-                0,
-                info.team,
-                None,
-                super::task::TASK_PRIORITY_ATTACK_DEFAULT,
-                kind,
-            ),
-        );
+        append_wait_to_attack(tm, world, unit, info.team);
 
         return world.ai.reaction_state == AiReactionState::AnimationsActive;
     }

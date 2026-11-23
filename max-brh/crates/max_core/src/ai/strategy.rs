@@ -720,8 +720,17 @@ impl AiPlayer {
             return;
         }
 
-        let Some((target_id, position, target_type)) =
-            super::tasks::combat::spotted_target_for_ai(world, self.player_team, spotted_index)
+        // `AiPlayer::BeginTurn` temporarily removes the player from
+        // `world.ai.players` (see `GameState::ai_begin_turn`), so the spotted
+        // units must be read from `self`, not from the world-side player slot.
+        let Some((target_id, position, target_type)) = self
+            .spotted_units
+            .get(spotted_index as usize)
+            .and_then(|spotted| {
+                let unit_id = spotted.unit?;
+                let info = world.unit(unit_id)?;
+                Some((unit_id, spotted.last_position, info.unit_type))
+            })
         else {
             return;
         };
@@ -737,7 +746,7 @@ impl AiPlayer {
         }
 
         let target_flags =
-            super::attack::get_target_flags(world, &target, &target, self.player_team) as u16;
+            super::attack::get_target_flags(world, None, &target, self.player_team) as u16;
         let target_task_priority = target_flags
             .wrapping_add(task_priority)
             .wrapping_add(super::task::TASK_PRIORITY_OFFSET_CENSUS_SLACK);
@@ -769,7 +778,7 @@ impl AiPlayer {
             world.ai_task_remove_self(previous);
         }
 
-        let kind = TaskKind::attack(target.team, position);
+        let kind = TaskKind::attack(target.team, position, Some(spotted_index));
         let task_id = world.ai_append_task(self.player_team, None, task_priority, kind);
 
         self.attack_tasks[task_index as usize] = Some(task_id);
@@ -1536,6 +1545,24 @@ impl AiPlayer {
             let task_id =
                 world.ai_append_task(team, None, super::task::TASK_PRIORITY_DEFENSE_RESERVE, kind);
             self.defense_reserve_task = Some(task_id);
+        }
+
+        // Attack reserve pool (`TaskAttackReserve`): the C++ `FindManager`
+        // creates it together with the building manager and the defense reserve
+        // (`aiplayer.cpp:2183-2187`).
+        if self.attack_reserve_task.is_none() {
+            let kind = TaskKind::AttackReserve {
+                units: Vec::new(),
+                site: position,
+                total_worth: 0,
+            };
+            let task_id = world.ai_append_task(
+                team,
+                None,
+                super::task::TASK_PRIORITY_ATTACK_RESERVE_POOL,
+                kind,
+            );
+            self.attack_reserve_task = Some(task_id);
         }
 
         // Vehicle escorts (C++ BeginTurn).
@@ -3241,5 +3268,65 @@ mod tests {
         assert_eq!(parse_team_strategy("random"), None);
         assert_eq!(parse_team_strategy(""), None);
         assert_eq!(parse_team_strategy("tank"), None);
+    }
+
+    /// `AiPlayer::BeginTurn` → `DetermineAttack` creates a `TaskAttack` for a
+    /// spotted key facility. The player is temporarily removed from
+    /// `world.ai.players` during `BeginTurn`, so the spotted units must come
+    /// from `self`.
+    #[test]
+    fn begin_turn_creates_an_attack_for_a_spotted_key_facility() {
+        let mut state = land_state(&[(0, 0, 24, 24)]);
+        state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Computer;
+        state.teams[TeamId::RED.0 as usize].team_clan = TeamClan::Musashi;
+        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
+        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
+        state.team_units[TeamId::GREEN.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
+        state.ai.settings.opponent = crate::enums::Opponent::Average as u8;
+        crate::ai_init(&mut state);
+
+        state
+            .spawn_unit(
+                crate::enums::UnitType::PowerStation,
+                TeamId::RED,
+                Point::new(12, 10),
+                0,
+            )
+            .expect("red building");
+        state
+            .spawn_unit(
+                crate::enums::UnitType::Tank,
+                TeamId::RED,
+                Point::new(5, 5),
+                0,
+            )
+            .expect("red tank");
+
+        let enemy = state
+            .spawn_unit(
+                crate::enums::UnitType::PowerStation,
+                TeamId::GREEN,
+                Point::new(14, 10),
+                crate::enums::unit_flags::SELECTABLE,
+            )
+            .expect("green building");
+        let mut info = state.unit(enemy).expect("green building").clone();
+        info.set_visible_to_team(TeamId::RED, true);
+        state.write_unit(enemy, info);
+
+        crate::ai_unit_spotted(&mut state, enemy, TeamId::RED);
+        assert!(crate::ai_setup_strategy(&mut state, TeamId::RED));
+
+        crate::ai_begin_turn(&mut state, TeamId::RED);
+
+        assert!(
+            state
+                .ai
+                .task_manager
+                .tasks()
+                .iter()
+                .any(|task| matches!(task.kind, TaskKind::Attack(_))),
+            "DetermineAttack must create a TaskAttack for a spotted key facility"
+        );
     }
 }

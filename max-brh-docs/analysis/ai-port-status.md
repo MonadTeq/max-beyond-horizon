@@ -23,7 +23,7 @@
 | 1 | Вес юнитов / состав армии | частично (A.3) | таблицы заполняются и используются (`GetWeightTable`/`GetFilteredWeightTable`/`GetExtendedWeightTable`, `RollUnitType`); нет `DetermineResearchProjects`, `ChooseUpgrade` (A.5) |
 | 2 | Выбор стратегии/высадки | закрыто (A.2) | — |
 | 3 | Производство | закрыто (A.3), кроме резерва | эвристика заменена на `PlanNextBuildJob`/`UpdateMiningNeeds`/`CheckPower`/`CheckWorkers`/склады `EndTurn`; производство юнитов по весам; нет `RollTeamMissionSupplies` (стартовая загрузка) и `TaskAttackReserve` (A.4) |
-| 4 | Бой | частично | точечная атака в радиусе; нет `EvaluateAssault`/наступления, `GetRequiredDamage`/`GetProjectedDamage` |
+| 4 | Бой | частично (A.4) | наступление, резерв, ценз целей, `EvaluateAttackReadiness` и `AiAttack_GetTargetFlags` портированы; нет `TransporterMap`/марша, слияния атак и `TaskSupportAttack`; см. ниже |
 | 5 | Разведка | отсутствует | нет целенаправленного исследования карты |
 | 6 | Флот | отсутствует | не строит/не использует морские юниты; нет `AttemptTransport` |
 | 7 | Исследования/апгрейды | отсутствует | нет выбора исследований и апгрейдов юнитов |
@@ -116,6 +116,74 @@ CRC/дайджесты изменились (ожидаемо — ИИ стро�
 путь решений расходится, как и ожидалось на этом этапе. `p7`/replay-векторы
 (без ИИ) не изменились. Тесты: 274 unit + 136 интеграционных, все зелёные.
 
+
+## Фаза A.4 — бой: резерв и наступление (в работе)
+
+Портировано (модули `ai/attack.rs`, `ai/tasks/combat.rs`,
+`ai/strategy.rs`, `ai/tasks/mod.rs`):
+
+- **`TaskAttackReserve`**: пул `units`, `IsUnitUsable`, `AddUnit`
+  (накопление и передача в ближайшую подходящую задачу — `Attack`/`KillUnit`),
+  `Execute` (`AiAttack_EvaluateAssault` → `evaluate_attack` + `ChaseAttacker`),
+  `EndTurn` (reload/repair/upgrade), `RemoveSelf`/`RemoveUnit`; задача создаётся
+  в `AiPlayer::init_tasks` вместе с менеджером и оборонным резервом
+  (`aiplayer.cpp:2183-2187`); резерв принимает только вооружённые мобильные
+  юниты. Фабричная/строительная ветка `AddUnit`
+  (`taskattackreserve.cpp:136-228`) оставлена в `TaskManageBuildings`
+  (`plan_unit_production`, A.3), чтобы не дублировать производство.
+- **`TaskAttack`**: `AssessEnemyUnits` (релевантность целей, добавление
+  защитников через `IsDefenderDangerous`), `ChooseFirstTarget` (с ротацией
+  у зоны атаки), `CopyTargets`/`RemoveTask`-очистка, `Init`/`GetCautionLevel`.
+- **`EvaluateAttackReadiness`** и составные части: ценз вторичных целей
+  (`GetRequiredDamage`/`GetProjectedDamage`), `IsReconUnitAvailable`,
+  `IsAnyTargetInRange`, `IsAttackUnderControl`, `IsTargetGroupInSight`,
+  `GetSafeDistances`, `UpdateReconUnit`/`FindReconUnit`/`RequestReconUnit`,
+  `DetermineLeader`/`MoveUnits`, переходы
+  WAIT → GATHER_FORCES → ADVANCE → NORMAL_SEARCH → ATTACK и обратно.
+- **`TaskKillUnit`**: `UpdateDemand` (`required_damage`, `hits` с запасом 5/4,
+  огонь защитников через `GetDefendersFire`), `GetProjectedDamage(attacker,
+  target)` = `AiAttack_GetAttackPotential * ATTRIB_ROUNDS` + бонус за
+  неподвижную/непоражаемую цель, `unit_damages` фиксируется при входе юнита,
+  `GetNewUnits` (ближайшие подходящие юниты + запросы `TaskObtainUnits` по
+  весам), `GetPriority` = база + `AiAttack_GetTargetFlags(nullptr, target,
+  team)`.
+- **`AiAttack_GetTargetFlags`** получил `Option<&UnitInfo>` (C++ `nullptr` для
+  приоритета) и подключён в `TaskKillUnit::GetPriority`.
+- **Наведение/штурм**: подход к цели идёт через
+  `AiAttack_ChooseSiteForAttacker` (TaskAttack::MoveCombatUnit), а не шагом на
+  клетку цели — иначе pathfinder не находил путь и отряд стоял.
+- Исправлены два препятствия, без которых наступление не запускалось:
+  `AiPlayer::DetermineAttack` читал замеченные юниты из `world.ai.players`,
+  хотя на время `BeginTurn` игрок оттуда изъят (теперь из `self`);
+  `TaskWaitToAttack` получил проверку дубликатов и условия
+  `CheckReactions` (`taskwaittoattack.cpp:41-82`) — без этого штурм порождал
+  тысячи задач ожидания.
+
+Осознанные отклонения: нет `TransporterMap` (марш/перевозка),
+`AiAttack_EvaluateAssault` целиком и слияния атак (`CopyTargets`);
+`attack_zone_reached` определяется как «лидер в пределах дальности стрельбы»,
+а не прибытие на клетку атаки; `TaskSupportAttack` при >5 вторичных целях не
+создаётся; `GetTotalProjectedDamage` в `IsAttackUnderControl` использует
+урон, зафиксированный при входе юнитов.
+
+Контрольный сценарий (20 ходов, карта 24×24, красная база + 3 танка + скаут,
+у зелёного здания 500 hits; `ai_init` + `ai_setup_strategy`):
+
+| Показатель | До A.4 | После A.4 |
+|---|---|---|
+| `state_checksum` (пакет 45) | `0x0C63` | `0x0C63` |
+| `replay_digest_crc` | `0x4592` | `0x47FC` |
+| CRC снапшота (`crc16`) | `0x9971` | `0x63CC` |
+| Задач ИИ в конце | 24 | 129 |
+| Создано `TaskAttack` | 0 | 1 |
+
+Причина: до A.4 `TaskAttack` в этом сценарии не создавался вовсе
+(изъятый слот игрока в `DetermineAttack`), теперь создаётся, ведёт ценз целей
+и запрашивает юнитов по весам — меняются состав задач и RNG-путь (броски
+`RollUnitType` в запросах). `state_checksum` не изменился: пакет 45 несёт
+состояние юнитов, а не задачи ИИ; `replay_digest`/снапшот включают AI-состояние.
+`p7` (`mini_replay_matches_cpp_digest_bit_for_bit`) не изменился. Тесты:
+279 unit + интеграционные, все зелёные.
 
 ## Открытые вопросы владельца
 

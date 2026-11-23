@@ -134,6 +134,8 @@ pub struct AttackState {
     pub primary_targets: Vec<u32>,
     /// `secondary_targets`.
     pub secondary_targets: Vec<u32>,
+    /// `SpottedUnit` index the attack was started on (`TaskAttack` constructor).
+    pub initial_target: Option<u32>,
     /// `kill_unit_task`.
     pub kill_unit_task: Option<u32>,
     /// `support_attack_task`.
@@ -156,6 +158,11 @@ pub struct AttackState {
     pub fire_turn: i32,
     /// `defenders_fire`.
     pub defenders_fire: i32,
+    /// Last computed safe scan distance against air targets
+    /// (`TaskAttack::GetSafeDistances`).
+    pub safe_distance_air: i32,
+    /// Last computed safe scan distance against ground targets.
+    pub safe_distance_ground: i32,
     /// Rally site (`DeterminePosition`).
     pub site: Point,
 }
@@ -829,11 +836,14 @@ impl TaskKind {
     }
 
     /// `TaskAttack::TaskAttack(spotted_unit, priority)`.
-    pub fn attack(target_team: TeamId, site: Point) -> Self {
+    pub fn attack(target_team: TeamId, site: Point, initial_target: Option<u32>) -> Self {
         let mut state = AttackState::default();
         state.target_team = Some(target_team);
         state.site = site;
-        state.access_flags = crate::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
+        state.initial_target = initial_target;
+        // C++ sets `access_flags = 0` in the constructor; `Init` sets the mobile
+        // mask and `BeginTurn` narrows it to land or sea.
+        state.access_flags = 0;
         Self::Attack(Box::new(state))
     }
 
@@ -1338,15 +1348,30 @@ impl TaskKind {
                         .wrapping_add(super::task::TASK_PRIORITY_TOLERANCE),
                 }
             }
-            // `TaskKillUnit::GetPriority` — until the target is evaluated, the task
-            // is considered "without targets" and gets the penalty
-            // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` without a target).
+            // `TaskKillUnit::GetPriority` (`taskkillunit.cpp:553`) — the base
+            // priority plus the target flags computed without an attacker
+            // (`AiAttack_GetTargetFlags(nullptr, target, team)`); without a
+            // target the task gets the `TASK_PRIORITY_TOLERANCE` penalty.
             Self::KillUnit(state) => {
-                if state.required_damage == u16::MAX {
-                    task.base_priority
-                        .wrapping_add(super::task::TASK_PRIORITY_TOLERANCE)
-                } else {
-                    task.base_priority
+                let target = state
+                    .spotted_unit
+                    .and_then(|index| {
+                        world
+                            .ai
+                            .players
+                            .get(task.team.0 as usize)
+                            .and_then(|player| player.spotted_units.get(index as usize))
+                    })
+                    .and_then(|spotted| spotted.unit)
+                    .and_then(|unit_id| world.unit(unit_id));
+
+                match target {
+                    Some(target) => task.base_priority.wrapping_add(
+                        super::attack::get_target_flags(world, None, target, task.team) as u16,
+                    ),
+                    None => task
+                        .base_priority
+                        .wrapping_add(super::task::TASK_PRIORITY_TOLERANCE),
                 }
             }
             _ => task.base_priority,
@@ -1362,13 +1387,12 @@ impl TaskKind {
     ) -> Option<CautionLevel> {
         let _ = task;
         match self {
-            Self::Attack(_) => Some(CautionLevel::AvoidReactionFire),
+            Self::Attack(state) => Some(combat::attack_caution_level(world, state, unit)),
             Self::FrontalAttack { caution_level, .. } => Some(*caution_level),
             Self::Retreat { caution_level, .. } => Some(*caution_level),
             Self::Move(state) => Some(state.caution_level),
             _ => {
-                let _ = world;
-                let _ = unit;
+                let _ = (world, unit);
                 None
             }
         }
@@ -1437,8 +1461,11 @@ impl TaskKind {
     /// `Task::IsUnitUsable(unit)` — `false` by default.
     pub fn is_unit_usable(&self, world: &GameState, header: TaskHeader, unit: UnitId) -> bool {
         match self {
-            Self::Attack(_) => combat::attack_is_unit_usable(world, header, unit),
+            Self::Attack(state) => combat::attack_is_unit_usable(world, header, state, unit),
             Self::KillUnit(state) => combat::kill_unit_is_unit_usable(world, header, state, unit),
+            Self::AttackReserve { .. } => {
+                combat::attack_reserve_is_unit_usable(world, header, unit)
+            }
             Self::ManageBuildings { .. } => {
                 build::manage_buildings_is_unit_usable(world, header, unit)
             }
