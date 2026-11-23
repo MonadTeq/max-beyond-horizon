@@ -279,9 +279,22 @@ impl Allocator {
     /// (`allocmenu.cpp:413`): move up to `cargo_demand` units from the field
     /// `source` of this same unit into its field `target`.
     ///
+    /// `cargo_type` in C++ is the **source** resource (`cargo2`); the gate
+    /// `!(cargo_material_type & cargo_type)` therefore tests the source flag, not
+    /// the target one. The target's flag is always part of the mask, so testing
+    /// it would make the conversion branch unreachable.
+    ///
     /// `cargo1`/`cargo2` in C++ are pointers to fields of **one** unit; the nested
     /// `AllocMenu_Optimize` may change this same unit, so the values
     /// are re-read after the call (as in C++, where the pointers are "live").
+    ///
+    /// # Recursion
+    ///
+    /// The nested call passes `source` as its `cargo_type1`, so the nested mask is
+    /// `source | cargo_material_type`. The gate above rejects any resource already
+    /// in the mask, hence every recursion level adds a distinct `CARGO_*` bit and
+    /// the depth is bounded by the three resource kinds (at most 3 levels). This
+    /// is exactly the C++ termination argument — no separate counter is needed.
     fn optimize_step(
         &mut self,
         state: &mut GameState,
@@ -294,7 +307,7 @@ impl Allocator {
             return self.cargo_demand == 0;
         };
 
-        if self.cargo_material_type & target.flag() == 0 && source.get(&unit) != 0 {
+        if self.cargo_material_type & source.flag() == 0 && source.get(&unit) != 0 {
             let mut demand = self.cargo_demand;
             let target_value = i32::from(target.get(&unit));
 
@@ -307,11 +320,12 @@ impl Allocator {
             }
 
             // `AllocMenu_Optimize(&*complex, cargo_type, demand, cargo_material_type)`
+            // — `cargo_type` is the source resource, not the target.
             let demand = optimize_masked(
                 state,
                 self.team,
                 self.complex,
-                target,
+                source,
                 demand,
                 self.cargo_material_type,
             );
@@ -323,7 +337,9 @@ impl Allocator {
 
                     source.set(&mut unit, source_value - demand);
                     target.set(&mut unit, target_value + demand);
-                    unit.total_mining = unit.total_mining.wrapping_add(demand as u8);
+                    // C++ (`allocmenu.cpp:429-432`) does not touch `total_mining`
+                    // here: the two fields belong to the same unit and the swap
+                    // keeps `raw + fuel + gold` unchanged.
                     state.write_unit(unit_id, unit);
                 }
 
@@ -1008,14 +1024,15 @@ mod tests {
         assert_eq!(cargo_get_cargo_capacity(&tank), Cargo::init());
     }
 
-    /// Known divergence: the C++ `Allocator::Optimize` gate is
-    /// `!(cargo_material_type & cargo_type)` where `cargo_type` is the **source**
-    /// resource, while the port tests the **target** flag; the target is always in
-    /// the mask, so the "convert other resources" branch is unreachable. Ignored
-    /// until the owner decides whether to fix the port.
+    /// `Allocator::Optimize` (`allocmenu.cpp:413-436`): when a mine has no free
+    /// mining units left, the target resource is increased by converting the
+    /// mining of another resource of the same mine. The converted amount is
+    /// re-allocated to the source resource elsewhere in the complex by the nested
+    /// `AllocMenu_Optimize` (`allocmenu.cpp:427`), so the complex total stays
+    /// constant — the fixture therefore needs a second mine with free mining
+    /// units, otherwise the nested call returns 0 and nothing is converted.
     #[test]
-    #[ignore = "known divergence vs allocmenu.cpp:414 (conversion branch unreachable)"]
-    fn cpp_conversion_of_other_resources_is_not_ported() {
+    fn cpp_conversion_of_other_resources_is_ported() {
         let (mut state, id, complex) = state_with_mine();
         {
             let unit = state.unit_mut(id).unwrap();
@@ -1024,12 +1041,71 @@ mod tests {
             unit.total_mining = 12;
         }
 
+        // The second mine of the same complex absorbs the 2 fuel units that the
+        // nested `AllocMenu_Optimize` re-allocates when converting fuel into raw.
+        let flags = unit_flags::STATIONARY | unit_flags::BUILDING;
+        let grid = Point::new(21, 21);
+        let other = state
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, grid, flags)
+            .expect("second mine");
+        {
+            let mut unit = state.unit(other).cloned().expect("unit");
+            unit.orders = UnitOrder::PowerOn;
+            unit.complex = Some(complex);
+            unit.raw_mining = 0;
+            unit.fuel_mining = 0;
+            unit.gold_mining = 0;
+            unit.total_mining = 0;
+            state.write_unit(other, unit);
+        }
+
         // C++: 4 free units, then 2 fuel units are converted to raw → 16 raw, 0 fuel.
         let added = optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 6);
         assert_eq!(added, 6);
         let unit = state.unit(id).unwrap();
         assert_eq!(unit.raw_mining, 16);
         assert_eq!(unit.fuel_mining, 0);
-        assert_eq!(unit.total_mining, 16);
+        assert_eq!(
+            unit.total_mining, 16,
+            "the swap keeps the mine's total at 16"
+        );
+
+        // The converted fuel production moved to the other mine of the complex.
+        let other = state.unit(other).unwrap();
+        assert_eq!(other.fuel_mining, 2);
+        assert_eq!(other.total_mining, 2);
+    }
+
+    /// Termination of the conversion recursion: the nested `AllocMenu_Optimize`
+    /// gets `source` as its `cargo_type1` (`allocmenu.cpp:427`), so every level
+    /// adds one distinct `CARGO_*` bit to the mask. The gate
+    /// (`allocmenu.cpp:414`) rejects a resource already in the mask, hence the
+    /// depth is bounded by the three resource kinds (at most 3 levels) and the
+    /// recursion cannot loop.
+    #[test]
+    fn optimize_conversion_recursion_terminates() {
+        let (mut state, id, complex) = state_with_mine();
+        {
+            let unit = state.unit_mut(id).unwrap();
+            unit.raw_mining = 10;
+            unit.fuel_mining = 3;
+            unit.gold_mining = 3;
+            unit.total_mining = 16;
+        }
+
+        // Saturated mine and no other mine: every conversion attempt recurses
+        // down to the mask holding all three resources and then fails.
+        let added = optimize(&mut state, TeamId::RED, complex, MiningKind::Raw, 6);
+        assert_eq!(added, 0);
+        let unit = state.unit(id).unwrap();
+        assert_eq!(
+            (
+                unit.raw_mining,
+                unit.fuel_mining,
+                unit.gold_mining,
+                unit.total_mining
+            ),
+            (10, 3, 3, 16)
+        );
     }
 }
