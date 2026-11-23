@@ -1310,7 +1310,34 @@ impl TaskKind {
                     .unwrap_or(super::task::TASK_PRIORITY_MOVE),
                 None => super::task::TASK_PRIORITY_MOVE,
             },
-            Self::GetMaterials { .. } => task.base_priority,
+            // `TaskGetMaterials::GetPriority` (`taskgetmaterials.cpp:39`) — the
+            // parent's effective priority; without a parent the base one.
+            Self::GetMaterials { .. } => match task.parent {
+                Some(parent) => world
+                    .ai
+                    .task_manager
+                    .task(parent)
+                    .map(|parent| parent.kind.get_priority(world, parent))
+                    .unwrap_or(task.base_priority),
+                None => task.base_priority,
+            },
+            // `TaskAttack::GetPriority` (`taskattack.cpp:101`) — the first
+            // target's priority while there is a target, otherwise the
+            // "least urgent in my tier" penalty.
+            Self::Attack(state) => {
+                let target = state
+                    .secondary_targets
+                    .first()
+                    .copied()
+                    .or(state.kill_unit_task);
+
+                match target.and_then(|task_id| world.ai.task_manager.task(task_id)) {
+                    Some(target) => target.kind.get_priority(world, target),
+                    None => task
+                        .base_priority
+                        .wrapping_add(super::task::TASK_PRIORITY_TOLERANCE),
+                }
+            }
             // `TaskKillUnit::GetPriority` — until the target is evaluated, the task
             // is considered "without targets" and gets the penalty
             // `TASK_PRIORITY_TOLERANCE` (C++ `GetPriority` without a target).

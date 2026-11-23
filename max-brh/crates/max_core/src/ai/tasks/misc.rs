@@ -338,9 +338,20 @@ fn repair_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
 // ---------------------------------------------------------------------------
 
 /// The cleaner unit type for the target.
-fn clearer_type_for(target: &crate::unit::UnitInfo) -> UnitType {
+///
+/// `TaskRemoveMines::ObtainUnit` (`taskremovemines.cpp:101`) picks the layer by
+/// the modified surface at the mine cell: `MINELAYR` on land, `SEAMNLYR` on
+/// water (the sea variant exists exactly for this), while rubble is removed by
+/// a `BULLDOZR` (`taskremoverubble.cpp:256`).
+fn clearer_type_for(ctx: &TaskCtx<'_>, target: &crate::unit::UnitInfo) -> UnitType {
     if target.unit_type == UnitType::LandMine || target.unit_type == UnitType::SeaMine {
-        UnitType::MineLayer
+        if crate::access::modified_surface_type(ctx.world, target.grid, false)
+            == crate::access::SURFACE_TYPE_LAND
+        {
+            UnitType::MineLayer
+        } else {
+            UnitType::SeaMineLayer
+        }
     } else {
         UnitType::Bulldozer
     }
@@ -364,7 +375,7 @@ fn remove_rubble_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
     };
 
     let team = target_info.team;
-    let clearer_type = clearer_type_for(&target_info);
+    let clearer_type = clearer_type_for(ctx, &target_info);
 
     if state.unit.is_none() {
         match find_closest_unit_of_type(ctx, team, clearer_type, target_info.grid) {

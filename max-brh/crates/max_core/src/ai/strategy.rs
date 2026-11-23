@@ -1278,10 +1278,10 @@ impl AiPlayer {
 
         // Mine assistant and terrain update.
         let mine_kind = TaskKind::mine_assistant();
-        world.ai_append_task(team, None, TASK_PRIORITY_CHECK_ASSAULTS, mine_kind);
+        world.ai_append_task(team, None, TASK_PRIORITY_FRONTIER, mine_kind);
 
         let terrain_kind = TaskKind::update_terrain();
-        world.ai_append_task(team, None, TASK_PRIORITY_CHECK_ASSAULTS, terrain_kind);
+        world.ai_append_task(team, None, super::task::TASK_PRIORITY_EMERGENCY, terrain_kind);
 
         if world.ai.settings.opponent >= Opponent::Apprentice as u8 {
             let scavenge_kind = TaskKind::scavenge();

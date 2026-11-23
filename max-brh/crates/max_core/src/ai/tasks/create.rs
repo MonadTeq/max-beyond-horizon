@@ -1426,28 +1426,31 @@ fn create_building_abort(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Tas
 /// `TaskCreateBuilding::Activate` (`taskcreatebuilding.cpp:912`) —
 /// **builder exit from the site** via `TaskActivate` (`taskactivate.cpp:104`).
 ///
-/// C++: `Activate` sets `op_state = CREATE_BUILDING_STATE_MOVING_OFF_SITE` and
-/// attaches `TaskActivate(builder, this, building)`; `TaskActivate::Activate` itself
-/// searches the first passable cell around the building (`Access_IsAccessible`) and issues
-/// `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` to the builder (for the player the same
-/// is done by a click, `game_manager.cpp:6879`). The task completes later — in
-/// `EndTurn`/`Execute` when `builder->GetOrder() == ORDER_AWAIT`
-/// (`taskcreatebuilding.cpp:847-854`), i.e. after the building unfolds
-/// (`UnitsManager_BuildingReady` waits for the builder to leave).
+/// C++: `Activate` takes the site from `builder->GetParent()` into `building`
+/// (`building->AddTask(this)`), sets `op_state = CREATE_BUILDING_STATE_MOVING_OFF_SITE`
+/// and attaches `TaskActivate(builder, this, building)`; `TaskActivate::Activate`
+/// itself searches the first passable cell around the building
+/// (`Access_IsAccessible`) and issues `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION`
+/// to the builder (for the player the same is done by a click,
+/// `game_manager.cpp:6879`). The task completes later — in `EndTurn`/`Execute`
+/// when `builder->GetOrder() == ORDER_AWAIT` (`taskcreatebuilding.cpp:847-854`),
+/// i.e. after the building unfolds (`UnitsManager_BuildingReady` waits for the
+/// builder to leave); `Finish` hands the completed building over through
+/// `AddUnit` when it is no longer idle (`taskcreatebuilding.cpp:317-344`).
 fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
-    let TaskKind::CreateBuilding {
-        unit_type,
-        site,
-        op_state,
-        builder,
-        manager,
-        ..
-    } = kind
-    else {
-        return;
+    let (unit_type, site, builder, tracked_building, manager) = match kind {
+        TaskKind::CreateBuilding {
+            unit_type,
+            site,
+            builder,
+            building,
+            manager,
+            ..
+        } => (*unit_type, *site, *builder, *building, *manager),
+        _ => return,
     };
 
-    let Some(builder_id) = *builder else {
+    let Some(builder_id) = builder else {
         return;
     };
 
@@ -1455,7 +1458,25 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
     // `ORDER_IDLE`/`BUILDING_READY`) — issue the exit order once; after that
     // wait until it leaves the 2×2 footprint (`TaskActivate_IsComplete`).
     if crate::production::builder_awaiting_exit(ctx.world, builder_id).is_some() {
-        *op_state = create_building_state::MOVING_OFF_SITE;
+        // `building = builder->GetParent()` (`taskcreatebuilding.cpp:914`) and
+        // `building->AddTask(this)` (`:916-918`): the site is tracked from here
+        // on so that the finished building can be handed over.
+        let building_id =
+            tracked_building.or_else(|| ctx.unit(builder_id).and_then(|unit| unit.parent_unit));
+
+        if let TaskKind::CreateBuilding {
+            op_state, building, ..
+        } = kind
+        {
+            *op_state = create_building_state::MOVING_OFF_SITE;
+            *building = building_id;
+        }
+
+        if let Some(building_id) = building_id {
+            if ctx.tm.unit_task(building_id) != Some(header.id) {
+                ctx.attach(header.id, building_id);
+            }
+        }
 
         if crate::unit_order::issue_builder_exit(ctx.world, builder_id) {
             return;
@@ -1468,16 +1489,54 @@ fn create_building_activate(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
         return;
     }
 
-    let building_id = ctx.world.units_at(*site).iter().copied().find(|id| {
-        ctx.world
-            .unit(*id)
-            .map(|unit| unit.unit_type == *unit_type && unit.team == header.team)
-            .unwrap_or(false)
+    // `TaskCreateBuilding::Finish` (`taskcreatebuilding.cpp:317`): the building
+    // is taken from the site, a dead one aborts the task, and a building that
+    // is no longer idle is handed over through `AddUnit`.
+    let building_id = tracked_building.or_else(|| {
+        ctx.world.units_at(site).iter().copied().find(|id| {
+            ctx.world
+                .unit(*id)
+                .map(|unit| unit.unit_type == unit_type && unit.team == header.team)
+                .unwrap_or(false)
+        })
     });
 
-    let _ = building_id;
+    if let Some(building_id) = building_id {
+        if let TaskKind::CreateBuilding { building, .. } = kind {
+            *building = Some(building_id);
+        }
 
-    if let Some(manager_id) = *manager {
+        let is_alive = ctx
+            .world
+            .unit(building_id)
+            .map(|unit| unit.hits > 0)
+            .unwrap_or(false);
+
+        if !is_alive {
+            create_building_abort(kind, ctx, header);
+
+            return;
+        }
+
+        let is_handover = ctx
+            .world
+            .unit(building_id)
+            .map(|unit| {
+                unit.unit_type == unit_type
+                    && unit.grid == site
+                    && unit.orders != UnitOrder::Idle
+                    && unit.orders != UnitOrder::AwaitScaling
+            })
+            .unwrap_or(false);
+
+        if is_handover {
+            create_building_add_unit(kind, ctx, header, building_id);
+
+            return;
+        }
+    }
+
+    if let Some(manager_id) = manager {
         ctx.tm.task_child_complete(ctx.world, manager_id, header.id);
     }
 

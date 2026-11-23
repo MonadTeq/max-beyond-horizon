@@ -35,8 +35,8 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind};
 
 use super::super::attack;
 use super::super::task::{
-    TaskHeader, TASK_PRIORITY_ATTACK_DEFAULT, TASK_PRIORITY_ATTACK_RESERVE_POOL,
-    TASK_PRIORITY_EMERGENCY, TASK_PRIORITY_ESCORT, TASK_PRIORITY_FOLLOW_DEFENSE,
+    TaskHeader, TASK_PRIORITY_ATTACK_RESERVE_POOL, TASK_PRIORITY_EMERGENCY, TASK_PRIORITY_ESCORT,
+    TASK_PRIORITY_FOLLOW_DEFENSE,
 };
 use super::{attack_state, TaskCtx, TaskKind, UnitDamage};
 
@@ -275,6 +275,32 @@ fn kill_unit_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Task
     }
 
     kill_unit_update_demand(ctx, header.team, state);
+}
+
+/// `TaskKillUnit::EndTurn` (`taskkillunit.cpp:672`) — `MoveUnits()`
+/// (`taskkillunit.cpp:832`): members that can still move report back to the
+/// task. Unlike `BeginTurn` this neither recruits nor re-evaluates the target.
+fn kill_unit_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+    let TaskKind::KillUnit(state) = kind else {
+        return;
+    };
+
+    // `TaskKillUnit::EndTurn` only acts while the target exists.
+    if state.spotted_unit.is_none() {
+        return;
+    }
+
+    for unit in state.units.clone() {
+        let moves = ctx.unit(unit).map(|info| info.speed > 0).unwrap_or(false);
+
+        // `UnitInfo::IsReadyForOrders(this)` (`unitinfo.cpp:3770`).
+        let ready = ctx.ready_to_take_orders(unit) && ctx.tm.unit_task(unit) == Some(header.id);
+
+        if moves && ready {
+            // `Task_RemindMoveFinished(unit, false)` — not a priority reminder.
+            ctx.remind_move_finished(unit, false);
+        }
+    }
 }
 
 fn kill_unit_execute(
@@ -551,7 +577,7 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
         kill.recruit_turn = -1;
         let _ = unit_id;
 
-        let priority = attack_priority(ctx.world, header.team);
+        let priority = ctx.priority_of(header.id);
         let task_id = ctx.append_task(
             header.team,
             Some(header.id),
@@ -572,11 +598,62 @@ fn attack_begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHea
     state.defenders_fire = 0;
 }
 
-/// `TaskAttack::GetPriority` — the parent's priority or the default attack.
-fn attack_priority(world: &crate::game::GameState, team: TeamId) -> u16 {
-    let _ = world;
-    let _ = team;
-    TASK_PRIORITY_ATTACK_DEFAULT
+/// `TaskAttack::EndTurn` (`taskattack.cpp:451`).
+///
+/// C++ calls `EvaluateAttackReadiness()` first. That is not ported: it needs
+/// the secondary-target census (`GetRequiredDamage`/`GetProjectedDamage` per
+/// target), `IsReconUnitAvailable`, `IsAnyTargetInRange` and
+/// `IsAttackUnderControl`, none of which exist in the reduced attack model
+/// (see `attack_begin_turn`). The rest — the turn-end reminders — is ported
+/// as is: they let idle group members report back to the attack.
+fn attack_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+    let TaskKind::Attack(state) = kind else {
+        return;
+    };
+
+    if let Some(recon_unit) = state.recon_unit {
+        if ctx
+            .unit(recon_unit)
+            .map(|info| info.speed > 0)
+            .unwrap_or(false)
+        {
+            ctx.remind_move_finished(recon_unit, true);
+        }
+    }
+
+    // Support-attack and secondary-target units (`taskattack.cpp:458-473`).
+    let mut units: Vec<UnitId> = Vec::new();
+
+    if let Some(task_id) = state.support_attack_task {
+        if let Some(task) = ctx.tm.task(task_id) {
+            if let TaskKind::SupportAttack {
+                units: support_units,
+                ..
+            } = &task.kind
+            {
+                units.extend(support_units.iter().copied());
+            }
+        }
+    }
+
+    for task_id in state.secondary_targets.clone() {
+        if let Some(task) = ctx.tm.task(task_id) {
+            if let TaskKind::KillUnit(kill) = &task.kind {
+                units.extend(kill.units.iter().copied());
+            }
+        }
+    }
+
+    for unit in units {
+        let moves = ctx.unit(unit).map(|info| info.speed > 0).unwrap_or(false);
+
+        // `UnitInfo::IsReadyForOrders(this)` (`unitinfo.cpp:3770`).
+        let ready = ctx.ready_to_take_orders(unit) && ctx.tm.unit_task(unit) == Some(header.id);
+
+        if moves && ready {
+            ctx.remind_move_finished(unit, true);
+        }
+    }
 }
 
 fn attack_add_unit(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader, unit: UnitId) {
@@ -1035,13 +1112,19 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
 pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Attack(_) => {
-            attack_begin_turn(kind, ctx, header);
+            attack_end_turn(kind, ctx, header);
             true
         }
         TaskKind::KillUnit(_) => {
-            kill_unit_begin_turn(kind, ctx, header);
+            kill_unit_end_turn(kind, ctx, header);
             true
         }
+        // `Task::BeginTurn()` calls `EndTurn()` (`task.cpp:631`), so classes
+        // without their own `BeginTurn` override (WaitToAttack, Retreat,
+        // Escort) use their turn-end helper here. The `EndTurn`
+        // implementations of FrontalAttack/SupportAttack/AttackReserve/
+        // DefenseReserve are not ported yet; their reduced begin-turn helpers
+        // are reused as before.
         TaskKind::FrontalAttack { .. } => {
             frontal_attack_begin_turn(kind, ctx, header);
             true
