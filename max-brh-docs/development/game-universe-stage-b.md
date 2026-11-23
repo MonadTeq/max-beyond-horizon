@@ -436,7 +436,7 @@ saveload,preferences,soak,menu*}.rs` (≈298 обращений, см. `lib.rs`)
 - **Инкапсуляция** завершена: `GameState` = `pub(crate)`; ни одна `pub` сигнатура
   `max_core` (fn/struct/enum/trait/type/const/static и `pub use` в `lib.rs`) не
   упоминает `GameState`; `state_mut()`/`into_state` удалены. **Гейт:**
-  `rg 'pub (fn|struct|enum|trait|type|const|static)[^{;]*GameState' crates/max_core/src`
+  `rg 'pub (fn|struct|enum|trait|type|const|static)[^{;]*\bGameState\b' crates/max_core/src`
   → пусто.
 - **Детерминизм** не нарушен: golden `snapshot_bytes`/`replay_digest`/CRC-пиннинги
   идентичны эталону.
