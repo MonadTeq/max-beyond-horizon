@@ -2112,4 +2112,127 @@ mod tests {
             tank_cost + engineer_cost
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 1: end-game boundaries (U)
+    // -----------------------------------------------------------------------
+
+    /// Boundary 0: a zero duration limit ends the game before the first turn
+    /// (`victory_limit <= turn_counter` is inclusive).
+    #[test]
+    fn zero_duration_limit_ends_the_game_immediately() {
+        let mut state = empty_match();
+        spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
+        spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
+        state.victory_type = VictoryType::Duration;
+        state.victory_limit = 0;
+        state.turn_counter = 0;
+
+        assert!(check_end_game_conditions(&mut state));
+    }
+
+    /// A single playing team is never ended by the "last survivor" rule
+    /// (`teams_total > 1` is required).
+    #[test]
+    fn single_team_game_does_not_end_by_elimination() {
+        let mut state = empty_match();
+        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::None;
+        spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
+
+        let status = evaluate_status(&state, state.turn_counter);
+        assert_eq!(status.teams_total, 1);
+        assert_eq!(status.teams_in_play, 1);
+        assert_eq!(status.team_rank[TeamId::RED.0 as usize], 1);
+        assert!(!check_end_game_conditions(&mut state));
+    }
+
+    /// No team in play (`teams_in_play == 0`) ends the game.
+    #[test]
+    fn game_with_no_team_in_play_ends() {
+        let mut state = empty_match();
+        // Neither team has a unit: both mission scripts report LOST.
+        let status = evaluate_status(&state, state.turn_counter);
+        assert_eq!(status.teams_total, 2);
+        assert_eq!(status.teams_in_play, 0);
+        assert_eq!(
+            status.team_status[TeamId::RED.0 as usize],
+            WinLossState::Lost
+        );
+        assert!(check_end_game_conditions(&mut state));
+    }
+
+    /// `TeamKind::Eliminated` leaves `teams_in_play` and the rank table, even if
+    /// the team still has units (`WinLoss_EvaluateStatus` checks the team type).
+    #[test]
+    fn eliminated_team_leaves_the_ranking() {
+        let mut state = empty_match();
+        spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
+        spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
+        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Eliminated;
+
+        let status = evaluate_status(&state, state.turn_counter);
+        assert_eq!(status.teams_total, 2, "an eliminated team is still total");
+        assert_eq!(status.teams_in_play, 1);
+        assert_eq!(status.team_rank[TeamId::GREEN.0 as usize], 0);
+        assert_eq!(status.team_rank[TeamId::RED.0 as usize], 1);
+        assert!(check_end_game_conditions(&mut state));
+    }
+
+    /// `PLAYER_TEAM_ALIEN` is a service slot: its units never enter
+    /// `teams_total`, `teams_in_play` or the ranking (`winloss.cpp`).
+    #[test]
+    fn derelict_slot_does_not_affect_the_ranking() {
+        let mut state = empty_match();
+        spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
+        spawn(&mut state, UnitType::Tank, TeamId::GREEN, 40, 40);
+        state.teams[TeamId::ALIEN.0 as usize].team_type = TeamKind::Computer;
+        spawn(&mut state, UnitType::AlienTank, TeamId::ALIEN, 60, 60);
+
+        let status = evaluate_status(&state, state.turn_counter);
+        assert_eq!(status.teams_total, 2);
+        assert_eq!(status.teams_in_play, 2);
+        assert_eq!(status.team_rank[TeamId::ALIEN.0 as usize], 0);
+        assert!(!check_end_game_conditions(&mut state));
+    }
+
+    /// Non-network `menu_check_end_game_conditions` marks a lost human team
+    /// `Eliminated` and continues; the network branch ends the game at once
+    /// (`menu.cpp:593-609`).
+    #[test]
+    fn local_human_loss_marks_the_team_eliminated() {
+        fn three_humans() -> GameState {
+            let mut state = empty_match();
+            for team in [TeamId::RED, TeamId::GREEN, TeamId::BLUE] {
+                state.teams[team.0 as usize].team_type = TeamKind::Player;
+            }
+            spawn(&mut state, UnitType::Tank, TeamId::RED, 20, 20);
+            spawn(&mut state, UnitType::Tank, TeamId::BLUE, 60, 60);
+            state
+        }
+
+        // Local game: GREEN is lost, the game continues and GREEN is eliminated.
+        let mut local = three_humans();
+        assert_eq!(
+            local.teams[TeamId::GREEN.0 as usize].team_type,
+            TeamKind::Player
+        );
+        assert!(
+            !check_end_game_conditions(&mut local),
+            "two teams are still in play"
+        );
+        assert_eq!(
+            local.teams[TeamId::GREEN.0 as usize].team_type,
+            TeamKind::Eliminated
+        );
+
+        // Network game: the same state ends the game immediately.
+        let mut network = three_humans();
+        network.network_game = true;
+        assert!(check_end_game_conditions(&mut network));
+        assert_eq!(
+            network.teams[TeamId::GREEN.0 as usize].team_type,
+            TeamKind::Player,
+            "the network branch does not mutate the team"
+        );
+    }
 }

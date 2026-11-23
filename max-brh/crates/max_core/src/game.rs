@@ -3389,4 +3389,224 @@ mod tests {
             crate::unit_values::base_unit_values(UnitType::AlienTank)
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 1: turn state machine (U)
+    // -----------------------------------------------------------------------
+
+    /// `GameManager_TeamTurnFinish` closes the turn only from `GAME_STATE_END_TURN`.
+    /// Any other phase is a no-op: the counter and the phase stay untouched.
+    #[test]
+    fn finish_turn_is_guarded_by_the_end_turn_phase() {
+        let (mut state, _red, _green) = tank_state();
+        state.network_game = false;
+        state.victory_limit = 50;
+
+        for phase in [
+            GameStateType::InGame,
+            GameStateType::TurnActive,
+            GameStateType::DeployingUnits,
+            GameStateType::SiteSelect,
+        ] {
+            state.game_state = phase;
+            assert!(
+                !state.finish_turn(),
+                "phase {phase:?} must not close the turn"
+            );
+            assert_eq!(state.turn_counter, 0, "phase {phase:?}");
+            assert_eq!(state.game_state, phase, "phase {phase:?} is left as is");
+        }
+
+        state.game_state = GameStateType::EndTurn;
+        assert!(!state.finish_turn(), "no victory condition is met");
+        assert_eq!(state.turn_counter, 1);
+        assert_eq!(state.game_state, GameStateType::InGame);
+    }
+
+    /// Boundary: a game with no playing teams has no barrier agreement, yet
+    /// `menu_check_end_game_conditions` finds nothing to end and the turn
+    /// counter still advances (0 participants is not "everyone is out").
+    #[test]
+    fn empty_game_has_no_barrier_and_still_advances_the_turn() {
+        let mut state = GameState::new();
+
+        assert_eq!(
+            state.end_turn_barrier(),
+            None,
+            "no playing teams — no agreement"
+        );
+        assert_eq!(state.begin_turn_barrier(), None);
+        assert_eq!(state.crc_barrier(), None);
+        assert!(state.are_teams_finished_turn());
+
+        state.game_state = GameStateType::EndTurn;
+        assert!(!state.finish_turn(), "empty game has no end condition");
+        assert_eq!(state.turn_counter, 1);
+        assert_eq!(state.game_state, GameStateType::InGame);
+    }
+
+    /// `GameManager_IsActiveTurn` (`game_manager.cpp:8296`): the active team in
+    /// turn-based play, everyone in simultaneous play, and always a remote team.
+    #[test]
+    fn is_active_turn_follows_the_play_mode() {
+        let (mut state, _red, _green) = tank_state();
+        state.active_turn_team = TeamId::RED;
+        state.play_mode = PlayMode::TurnBased;
+        assert!(state.is_active_turn(TeamId::RED));
+        assert!(!state.is_active_turn(TeamId::GREEN));
+
+        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
+        assert!(
+            state.is_active_turn(TeamId::GREEN),
+            "a remote team always processes its input"
+        );
+
+        state.play_mode = PlayMode::SimultaneousMoves;
+        assert!(state.is_active_turn(TeamId::BLUE));
+        assert!(state.is_active_turn(TeamId::GRAY));
+
+        state.play_mode = PlayMode::Unknown;
+        assert!(state.is_active_turn(TeamId::GRAY));
+    }
+
+    /// The barrier needs the agreement of all four playing teams; `ALIEN` and
+    /// empty/eliminated slots never take part (`Remote_ServerWaitBarrier`).
+    #[test]
+    fn barrier_requires_all_four_playing_teams_to_agree() {
+        let mut state = GameState::new();
+        for team in 0..PLAYER_TEAM_COUNT {
+            state.teams[team].team_type = TeamKind::Player;
+            state.turn_indices[team] = 9;
+        }
+        assert_eq!(state.end_turn_barrier(), Some(9));
+
+        state.turn_indices[PLAYER_TEAM_COUNT - 1] = 8;
+        assert_eq!(state.end_turn_barrier(), None, "one team diverged");
+
+        state.turn_indices[PLAYER_TEAM_COUNT] = 1;
+        assert_eq!(
+            state.end_turn_barrier(),
+            None,
+            "ALIEN does not repair a disagreement"
+        );
+
+        state.turn_indices[PLAYER_TEAM_COUNT - 1] = 9;
+        assert_eq!(state.end_turn_barrier(), Some(9));
+
+        // An eliminated team drops out of the agreement (as in C++).
+        state.teams[PLAYER_TEAM_COUNT - 1].team_type = TeamKind::Eliminated;
+        state.turn_indices[PLAYER_TEAM_COUNT - 1] = 0;
+        assert_eq!(state.end_turn_barrier(), Some(9));
+    }
+
+    /// Commands are applied strictly in receive order: conflicting orders produce
+    /// the last delivered one, and the reverse delivery produces the other state.
+    /// Both runs are bit-identical to their own repetition (D).
+    #[test]
+    fn command_delivery_order_decides_the_final_order() {
+        fn order_command(id: UnitId, order: UnitOrder) -> Command {
+            Command::Order(crate::input::Packet08Order {
+                unit: id,
+                payload: crate::input::OrderPayload::P1(crate::events::payload_p1_for(
+                    order,
+                    UnitOrderState::ExecutingOrder,
+                    UnitOrder::Await,
+                    UnitOrderState::ExecutingOrder,
+                )),
+            })
+        }
+
+        fn run(base: &GameState, id: UnitId, first: UnitOrder, second: UnitOrder) -> GameState {
+            let mut state = base.clone();
+            state.enqueue(order_command(id, first));
+            state.enqueue(order_command(id, second));
+            assert_eq!(state.apply_pending_commands(), 2);
+            state
+        }
+
+        let (state, id, _second) = tank_state();
+        let sentry = UnitOrder::Sentry;
+        let await_order = UnitOrder::Await;
+
+        let forward = run(&state, id, sentry, await_order);
+        assert_eq!(
+            forward.unit(id).expect("unit").orders,
+            await_order,
+            "the last delivered order wins"
+        );
+
+        let backward = run(&state, id, await_order, sentry);
+        assert_eq!(backward.unit(id).expect("unit").orders, sentry);
+        assert_ne!(
+            forward.snapshot_bytes(),
+            backward.snapshot_bytes(),
+            "delivery order is part of the state"
+        );
+
+        // Repetition of the same delivery order stays bit-identical.
+        let repeated = run(&state, id, sentry, await_order);
+        assert_eq!(repeated.snapshot_bytes(), forward.snapshot_bytes());
+        assert_eq!(
+            crate::crc::state_digest(&repeated),
+            crate::crc::state_digest(&forward)
+        );
+    }
+
+    /// Phase, active team and turn counter are simulated fields: they enter the
+    /// canonical digest but not the packet-45 unit-list CRC (D).
+    #[test]
+    fn phase_team_and_turn_counter_enter_the_digest() {
+        let (mut state, _red, _green) = tank_state();
+        state.network_game = false;
+
+        let baseline = state.snapshot_bytes();
+        let baseline_crc = crate::crc::state_digest(&state);
+        let unit_crc = crate::crc::state_checksum(&state);
+
+        state.active_turn_team = TeamId::GREEN;
+        let after_team = state.snapshot_bytes();
+        assert_ne!(baseline, after_team, "active team is digested");
+        assert_ne!(baseline_crc, crate::crc::state_digest(&state));
+
+        state.game_state = GameStateType::EndTurn;
+        assert_ne!(after_team, state.snapshot_bytes(), "phase is digested");
+
+        state.game_state = GameStateType::InGame;
+        state.turn_counter += 1;
+        assert_ne!(baseline, state.snapshot_bytes(), "turn is digested");
+
+        // Packet 45 covers only the four unit lists (no phase/turn fields).
+        assert_eq!(
+            crate::crc::state_checksum(&state),
+            unit_crc,
+            "unit-list CRC must not depend on the phase"
+        );
+    }
+
+    /// `UnitsManager_UnitIdCounter` ids carry a 13-bit object index
+    /// (`counter & 0x1FFF`); a long run of spawns never leaves that space and
+    /// keeps the counter monotonic (boundary/MAX).
+    #[test]
+    fn unit_ids_stay_inside_the_thirteen_bit_index_space() {
+        let (mut state, _red, _green) = tank_state();
+        let before = state.unit_id_counter;
+        let flags = unit_flags::MOBILE_LAND_UNIT | unit_flags::SELECTABLE;
+        let mut seen = std::collections::BTreeSet::new();
+
+        for index in 0..64i16 {
+            let grid = Point::new(2 + index % 60, 2 + index / 60);
+            let id = state
+                .spawn_unit(UnitType::Tank, TeamId::RED, grid, flags)
+                .expect("spawn");
+            assert!(
+                id.object_index() < 0x2000,
+                "object index {} escapes the 13-bit space",
+                id.object_index()
+            );
+            assert!(seen.insert(id), "duplicate unit id {id:?}");
+        }
+
+        assert_eq!(state.unit_id_counter, before + 64);
+        assert_eq!(state.unit_count(), 2 + 64);
+    }
 }

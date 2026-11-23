@@ -958,4 +958,203 @@ mod tests {
             assert_eq!(state.turn_counter, turn + 1);
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 1: deployment boundaries (U)
+    // -----------------------------------------------------------------------
+
+    /// `Survey_GetTotalResourcesInArea`: radius 0 sees exactly one cell, a
+    /// negative radius sees none, map edges are clipped and the sum is clamped
+    /// to 255 (`SURVEY_RESOURCE_LIMIT`).
+    #[test]
+    fn survey_resources_in_area_respects_radius_edges_and_limit() {
+        let state = land_state(&[]);
+
+        // Radius 0 — the starting cell only (`even x` is materials).
+        assert_eq!(
+            survey_resources_in_area(&state, Point::new(10, 10), 0),
+            (16, 0, 0)
+        );
+        assert_eq!(
+            survey_resources_in_area(&state, Point::new(11, 10), 0),
+            (0, 0, 16)
+        );
+
+        // A negative radius yields an empty range (no cells).
+        assert_eq!(
+            survey_resources_in_area(&state, Point::new(10, 10), -1),
+            (0, 0, 0)
+        );
+
+        // The map corner is clipped to the two visible cells per axis.
+        assert_eq!(
+            survey_resources_in_area(&state, Point::new(0, 0), 1),
+            (32, 0, 32)
+        );
+
+        // Saturation: a radius covering the whole map clamps at 255 per type.
+        let mut rich = land_state(&[]);
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                rich.map
+                    .resources
+                    .set(x, y, ResourceMapEntry::new(16, Some(ResourceKind::Raw), 0));
+            }
+        }
+        assert_eq!(
+            survey_resources_in_area(&rich, Point::new(10, 10), MAP_WIDTH as i32),
+            (SURVEY_RESOURCE_LIMIT, 0, 0)
+        );
+    }
+
+    /// `GameManager_IsValidStartingPosition`: the 4×4 area must be pure land and
+    /// the rectangle must stay inside the map (0 and MAX cell boundaries).
+    #[test]
+    fn valid_starting_position_rejects_edges_and_mixed_surface() {
+        let mut state = GameState::new();
+
+        assert!(is_valid_starting_position(&state, Point::new(1, 1)));
+        assert!(is_valid_starting_position(&state, Point::new(109, 109)));
+        assert!(!is_valid_starting_position(&state, Point::new(0, 1)));
+        assert!(!is_valid_starting_position(&state, Point::new(1, 0)));
+        assert!(!is_valid_starting_position(&state, Point::new(110, 1)));
+        assert!(!is_valid_starting_position(&state, Point::new(1, 110)));
+        assert!(!is_valid_starting_position(&state, Point::new(-1, 5)));
+
+        // A single water cell inside the 4×4 square invalidates the position.
+        state.map.surface.set(2, 2, Surface::WATER);
+        assert!(!is_valid_starting_position(&state, Point::new(1, 1)));
+    }
+
+    /// `Access_FindReachableSpot` with `range = 0` performs no iteration:
+    /// it reports failure and leaves the point untouched (boundary 0).
+    #[test]
+    fn find_reachable_spot_with_zero_range_is_a_no_op() {
+        let state = land_state(&[TeamId::RED]);
+        let mut position = Point::new(20, 20);
+
+        assert!(!find_reachable_spot(
+            &state,
+            UnitType::Constructor,
+            TeamId::RED,
+            &mut position,
+            0,
+            0
+        ));
+        assert_eq!(position, Point::new(20, 20));
+    }
+
+    /// `GameManager_GetStartPositionMiningStation`: a barren starting cell makes
+    /// the search move to a cell that satisfies the materials/fuel minimums.
+    #[test]
+    fn mining_station_search_leaves_a_barren_start_cell() {
+        let mut state = land_state(&[TeamId::RED]);
+
+        // Clear a 5×5 area around the requested start.
+        for x in 18..=22 {
+            for y in 18..=22 {
+                state
+                    .map
+                    .resources
+                    .set(x, y, ResourceMapEntry::new(0, None, 0));
+            }
+        }
+
+        let start = Point::new(20, 20);
+        let found = start_position_mining_station(&state, start, MAX_RESOURCES);
+
+        assert_ne!(found, start, "the barren start must be rejected");
+        assert!(is_valid_starting_position(&state, found));
+
+        let max_resources = MAX_RESOURCES;
+        let minimum_fuel = (max_resources * 8 + 10) / 20;
+        let minimum_materials = (max_resources * 12 + 10) / 20;
+        let (raw, _gold, fuel) = survey_resources_in_area(&state, found, SURVEY_RADIUS);
+
+        assert!(raw >= minimum_materials, "raw={raw} at {found:?}");
+        assert!(fuel >= minimum_fuel, "fuel={fuel} at {found:?}");
+    }
+
+    /// `UnitsManager_SetInitialMining` fills the 16-unit storage: fuel for the
+    /// generator first, then materials, then the rest. A rich cell saturates the
+    /// capacity (MAX), a barren one yields zeros (0).
+    #[test]
+    fn set_initial_mining_caps_at_the_sixteen_unit_capacity() {
+        let mut state = land_state(&[TeamId::RED]);
+        let id = state
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
+            .expect("mining station");
+
+        set_initial_mining(&mut state, id, Point::new(20, 20));
+
+        let unit = state.unit(id).expect("mining station");
+        // 2×2 neighborhood: 32 materials and 32 fuel; the generator consumes 2
+        // fuel, so the 16 units of capacity are 2 fuel + 14 materials.
+        assert_eq!(unit.fuel_mining, 2);
+        assert_eq!(unit.raw_mining, 14);
+        assert_eq!(unit.gold_mining, 0);
+        assert_eq!(unit.total_mining, 16, "storage capacity is saturated");
+        assert_eq!(unit.raw_mining_max, 32);
+        assert_eq!(unit.fuel_mining_max, 32);
+        assert_eq!(unit.gold_mining_max, 0);
+
+        // Barren cell: nothing to mine, capacity stays unused.
+        let mut barren = land_state(&[TeamId::RED]);
+        for x in 0..MAP_WIDTH {
+            for y in 0..MAP_HEIGHT {
+                barren
+                    .map
+                    .resources
+                    .set(x, y, ResourceMapEntry::new(0, None, 0));
+            }
+        }
+        let id = barren
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
+            .expect("mining station");
+        set_initial_mining(&mut barren, id, Point::new(20, 20));
+
+        let unit = barren.unit(id).expect("mining station");
+        assert_eq!(unit.total_mining, 0);
+        assert_eq!(unit.raw_mining_max, 0);
+        assert_eq!(unit.fuel_mining_max, 0);
+    }
+
+    /// The derelict `ALIEN` slot is not a playing team: deployment rejects it
+    /// without touching the state or the RNG stream (boundary slot).
+    #[test]
+    fn deploy_ignores_the_derelict_team_slot() {
+        let mut state = land_state(&[TeamId::RED]);
+        let rng_before = state.rng.state();
+        let deployed = deploy_team_supplies(
+            &mut state,
+            TeamId::ALIEN,
+            200,
+            &DEFAULT_MISSION_LOADOUT,
+            Point::new(20, 20),
+            MAX_RESOURCES,
+        );
+
+        assert!(deployed.is_empty());
+        assert_eq!(state.unit_count(), 0);
+        assert_eq!(state.rng.state(), rng_before, "no RNG draws for ALIEN");
+        assert_eq!(state.game_state, GameStateType::InGame);
+    }
+
+    /// Teams whose `team_type` is `None` are skipped by the landing loop
+    /// (`GameManager_InitGame`: only `team_type != TEAM_TYPE_NONE`).
+    #[test]
+    fn deploy_skips_teams_that_do_not_play() {
+        let mut state = GameState::new();
+        for team in 0..PLAYER_TEAM_COUNT {
+            state.teams[team].team_type = TeamKind::None;
+        }
+        let rng_before = state.rng.state();
+        let teams = [TeamStart::new(TeamId::RED, Point::new(20, 20))];
+
+        let deployed = deploy_starting_units(&mut state, 150, MAX_RESOURCES, &teams);
+
+        assert_eq!(deployed, 0);
+        assert_eq!(state.unit_count(), 0);
+        assert_eq!(state.rng.state(), rng_before);
+    }
 }

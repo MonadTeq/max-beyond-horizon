@@ -1069,8 +1069,8 @@ mod tests {
     use crate::enums::TeamClan;
     use crate::input::ComplexSummaryEntry;
     use crate::input::{
-        Packet13Seed, Packet41MoveFinished, Packet45CrcBarrier, Packet50StopUnit,
-        Packet52EndTurnBarrier,
+        Packet00TurnBarrier, Packet01FrameBarrier, Packet13Seed, Packet18Chat,
+        Packet41MoveFinished, Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier,
     };
     use crate::team::{ResearchTopicInfo, TeamKind};
     use crate::unit_values::ATTRIB_HITS;
@@ -1640,5 +1640,214 @@ mod tests {
         let unit = state.unit(tank).expect("tank");
         assert_eq!(unit.orders, before, "невалидный приказ не применён");
         assert_eq!(state.state_sync_index(TeamId::GREEN), 4);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 1: dispatcher boundaries (U)
+    // -----------------------------------------------------------------------
+
+    /// An empty queue applies nothing and does not disturb the state;
+    /// `pop_front` on an empty queue is `None` and keeps the counter at 0.
+    #[test]
+    fn empty_command_queue_is_a_no_op() {
+        let (mut state, _id) = state_with_tank();
+        let before = state.snapshot_bytes();
+
+        assert_eq!(apply_pending(&mut state), 0);
+        assert_eq!(state.commands.applied(), 0);
+        assert_eq!(state.snapshot_bytes(), before);
+
+        let mut queue = CommandQueue::new();
+        assert!(queue.is_empty());
+        assert_eq!(queue.len(), 0);
+        assert_eq!(queue.pop_front(), None);
+        assert_eq!(queue.applied(), 0);
+    }
+
+    /// `CommandQueue::clear` drops pending commands but keeps the applied
+    /// diagnostic counter (`Remote_ReceiveNetPackets` drain semantics).
+    #[test]
+    fn clear_keeps_the_applied_counter() {
+        let (mut state, id) = state_with_tank();
+        state
+            .commands
+            .push(Command::Stop(Packet50StopUnit { unit: id }));
+        state.commands.push(Command::Seed(Packet13Seed { seed: 1 }));
+
+        assert!(state.commands.pop_front().is_some());
+        assert_eq!(state.commands.applied(), 1);
+
+        state.commands.clear();
+        assert!(state.commands.is_empty());
+        assert_eq!(state.commands.len(), 0);
+        assert_eq!(
+            state.commands.applied(),
+            1,
+            "the applied counter is not reset by clear"
+        );
+    }
+
+    /// Commands for units that do not exist are rejected with `UnknownUnit`
+    /// and leave the canonical state untouched (`Remote_NetErrorUnknownUnit`).
+    #[test]
+    fn unknown_unit_is_rejected_without_changing_the_state() {
+        let (mut state, _id) = state_with_tank();
+        let missing = UnitId(0x7FFF);
+        let before = state.snapshot_bytes();
+
+        let commands = [
+            Command::Order(crate::input::Packet08Order {
+                unit: missing,
+                payload: OrderPayload::P1(payload_p1_for(
+                    UnitOrder::Sentry,
+                    UnitOrderState::ExecutingOrder,
+                    UnitOrder::Await,
+                    UnitOrderState::ExecutingOrder,
+                )),
+            }),
+            Command::Stop(Packet50StopUnit { unit: missing }),
+            Command::MoveFinished(Packet41MoveFinished::port_form(missing, true)),
+            Command::Rename(crate::input::Packet43Rename {
+                unit: missing,
+                name: "ghost".into(),
+            }),
+        ];
+
+        for command in &commands {
+            assert_eq!(
+                apply_command(&mut state, command),
+                ApplyOutcome::UnknownUnit,
+                "{command:?}"
+            );
+        }
+
+        assert_eq!(
+            state.snapshot_bytes(),
+            before,
+            "a rejected command must not change the state"
+        );
+        assert!(state.unit_events.is_empty());
+    }
+
+    /// Every barrier/chat packet validates the team slot: `ALIEN` (4) and any
+    /// larger index are rejected as `Ignored` without touching the state.
+    #[test]
+    fn barrier_packets_reject_non_playing_team_slots() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        let before = state.snapshot_bytes();
+
+        for alien in [TeamId::ALIEN, TeamId(200)] {
+            let commands = [
+                command_finished_turn(alien),
+                command_end_turn_barrier(alien, 1),
+                Command::CrcBarrier(Packet45CrcBarrier {
+                    team: alien,
+                    next_turn_index: 1,
+                    crc16: 0x1234,
+                }),
+                Command::TurnBarrier(Packet00TurnBarrier {
+                    team: alien,
+                    counter: 1,
+                }),
+                Command::FrameBarrier(Packet01FrameBarrier {
+                    team: alien,
+                    counter: 1,
+                }),
+                Command::Chat(Packet18Chat {
+                    sender: alien,
+                    message: "hello".into(),
+                }),
+            ];
+
+            for command in &commands {
+                assert_eq!(
+                    apply_command(&mut state, command),
+                    ApplyOutcome::Ignored,
+                    "team {alien:?}: {command:?}"
+                );
+            }
+        }
+
+        assert_eq!(state.snapshot_bytes(), before);
+    }
+
+    /// Packet 06 closes the turn only in turn-based play; in simultaneous mode
+    /// it only marks `finished_turn` and keeps the phase (`remote.cpp`).
+    #[test]
+    fn finished_turn_is_phase_dependent_on_the_play_mode() {
+        let mut turn_based = GameState::new();
+        turn_based.teams[0].team_type = TeamKind::Player;
+        turn_based.teams[1].team_type = TeamKind::Remote;
+        turn_based.play_mode = crate::enums::PlayMode::TurnBased;
+
+        assert_eq!(
+            apply_command(&mut turn_based, &command_finished_turn(TeamId::RED)),
+            ApplyOutcome::Applied
+        );
+        assert!(turn_based.teams[0].finished_turn);
+        assert_eq!(turn_based.game_state, crate::enums::GameStateType::EndTurn);
+        assert!(
+            !turn_based.are_teams_finished_turn(),
+            "the remote team has not finished yet"
+        );
+
+        let mut simultaneous = GameState::new();
+        simultaneous.teams[0].team_type = TeamKind::Player;
+        simultaneous.play_mode = crate::enums::PlayMode::SimultaneousMoves;
+
+        assert_eq!(
+            apply_command(&mut simultaneous, &command_finished_turn(TeamId::RED)),
+            ApplyOutcome::Applied
+        );
+        assert!(simultaneous.teams[0].finished_turn);
+        assert_eq!(
+            simultaneous.game_state,
+            crate::enums::GameStateType::InGame,
+            "simultaneous mode keeps playing"
+        );
+    }
+
+    /// The seed delivery is ordered and deterministic: two seeds in one batch
+    /// end with the last one, and two identical runs stay bit-identical (D).
+    #[test]
+    fn seed_delivery_is_ordered_and_deterministic() {
+        let (state, _id) = state_with_tank();
+
+        fn run(base: &GameState) -> GameState {
+            let mut state = base.clone();
+            state.enqueue(Command::Seed(Packet13Seed { seed: 0x1111_1111 }));
+            state.enqueue(Command::Seed(Packet13Seed { seed: 0x2222_2222 }));
+            assert_eq!(state.apply_pending_commands(), 2);
+            state
+        }
+
+        let first = run(&state);
+        let second = run(&state);
+
+        assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
+        assert_eq!(
+            crate::crc::state_digest(&first),
+            crate::crc::state_digest(&second)
+        );
+        assert_eq!(first.rng, crate::rng::Randomizer::new(0x2222_2222));
+        assert_ne!(first.rng.state(), state.rng.state());
+    }
+
+    /// `UnitEventEmergencyStop::Process` on a unit that no longer exists is a
+    /// no-op (the event stays a pure data record until the cycle).
+    #[test]
+    fn unit_event_for_a_missing_unit_is_a_no_op() {
+        let mut state = GameState::new();
+        let before = state.snapshot_bytes();
+
+        process_unit_event(
+            &mut state,
+            &UnitEvent::EmergencyStop {
+                unit: UnitId(0x7FFF),
+            },
+        );
+
+        assert_eq!(state.snapshot_bytes(), before);
     }
 }

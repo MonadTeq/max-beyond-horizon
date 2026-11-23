@@ -1979,4 +1979,213 @@ mod tests {
         assert_eq!(ResourceMapEntry::from_bits(0).bits(), 0);
         assert_eq!(MAP_CELLS, MAP_TILES);
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 1: setup invariants (U)
+    // -----------------------------------------------------------------------
+
+    /// `ResourceLevel` accepts exactly the menu values 0..=2
+    /// (`menu_update_resource_levels` has no `default` branch).
+    #[test]
+    fn resource_level_rejects_values_outside_the_menu_range() {
+        assert_eq!(ResourceLevel::new(0), Some(ResourceLevel::LOW));
+        assert_eq!(ResourceLevel::new(1), Some(ResourceLevel::NORMAL));
+        assert_eq!(ResourceLevel::new(2), Some(ResourceLevel::HIGH));
+        assert_eq!(ResourceLevel::new(3), None, "3 is outside the menu");
+        assert_eq!(ResourceLevel::new(u8::MAX), None);
+
+        assert_eq!(ResourceLevel::LOW.value(), 0);
+        assert_eq!(ResourceLevel::NORMAL.value(), 1);
+        assert_eq!(ResourceLevel::HIGH.value(), 2);
+        assert!(ResourceLevel::LOW < ResourceLevel::NORMAL);
+        assert!(ResourceLevel::NORMAL < ResourceLevel::HIGH);
+
+        // Round-trip through the numeric value.
+        for value in 0..=2u8 {
+            assert_eq!(
+                ResourceLevel::new(value).map(ResourceLevel::value),
+                Some(value)
+            );
+        }
+    }
+
+    /// The whole 3×3×3×3 menu grid (`menu_update_resource_levels`) produces
+    /// ordered, self-consistent generation parameters (0 and MAX level).
+    #[test]
+    fn menu_levels_are_ordered_across_the_whole_grid() {
+        let levels = [
+            ResourceLevel::LOW,
+            ResourceLevel::NORMAL,
+            ResourceLevel::HIGH,
+        ];
+
+        for &raw in &levels {
+            for &fuel in &levels {
+                for &gold in &levels {
+                    for &derelicts in &levels {
+                        let settings =
+                            GenerationSettings::from_menu_levels(raw, fuel, gold, derelicts);
+
+                        assert!(
+                            settings.min_resources > 0,
+                            "min_resources must stay positive: {raw:?}/{fuel:?}/{gold:?}/{derelicts:?}"
+                        );
+                        assert!(
+                            settings.max_resources > settings.min_resources,
+                            "max must exceed min: {raw:?}/{fuel:?}/{gold:?}/{derelicts:?}"
+                        );
+                        assert!(
+                            (33..=49).contains(&settings.mixed_resource_seperation),
+                            "mixed separation out of range: {}",
+                            settings.mixed_resource_seperation
+                        );
+
+                        for kind in [ResourceKind::Raw, ResourceKind::Fuel, ResourceKind::Gold] {
+                            let values = settings.kind(kind);
+
+                            assert!(values.normal_high >= values.normal_low, "{kind:?}");
+                            assert!(
+                                values.concentrate_high >= values.concentrate_low,
+                                "{kind:?}"
+                            );
+                            assert!(
+                                values.concentrate_seperation > values.concentrate_diffusion,
+                                "{kind:?}"
+                            );
+                            assert!(values.concentrate_diffusion > 0, "{kind:?}");
+                        }
+
+                        let expected_alien = match derelicts.value() {
+                            0 => (0, 0),
+                            1 => (65, 20),
+                            _ => (50, 30),
+                        };
+
+                        assert_eq!(
+                            (settings.alien_seperation, settings.alien_unit_value),
+                            expected_alien,
+                            "derelict level {derelicts:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `derive_surface_map` tolerates short and long inputs: missing cells stay
+    /// `NONE`, extra tile ids are ignored (C++ reads out of bounds).
+    #[test]
+    fn derive_surface_map_defaults_missing_cells_and_ignores_extras() {
+        let pass_table = [0u8, 1, 2, 3];
+
+        let empty = derive_surface_map(&[], &pass_table);
+        for tile in empty.tiles() {
+            assert_eq!(*tile, Surface::NONE, "no tile ids -> no surfaces");
+        }
+
+        // Only the first cells are filled; the rest of the map is `NONE`.
+        let surface = derive_surface_map(&[3u16, 3, 3], &pass_table);
+        assert_eq!(surface.get(0, 0), Surface::AIR);
+        assert_eq!(surface.get(2, 0), Surface::AIR);
+        assert_eq!(
+            surface.get(3, 0),
+            Surface::NONE,
+            "cells beyond the input stay NONE"
+        );
+
+        // More tile ids than map cells: the surplus is ignored, no panic.
+        let oversized = vec![0u16; MAP_TILES + 32];
+        let surface = derive_surface_map(&oversized, &pass_table);
+        assert_eq!(surface.get(0, 0), Surface::LAND);
+        assert_eq!(
+            surface.get((MAP_WIDTH - 1) as i16, (MAP_HEIGHT - 1) as i16),
+            Surface::LAND
+        );
+
+        // An empty pass table makes every lookup fall back to `NONE`.
+        let surface = derive_surface_map(&[0u16; MAP_TILES], &[]);
+        assert_eq!(surface.get(0, 0), Surface::NONE);
+    }
+
+    /// `Access_GetApproximateDistance` (`access.cpp:386`):
+    /// `max(dx, dy) * 2 + min(dx, dy)`, symmetric and zero at the origin.
+    #[test]
+    fn approximate_distance_matches_the_cpp_formula() {
+        assert_eq!(approximate_distance(0, 0), 0);
+        assert_eq!(approximate_distance(5, 0), 10);
+        assert_eq!(approximate_distance(0, 5), 10);
+        assert_eq!(approximate_distance(3, 2), 8);
+        assert_eq!(approximate_distance(2, 3), 8);
+        assert_eq!(approximate_distance(4, 4), 12);
+        assert_eq!(approximate_distance(-3, -2), 8);
+        assert_eq!(approximate_distance(-3, 2), 8);
+        assert_eq!(approximate_distance(3, -2), 8);
+
+        // Symmetry within the map coordinate range.
+        for distance_x in -16..=16i32 {
+            for distance_y in -16..=16i32 {
+                assert_eq!(
+                    approximate_distance(distance_x, distance_y),
+                    approximate_distance(distance_y, distance_x),
+                    "({distance_x}, {distance_y})"
+                );
+            }
+        }
+    }
+
+    /// Full generation on a map without teams is a pure function of
+    /// `(setup, surface, seed)`: same seed — identical map and RNG state,
+    /// another seed — another resource map (D).
+    #[test]
+    fn map_generation_without_teams_is_seed_deterministic() {
+        fn setup() -> GameSetup {
+            GameSetup {
+                planet: Planet::Snowcrab,
+                settings: GenerationSettings::from_menu_levels(
+                    ResourceLevel::NORMAL,
+                    ResourceLevel::NORMAL,
+                    ResourceLevel::NORMAL,
+                    ResourceLevel::LOW,
+                ),
+                teams: Vec::new(),
+                alien_costs: AlienUnitCosts {
+                    alien_tank: 4,
+                    juggernaut: 8,
+                    alien_assault_gun: 5,
+                    alien_plane: 6,
+                },
+            }
+        }
+
+        let surface = SurfaceMap::from_tiles([Surface::LAND; MAP_TILES]);
+        let seed = 0x00C0_FFEEu32;
+
+        let mut first_setup = setup();
+        let mut first_rng = Randomizer::new(seed);
+        let first = generate_map(&mut first_setup, &surface, &mut first_rng);
+
+        let mut second_setup = setup();
+        let mut second_rng = Randomizer::new(seed);
+        let second = generate_map(&mut second_setup, &surface, &mut second_rng);
+
+        assert_eq!(first, second, "same seed must reproduce the map");
+        assert_eq!(first_rng.state(), second_rng.state());
+        assert!(first.aliens.is_empty(), "derelicts are disabled");
+        assert_eq!(
+            first.map.surface.tiles(),
+            surface.tiles(),
+            "generation keeps the input surface"
+        );
+
+        let mut other_setup = setup();
+        let mut other_rng = Randomizer::new(seed + 1);
+        let other = generate_map(&mut other_setup, &surface, &mut other_rng);
+
+        assert_ne!(
+            first.map.resources.tiles(),
+            other.map.resources.tiles(),
+            "another seed must change the resource map"
+        );
+        assert_ne!(first_rng.state(), other_rng.state());
+    }
 }
