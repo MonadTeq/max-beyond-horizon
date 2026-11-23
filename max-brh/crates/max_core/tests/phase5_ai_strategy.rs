@@ -40,7 +40,7 @@ fn clan_mapping_selects_the_strategy_on_the_first_turn() {
     for (clan, expected) in cases {
         let mut state = ai_state(land_map(40), clan, Opponent::Average);
         assert_eq!(
-            state.ai.players[TeamId::RED.0 as usize].strategy,
+            state.state().ai.players[TeamId::RED.0 as usize].strategy,
             AiStrategy::Random,
             "{clan:?}: the strategy starts unresolved"
         );
@@ -53,7 +53,7 @@ fn clan_mapping_selects_the_strategy_on_the_first_turn() {
         assert!(!over, "{clan:?}: a base with an army is not eliminated");
 
         assert_eq!(
-            state.ai.players[TeamId::RED.0 as usize].strategy,
+            state.state().ai.players[TeamId::RED.0 as usize].strategy,
             expected,
             "{clan:?}: `AiPlayer::init_tasks` must resolve RANDOM by the clan"
         );
@@ -66,13 +66,13 @@ fn clan_mapping_selects_the_strategy_on_the_first_turn() {
 fn forced_strategy_wins_only_when_its_score_is_non_zero() {
     // `Defensive` scores `count` (one continent) → the force is accepted.
     let mut forced = ai_state(land_map(40), TeamClan::Musashi, Opponent::Average);
-    forced.ai.settings.team_strategy[0] = Some(AiStrategy::Defensive);
+    forced.state_mut().ai.settings.team_strategy[0] = Some(AiStrategy::Defensive);
     assert!(
-        max_core::ai_setup_strategy(&mut forced, TeamId::RED),
+        max_core::ai_setup_strategy(forced.state_mut(), TeamId::RED),
         "the map has a viable continent"
     );
     assert_eq!(
-        forced.ai.players[TeamId::RED.0 as usize].strategy,
+        forced.state().ai.players[TeamId::RED.0 as usize].strategy,
         AiStrategy::Defensive
     );
 
@@ -82,7 +82,7 @@ fn forced_strategy_wins_only_when_its_score_is_non_zero() {
     let (_, over) = play_rounds(&mut forced, 1, ROUND_TICKS);
     assert!(!over);
     assert_eq!(
-        forced.ai.players[TeamId::RED.0 as usize].strategy,
+        forced.state().ai.players[TeamId::RED.0 as usize].strategy,
         AiStrategy::Defensive,
         "the forced strategy survives the turn"
     );
@@ -93,11 +93,11 @@ fn forced_strategy_wins_only_when_its_score_is_non_zero() {
 #[test]
 fn forced_strategy_with_a_zero_score_falls_back_to_the_roll() {
     let mut state = ai_state(land_map(40), TeamClan::Musashi, Opponent::Average);
-    state.ai.settings.team_strategy[0] = Some(AiStrategy::Sea);
+    state.state_mut().ai.settings.team_strategy[0] = Some(AiStrategy::Sea);
 
-    assert!(max_core::ai_setup_strategy(&mut state, TeamId::RED));
+    assert!(max_core::ai_setup_strategy(state.state_mut(), TeamId::RED));
 
-    let strategy = state.ai.players[TeamId::RED.0 as usize].strategy;
+    let strategy = state.state().ai.players[TeamId::RED.0 as usize].strategy;
     assert_ne!(
         strategy,
         AiStrategy::Sea,
@@ -114,26 +114,33 @@ fn strategy_selection_is_seeded_and_reproducible() {
     let mut first = ai_state(land_map(40), TeamClan::Musashi, Opponent::Average);
     let mut second = ai_state(land_map(40), TeamClan::Musashi, Opponent::Average);
 
-    let before = first.rng.state();
-    assert!(max_core::ai_setup_strategy(&mut first, TeamId::RED));
-    assert!(max_core::ai_setup_strategy(&mut second, TeamId::RED));
+    let before = first.state().rng.state();
+    assert!(max_core::ai_setup_strategy(first.state_mut(), TeamId::RED));
+    assert!(max_core::ai_setup_strategy(second.state_mut(), TeamId::RED));
 
-    let after = first.rng.state();
+    let after = first.state().rng.state();
     assert_ne!(
         before, after,
         "SelectStrategy must roll the strategy on the RNG"
     );
-    assert_eq!(after, second.rng.state(), "same seed → same RNG path");
     assert_eq!(
-        first.ai.players[TeamId::RED.0 as usize].strategy,
-        second.ai.players[TeamId::RED.0 as usize].strategy
+        after,
+        second.state().rng.state(),
+        "same seed → same RNG path"
+    );
+    assert_eq!(
+        first.state().ai.players[TeamId::RED.0 as usize].strategy,
+        second.state().ai.players[TeamId::RED.0 as usize].strategy
     );
 
     let mut other_seed = ai_state(land_map(40), TeamClan::Musashi, Opponent::Average);
-    other_seed.rng = Randomizer::new(1);
-    assert!(max_core::ai_setup_strategy(&mut other_seed, TeamId::RED));
+    other_seed.state_mut().rng = Randomizer::new(1);
+    assert!(max_core::ai_setup_strategy(
+        other_seed.state_mut(),
+        TeamId::RED
+    ));
     assert_ne!(
-        other_seed.rng.state(),
+        other_seed.state().rng.state(),
         after,
         "a different seed starts a different RNG stream"
     );
@@ -214,9 +221,9 @@ fn weight_tables_are_filled_and_rebuilt_for_the_strategy() {
 
     for (strategy, rebuilt) in cases {
         let mut state = strategy_state(*strategy, Opponent::Average);
-        max_core::ai_begin_turn(&mut state, TeamId::RED);
+        max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
 
-        let player = &state.ai.players[TeamId::RED.0 as usize];
+        let player = &state.state().ai.players[TeamId::RED.0 as usize];
         assert_eq!(player.strategy, *strategy);
 
         let mut baseline = AiPlayer::new(TeamId::RED);
@@ -256,10 +263,10 @@ fn weight_tables_are_filled_and_rebuilt_for_the_strategy() {
 #[test]
 fn filtered_weight_table_drops_stationary_types() {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
-    max_core::ai_begin_turn(&mut state, TeamId::RED);
+    max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
 
-    let player = &state.ai.players[TeamId::RED.0 as usize];
-    let filtered = build_orders::get_filtered_weight_table(player, &state, None, 0x01);
+    let player = &state.state().ai.players[TeamId::RED.0 as usize];
+    let filtered = build_orders::get_filtered_weight_table(player, state.state(), None, 0x01);
 
     let mut live = 0;
     for entry in filtered.entries() {
@@ -286,14 +293,14 @@ fn filtered_weight_table_drops_stationary_types() {
 #[test]
 fn strategy_and_weight_tables_enter_the_state_digest() {
     let mut first = strategy_state(AiStrategy::TankHorde, Opponent::Average);
-    max_core::ai_begin_turn(&mut first, TeamId::RED);
-    let baseline = first.snapshot_bytes();
+    max_core::ai_begin_turn(first.state_mut(), TeamId::RED);
+    let baseline = first.snapshot().snapshot_bytes();
 
     let mut second = first.clone();
-    second.ai.players[TeamId::RED.0 as usize].strategy = AiStrategy::Air;
-    second.ai.players[TeamId::RED.0 as usize]
+    second.state_mut().ai.players[TeamId::RED.0 as usize].strategy = AiStrategy::Air;
+    second.state_mut().ai.players[TeamId::RED.0 as usize]
         .weight_table_tanks
         .clear();
 
-    assert_ne!(baseline, second.snapshot_bytes());
+    assert_ne!(baseline, second.snapshot().snapshot_bytes());
 }

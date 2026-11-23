@@ -19,30 +19,35 @@ use max_core::geo::Point;
 use max_core::power;
 use max_core::production::{self, BuildError, ProductionEventKind, ProductionManager};
 use max_core::team::{TeamId, TeamKind};
-use max_core::{GameState, TeamClan, TeamUnits};
+use max_core::universe::GameUniverse;
+use max_core::{TeamClan, TeamUnits};
 
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+fn state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
-fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> max_core::UnitId {
+fn spawn(state: &mut GameUniverse, unit_type: UnitType, grid: Point) -> max_core::UnitId {
     state
         .spawn_unit(unit_type, TeamId::RED, grid, 0)
         .expect("unit")
 }
 
 /// `Training Hall` factory at (12,11) and a raw storage at (12,12): one complex.
-fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_core::UnitId) {
+fn factory_with_raw(state: &mut GameUniverse, raw: i16) -> (max_core::UnitId, max_core::UnitId) {
     let factory = spawn(state, UnitType::TrainingHall, Point::new(12, 11));
     let dump = spawn(state, UnitType::MaterialStorage, Point::new(12, 13));
     state.unit_mut(dump).expect("MaterialStorage").storage = raw;
 
     assert_eq!(
-        state.unit(factory).expect("factory").complex,
-        state.unit(dump).expect("MaterialStorage").complex,
+        state.snapshot().unit(factory).expect("factory").complex,
+        state
+            .snapshot()
+            .unit(dump)
+            .expect("MaterialStorage")
+            .complex,
         "завод и MaterialStorage — один комплекс"
     );
 
@@ -50,7 +55,7 @@ fn factory_with_raw(state: &mut GameState, raw: i16) -> (max_core::UnitId, max_c
 }
 
 /// `POWGEN` (+1 power) and `FDUMP` with fuel — a power producer.
-fn add_power(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
+fn add_power(state: &mut GameUniverse) -> (max_core::UnitId, max_core::UnitId) {
     let generator = spawn(state, UnitType::PowerGenerator, Point::new(14, 11));
     let fuel = spawn(state, UnitType::FuelStorage, Point::new(14, 12));
     state.unit_mut(fuel).expect("fuel dump").storage = 50;
@@ -58,21 +63,23 @@ fn add_power(state: &mut GameState) -> (max_core::UnitId, max_core::UnitId) {
 }
 
 /// `HABITAT` (+3 workers; it does not consume power itself).
-fn add_workers(state: &mut GameState) -> max_core::UnitId {
+fn add_workers(state: &mut GameUniverse) -> max_core::UnitId {
     spawn(state, UnitType::Habitat, Point::new(11, 12))
 }
 
-fn production_turn(state: &mut GameState) -> Vec<max_core::ProductionEvent> {
+fn production_turn(state: &mut GameUniverse) -> Vec<max_core::ProductionEvent> {
     state.manage_economy(TeamId::RED);
-    production::progress_build_state(state, TeamId::RED)
+    production::progress_build_state(state.state_mut(), TeamId::RED)
 }
 
-fn count_type(state: &GameState, unit_type: UnitType) -> usize {
+fn count_type(state: &GameUniverse, unit_type: UnitType) -> usize {
     state
+        .snapshot()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
             state
+                .snapshot()
                 .unit(*id)
                 .is_some_and(|unit| unit.unit_type == unit_type)
         })
@@ -88,7 +95,7 @@ fn factory_start_is_refused_without_power() {
     let mut state = state();
     let (factory, _dump) = factory_with_raw(&mut state, 20);
 
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
 
     // `Cargo_GetNetProduction(TRAINHAL)` = raw 1 + power 1 + life 1. There is no
@@ -103,7 +110,7 @@ fn factory_start_is_refused_without_power() {
     assert_eq!(manager.queue(factory), vec![UnitType::Infantry]);
     drop(manager);
 
-    let unit = state.unit(factory).expect("factory");
+    let unit = state.snapshot().unit(factory).expect("factory");
     assert_eq!(unit.build_time, 0, "очередь не стартует");
     assert_ne!(unit.orders, UnitOrder::Build);
 }
@@ -116,7 +123,7 @@ fn factory_start_is_refused_without_workers() {
 
     // Power is enough (POWGEN +1, TRAINHAL −1), but `Training Hall` also requires
     // a worker (`Cargo_GetLifeConsumptionRate(TRAINHAL) = 1`).
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     assert_eq!(
         manager.commit(factory),
@@ -127,7 +134,7 @@ fn factory_start_is_refused_without_workers() {
 
     add_workers(&mut state);
 
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager
         .commit(factory)
@@ -141,7 +148,7 @@ fn factory_start_is_refused_without_raw_materials() {
     add_power(&mut state);
     add_workers(&mut state);
 
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     assert_eq!(
         manager.commit(factory),
@@ -166,21 +173,30 @@ fn power_deficit_powers_off_research_center_before_the_mine() {
     // `DeployUnit` puts RESEARCH in POWER_OFF; turn it on manually.
     let _ = state.set_order(research, UnitOrder::PowerOn, UnitOrderState::Init);
 
-    let complex = state.unit(mine).expect("mine").complex.expect("complex");
+    let complex = state
+        .snapshot()
+        .unit(mine)
+        .expect("mine")
+        .complex
+        .expect("complex");
     for id in [research, generator, fuel] {
-        assert_eq!(state.unit(id).expect("unit").complex, Some(complex));
+        assert_eq!(
+            state.snapshot().unit(id).expect("unit").complex,
+            Some(complex)
+        );
     }
 
     // Demand: mine 1 + RESEARCH 1 = 2; the generator gives 1 → deficit 1.
-    let outcome = power::optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+    let outcome =
+        power::optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, true);
 
     assert_eq!(
-        state.unit(research).expect("research").orders,
+        state.snapshot().unit(research).expect("research").orders,
         UnitOrder::PowerOff,
         "C++ `OptimizeAuxilaryIndustry(RESEARCH)` — первый на отключение"
     );
     assert_eq!(
-        state.unit(mine).expect("mine").orders,
+        state.snapshot().unit(mine).expect("mine").orders,
         UnitOrder::PowerOn,
         "шахта отключается только после RESEARCH (`OptimizeMiningIndustry`)"
     );
@@ -197,15 +213,24 @@ fn power_deficit_powers_off_research_center_before_the_mine() {
 fn power_deficit_powers_off_the_mine_when_no_other_consumer_is_left() {
     let mut state = state();
     let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
-    let complex = state.unit(mine).expect("mine").complex.expect("complex");
+    let complex = state
+        .snapshot()
+        .unit(mine)
+        .expect("mine")
+        .complex
+        .expect("complex");
 
     // The mine has no power producer: it is on (`ORDER_POWER_ON`),
     // so its own consumption 1 > 0. C++ `OptimizeMiningIndustry`
     // turns the mine off (`production_manager.cpp:729-774`).
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::Init);
-    let outcome = power::optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+    let outcome =
+        power::optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, true);
 
-    assert_eq!(state.unit(mine).expect("mine").orders, UnitOrder::PowerOff);
+    assert_eq!(
+        state.snapshot().unit(mine).expect("mine").orders,
+        UnitOrder::PowerOff
+    );
     assert_eq!(outcome.powered_off, vec![mine]);
     let message = outcome.message.expect("message");
     assert!(message.contains("More power needed, Mining Station turned off."));
@@ -219,32 +244,40 @@ fn generators_are_switched_on_and_off_automatically() {
     let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 11));
     state.unit_mut(fuel).expect("fuel").storage = 50;
 
-    let complex = state.unit(mine).expect("mine").complex.expect("complex");
-    assert_eq!(state.unit(generator).expect("gen").complex, Some(complex));
+    let complex = state
+        .snapshot()
+        .unit(mine)
+        .expect("mine")
+        .complex
+        .expect("complex");
+    assert_eq!(
+        state.snapshot().unit(generator).expect("gen").complex,
+        Some(complex)
+    );
 
     // POWGEN is off after `DeployUnit`; the mine requires 1 power — the generator
     // turns on automatically (`OptimizePowerProduction`).
     assert_eq!(
-        state.unit(generator).expect("generator").orders,
+        state.snapshot().unit(generator).expect("generator").orders,
         UnitOrder::PowerOff
     );
-    power::optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    power::optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert_eq!(
-        state.unit(generator).expect("generator").orders,
+        state.snapshot().unit(generator).expect("generator").orders,
         UnitOrder::PowerOn,
         "генератор включён под спрос шахты"
     );
 
     // If there is no fuel, the generator turns off, and the mine — as a consumer.
     state.unit_mut(fuel).expect("fuel").storage = 0;
-    power::optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    power::optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert_eq!(
-        state.unit(generator).expect("generator").orders,
+        state.snapshot().unit(generator).expect("generator").orders,
         UnitOrder::PowerOff,
         "без топлива генератор не работает (`CheckPowerNeed`)"
     );
     assert_eq!(
-        state.unit(mine).expect("mine").orders,
+        state.snapshot().unit(mine).expect("mine").orders,
         UnitOrder::PowerOff,
         "шахта без энергии выключается"
     );
@@ -254,12 +287,15 @@ fn generators_are_switched_on_and_off_automatically() {
     // only producers), so we turn the mine on as the player.
     state.unit_mut(fuel).expect("fuel").storage = 50;
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::Init);
-    power::optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    power::optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert_eq!(
-        state.unit(generator).expect("generator").orders,
+        state.snapshot().unit(generator).expect("generator").orders,
         UnitOrder::PowerOn
     );
-    assert_eq!(state.unit(mine).expect("mine").orders, UnitOrder::PowerOn);
+    assert_eq!(
+        state.snapshot().unit(mine).expect("mine").orders,
+        UnitOrder::PowerOn
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -273,15 +309,18 @@ fn running_build_pauses_on_power_loss_and_resumes() {
     let (_generator, fuel) = add_power(&mut state);
     add_workers(&mut state);
 
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("power/workers/raw enough");
     drop(manager);
 
     // Turn 1: paid, build_time 2 → 1.
     production_turn(&mut state);
-    assert_eq!(state.unit(factory).expect("factory").build_time, 1);
-    assert_eq!(state.unit(dump).expect("dump").storage, 19);
+    assert_eq!(
+        state.snapshot().unit(factory).expect("factory").build_time,
+        1
+    );
+    assert_eq!(state.snapshot().unit(dump).expect("dump").storage, 19);
 
     // Fuel ran out — the power producer cannot work.
     state.unit_mut(fuel).expect("fuel").storage = 0;
@@ -294,13 +333,13 @@ fn running_build_pauses_on_power_loss_and_resumes() {
         "стройка встала из-за энергии: {events:?}"
     );
     assert_eq!(
-        state.unit(factory).expect("factory").build_time,
+        state.snapshot().unit(factory).expect("factory").build_time,
         1,
         "пауза не двигает build_time"
     );
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
     assert_eq!(
-        state.unit(dump).expect("dump").storage,
+        state.snapshot().unit(dump).expect("dump").storage,
         19,
         "пауза не списывает сырьё"
     );
@@ -310,6 +349,7 @@ fn running_build_pauses_on_power_loss_and_resumes() {
     // a "selected" unit, so the form "More power needed, X turned off."
     // with the "Adjustments made:" prefix.
     let message = state
+        .state_mut()
         .take_industry_message()
         .expect("сообщение о нехватке энергии");
     assert!(
@@ -335,12 +375,12 @@ fn commit_message_names_the_missing_power() {
     let mut state = state();
     let (factory, _dump) = factory_with_raw(&mut state, 20);
 
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     assert_eq!(manager.commit(factory), Err(BuildError::NotEnoughPower));
     drop(manager);
 
-    let message = state.take_industry_message().expect("message");
+    let message = state.state_mut().take_industry_message().expect("message");
     assert_eq!(message, "Cannot turn Training Hall on, power needed.");
 }
 
@@ -350,7 +390,7 @@ fn commit_message_names_the_missing_power() {
 
 #[test]
 fn energy_state_is_part_of_snapshot_and_crc() {
-    fn build(generator_on: bool) -> GameState {
+    fn build(generator_on: bool) -> GameUniverse {
         let mut state = state();
         let _ = factory_with_raw(&mut state, 20);
         let (generator, _fuel) = add_power(&mut state);
@@ -365,21 +405,24 @@ fn energy_state_is_part_of_snapshot_and_crc() {
     let off = build(false);
 
     assert_ne!(
-        on.snapshot_bytes(),
-        off.snapshot_bytes(),
+        on.snapshot().snapshot_bytes(),
+        off.snapshot().snapshot_bytes(),
         "приказ генератора входит в снапшот"
     );
     assert_ne!(
-        max_core::crc::state_digest(&on),
-        max_core::crc::state_digest(&off),
+        max_core::crc::state_digest(on.state()),
+        max_core::crc::state_digest(off.state()),
         "CRC состояния меняется вместе с энергетикой"
     );
 
     let same = build(true);
-    assert_eq!(on.snapshot_bytes(), same.snapshot_bytes());
     assert_eq!(
-        max_core::crc::state_digest(&on),
-        max_core::crc::state_digest(&same)
+        on.snapshot().snapshot_bytes(),
+        same.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        max_core::crc::state_digest(on.state()),
+        max_core::crc::state_digest(same.state())
     );
 }
 
@@ -392,14 +435,17 @@ fn optimization_is_deterministic() {
         add_workers(&mut state);
         spawn(&mut state, UnitType::ResearchCentre, Point::new(9, 12));
 
-        let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+        let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
         manager.enqueue(factory, UnitType::Infantry).expect("queue");
         let _ = manager.commit(factory);
         drop(manager);
 
         production_turn(&mut state);
         production_turn(&mut state);
-        (state.snapshot_bytes(), max_core::crc::state_digest(&state))
+        (
+            state.snapshot().snapshot_bytes(),
+            max_core::crc::state_digest(state.state()),
+        )
     }
 
     assert_eq!(run(), run(), "два прогона энергии совпадают");

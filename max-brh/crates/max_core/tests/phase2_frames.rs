@@ -31,7 +31,7 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
             )
             .expect("explosion spawns");
 
-        let max = state.unit(explosion).unwrap().image_index_max;
+        let max = state.snapshot().unit(explosion).unwrap().image_index_max;
         assert_eq!(max, frames::image_index_max(UnitType::LandExplosion, 0));
         assert_eq!(max, 13, "D_LNDEXPD: 14 frames");
 
@@ -41,11 +41,11 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
 
         for tick in 0..64 {
             state.tick();
-            match state.unit(explosion) {
+            match state.snapshot().unit(explosion) {
                 Some(effect) => {
                     observed.push(effect.image_index);
                     assert!(effect.image_index <= max);
-                    snapshots.push(state.snapshot_bytes());
+                    snapshots.push(state.snapshot().snapshot_bytes());
                 }
                 None => {
                     removed_at = Some(tick);
@@ -90,10 +90,10 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
 #[test]
 fn sentry_animation_cycles_and_wraps() {
     let mut state = game();
-    state.settings_effects = true;
+    state.state_mut().settings_effects = true;
     let radar = spawn(&mut state, UnitType::Radar, TeamId::RED, Point::new(10, 10));
     {
-        let unit = state.unit(radar).unwrap();
+        let unit = state.snapshot().unit(radar).unwrap();
         assert_eq!(unit.orders, UnitOrder::Sentry);
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert_eq!(unit.image_base, 0);
@@ -108,7 +108,7 @@ fn sentry_animation_cycles_and_wraps() {
     let mut frames_seen = Vec::new();
     for _ in 0..17 {
         state.tick();
-        frames_seen.push(state.unit(radar).unwrap().image_index);
+        frames_seen.push(state.snapshot().unit(radar).unwrap().image_index);
     }
 
     assert_eq!(
@@ -119,10 +119,10 @@ fn sentry_animation_cycles_and_wraps() {
 
     // Effects off — the frame stays at the base.
     let mut quiet = game();
-    quiet.settings_effects = false;
+    quiet.state_mut().settings_effects = false;
     let radar = spawn(&mut quiet, UnitType::Radar, TeamId::RED, Point::new(10, 10));
     ticks(&mut quiet, 6);
-    assert_eq!(quiet.unit(radar).unwrap().image_index, 0);
+    assert_eq!(quiet.snapshot().unit(radar).unwrap().image_index, 0);
 }
 
 /// Frame headers from `SC_UNITS` are applied when the unit is deployed:
@@ -132,7 +132,7 @@ fn deployed_frames_match_the_resource_table() {
     let mut state = game();
 
     let tank = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(10, 10));
-    let tank_unit = state.unit(tank).unwrap();
+    let tank_unit = state.snapshot().unit(tank).unwrap();
     assert_ne!(tank_unit.flags & TURRET_SPRITE, 0);
     assert_eq!(tank_unit.image_base, 0);
     assert_eq!(tank_unit.image_index, 0);
@@ -146,7 +146,7 @@ fn deployed_frames_match_the_resource_table() {
         TeamId::RED,
         Point::new(12, 10),
     );
-    let scanner_unit = state.unit(scanner).unwrap();
+    let scanner_unit = state.snapshot().unit(scanner).unwrap();
     assert_ne!(scanner_unit.flags & SPINNING_TURRET, 0);
     assert_eq!(scanner_unit.turret_image_base, 8);
     assert_eq!(scanner_unit.turret_image_index, 8);
@@ -157,7 +157,7 @@ fn deployed_frames_match_the_resource_table() {
 
     for infantry in [UnitType::Infantry, UnitType::Infiltrator] {
         let id = spawn(&mut state, infantry, TeamId::RED, Point::new(14, 10));
-        let unit = state.unit(id).unwrap();
+        let unit = state.snapshot().unit(id).unwrap();
         assert_eq!(unit.image_index_max, 103, "{infantry:?}");
     }
 
@@ -170,12 +170,15 @@ fn deployed_frames_match_the_resource_table() {
             0,
         )
         .unwrap();
-    assert_eq!(state.unit(explosion).unwrap().image_index_max, 27);
+    assert_eq!(
+        state.snapshot().unit(explosion).unwrap().image_index_max,
+        27
+    );
 
     // Frame counters are presentation fields: the canonical simulation digest
     // (`snapshot_bytes`) deliberately does not carry them; animation determinism
     // is checked by the frame sequences above instead.
-    let before = crc::state_checksum(&state);
+    let before = crc::state_checksum(state.state());
     state.unit_mut(tank).unwrap().image_index = 3;
-    assert_eq!(before, crc::state_checksum(&state));
+    assert_eq!(before, crc::state_checksum(state.state()));
 }

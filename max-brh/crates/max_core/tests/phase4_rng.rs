@@ -5,7 +5,7 @@
 //! state**:
 //!
 //! * V70 does not store the `Randomizer` state — the state is re-seeded from the
-//!   header (`GameState::load_state`, intentional divergence from C++, see the
+//!   header (`GameUniverse::load_state`, intentional divergence from C++, see the
 //!   `load_state` documentation); a save/load cycle therefore restarts the
 //!   stream, and two loads of the same file produce the same sequence;
 //! * the RNG state is part of the canonical replay digest at fixed offsets, so a
@@ -19,38 +19,44 @@
 use max_core::crc::{replay_digest_bytes, state_digest};
 use max_core::rng::{Randomizer, DEFAULT_SEED};
 use max_core::save::SaveFile;
-use max_core::GameState;
+use max_core::universe::GameUniverse;
 
 /// `max-original/SAVE1.CAM` — header `rng_seed = 0x32A61291`.
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 /// `max-original/SAVE2.CAM` — header `rng_seed = 0x329B8D8E`.
 const SAVE2: &[u8] = include_bytes!("data/save2_v70.cam");
 
-fn loaded_state(source: &[u8]) -> GameState {
-    GameState::from_save(&SaveFile::parse(source).expect("reference save parses"))
+fn loaded_state(source: &[u8]) -> GameUniverse {
+    GameUniverse::from_save(&SaveFile::parse(source).expect("reference save parses"))
 }
 
 #[test]
 fn load_reseeds_the_generator_from_the_header() {
-    // `GameState::load_state`: `self.rng = Randomizer::new(save.header.rng_seed)`.
+    // `GameUniverse::load_state`: `self.rng = Randomizer::new(save.header.rng_seed)`.
     let state1 = loaded_state(SAVE1);
-    assert_eq!(state1.rng.state(), Randomizer::new(0x32A6_1291).state());
+    assert_eq!(
+        state1.state().rng.state(),
+        Randomizer::new(0x32A6_1291).state()
+    );
 
     let state2 = loaded_state(SAVE2);
-    assert_eq!(state2.rng.state(), Randomizer::new(0x329B_8D8E).state());
-    assert_ne!(state1.rng.state(), state2.rng.state());
+    assert_eq!(
+        state2.state().rng.state(),
+        Randomizer::new(0x329B_8D8E).state()
+    );
+    assert_ne!(state1.state().rng.state(), state2.state().rng.state());
 }
 
 #[test]
 fn save_metadata_keeps_the_header_seed() {
     let state = loaded_state(SAVE1);
-    assert_eq!(state.save_meta.rng_seed, 0x32A6_1291);
+    assert_eq!(state.state().save_meta.rng_seed, 0x32A6_1291);
 
     // The seed survives the "state -> file -> state" cycle.
-    let bytes = state.to_save_bytes().expect("writes");
-    let reloaded = GameState::from_save(&SaveFile::parse(&bytes).expect("parses"));
-    assert_eq!(reloaded.save_meta.rng_seed, 0x32A6_1291);
-    assert_eq!(reloaded.rng.state(), state.rng.state());
+    let bytes = state.state().to_save_bytes().expect("writes");
+    let reloaded = GameUniverse::from_save(&SaveFile::parse(&bytes).expect("parses"));
+    assert_eq!(reloaded.state().save_meta.rng_seed, 0x32A6_1291);
+    assert_eq!(reloaded.state().rng.state(), state.state().rng.state());
 }
 
 #[test]
@@ -60,8 +66,8 @@ fn two_loads_produce_the_same_stream() {
 
     for index in 0..1000 {
         assert_eq!(
-            first.rng.next_u32(),
-            second.rng.next_u32(),
+            first.state_mut().rng.next_u32(),
+            second.state_mut().rng.next_u32(),
             "value {index} of the stream diverged"
         );
     }
@@ -74,15 +80,15 @@ fn v70_does_not_store_the_generator_state() {
     // stream from the seed again — this is the documented port behavior.
     let mut state = loaded_state(SAVE1);
     for _ in 0..17 {
-        let _ = state.rng.next_u32();
+        let _ = state.state_mut().rng.next_u32();
     }
-    let advanced = state.rng.state();
+    let advanced = state.state().rng.state();
     assert_ne!(advanced, Randomizer::new(0x32A6_1291).state());
 
-    let bytes = state.to_save_bytes().expect("writes");
-    let reloaded = GameState::from_save(&SaveFile::parse(&bytes).expect("parses"));
+    let bytes = state.state().to_save_bytes().expect("writes");
+    let reloaded = GameUniverse::from_save(&SaveFile::parse(&bytes).expect("parses"));
     assert_eq!(
-        reloaded.rng.state(),
+        reloaded.state().rng.state(),
         Randomizer::new(0x32A6_1291).state(),
         "the stream must restart from the header seed"
     );
@@ -91,12 +97,12 @@ fn v70_does_not_store_the_generator_state() {
 #[test]
 fn seed_drives_the_replay_digest() {
     let mut state = loaded_state(SAVE1);
-    let reference = replay_digest_bytes(&state);
+    let reference = replay_digest_bytes(state.state());
 
     // The RNG state is 4 little-endian words after the unit-id counter.
     let mut reseeded = state.clone();
-    reseeded.rng.set_seed(0x32A6_1292);
-    let digest = replay_digest_bytes(&reseeded);
+    reseeded.state_mut().rng.set_seed(0x32A6_1292);
+    let digest = replay_digest_bytes(reseeded.state());
     assert_ne!(digest, reference, "a different seed must change the digest");
     assert_ne!(
         &digest[24..40],
@@ -105,10 +111,13 @@ fn seed_drives_the_replay_digest() {
     );
 
     // Restoring the exact state restores the digest.
-    state.rng.set_state(reseeded.rng.state());
-    assert_ne!(replay_digest_bytes(&state), reference);
-    state.rng.set_seed(0x32A6_1291);
-    assert_eq!(replay_digest_bytes(&state), reference);
+    state
+        .state_mut()
+        .rng
+        .set_state(reseeded.state().rng.state());
+    assert_ne!(replay_digest_bytes(state.state()), reference);
+    state.state_mut().rng.set_seed(0x32A6_1291);
+    assert_eq!(replay_digest_bytes(state.state()), reference);
 }
 
 #[test]
@@ -119,12 +128,18 @@ fn ticks_are_deterministic_with_the_loaded_seed() {
     for _ in 0..20 {
         first.tick();
         second.tick();
-        assert_eq!(first.rng.state(), second.rng.state());
+        assert_eq!(first.state().rng.state(), second.state().rng.state());
     }
 
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(replay_digest_bytes(&first), replay_digest_bytes(&second));
-    assert_eq!(state_digest(&first), state_digest(&second));
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        replay_digest_bytes(first.state()),
+        replay_digest_bytes(second.state())
+    );
+    assert_eq!(state_digest(first.state()), state_digest(second.state()));
 }
 
 #[test]
@@ -136,8 +151,8 @@ fn a_new_game_uses_the_cpp_default_seed() {
         Randomizer::new(DEFAULT_SEED).state()
     );
 
-    let state = GameState::new();
-    assert_eq!(state.rng.state(), Randomizer::new(0).state());
+    let state = GameUniverse::default();
+    assert_eq!(state.state().rng.state(), Randomizer::new(0).state());
 }
 
 #[test]
@@ -165,10 +180,10 @@ fn generator_state_round_trip_in_a_loaded_game() {
     // `Randomizer::from_state` is the save/restore route; the sequence after a
     // restore must continue, not restart.
     let state = loaded_state(SAVE1);
-    let snapshot = state.rng.state();
+    let snapshot = state.state().rng.state();
 
     let mut restored = Randomizer::from_state(snapshot);
-    let mut original = state.rng;
+    let mut original = state.state().rng;
     for index in 0..64 {
         assert_eq!(
             restored.next_u32(),

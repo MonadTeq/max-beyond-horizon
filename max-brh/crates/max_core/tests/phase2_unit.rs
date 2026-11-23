@@ -25,7 +25,7 @@ const TANK_SPEED: u16 = 6;
 /// runs are bit-identical (D).
 #[test]
 fn move_spends_speed_and_restores_await_deterministically() {
-    fn run() -> max_core::GameState {
+    fn run() -> max_core::universe::GameUniverse {
         let mut state = game();
         let unit = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(10, 10));
         order_move(&mut state, unit, Point::new(14, 10));
@@ -33,13 +33,14 @@ fn move_spends_speed_and_restores_await_deterministically() {
         assert!(
             run_until(&mut state, 64, |state| {
                 state
+                    .snapshot()
                     .unit(unit)
                     .is_some_and(|unit| unit.grid == Point::new(14, 10) && !unit.has_move_order())
             }),
             "tank did not reach the target in 64 ticks"
         );
 
-        let unit = state.unit(unit).expect("unit");
+        let unit = state.snapshot().unit(unit).expect("unit");
         assert_eq!(unit.orders, UnitOrder::Await);
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert_eq!(
@@ -56,15 +57,21 @@ fn move_spends_speed_and_restores_await_deterministically() {
     let first = run();
     let second = run();
 
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
+    assert_eq!(
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
     );
     assert_ne!(
-        crc::state_checksum(&first),
-        crc::state_checksum(&game()),
+        crc::state_checksum(first.state()),
+        crc::state_checksum(game().state()),
         "the scenario must change the state CRC"
     );
 }
@@ -76,16 +83,17 @@ fn move_spends_speed_and_restores_await_deterministically() {
 fn movement_readiness_recomputes_shots() {
     let mut state = game();
     let unit = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(10, 10));
-    assert_eq!(state.unit(unit).unwrap().shots, 2, "TANK rounds");
+    assert_eq!(state.snapshot().unit(unit).unwrap().shots, 2, "TANK rounds");
 
     order_move(&mut state, unit, Point::new(14, 10));
     assert!(run_until(&mut state, 64, |state| {
         state
+            .snapshot()
             .unit(unit)
             .is_some_and(|unit| unit.grid == Point::new(14, 10) && !unit.has_move_order())
     }));
 
-    let unit = state.unit(unit).expect("unit");
+    let unit = state.snapshot().unit(unit).expect("unit");
     assert_eq!(unit.speed, 2);
     assert_eq!(
         unit.shots, 0,
@@ -99,7 +107,7 @@ fn movement_readiness_recomputes_shots() {
 /// `RELOAD` refills the tank's magazine from its cargo (`UnitInfo::Reload`).
 #[test]
 fn fire_consumes_ammo_and_reload_restores_it() {
-    fn run() -> max_core::GameState {
+    fn run() -> max_core::universe::GameUniverse {
         let mut state = game();
         let shooter = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(10, 10));
         let target = spawn(
@@ -112,17 +120,20 @@ fn fire_consumes_ammo_and_reload_restores_it() {
         order_fire(&mut state, shooter, Point::new(13, 10));
         assert!(
             run_until(&mut state, 40, |state| {
-                state.unit(target).is_some_and(|unit| unit.hits < TANK_HITS)
+                state
+                    .snapshot()
+                    .unit(target)
+                    .is_some_and(|unit| unit.hits < TANK_HITS)
             }),
             "the shot never happened"
         );
 
-        let shooter_unit = state.unit(shooter).expect("shooter");
+        let shooter_unit = state.snapshot().unit(shooter).expect("shooter");
         assert_eq!(shooter_unit.ammo, TANK_AMMO - 1);
         assert_eq!(shooter_unit.shots, 1, "one of two rounds spent");
         assert_eq!(shooter_unit.live_attack, 0, "the attack is finished");
         assert_eq!(
-            state.unit(target).unwrap().hits,
+            state.snapshot().unit(target).unwrap().hits,
             TANK_HITS - 6,
             "TANK attack 16 - TANK armor 10"
         );
@@ -142,19 +153,28 @@ fn fire_consumes_ammo_and_reload_restores_it() {
         state.set_order(truck, UnitOrder::Reload, UnitOrderState::Init);
         ticks(&mut state, 2);
 
-        assert_eq!(state.unit(shooter).unwrap().ammo, TANK_AMMO);
-        assert_eq!(state.unit(truck).unwrap().storage, 4);
-        assert_eq!(state.unit(truck).unwrap().orders, UnitOrder::Await);
+        assert_eq!(state.snapshot().unit(shooter).unwrap().ammo, TANK_AMMO);
+        assert_eq!(state.snapshot().unit(truck).unwrap().storage, 4);
+        assert_eq!(
+            state.snapshot().unit(truck).unwrap().orders,
+            UnitOrder::Await
+        );
         state
     }
 
     let first = run();
     let second = run();
 
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
+    assert_eq!(
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
     );
 }

@@ -31,7 +31,7 @@ use max_core::save::{
 use max_core::team::{TeamId, TeamInfoUi, TeamKind};
 use max_core::unit::{UnitId, UnitListKind, UnitPath};
 use max_core::unit_values::{ATTRIB_COUNT, UNIT_COUNT};
-use max_core::GameState;
+use max_core::universe::GameUniverse;
 
 /// `max-original/SAVE1.CAM` — the training campaign "Islands in the Sun".
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
@@ -585,10 +585,10 @@ fn every_unit_field_survives_a_write_cycle() {
 
 /// Builds a save of a fresh game with one unit of each path kind.
 fn save_with_paths() -> Vec<u8> {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.player_team = TeamId::RED;
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().player_team = TeamId::RED;
 
     let tank = state
         .spawn_unit(
@@ -644,7 +644,7 @@ fn save_with_paths() -> Vec<u8> {
             direction_y: -4,
         }));
 
-    state.to_save_bytes().expect("writes")
+    state.state().to_save_bytes().expect("writes")
 }
 
 #[test]
@@ -860,10 +860,10 @@ fn invalid_enum_values_are_rejected() {
 
 /// A one-unit save with a message log entry that has a recognizable marker.
 fn marker_save() -> (Vec<u8>, [u8; 11]) {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.player_team = TeamId::RED;
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().player_team = TeamId::RED;
     let tank = state
         .spawn_unit(
             max_core::enums::UnitType::Tank,
@@ -872,8 +872,10 @@ fn marker_save() -> (Vec<u8>, [u8; 11]) {
             0,
         )
         .expect("tank");
-    state.push_message(0, "PHASE4MARK", Point::new(10, 10), Some(tank));
-    let bytes = state.to_save_bytes().expect("writes");
+    state
+        .state_mut()
+        .push_message(0, "PHASE4MARK", Point::new(10, 10), Some(tank));
+    let bytes = state.state().to_save_bytes().expect("writes");
     (bytes, *b"PHASE4MARK\0")
 }
 
@@ -1154,10 +1156,13 @@ fn spawn_after_v70_load_does_not_collide_with_loaded_ids() {
         .max()
         .expect("SAVE2 has units");
 
-    let mut state = GameState::from_save(&save);
-    let before = state.unit_count();
+    let mut state = GameUniverse::from_save(&save);
+    let before = state.snapshot().unit_count();
     let loaded_first = UnitId::new(TeamId::RED, 1);
-    assert!(state.unit(loaded_first).is_some(), "SAVE2 contains V70 id 1");
+    assert!(
+        state.snapshot().unit(loaded_first).is_some(),
+        "SAVE2 contains V70 id 1"
+    );
 
     let id = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(60, 60), 0)
@@ -1169,20 +1174,26 @@ fn spawn_after_v70_load_does_not_collide_with_loaded_ids() {
         loaded_max + 1,
         "the object index continues after the highest loaded one"
     );
-    assert_ne!(id, loaded_first, "the new id must not collide with V70 id 1");
+    assert_ne!(
+        id, loaded_first,
+        "the new id must not collide with V70 id 1"
+    );
 
     // The hash and the id addressee agree: `state.unit(id)` is the new unit.
-    let unit = state.unit(id).expect("the new unit is addressable by id");
+    let unit = state
+        .snapshot()
+        .unit(id)
+        .expect("the new unit is addressable by id");
     assert_eq!(unit.id, id);
     assert_eq!(unit.team, TeamId::RED);
     assert_eq!(unit.unit_type, UnitType::Tank);
-    assert_eq!(state.unit_count(), before + 1);
+    assert_eq!(state.snapshot().unit_count(), before + 1);
 
     let unique: std::collections::BTreeSet<UnitId> =
-        state.unit_ids_in_order().into_iter().collect();
+        state.snapshot().unit_ids_in_order().into_iter().collect();
     assert_eq!(
         unique.len(),
-        state.unit_count(),
+        state.snapshot().unit_count(),
         "every live unit id is still unique"
     );
 }

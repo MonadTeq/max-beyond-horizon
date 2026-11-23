@@ -161,7 +161,10 @@ fn save1_round_trip_is_byte_identical() {
     let save = SaveFile::parse(SAVE1).expect("SAVE1.CAM разбирается целиком");
     let bytes = save.to_bytes().expect("SAVE1.CAM записывается");
     assert_eq!(bytes.len(), SAVE1.len());
-    assert_eq!(bytes, SAVE1, "запись V70 должна совпадать побайтово");
+    assert_eq!(
+        bytes, SAVE1,
+        "запись V70 должна совпадать побайтово"
+    );
 }
 
 #[test]
@@ -227,15 +230,24 @@ fn save2_sections_logs_and_two_ai_players() {
     assert_eq!(log_counts, vec![1, 1, 1, 0]);
     for entry in &save.message_logs[0] {
         // V70 writes `strlen + 1`, i.e. text with a terminating zero.
-        assert!(entry.text.last() == Some(&0), "текст с NUL на конце");
+        assert!(
+            entry.text.last() == Some(&0),
+            "текст с NUL на конце"
+        );
         assert!(!entry.text.is_empty());
         assert!(!entry.is_alert_message || entry.point != Point::ZERO || entry.unit.is_some());
     }
 
     // Two computer players — two `AiPlayer` blocks.
     assert!(save.ai_players[0].is_none());
-    assert_eq!(save.ai_players[1].as_deref().map(|ai| ai.player_team), Some(1));
-    assert_eq!(save.ai_players[2].as_deref().map(|ai| ai.player_team), Some(2));
+    assert_eq!(
+        save.ai_players[1].as_deref().map(|ai| ai.player_team),
+        Some(1)
+    );
+    assert_eq!(
+        save.ai_players[2].as_deref().map(|ai| ai.player_team),
+        Some(2)
+    );
 
     // Clans affect base values: Musashi strengthens the tank (+4 attack).
     let tank = save.team_units[0].base_values[UnitType::Tank as usize].values;
@@ -247,7 +259,10 @@ fn save2_sections_logs_and_two_ai_players() {
 fn save2_round_trip_is_byte_identical() {
     let save = SaveFile::parse(SAVE2).expect("SAVE2.CAM разбирается целиком");
     let bytes = save.to_bytes().expect("SAVE2.CAM записывается");
-    assert_eq!(bytes, SAVE2, "запись V70 должна совпадать побайтово");
+    assert_eq!(
+        bytes, SAVE2,
+        "запись V70 должна совпадать побайтово"
+    );
 }
 
 #[test]
@@ -262,8 +277,5 @@ fn truncated_files_are_rejected() {
     // An extra byte at the end is also an error (the parser must read the whole file).
     let mut extended = SAVE1.to_vec();
     extended.push(0);
-    assert_eq!(
-        SaveFile::parse(&extended),
-        Err(SaveError::TrailingBytes(1))
-    );
+    assert_eq!(SaveFile::parse(&extended), Err(SaveError::TrailingBytes(1)));
 }

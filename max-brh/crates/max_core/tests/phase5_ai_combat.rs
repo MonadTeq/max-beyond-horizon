@@ -31,7 +31,7 @@ use support::phase5::{
 /// inside the base tank's scan (4 cells) and a second green tank far away (the
 /// enemy team must keep an army, otherwise the victory check closes the match
 /// as soon as the forward units die).
-fn combat_scenario() -> (max_core::GameState, max_core::UnitId) {
+fn combat_scenario() -> (max_core::universe::GameUniverse, max_core::UnitId) {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     let red = red_base(&mut state, Point::new(8, 8), 500);
 
@@ -62,12 +62,15 @@ fn spotted_enemy_facility_triggers_an_attack() {
     let (mut state, facility) = combat_scenario();
 
     assert_eq!(
-        state.ai.players[TeamId::RED.0 as usize].spotted_units.len(),
+        state.state().ai.players[TeamId::RED.0 as usize]
+            .spotted_units
+            .len(),
         1,
         "the sentry/visibility pass must spot the facility"
     );
 
     let hits_before = state
+        .snapshot()
         .unit(facility)
         .map(|unit| unit.hits)
         .expect("facility alive");
@@ -93,7 +96,7 @@ fn spotted_enemy_facility_triggers_an_attack() {
         "the base tank must be registered in TaskDefenseReserve"
     );
 
-    let hits_after = state.unit(facility).map(|unit| unit.hits);
+    let hits_after = state.snapshot().unit(facility).map(|unit| unit.hits);
     assert!(
         hits_after.map(|hits| hits < hits_before).unwrap_or(true),
         "the facility must be damaged or destroyed (before {hits_before}, after {hits_after:?})"
@@ -121,9 +124,11 @@ fn attack_task_targets_the_enemy_team() {
                     for _ in 0..ROUND_TICKS {
                         state.tick();
 
-                        if let Some(task) = state.ai.task_manager.tasks().iter().find(|task| {
-                            task.team == TeamId::RED && matches!(task.kind, TaskKind::Attack(_))
-                        }) {
+                        if let Some(task) =
+                            state.state().ai.task_manager.tasks().iter().find(|task| {
+                                task.team == TeamId::RED && matches!(task.kind, TaskKind::Attack(_))
+                            })
+                        {
                             if let TaskKind::Attack(attack) = &task.kind {
                                 target_team = Some(attack.target_team);
                             }
@@ -170,6 +175,7 @@ fn unspotted_enemy_is_not_attacked() {
 
     // No sentry, no visibility refresh: the base tank stays `ORDER_IDLE`.
     let hits_before = state
+        .snapshot()
         .unit(facility)
         .map(|unit| unit.hits)
         .expect("facility alive");
@@ -187,7 +193,7 @@ fn unspotted_enemy_is_not_attacked() {
         "an unseen enemy must not create TaskKillUnit"
     );
     assert_eq!(
-        state.unit(facility).map(|unit| unit.hits),
+        state.snapshot().unit(facility).map(|unit| unit.hits),
         Some(hits_before),
         "the facility must stay undamaged, over={over}"
     );
@@ -202,10 +208,12 @@ fn defense_reserve_accumulates_the_base_army() {
     for site in [Point::new(8, 15), Point::new(10, 16)] {
         spawn(&mut state, UnitType::Tank, TeamId::RED, site);
         let tank = state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
                 state
+                    .snapshot()
                     .unit(*id)
                     .is_some_and(|unit| unit.team == TeamId::RED && unit.grid == site)
             })

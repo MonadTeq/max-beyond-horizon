@@ -1,5 +1,5 @@
 //! P7 end-to-end tests: CRC16, a mini C++ ⇄ Rust replay, victory/defeat on
-//! real V70 saves and loading `GameState` from V70.
+//! real V70 saves and loading `GameUniverse` from V70.
 //!
 //! Oracles: `max-cpp-port/src/{crc16.c,game_manager.cpp,winloss.cpp}`,
 //! `assets/PATCHES.RES` (`SC_T*`/`SC_S*`/`SC_C*` — mission scripts),
@@ -18,8 +18,9 @@ use max_core::setup::{
 };
 use max_core::team::{TeamId, TeamInfo, TeamKind, TeamUnits};
 use max_core::unit::UnitListKind;
+use max_core::universe::GameUniverse;
 use max_core::victory::{self, MissionCategory};
-use max_core::{GameState, Randomizer, INITIAL_UNIT_ID_COUNTER};
+use max_core::{Randomizer, INITIAL_UNIT_ID_COUNTER};
 
 const SIM_VECTORS: &str = include_str!("../../../tools/sim_vectors/vectors.txt");
 const MAP_VECTORS: &str = include_str!("../../../tools/map_vectors/vectors.txt");
@@ -202,8 +203,8 @@ fn level(value: u8) -> ResourceLevel {
 }
 
 /// Assembles the state exactly as the C++ generator does:
-/// the map with P2 parameters, two units via `GameState::spawn_unit`, N ticks.
-fn build_replay_state(replay: &ReplayVector) -> GameState {
+/// the map with P2 parameters, two units via `GameUniverse::spawn_unit`, N ticks.
+fn build_replay_state(replay: &ReplayVector) -> GameUniverse {
     let case = map_vector_case(MAP_VECTORS, &replay.case);
     assert_eq!(case.seed, replay.seed);
     assert_eq!(case.levels, replay.levels);
@@ -233,8 +234,8 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
     let mut rng = Randomizer::new(replay.seed);
     let output = generate_map(&mut setup, &surface, &mut rng);
 
-    let mut state = GameState::new();
-    state.map = output.map;
+    let mut state = GameUniverse::default();
+    state.state_mut().map = output.map;
 
     // Teams: red and blue are humans, gray/green do not play, ALIEN is a computer.
     let kinds = [
@@ -244,24 +245,24 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
         TeamKind::None,
     ];
     for (team, kind) in kinds.iter().enumerate() {
-        state.teams[team] = TeamInfo::new();
-        state.teams[team].team_type = *kind;
-        state.team_units[team] = TeamUnits::with_clan(TeamClan::Random);
+        state.state_mut().teams[team] = TeamInfo::new();
+        state.state_mut().teams[team].team_type = *kind;
+        state.state_mut().team_units[team] = TeamUnits::with_clan(TeamClan::Random);
     }
-    state.teams[4] = TeamInfo::new();
-    state.teams[4].team_type = TeamKind::Computer;
+    state.state_mut().teams[4] = TeamInfo::new();
+    state.state_mut().teams[4].team_type = TeamKind::Computer;
 
-    state.rng = rng;
-    state.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
-    state.game_state = max_core::enums::GameStateType::InGame;
+    state.state_mut().rng = rng;
+    state.state_mut().unit_id_counter = INITIAL_UNIT_ID_COUNTER;
+    state.state_mut().game_state = max_core::enums::GameStateType::InGame;
 
     // Deployment happens in phase `GAME_STATE_12_DEPLOYING_UNITS`: C++
     // `UnitsManager_DeployUnit` (`units_manager.cpp:2382-2384`) in this phase
     // does **not** zero the storage (the engine expects mission loading), so
     // ENGINEER keeps `ATTRIB_STORAGE` (40) — exactly as in
     // `tools/sim_vectors` (`deploy_unit` writes `values.storage`).
-    let deploy_state = state.game_state;
-    state.game_state = max_core::enums::GameStateType::DeployingUnits;
+    let deploy_state = state.state().game_state;
+    state.state_mut().game_state = max_core::enums::GameStateType::DeployingUnits;
 
     for (unit_type, team, x, y) in &replay.deploys {
         let unit_type = UnitType::try_from(*unit_type).expect("unit type");
@@ -270,7 +271,7 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
             .expect("unit deploys");
     }
 
-    state.game_state = deploy_state;
+    state.state_mut().game_state = deploy_state;
 
     for _ in 0..replay.ticks {
         state.tick();
@@ -287,7 +288,7 @@ fn build_replay_state(replay: &ReplayVector) -> GameState {
 fn mini_replay_matches_cpp_digest_bit_for_bit() {
     let replay = replay_vector();
     let state = build_replay_state(&replay);
-    let digest = crc::replay_digest_bytes(&state);
+    let digest = crc::replay_digest_bytes(state.state());
 
     assert_eq!(
         digest,
@@ -297,8 +298,8 @@ fn mini_replay_matches_cpp_digest_bit_for_bit() {
         replay.digest.len()
     );
     assert_eq!(
-        crc::replay_digest_crc(&state),
-        crc::replay_digest_crc(&state.clone())
+        crc::replay_digest_crc(state.state()),
+        crc::replay_digest_crc(state.clone().state())
     );
 
     // Magic and CRC at the end.
@@ -316,11 +317,17 @@ fn mini_replay_is_deterministic_over_two_runs() {
     let second = build_replay_state(&replay);
 
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
     );
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -336,11 +343,11 @@ fn network_crc_matches_cpp_vector_bytes() {
 
     let replay = replay_vector();
     let state = build_replay_state(&replay);
-    let checksum = crc::state_checksum(&state);
+    let checksum = crc::state_checksum(state.state());
 
     // `GameManager_CheckDesync` (packet 45) on the same state in C++.
     assert_eq!(checksum, replay.checksum, "packet 45 CRC mismatch");
-    assert_eq!(checksum, crc::state_checksum(&state.clone()));
+    assert_eq!(checksum, crc::state_checksum(state.clone().state()));
     // There are units in the replay, so the CRC differs from the initial value.
     assert_ne!(checksum, crc::CRC16_INITIAL);
 }
@@ -349,16 +356,18 @@ fn network_crc_matches_cpp_vector_bytes() {
 // (c) Victory/defeat on real saves
 // ---------------------------------------------------------------------------
 
-fn green_count(state: &GameState, unit_type: UnitType) -> i32 {
-    victory::count_ready_units(state, TeamId::GREEN, unit_type)
+fn green_count(state: &GameUniverse, unit_type: UnitType) -> i32 {
+    victory::count_ready_units(state.state(), TeamId::GREEN, unit_type)
 }
 
-fn destroy_all(state: &mut GameState, unit_type: UnitType) {
+fn destroy_all(state: &mut GameUniverse, unit_type: UnitType) {
     let ids: Vec<_> = state
+        .snapshot()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
             state
+                .snapshot()
                 .unit(*id)
                 .is_some_and(|unit| unit.unit_type == unit_type)
         })
@@ -375,12 +384,12 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     assert_eq!(save.header.save_game_type, FileType::Campaign);
     assert_eq!(save.header.mission_index, 1);
 
-    let mut state = GameState::from_save(&save);
-    assert_eq!(state.mission_category, MissionCategory::Campaign);
-    assert_eq!(state.mission_index, 1);
-    assert_eq!(state.player_team, TeamId::RED);
+    let mut state = GameUniverse::from_save(&save);
+    assert_eq!(state.state().mission_category, MissionCategory::Campaign);
+    assert_eq!(state.state().mission_index, 1);
+    assert_eq!(state.state().player_team, TeamId::RED);
     assert_eq!(
-        state.teams[TeamId::RED.0 as usize].team_type,
+        state.state().teams[TeamId::RED.0 as usize].team_type,
         TeamKind::Player
     );
 
@@ -397,7 +406,7 @@ fn campaign_1_real_save_evaluates_like_the_script() {
         WinLossState::Won
     };
 
-    let status = victory::evaluate_status(&state, state.turn_counter);
+    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         expected,
@@ -408,7 +417,7 @@ fn campaign_1_real_save_evaluates_like_the_script() {
     // Destroy all green research centers → red loses.
     destroy_all(&mut state, UnitType::ResearchCentre);
     assert_eq!(green_count(&state, UnitType::ResearchCentre), 0);
-    let status = victory::evaluate_status(&state, state.turn_counter);
+    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Lost
@@ -421,13 +430,13 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
     assert_eq!(save.header.save_game_type, FileType::Scenario);
     assert_eq!(save.header.mission_index, 18);
 
-    let mut state = GameState::from_save(&save);
-    assert_eq!(state.mission_category, MissionCategory::Scenario);
-    assert_eq!(state.mission_index, 18);
+    let mut state = GameUniverse::from_save(&save);
+    assert_eq!(state.state().mission_category, MissionCategory::Scenario);
+    assert_eq!(state.state().mission_index, 18);
 
     // While green has research centers — the mission continues.
     assert!(green_count(&state, UnitType::ResearchCentre) > 0);
-    let status = victory::evaluate_status(&state, state.turn_counter);
+    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Pending
@@ -436,7 +445,7 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
     destroy_all(&mut state, UnitType::ResearchCentre);
     assert_eq!(green_count(&state, UnitType::ResearchCentre), 0);
 
-    let status = victory::evaluate_status(&state, state.turn_counter);
+    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Won
@@ -450,15 +459,15 @@ fn mission_18_real_save_wins_when_green_research_centers_are_gone() {
 #[test]
 fn real_save_loads_normalized_and_ticks_deterministically() {
     let save = SaveFile::parse(SAVE1_CAMPAIGN).expect("fixture parses");
-    let mut first = GameState::from_save(&save);
-    let mut second = GameState::from_save(&save);
+    let mut first = GameUniverse::from_save(&save);
+    let mut second = GameUniverse::from_save(&save);
 
     // --- normalizations of `UnitInfo::FileLoad` / `SaveLoad_LoadFormatV70` ---
-    assert_eq!(first.unit_id_counter, INITIAL_UNIT_ID_COUNTER);
-    assert!(first.unit_count() > 0, "fixture has units");
+    assert_eq!(first.state().unit_id_counter, INITIAL_UNIT_ID_COUNTER);
+    assert!(first.snapshot().unit_count() > 0, "fixture has units");
 
-    for id in first.unit_ids_in_order() {
-        let unit = first.unit(id).expect("unit exists");
+    for id in first.snapshot().unit_ids_in_order() {
+        let unit = first.snapshot().unit(id).expect("unit exists");
         assert!(unit.build_rate >= 1, "build_rate normalized");
         assert_eq!(
             unit.ai_state_bits & (0x100 | 0x200),
@@ -477,10 +486,10 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
     }
 
     // Every unit from the file got into the cell map (otherwise `Access_*` does not see it).
-    for id in first.unit_ids_in_order() {
-        let grid = first.unit(id).expect("unit").grid;
+    for id in first.snapshot().unit_ids_in_order() {
+        let grid = first.snapshot().unit(id).expect("unit").grid;
         assert!(
-            first.units_at(grid).contains(&id),
+            first.snapshot().units_at(grid).contains(&id),
             "unit {id:?} missing from map hash at {grid:?}"
         );
     }
@@ -491,12 +500,18 @@ fn real_save_loads_normalized_and_ticks_deterministically() {
         second.tick();
     }
 
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
     );
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
+    assert_eq!(
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
 }
 
 #[test]
@@ -516,8 +531,9 @@ fn loaded_units_resolve_parent_and_enemy_references() {
     save.units[0].parent_object_index = parent_object_index;
     save.units[0].enemy_object_index = enemy_object_index;
 
-    let state = GameState::from_save(&save);
+    let state = GameUniverse::from_save(&save);
     let unit = state
+        .snapshot()
         .unit(save.units[0].info.id)
         .expect("loaded unit exists");
 
@@ -526,6 +542,7 @@ fn loaded_units_resolve_parent_and_enemy_references() {
 
     // References absent from the file (object number 0) remain empty.
     let other = state
+        .snapshot()
         .unit(save.units[1].info.id)
         .expect("loaded unit exists");
     assert_eq!(other.parent_unit, None);
@@ -535,7 +552,7 @@ fn loaded_units_resolve_parent_and_enemy_references() {
 #[test]
 fn loaded_lists_and_team_units_match_the_file() {
     let save = SaveFile::parse(SAVE1_CAMPAIGN).expect("fixture parses");
-    let state = GameState::from_save(&save);
+    let state = GameUniverse::from_save(&save);
 
     for kind in UnitListKind::ALL {
         let expected: Vec<_> = save
@@ -547,14 +564,14 @@ fn loaded_lists_and_team_units_match_the_file() {
             })
             .collect();
 
-        assert_eq!(state.unit_list(kind), expected, "list {kind:?}");
+        assert_eq!(state.snapshot().unit_list(kind), expected, "list {kind:?}");
     }
 
     let team_units = save.team_units();
     for team in 0..4 {
-        assert_eq!(state.team_units[team].gold, team_units[team].gold);
+        assert_eq!(state.state().team_units[team].gold, team_units[team].gold);
         assert_eq!(
-            state.team_units[team].complexes().len(),
+            state.state().team_units[team].complexes().len(),
             team_units[team].complexes().len()
         );
     }

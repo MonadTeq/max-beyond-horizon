@@ -26,20 +26,22 @@ use max_core::production::{self, ProductionManager};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::{TeamClan, UnitId};
 
-fn state_with_gold(gold: u32) -> max_core::GameState {
-    let mut state = max_core::GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[0].set_gold(gold);
+fn state_with_gold(gold: u32) -> max_core::universe::GameUniverse {
+    let mut state = max_core::universe::GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().team_units[0].set_gold(gold);
     state
 }
 
-fn count_type(state: &max_core::GameState, unit_type: UnitType) -> usize {
+fn count_type(state: &max_core::universe::GameUniverse, unit_type: UnitType) -> usize {
     state
+        .snapshot()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
             state
+                .snapshot()
                 .unit(*id)
                 .is_some_and(|unit| unit.unit_type == unit_type)
         })
@@ -47,7 +49,7 @@ fn count_type(state: &max_core::GameState, unit_type: UnitType) -> usize {
 }
 
 /// `TRAINHAL` order by the constructor: the site stands, the order is `ORDER_BUILD`.
-fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point) {
+fn start_training_hall_build(state: &mut max_core::universe::GameUniverse) -> (UnitId, Point) {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor");
@@ -55,7 +57,7 @@ fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point)
     // `UnitsManager_DeployUnit` zeroes the new unit's storage.
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
-    let mut manager = ProductionManager::new(state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("constructor builds training halls");
@@ -66,37 +68,43 @@ fn start_training_hall_build(state: &mut max_core::GameState) -> (UnitId, Point)
 }
 
 /// Signs of a **live** construction: queue, progress and site utilities are in place.
-fn assert_build_intact(state: &max_core::GameState, builder: UnitId, site: Point) {
-    let unit = state.unit(builder).expect("builder alive");
+fn assert_build_intact(state: &max_core::universe::GameUniverse, builder: UnitId, site: Point) {
+    let unit = state.snapshot().unit(builder).expect("builder alive");
 
     assert_eq!(
         unit.build_list,
         vec![UnitType::TrainingHall],
         "очередь стройки не тронута"
     );
-    assert!(unit.build_time > 0, "прогресс стройки сохранён");
     assert!(
-        production::construction_utility(state, TeamId::RED, site).is_some(),
+        unit.build_time > 0,
+        "прогресс стройки сохранён"
+    );
+    assert!(
+        production::construction_utility(state.state(), TeamId::RED, site).is_some(),
         "лента площадки на месте"
     );
 }
 
 /// Signs of a cancelled construction (C++ `CancelBuilding` mobile branch).
-fn assert_build_cancelled(state: &max_core::GameState, builder: UnitId, site: Point) {
-    let unit = state.unit(builder).expect("builder alive");
+fn assert_build_cancelled(state: &max_core::universe::GameUniverse, builder: UnitId, site: Point) {
+    let unit = state.snapshot().unit(builder).expect("builder alive");
 
-    assert!(unit.build_list.is_empty(), "очередь стройки очищена");
+    assert!(
+        unit.build_list.is_empty(),
+        "очередь стройки очищена"
+    );
     assert_eq!(unit.build_time, 0, "прогресс сброшен");
     assert!(
         unit.path.is_none(),
         "путь к площадке снят (`path = nullptr`)"
     );
     assert!(
-        production::construction_utility(state, TeamId::RED, site).is_none(),
+        production::construction_utility(state.state(), TeamId::RED, site).is_none(),
         "лента площадки снята с карты"
     );
-    for id in state.units_at(site).iter().copied() {
-        let unit_type = state.unit(id).map(|unit| unit.unit_type);
+    for id in state.snapshot().units_at(site).iter().copied() {
+        let unit_type = state.snapshot().unit(id).map(|unit| unit.unit_type);
         assert!(
             !matches!(
                 unit_type,
@@ -120,7 +128,7 @@ fn set_order_move_does_not_cancel_the_unfinished_build() {
 
     state.set_order(builder, UnitOrder::Move, UnitOrderState::InProgress);
 
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Move, UnitOrderState::InProgress),
@@ -134,7 +142,7 @@ fn set_order_move_does_not_cancel_the_unfinished_build() {
 fn packet_38_move_does_not_cancel_the_unfinished_build() {
     let mut state = state_with_gold(100);
     let (builder, site) = start_training_hall_build(&mut state);
-    let grid = state.unit(builder).expect("builder").grid;
+    let grid = state.snapshot().unit(builder).expect("builder").grid;
 
     let packet = Packet38Move {
         unit: builder,
@@ -145,9 +153,9 @@ fn packet_38_move_does_not_cancel_the_unfinished_build() {
         group_speed: 0,
         path: None,
     };
-    apply_command(&mut state, &Command::Move(packet));
+    apply_command(state.state_mut(), &Command::Move(packet));
 
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Move, UnitOrderState::InProgress)
@@ -175,9 +183,9 @@ fn packet_08_move_does_not_cancel_the_unfinished_build() {
             disabled_reaction_fire: false,
         }),
     };
-    apply_command(&mut state, &Command::Order(order));
+    apply_command(state.state_mut(), &Command::Order(order));
 
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Move, UnitOrderState::Init)
@@ -197,29 +205,35 @@ fn leaving_a_finished_site_keeps_the_foundation() {
 
     for _ in 0..10 {
         state.manage_economy(TeamId::RED);
-        production::progress_build_state(&mut state, TeamId::RED);
+        production::progress_build_state(state.state_mut(), TeamId::RED);
     }
 
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Build, UnitOrderState::UnitReady)
     );
-    assert!(unit.build_list.is_empty(), "очередь очищена достройкой");
+    assert!(
+        unit.build_list.is_empty(),
+        "очередь очищена достройкой"
+    );
 
-    let slab_at_site = |state: &max_core::GameState| {
-        state.units_at(site).iter().any(|id| {
-            state.unit(*id).is_some_and(|unit| {
+    let slab_at_site = |state: &max_core::universe::GameUniverse| {
+        state.snapshot().units_at(site).iter().any(|id| {
+            state.snapshot().unit(*id).is_some_and(|unit| {
                 matches!(unit.unit_type, UnitType::LargeSlab | UnitType::SmallSlab)
             })
         })
     };
-    assert!(slab_at_site(&state), "плита под зданием стоит");
+    assert!(
+        slab_at_site(&state),
+        "плита под зданием стоит"
+    );
 
     // Exit order: `ORDER_ACTIVATE`/`IN_TRANSITION` → `PositionInTape` LEAVE.
     state.set_order(builder, UnitOrder::Activate, UnitOrderState::InTransition);
     state.tick();
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(unit.orders, UnitOrder::AwaitTapePositioning);
     assert_eq!(unit.state, UnitOrderState::TapePositioningDeinit);
 
@@ -247,7 +261,7 @@ fn explicit_stop_cancels_the_build() {
     // `UnitsManager_Popup_OnClick_BuildStop` → `GameManager_SelectBuildSite`
     // → `UnitsManager_SetNewOrder(unit, ORDER_BUILD, BUILD_CANCEL)`.
     state.set_order(builder, UnitOrder::Build, UnitOrderState::BuildCancel);
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(unit.orders, UnitOrder::Build);
     assert_eq!(unit.state, UnitOrderState::BuildCancel);
 
@@ -256,7 +270,7 @@ fn explicit_stop_cancels_the_build() {
         state.tick();
     }
 
-    let unit = state.unit(builder).expect("builder alive");
+    let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Await, UnitOrderState::ExecutingOrder)

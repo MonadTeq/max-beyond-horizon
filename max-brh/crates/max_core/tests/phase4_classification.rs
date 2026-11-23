@@ -2,7 +2,7 @@
 //!
 //! The unit test file of the module already proves every classifier axis for all
 //! 93 types against direct flag/attribute checks. This file proves that the
-//! classification actually **drives `GameState`**:
+//! classification actually **drives `GameUniverse`**:
 //!
 //! * spawning a type puts it into exactly the list and the `MapHash` footprint
 //!   its class (mobility/footprint/flags) dictates;
@@ -32,18 +32,19 @@ use max_core::geo::Point;
 use max_core::production::{self, BUILDABLE, FACTORIES, MOBILE_BUILDERS};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::unit_values::{base_unit_values, ATTRIB_ATTACK};
-use max_core::{GameState, UnitListKind};
+use max_core::universe::GameUniverse;
+use max_core::UnitListKind;
 
 /// A one-team state with a proper attribute table (so `spawn_unit` copies the
 /// `SC_ATTRI` values into the instance).
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+fn state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
-fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> max_core::UnitId {
+fn spawn(state: &mut GameUniverse, unit_type: UnitType, grid: Point) -> max_core::UnitId {
     state
         .spawn_unit(unit_type, TeamId::RED, grid, 0)
         .unwrap_or_else(|| panic!("spawn {unit_type:?}"))
@@ -59,7 +60,7 @@ fn every_type_spawns_into_its_classified_list_and_footprint() {
         let grid = Point::new(((index % 30) as i16) * 3, ((index / 30) as i16) * 3);
         let id = spawn(&mut state, unit_type, grid);
 
-        let unit = state.unit(id).expect("spawned unit").clone();
+        let unit = state.snapshot().unit(id).expect("spawned unit").clone();
         // The instance flags are the type flags (plus explicit caller flags = 0).
         assert_eq!(
             unit.flags,
@@ -86,11 +87,12 @@ fn every_type_spawns_into_its_classified_list_and_footprint() {
         // The five lists: the unit is in its own list exactly once.
         let kind = unit.unit_list;
         assert!(
-            state.unit_list(kind).contains(&id),
+            state.snapshot().unit_list(kind).contains(&id),
             "{unit_type:?} missing from {kind:?}"
         );
         for other in UnitListKind::ALL {
             let count = state
+                .snapshot()
                 .unit_list(other)
                 .iter()
                 .filter(|candidate| *candidate == &id)
@@ -103,6 +105,7 @@ fn every_type_spawns_into_its_classified_list_and_footprint() {
         // The `MapHash` footprint: a quad building occupies exactly four cells,
         // anything else exactly one.
         let occupied: Vec<(u16, u16)> = state
+            .state()
             .map_hash
             .iter_objects()
             .filter(|object| object.units.contains(&id))
@@ -133,7 +136,7 @@ fn spawned_units_start_with_their_type_combat_attributes() {
     for &unit_type in UnitType::ALL {
         let mut state = state();
         let id = spawn(&mut state, unit_type, Point::new(10, 10));
-        let unit = state.unit(id).expect("unit").clone();
+        let unit = state.snapshot().unit(id).expect("unit").clone();
         let base = base_unit_values(unit_type);
 
         assert_eq!(unit.base_values, base, "{unit_type:?}: base values");
@@ -181,9 +184,9 @@ fn expected_access_cost(unit_type: UnitType, surface: u8) -> u32 {
 #[test]
 fn passability_over_land_water_and_coast_follows_classification() {
     let mut state = state();
-    state.map.surface.set(0, 0, Surface::LAND);
-    state.map.surface.set(1, 0, Surface::WATER);
-    state.map.surface.set(2, 0, Surface::COAST);
+    state.state_mut().map.surface.set(0, 0, Surface::LAND);
+    state.state_mut().map.surface.set(1, 0, Surface::WATER);
+    state.state_mut().map.surface.set(2, 0, Surface::COAST);
     let flags = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 
     for &unit_type in UnitType::ALL {
@@ -192,7 +195,7 @@ fn passability_over_land_water_and_coast_follows_classification() {
             (Point::new(1, 0), SURFACE_TYPE_WATER),
             (Point::new(2, 0), SURFACE_TYPE_COAST),
         ] {
-            let actual = is_accessible(&state, unit_type, TeamId::RED, grid, flags);
+            let actual = is_accessible(state.state(), unit_type, TeamId::RED, grid, flags);
             assert_eq!(
                 actual,
                 expected_access_cost(unit_type, surface),
@@ -286,7 +289,7 @@ fn classifier_covers_every_spawnable_type() {
     for (index, &unit_type) in UnitType::ALL.iter().enumerate() {
         let grid = Point::new((index % 20) as i16, (index / 20) as i16);
         let id = spawn(&mut state, unit_type, grid);
-        let kind = state.unit(id).expect("unit").unit_list;
+        let kind = state.snapshot().unit(id).expect("unit").unit_list;
         seen[kind.index()] += 1;
     }
     assert_eq!(seen.iter().sum::<usize>(), 93);
@@ -311,24 +314,30 @@ fn digest_of_one_unit_of_every_type_is_stable() {
 
     let first = build();
     let second = build();
-    assert_eq!(first.unit_count(), 93);
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(replay_digest_crc(&first), replay_digest_crc(&second));
-    assert_eq!(state_digest(&first), state_digest(&second));
+    assert_eq!(first.snapshot().unit_count(), 93);
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        replay_digest_crc(first.state()),
+        replay_digest_crc(second.state())
+    );
+    assert_eq!(state_digest(first.state()), state_digest(second.state()));
 
     // Pinned digest of the "all types" state: a change in spawn bookkeeping,
     // classification-driven defaults or attribute tables moves it.
-    assert_eq!(state_digest(&first), ALL_TYPES_STATE_DIGEST);
-    assert_eq!(replay_digest_crc(&first), ALL_TYPES_REPLAY_DIGEST);
+    assert_eq!(state_digest(first.state()), ALL_TYPES_STATE_DIGEST);
+    assert_eq!(replay_digest_crc(first.state()), ALL_TYPES_REPLAY_DIGEST);
 
     // A single classification fact (a building's footprint) is part of the
     // digest: clearing `BUILDING`-derived cells by hand is visible.
     let mut modified = first.clone();
-    let id = modified.unit_ids_in_order()[0];
-    let mut unit = modified.unit(id).expect("unit").clone();
+    let id = modified.snapshot().unit_ids_in_order()[0];
+    let mut unit = modified.snapshot().unit(id).expect("unit").clone();
     unit.shots = unit.shots.wrapping_add(1);
     modified.write_unit(id, unit);
-    assert_ne!(state_digest(&modified), ALL_TYPES_STATE_DIGEST);
+    assert_ne!(state_digest(modified.state()), ALL_TYPES_STATE_DIGEST);
 }
 
 /// `state_digest` of a state with one unit of every one of the 93 types.

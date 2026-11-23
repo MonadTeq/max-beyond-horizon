@@ -25,7 +25,7 @@ use max_core::team::{
     ComplexId, ResearchTopicInfo, TeamId, TeamInfo, TeamKind, TeamUnits, RESEARCH_TOPICS,
 };
 use max_core::unit_values::{team_base_values, BASE_UNIT_VALUES, UNIT_COUNT};
-use max_core::GameState;
+use max_core::universe::GameUniverse;
 
 /// `max-original/SAVE1.CAM` — two playing teams.
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
@@ -273,20 +273,21 @@ fn real_save_team_sections_are_consistent() {
 
 #[test]
 fn research_progress_upgrades_current_values_and_round_trips() {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[0].team_clan = TeamClan::Random;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.player_team = TeamId::RED;
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().teams[0].team_clan = TeamClan::Random;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().player_team = TeamId::RED;
 
     // The ATTACK topic with one point per turn.
     let topic = ResearchTopic::Attack;
-    state.teams[0].research_topics[topic as usize] = ResearchTopicInfo {
+    state.state_mut().teams[0].research_topics[topic as usize] = ResearchTopicInfo {
         research_level: 0,
         turns_to_complete: 0,
         allocation: 1,
     };
-    let base_attack = i32::from(state.team_units[0].base_values[UnitType::Tank as usize].attack);
+    let base_attack =
+        i32::from(state.state().team_units[0].base_values[UnitType::Tank as usize].attack);
 
     // `research_new_turn` deducts `allocation`; a completed level applies the
     // upgrade (`ResearchMenu_ApplyUpgrades`). The first call initializes
@@ -296,14 +297,16 @@ fn research_progress_upgrades_current_values_and_round_trips() {
     while events == 0 {
         calls += 1;
         assert!(calls < 10_000, "research never completed");
-        let produced =
-            research_new_turn(&mut state.team_units[0], &mut state.teams[0], TeamId::RED);
+        let produced = {
+            let state = state.state_mut();
+            research_new_turn(&mut state.team_units[0], &mut state.teams[0], TeamId::RED)
+        };
         events += produced.len();
         for event in produced {
             assert_eq!(event.topic, topic);
         }
     }
-    let level = state.teams[0].research_topics[topic as usize].research_level;
+    let level = state.state().teams[0].research_topics[topic as usize].research_level;
     assert_eq!(level, events as u32);
     assert_eq!(level, 1);
 
@@ -312,14 +315,14 @@ fn research_progress_upgrades_current_values_and_round_trips() {
     let (_, new_level) = research_attribute_values(topic, base_attack, level);
     let expected = base_attack + new_level - old1;
     assert_eq!(
-        i32::from(state.team_units[0].current_values[UnitType::Tank as usize].attack),
+        i32::from(state.state().team_units[0].current_values[UnitType::Tank as usize].attack),
         expected
     );
 
     // The base table is untouched, and a newly spawned unit uses the upgraded
     // values.
     assert_eq!(
-        i32::from(state.team_units[0].base_values[UnitType::Tank as usize].attack),
+        i32::from(state.state().team_units[0].base_values[UnitType::Tank as usize].attack),
         base_attack
     );
     let tank = state
@@ -327,6 +330,7 @@ fn research_progress_upgrades_current_values_and_round_trips() {
         .expect("tank");
     assert_eq!(
         state
+            .snapshot()
             .unit(tank)
             .map(|unit| i32::from(unit.base_values.attack)),
         Some(expected)
@@ -334,7 +338,7 @@ fn research_progress_upgrades_current_values_and_round_trips() {
 
     // V70 keeps the research state and both value tables; write -> read -> write
     // is byte-identical.
-    let bytes = state.to_save_bytes().expect("writes");
+    let bytes = state.state().to_save_bytes().expect("writes");
     let save = SaveFile::parse(&bytes).expect("parses");
     let saved_topic = save.teams[0].research_topics[topic as usize];
     assert_eq!(saved_topic.research_level, level);
@@ -346,12 +350,12 @@ fn research_progress_upgrades_current_values_and_round_trips() {
         ),
         expected
     );
-    let reloaded = GameState::from_save(&save);
+    let reloaded = GameUniverse::from_save(&save);
     assert_eq!(
-        reloaded.teams[0].research_topics[topic as usize],
-        state.teams[0].research_topics[topic as usize]
+        reloaded.state().teams[0].research_topics[topic as usize],
+        state.state().teams[0].research_topics[topic as usize]
     );
-    assert_eq!(reloaded.to_save_bytes().expect("writes"), bytes);
+    assert_eq!(reloaded.state().to_save_bytes().expect("writes"), bytes);
 }
 
 #[test]
@@ -359,9 +363,9 @@ fn gold_is_a_v70_u16_on_disk() {
     // `TeamUnits::FileLoad` reads `uint16_t gold_v70`, `FileSave` writes it back;
     // the runtime value is `uint32_t`. Values above 65535 truncate exactly like
     // the C++ narrowing cast.
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
 
     for (gold, expected) in [
         (0u32, 0u16),
@@ -371,13 +375,13 @@ fn gold_is_a_v70_u16_on_disk() {
         (70_000, 70_000u32 as u16),
         (0xFFFF_FFFF, 0xFFFF),
     ] {
-        state.team_units[0].set_gold(gold);
-        let bytes = state.to_save_bytes().expect("writes");
+        state.state_mut().team_units[0].set_gold(gold);
+        let bytes = state.state().to_save_bytes().expect("writes");
         let save = SaveFile::parse(&bytes).expect("parses");
         assert_eq!(save.team_units[0].gold, expected, "gold {gold}");
-        let reloaded = GameState::from_save(&save);
+        let reloaded = GameUniverse::from_save(&save);
         assert_eq!(
-            reloaded.team_units[0].gold,
+            reloaded.state().team_units[0].gold,
             u32::from(expected),
             "gold {gold}"
         );

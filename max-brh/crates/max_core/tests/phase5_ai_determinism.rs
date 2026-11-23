@@ -18,7 +18,7 @@ mod support;
 use max_core::enums::{AiStrategy, Opponent, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
-use max_core::GameState;
+use max_core::universe::GameUniverse;
 use support::phase5::{
     add_research_lab, add_vehicle_plant, ai_state, count_units, crcs, factory_unit_requests,
     green_base, land_map, play_rounds, red_base, refresh_visibility, sentry, spawn, strategy_state,
@@ -45,7 +45,7 @@ const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x0CA2, 0xADC0);
 const RECON_CRCS: (u16, u16, u16) = (0x5387, 0x603B, 0xFD64);
 
 /// A.2: clan `AyersHand` resolves to `Missiles`; the base plays six rounds.
-fn strategy_scenario() -> GameState {
+fn strategy_scenario() -> GameUniverse {
     let mut state = ai_state(land_map(40), TeamClan::AyersHand, Opponent::Average);
     red_base(&mut state, Point::new(8, 8), 500);
     green_base(&mut state, Point::new(32, 32));
@@ -55,7 +55,7 @@ fn strategy_scenario() -> GameState {
 }
 
 /// A.3: a bare TankHorde base builds its first buildings; 12 rounds.
-fn production_scenario() -> GameState {
+fn production_scenario() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     red_base(&mut state, Point::new(8, 8), 500);
     green_base(&mut state, Point::new(32, 32));
@@ -66,7 +66,7 @@ fn production_scenario() -> GameState {
 
 /// A.1/A.3: a heavy plant with a stockpile builds a tank because an enemy tank
 /// is spotted; 4 rounds.
-fn factory_scenario() -> GameState {
+fn factory_scenario() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     let red = red_base(&mut state, Point::new(8, 8), 500);
     green_base(&mut state, Point::new(32, 32));
@@ -87,7 +87,7 @@ fn factory_scenario() -> GameState {
 }
 
 /// A.4: the base tank spots a key facility and the attack runs; 6 rounds.
-fn combat_scenario() -> GameState {
+fn combat_scenario() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     let red = red_base(&mut state, Point::new(8, 8), 500);
 
@@ -113,7 +113,7 @@ fn combat_scenario() -> GameState {
 
 /// A.5: the base buys tank upgrades and the powered centre gets the fastest
 /// topic; 4 rounds.
-fn research_scenario() -> GameState {
+fn research_scenario() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     let red = red_base(&mut state, Point::new(8, 8), 800);
     green_base(&mut state, Point::new(32, 32));
@@ -132,7 +132,7 @@ fn research_scenario() -> GameState {
 }
 
 /// A.6: the scout explores the map; 8 rounds.
-fn recon_scenario() -> GameState {
+fn recon_scenario() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::CombinedArms, Opponent::Average);
     red_base(&mut state, Point::new(10, 10), 500);
     green_base(&mut state, Point::new(30, 30));
@@ -144,13 +144,17 @@ fn recon_scenario() -> GameState {
 
 /// Runs the scenario twice and asserts the bit-identical state plus the pinned
 /// digests.
-fn assert_deterministic(name: &str, run: fn() -> GameState, pinned: (u16, u16, u16)) -> GameState {
+fn assert_deterministic(
+    name: &str,
+    run: fn() -> GameUniverse,
+    pinned: (u16, u16, u16),
+) -> GameUniverse {
     let first = run();
     let second = run();
 
     assert_eq!(
-        first.snapshot_bytes(),
-        second.snapshot_bytes(),
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes(),
         "{name}: two identical runs must produce the same snapshot"
     );
     assert_eq!(
@@ -171,7 +175,7 @@ fn assert_deterministic(name: &str, run: fn() -> GameState, pinned: (u16, u16, u
 fn strategy_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("strategy", strategy_scenario, STRATEGY_CRCS);
     assert_eq!(
-        state.ai.players[TeamId::RED.0 as usize].strategy,
+        state.state().ai.players[TeamId::RED.0 as usize].strategy,
         AiStrategy::Missiles
     );
 }
@@ -195,14 +199,19 @@ fn factory_scenario_is_deterministic_and_pinned() {
 #[test]
 fn combat_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("combat", combat_scenario, COMBAT_CRCS);
-    assert!(state.ai.players[TeamId::RED.0 as usize].spotted_units.len() <= 2);
+    assert!(
+        state.state().ai.players[TeamId::RED.0 as usize]
+            .spotted_units
+            .len()
+            <= 2
+    );
 }
 
 #[test]
 fn research_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("research", research_scenario, RESEARCH_CRCS);
     assert!(
-        state.teams[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades > 0,
+        state.state().teams[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades > 0,
         "the research scenario must have bought upgrades"
     );
 }
@@ -217,9 +226,9 @@ fn recon_scenario_is_deterministic_and_pinned() {
 /// digest (a sanity check on the CRC table: six distinct rows).
 #[test]
 fn the_six_scenarios_have_distinct_digests() {
-    // One scenario at a time: a `GameState` is large, six on one test-thread
+    // One scenario at a time: a `GameUniverse` is large, six on one test-thread
     // stack overflow it.
-    let scenarios: [(&str, fn() -> GameState); 6] = [
+    let scenarios: [(&str, fn() -> GameUniverse); 6] = [
         ("strategy", strategy_scenario),
         ("production", production_scenario),
         ("factory", factory_scenario),
@@ -245,7 +254,7 @@ fn the_six_scenarios_have_distinct_digests() {
 }
 
 /// A run resumed from a clone continues bit-identically to an uninterrupted
-/// run: no AI state lives outside `GameState`.
+/// run: no AI state lives outside `GameUniverse`.
 #[test]
 fn a_cloned_run_continues_bit_identically() {
     let mut interrupted = production_scenario_setup();
@@ -259,12 +268,15 @@ fn a_cloned_run_continues_bit_identically() {
     let (_, over) = play_rounds(&mut resumed, 8, ROUND_TICKS);
     assert!(!over);
 
-    assert_eq!(interrupted.snapshot_bytes(), resumed.snapshot_bytes());
+    assert_eq!(
+        interrupted.snapshot().snapshot_bytes(),
+        resumed.snapshot().snapshot_bytes()
+    );
     assert_eq!(crcs(&interrupted), crcs(&resumed));
 }
 
 /// The production scenario's opening position (shared by the resume test).
-fn production_scenario_setup() -> GameState {
+fn production_scenario_setup() -> GameUniverse {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     red_base(&mut state, Point::new(8, 8), 500);
     green_base(&mut state, Point::new(32, 32));

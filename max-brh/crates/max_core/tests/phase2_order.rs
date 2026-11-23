@@ -8,7 +8,7 @@
 //!
 //! Coverage gap (reported to the analyst/architect): there is no parser or
 //! server-side validator for `Order`, and no bridge from `Order` to
-//! `Packet08Order`/`GameState`. A scenario "client order → server applies it"
+//! `Packet08Order`/`GameUniverse`. A scenario "client order → server applies it"
 //! cannot be built without inventing that mapping.
 
 mod support;
@@ -132,8 +132,8 @@ fn client_proposals_do_not_mutate_the_game_state() {
         Order::EndTurn,
     ];
 
-    let before = crc::state_checksum(&state);
-    let before_snapshot = state.snapshot_bytes();
+    let before = crc::state_checksum(state.state());
+    let before_snapshot = state.snapshot().snapshot_bytes();
 
     for order in orders {
         let json = serde_json::to_string(&order).expect("encode");
@@ -141,8 +141,8 @@ fn client_proposals_do_not_mutate_the_game_state() {
         assert_eq!(decoded, order);
     }
 
-    assert_eq!(before, crc::state_checksum(&state));
-    assert_eq!(before_snapshot, state.snapshot_bytes());
+    assert_eq!(before, crc::state_checksum(state.state()));
+    assert_eq!(before_snapshot, state.snapshot().snapshot_bytes());
 }
 
 /// Server acknowledgements keep the sequence number and the rejection reason.

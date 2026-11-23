@@ -8,15 +8,13 @@
 use max_core::enums::{ResearchTopic, TeamClan, UnitType};
 use max_core::research::{
     apply_research_upgrades, research_attribute_values, research_factor, research_new_turn,
-    research_turns_to_complete, team_upgrade_cost, team_upgrade_cost_step, update_research_progress,
-    upgrade_amount_for_base, upgrade_control_cost, upgrade_cost_step_with, UpgradeQuote,
-    RESEARCH_TOPIC_FACTORS,
+    research_turns_to_complete, team_upgrade_cost, team_upgrade_cost_step,
+    update_research_progress, upgrade_amount_for_base, upgrade_control_cost,
+    upgrade_cost_step_with, UpgradeQuote, RESEARCH_TOPIC_FACTORS,
 };
 use max_core::team::{ResearchTopicInfo, TeamId, TeamInfo, TeamKind, TeamUnits};
-use max_core::unit_values::{
-    ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_SPEED, ATTRIB_TURNS,
-};
-use max_core::GameState;
+use max_core::unit_values::{ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_SPEED, ATTRIB_TURNS};
+use max_core::universe::GameUniverse;
 
 const VECTORS: &str = include_str!("../../../tools/upgrade_vectors/vectors.txt");
 
@@ -148,7 +146,8 @@ fn team_upgrade_cost_vectors_match_cpp() {
         let step: u16 = parts.next().unwrap().parse().unwrap();
         let expected: i32 = parts.next().unwrap().parse().unwrap();
         assert_eq!(
-            team_upgrade_cost_step(id, current, factor, base, step),            expected,
+            team_upgrade_cost_step(id, current, factor, base, step),
+            expected,
             "cost_team id={id} base={base} current={current} factor={factor} step={step}"
         );
         checked += 1;
@@ -182,7 +181,10 @@ fn a_completed_level_applies_attack_upgrade_to_current_values() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].topic, ResearchTopic::Attack);
     assert_eq!(events[0].level, 1);
-    assert_eq!(info.research_topics[ResearchTopic::Attack as usize].research_level, 1);
+    assert_eq!(
+        info.research_topics[ResearchTopic::Attack as usize].research_level,
+        1
+    );
 
     // C++ `ResearchMenu_ApplyUpgrades`: delta = (level * base) / 10 - 0.
     let expected_delta = (base_attack / 10) as u16;
@@ -303,18 +305,18 @@ fn turns_attribute_cost_uses_the_inverse_formula() {
 #[test]
 fn research_state_is_deterministic() {
     fn run() -> Vec<u8> {
-        let mut state = GameState::new();
-        state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-        state.team_units[TeamId::RED.0 as usize] = team_units();
-        state.teams[TeamId::RED.0 as usize].research_topics[ResearchTopic::Attack as usize] =
-            ResearchTopicInfo {
-                research_level: 0,
-                turns_to_complete: 2,
-                allocation: 1,
-            };
-        state.advance_research(TeamId::RED);
-        state.advance_research(TeamId::RED);
-        state.snapshot_bytes()
+        let mut state = GameUniverse::default();
+        state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+        state.state_mut().team_units[TeamId::RED.0 as usize] = team_units();
+        state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+            [ResearchTopic::Attack as usize] = ResearchTopicInfo {
+            research_level: 0,
+            turns_to_complete: 2,
+            allocation: 1,
+        };
+        state.state_mut().advance_research(TeamId::RED);
+        state.state_mut().advance_research(TeamId::RED);
+        state.snapshot().snapshot_bytes()
     }
 
     assert_eq!(run(), run(), "два прогона исследований совпадают");
@@ -322,23 +324,25 @@ fn research_state_is_deterministic() {
 
 #[test]
 fn allocation_is_stored_in_team_info() {
-    let mut state = GameState::new();
-    state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.update_research_progress(TeamId::RED, ResearchTopic::Range, 1);
-    let info = &state.teams[TeamId::RED.0 as usize].research_topics
-        [ResearchTopic::Range as usize];
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state
+        .state_mut()
+        .update_research_progress(TeamId::RED, ResearchTopic::Range, 1);
+    let info =
+        &state.state().teams[TeamId::RED.0 as usize].research_topics[ResearchTopic::Range as usize];
     assert_eq!(info.allocation, 1);
     assert!(info.turns_to_complete > 0, "прогресс инициализирован");
-    assert_eq!(state.research_allocation(TeamId::RED)[2], 1);
+    assert_eq!(state.state().research_allocation(TeamId::RED)[2], 1);
 }
 
 #[test]
 fn research_center_allocation_reassigns_and_powers_off() {
     use max_core::enums::UnitOrder;
 
-    let mut state = GameState::new();
-    state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.team_units[TeamId::RED.0 as usize] = team_units();
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.state_mut().team_units[TeamId::RED.0 as usize] = team_units();
     let id = state
         .spawn_unit(
             UnitType::ResearchCentre,
@@ -347,25 +351,34 @@ fn research_center_allocation_reassigns_and_powers_off() {
             0,
         )
         .expect("research center");
-    let mut unit = state.unit(id).cloned().unwrap();
+    let mut unit = state.snapshot().unit(id).cloned().unwrap();
     unit.orders = UnitOrder::PowerOn;
     unit.state = max_core::enums::UnitOrderState::ExecutingOrder;
     unit.research_topic = ResearchTopic::Range;
     state.write_unit(id, unit);
-    state.update_research_progress(TeamId::RED, ResearchTopic::Range, 1);
-    assert_eq!(state.research_allocation(TeamId::RED)[2], 1);
+    state
+        .state_mut()
+        .update_research_progress(TeamId::RED, ResearchTopic::Range, 1);
+    assert_eq!(state.state().research_allocation(TeamId::RED)[2], 1);
 
     // Move the center to Attack: Range allocation -1, Attack +1.
     let mut target = [0u32; 8];
     target[ResearchTopic::Attack as usize] = 1;
-    state.set_research_allocation(TeamId::RED, target);
+    state
+        .state_mut()
+        .set_research_allocation(TeamId::RED, target);
 
-    let unit = state.unit(id).unwrap();
+    let unit = state.snapshot().unit(id).unwrap();
     assert_eq!(unit.research_topic, ResearchTopic::Attack);
-    assert_eq!(state.research_allocation(TeamId::RED)[2], 0);
-    assert_eq!(state.research_allocation(TeamId::RED)[0], 1);
+    assert_eq!(state.state().research_allocation(TeamId::RED)[2], 0);
+    assert_eq!(state.state().research_allocation(TeamId::RED)[0], 1);
 
     // A target without slots — the center is turned off.
-    state.set_research_allocation(TeamId::RED, [0u32; 8]);
-    assert_eq!(state.unit(id).unwrap().orders, UnitOrder::PowerOff);
+    state
+        .state_mut()
+        .set_research_allocation(TeamId::RED, [0u32; 8]);
+    assert_eq!(
+        state.snapshot().unit(id).unwrap().orders,
+        UnitOrder::PowerOff
+    );
 }

@@ -357,14 +357,15 @@ fn real_save_tables_are_consistent_with_their_keys() {
 
 #[test]
 fn standard_map_hash_places_every_unit_in_its_cell_object() {
-    // The live `GameState` table is sized for the stock map (2048 buckets) — a
+    // The live `GameUniverse` table is sized for the stock map (2048 buckets) — a
     // different size than the file (512), as C++ rehashes on load
     // (`hash.cpp:FileLoad`).
-    let state = max_core::GameState::from_save(&SaveFile::parse(SAVE1).expect("parses"));
-    assert_eq!(state.map_hash.size(), 2048);
+    let state =
+        max_core::universe::GameUniverse::from_save(&SaveFile::parse(SAVE1).expect("parses"));
+    assert_eq!(state.state().map_hash.size(), 2048);
 
     let mut placed = 0usize;
-    for object in state.map_hash.iter_objects() {
+    for object in state.state().map_hash.iter_objects() {
         assert!(
             !object.units.is_empty(),
             "empty cell object in the live table"
@@ -372,13 +373,13 @@ fn standard_map_hash_places_every_unit_in_its_cell_object() {
         placed += object.units.len();
     }
     assert!(
-        placed >= state.unit_count(),
+        placed >= state.snapshot().unit_count(),
         "every unit must appear in at least its own cell"
     );
-    for id in state.unit_ids_in_order() {
-        let unit = state.unit(id).expect("unit");
+    for id in state.snapshot().unit_ids_in_order() {
+        let unit = state.snapshot().unit(id).expect("unit");
         assert!(
-            state.units_at(unit.grid).contains(&id),
+            state.snapshot().units_at(unit.grid).contains(&id),
             "{id:?} is missing from the cell table"
         );
     }

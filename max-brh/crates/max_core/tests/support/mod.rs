@@ -1,132 +1,148 @@
 //! Shared helpers for the phase 2 and phase 5 integration scenarios
 //! (`phase2_*.rs`, `phase5_*.rs`; the AI harness lives in [`phase5`]).
 //!
-//! Every scenario has the same shape: a deterministic [`GameState`] (fixed
+//! Every scenario has the same shape: a deterministic [`GameUniverse`] (fixed
 //! teams, seeded RNG), units placed by [`spawn`], orders issued through the
-//! public state API, ticks, then assertions on the resulting state and the
-//! canonical digests (`crc::state_checksum` / `snapshot_bytes`).
+//! facade API, ticks through [`GameUniverse::tick`], then assertions on the
+//! resulting state and the canonical digests
+//! ([`max_core::crc::state_checksum`] / [`GameUniverse::snapshot`]).
+//!
+//! Stage B §4.1: the scenario harness drives the facade; `GameState` itself is
+//! reached only for the setup fields the facade config layer does not expose yet
+//! (`active_turn_team`, `ai.all_visible`).
 
 #![allow(dead_code)]
 
 pub mod phase5;
 
 use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
+use max_core::universe::GameUniverse;
 use max_core::UnitId;
 
 /// Two human teams (RED/GREEN), all units visible, turn-based mode.
-pub fn game() -> GameState {
-    let mut state = GameState::new();
-    state.network_game = false;
-    state.game_state = GameStateType::InGame;
-    state.play_mode = PlayMode::TurnBased;
-    state.active_turn_team = TeamId::RED;
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
+pub fn game() -> GameUniverse {
+    let mut universe = GameUniverse::default();
+    universe.set_network_game(false);
+    universe.set_game_state(GameStateType::InGame);
+    universe.set_play_mode(PlayMode::TurnBased);
+    universe.state_mut().active_turn_team = TeamId::RED;
+    universe.team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
+    universe
+        .team_mut(TeamId::GREEN)
+        .expect("GREEN slot")
+        .team_type = TeamKind::Player;
+    *universe.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+    *universe
+        .team_units_mut(TeamId::GREEN)
+        .expect("GREEN economy") = TeamUnits::with_clan(TeamClan::Random);
     // Scenario units are placed next to each other; visibility is an explicit
     // input fact, not a scan result (`GameManager_AllVisible`).
-    state.ai.all_visible = true;
-    state
+    universe.state_mut().ai.all_visible = true;
+    universe
 }
 
 /// The same game with fog of war (`GameManager_AllVisible = false`).
-pub fn fog_game() -> GameState {
-    let mut state = game();
-    state.ai.all_visible = false;
-    state
+pub fn fog_game() -> GameUniverse {
+    let mut universe = game();
+    universe.state_mut().ai.all_visible = false;
+    universe
 }
 
 /// Spawns a unit with the type flags from `SC_UNITS`.
-pub fn spawn(state: &mut GameState, unit_type: UnitType, team: TeamId, grid: Point) -> UnitId {
-    state
+pub fn spawn(
+    universe: &mut GameUniverse,
+    unit_type: UnitType,
+    team: TeamId,
+    grid: Point,
+) -> UnitId {
+    universe
         .spawn_unit(unit_type, team, grid, 0)
         .unwrap_or_else(|| panic!("spawn {unit_type:?} for {team:?} at {grid:?}"))
 }
 
 /// Issues `MOVE` to `target` (order data + order/state pair).
-pub fn order_move(state: &mut GameState, id: UnitId, target: Point) {
-    state.set_order_data(
+pub fn order_move(universe: &mut GameUniverse, id: UnitId, target: Point) {
+    universe.set_order_data(
         id,
         max_core::game::OrderData {
             move_to: target,
             fire_on: Point::ZERO,
         },
     );
-    state.set_order(id, UnitOrder::Move, UnitOrderState::Init);
+    universe.set_order(id, UnitOrder::Move, UnitOrderState::Init);
 }
 
 /// Issues `FIRE` at `target` (order data + order/state pair).
-pub fn order_fire(state: &mut GameState, id: UnitId, target: Point) {
-    state.set_order_data(
+pub fn order_fire(universe: &mut GameUniverse, id: UnitId, target: Point) {
+    universe.set_order_data(
         id,
         max_core::game::OrderData {
             move_to: target,
             fire_on: target,
         },
     );
-    state.set_order(id, UnitOrder::Fire, UnitOrderState::Init);
+    universe.set_order(id, UnitOrder::Fire, UnitOrderState::Init);
 }
 
 /// Runs up to `limit` ticks until `done` returns `true`; returns whether it did.
 pub fn run_until(
-    state: &mut GameState,
+    universe: &mut GameUniverse,
     limit: usize,
-    mut done: impl FnMut(&GameState) -> bool,
+    mut done: impl FnMut(&GameUniverse) -> bool,
 ) -> bool {
     for _ in 0..limit {
-        if done(state) {
+        if done(universe) {
             return true;
         }
-        state.tick();
+        universe.tick();
     }
-    done(state)
+    done(universe)
 }
 
 /// Runs exactly `count` ticks.
-pub fn ticks(state: &mut GameState, count: usize) {
+pub fn ticks(universe: &mut GameUniverse, count: usize) {
     for _ in 0..count {
-        state.tick();
+        universe.tick();
     }
 }
 
 /// Start of a team's turn (`GameManager_ManageEconomy`): restores speed/shots and
 /// updates production. Scenarios that move farther than one speed allowance call
 /// it between turn bursts, as the turn machine does.
-pub fn start_turn(state: &mut GameState, team: TeamId) {
-    state.manage_economy(team);
+pub fn start_turn(universe: &mut GameUniverse, team: TeamId) {
+    universe.manage_economy(team);
 }
 
 /// Runs up to `turns` team turns of `ticks_per_turn` ticks, calling
 /// [`start_turn`] before each; stops as soon as `done` is satisfied.
 pub fn run_turns(
-    state: &mut GameState,
+    universe: &mut GameUniverse,
     team: TeamId,
     turns: usize,
     ticks_per_turn: usize,
-    mut done: impl FnMut(&GameState) -> bool,
+    mut done: impl FnMut(&GameUniverse) -> bool,
 ) -> bool {
     for _ in 0..turns {
-        if done(state) {
+        if done(universe) {
             return true;
         }
-        start_turn(state, team);
+        start_turn(universe, team);
         for _ in 0..ticks_per_turn {
-            state.tick();
-            if done(state) {
+            universe.tick();
+            if done(universe) {
                 return true;
             }
         }
     }
-    done(state)
+    done(universe)
 }
 
 /// Marks a unit as flying (`HOVERING`), as after a successful takeoff.
-pub fn set_hovering(state: &mut GameState, id: UnitId, hovering: bool) {
-    if let Some(unit) = state.unit_mut(id) {
+pub fn set_hovering(universe: &mut GameUniverse, id: UnitId, hovering: bool) {
+    if let Some(unit) = universe.unit_mut(id) {
         if hovering {
             unit.flags |= max_core::enums::unit_flags::HOVERING;
         } else {

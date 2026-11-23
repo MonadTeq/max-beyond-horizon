@@ -1,4 +1,4 @@
-﻿//! Rubble: the death of a ground unit leaves `SMLRUBLE`/`LRGRUBLE` — 1:1 C++.
+//! Rubble: the death of a ground unit leaves `SMLRUBLE`/`LRGRUBLE` — 1:1 C++.
 //!
 //! Oracle `UnitsManager_BuildClearing` (`units_manager.cpp:3646-3805`):
 //! * rubble is created only with `mode = true` (the unit was destroyed), not for
@@ -16,43 +16,49 @@ use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_WIDTH};
 use max_core::production;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::{GameState, TeamClan};
+use max_core::universe::GameUniverse;
+use max_core::TeamClan;
 use std::collections::BTreeMap;
 
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.play_mode = max_core::enums::PlayMode::TurnBased;
-    state.game_state = max_core::enums::GameStateType::InGame;
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Computer;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
-    state.ai.all_visible = true;
+fn state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().play_mode = max_core::enums::PlayMode::TurnBased;
+    state.state_mut().game_state = max_core::enums::GameStateType::InGame;
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().teams[1].team_type = TeamKind::Computer;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().ai.all_visible = true;
 
     // The whole map is land: `Access_IsFullyLandCovered` requires `SURFACE_TYPE_LAND`.
-    for tile in state.map.surface.tiles_mut().iter_mut() {
+    for tile in state.state_mut().map.surface.tiles_mut().iter_mut() {
         *tile = Surface::LAND;
     }
 
     state
 }
 
-fn spawn(state: &mut GameState, unit_type: UnitType, team: TeamId, grid: Point) -> max_core::UnitId {
+fn spawn(
+    state: &mut GameUniverse,
+    unit_type: UnitType,
+    team: TeamId,
+    grid: Point,
+) -> max_core::UnitId {
     state.spawn_unit(unit_type, team, grid, 0).expect("spawn")
 }
 
 /// Kill the unit: `hits = 0` + `ORDER_EXPLODE`/`STATE_EXPLODE` (as
 /// `UnitsManager_ProcessOrderExplode`, `units_manager.cpp:2972`).
-fn kill(state: &mut GameState, id: max_core::UnitId) {
-    let mut unit = state.unit(id).expect("unit").clone();
+fn kill(state: &mut GameUniverse, id: max_core::UnitId) {
+    let mut unit = state.snapshot().unit(id).expect("unit").clone();
     unit.hits = 0;
     state.write_unit(id, unit);
     state.set_order(id, UnitOrder::Explode, UnitOrderState::Explode);
 }
 
-fn tick_until<F>(state: &mut GameState, done: F) -> bool
+fn tick_until<F>(state: &mut GameUniverse, done: F) -> bool
 where
-    F: Fn(&GameState) -> bool,
+    F: Fn(&GameUniverse) -> bool,
 {
     for _ in 0..120 {
         state.tick();
@@ -65,12 +71,14 @@ where
     false
 }
 
-fn units_of(state: &GameState, unit_type: UnitType) -> Vec<max_core::UnitId> {
+fn units_of(state: &GameUniverse, unit_type: UnitType) -> Vec<max_core::UnitId> {
     state
+        .snapshot()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
             state
+                .snapshot()
                 .unit(*id)
                 .map(|unit| unit.unit_type == unit_type)
                 .unwrap_or(false)
@@ -87,11 +95,13 @@ fn destroyed_ground_unit_leaves_small_rubble() {
     kill(&mut state, tank);
 
     assert!(
-        tick_until(&mut state, |state| !units_of(state, UnitType::SmallRubble).is_empty()),
+        tick_until(&mut state, |state| !units_of(state, UnitType::SmallRubble)
+            .is_empty()),
         "обломок должен появиться после половины анимации взрыва"
     );
 
     let rubble = state
+        .snapshot()
         .unit(units_of(&state, UnitType::SmallRubble)[0])
         .expect("rubble");
 
@@ -100,7 +110,7 @@ fn destroyed_ground_unit_leaves_small_rubble() {
     assert_eq!(
         i32::from(rubble.storage),
         max_core::victory::get_normal_rate_build_cost(
-            &state.unit(tank).cloned().unwrap_or_else(|| {
+            &state.snapshot().unit(tank).cloned().unwrap_or_else(|| {
                 let mut unit = max_core::UnitInfo::new(UnitType::Tank, TeamId::RED, tank);
                 unit.flags = unit_flags::MOBILE_LAND_UNIT;
                 unit
@@ -128,7 +138,10 @@ fn infantry_leaves_no_rubble() {
     kill(&mut state, infantry);
 
     assert!(
-        tick_until(&mut state, |state| state.unit(infantry).is_none()),
+        tick_until(&mut state, |state| state
+            .snapshot()
+            .unit(infantry)
+            .is_none()),
         "пехота исчезает после своей анимации"
     );
     assert!(
@@ -150,7 +163,8 @@ fn destroyed_building_leaves_large_rubble() {
     kill(&mut state, building);
 
     assert!(
-        tick_until(&mut state, |state| !units_of(state, UnitType::LargeRubble).is_empty()),
+        tick_until(&mut state, |state| !units_of(state, UnitType::LargeRubble)
+            .is_empty()),
         "здание оставляет большой обломок"
     );
     assert!(
@@ -158,7 +172,7 @@ fn destroyed_building_leaves_large_rubble() {
         "маленького обломка быть не должно"
     );
     assert!(
-        state.unit(building).is_none(),
+        state.snapshot().unit(building).is_none(),
         "само здание уничтожено"
     );
 }
@@ -176,7 +190,7 @@ fn sea_unit_on_water_leaves_no_rubble() {
     for y in 29..=31 {
         for x in 29..=31 {
             let index = y * MAP_WIDTH as i16 + x;
-            state.map.surface.tiles_mut()[index as usize] = Surface::WATER;
+            state.state_mut().map.surface.tiles_mut()[index as usize] = Surface::WATER;
         }
     }
 
@@ -184,7 +198,7 @@ fn sea_unit_on_water_leaves_no_rubble() {
     kill(&mut state, boat);
 
     assert!(
-        tick_until(&mut state, |state| state.unit(boat).is_none()),
+        tick_until(&mut state, |state| state.snapshot().unit(boat).is_none()),
         "корабль исчезает"
     );
     assert!(
@@ -199,10 +213,13 @@ fn quick_build_removal_does_not_leave_rubble() {
     let mut state = state();
     let tank = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(14, 14));
 
-    let rubble = access::build_clearing(&mut state, tank, false);
+    let rubble = access::build_clearing(state.state_mut(), tank, false);
 
     assert!(rubble.is_none(), "mode = false — обломка нет");
-    assert!(state.unit(tank).is_none(), "юнит всё равно убран");
+    assert!(
+        state.snapshot().unit(tank).is_none(),
+        "юнит всё равно убран"
+    );
     assert!(units_of(&state, UnitType::SmallRubble).is_empty());
 }
 
@@ -220,17 +237,23 @@ fn rubble_is_deterministic_between_runs() {
         state.update_visibility_status(false);
         kill(&mut state, tank);
         kill(&mut state, infantry);
-        assert!(tick_until(&mut state, |state| !units_of(state, UnitType::SmallRubble)
-            .is_empty()));
+        assert!(tick_until(&mut state, |state| !units_of(
+            state,
+            UnitType::SmallRubble
+        )
+        .is_empty()));
 
         let mut rubble = BTreeMap::new();
 
         for id in units_of(&state, UnitType::SmallRubble) {
-            let unit = state.unit(id).expect("rubble");
-            rubble.insert(format!("{id:?}@{},{}", unit.grid.x, unit.grid.y), unit.angle);
+            let unit = state.snapshot().unit(id).expect("rubble");
+            rubble.insert(
+                format!("{id:?}@{},{}", unit.grid.x, unit.grid.y),
+                unit.angle,
+            );
         }
 
-        let digest = max_core::crc::replay_digest_bytes(&state);
+        let digest = max_core::crc::replay_digest_bytes(state.state());
 
         (rubble, digest)
     }
@@ -239,7 +262,10 @@ fn rubble_is_deterministic_between_runs() {
     let (second, second_digest) = run();
 
     assert_eq!(first, second, "кадры обломков не меняются между партиями");
-    assert_eq!(first_digest, second_digest, "дайджест состояния детерминирован");
+    assert_eq!(
+        first_digest, second_digest,
+        "дайджест состояния детерминирован"
+    );
 }
 
 #[test]
@@ -262,7 +288,7 @@ fn bulldozer_clears_rubble_and_takes_its_cargo() {
     // `bulldozer->SetParent(rubble)`, `build_time = 1` (4 for a building),
     // `ORDER_CLEAR`/`INIT`.
     {
-        let mut unit = state.unit(bulldozer).expect("bulldozer").clone();
+        let mut unit = state.snapshot().unit(bulldozer).expect("bulldozer").clone();
         unit.parent_unit = Some(rubble);
         unit.build_time = 1;
         unit.storage = 3;
@@ -271,16 +297,16 @@ fn bulldozer_clears_rubble_and_takes_its_cargo() {
         state.write_unit(bulldozer, unit);
     }
     {
-        let mut unit = state.unit(rubble).expect("rubble").clone();
+        let mut unit = state.snapshot().unit(rubble).expect("rubble").clone();
         unit.storage = 7;
         state.write_unit(rubble, unit);
     }
 
     // `GameManager_SpawnNewUnits` → `UnitInfo::SpawnNewUnit` (BULLDOZR branch).
-    production::progress_build_state(&mut state, TeamId::RED);
+    production::progress_build_state(state.state_mut(), TeamId::RED);
 
-    assert!(state.unit(rubble).is_none(), "обломок снесён");
-    let unit = state.unit(bulldozer).expect("bulldozer");
+    assert!(state.snapshot().unit(rubble).is_none(), "обломок снесён");
+    let unit = state.snapshot().unit(bulldozer).expect("bulldozer");
     assert_eq!(
         (unit.orders, unit.state),
         (UnitOrder::Await, UnitOrderState::ExecutingOrder),

@@ -7,19 +7,19 @@
 //! on the map and minimap without reconnaissance.
 
 use max_core::enums::{TeamClan, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
+use max_core::universe::GameUniverse;
 
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
-    state.team_units[TeamId::RED.0 as usize] =
+fn state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
+    state.state_mut().team_units[TeamId::RED.0 as usize] =
         max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[TeamId::GREEN.0 as usize] =
+    state.state_mut().team_units[TeamId::GREEN.0 as usize] =
         max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.player_team = TeamId::RED;
+    state.state_mut().player_team = TeamId::RED;
     state
 }
 
@@ -33,10 +33,26 @@ fn spawned_units_are_visible_only_to_their_own_team() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(80, 80), 0)
         .expect("чужой танк");
 
-    assert!(state.unit(own).unwrap().is_visible_to_team(TeamId::RED));
-    assert!(!state.unit(own).unwrap().is_visible_to_team(TeamId::GREEN));
-    assert!(!state.unit(enemy).unwrap().is_visible_to_team(TeamId::RED));
-    assert!(state.unit(enemy).unwrap().is_visible_to_team(TeamId::GREEN));
+    assert!(state
+        .snapshot()
+        .unit(own)
+        .unwrap()
+        .is_visible_to_team(TeamId::RED));
+    assert!(!state
+        .snapshot()
+        .unit(own)
+        .unwrap()
+        .is_visible_to_team(TeamId::GREEN));
+    assert!(!state
+        .snapshot()
+        .unit(enemy)
+        .unwrap()
+        .is_visible_to_team(TeamId::RED));
+    assert!(state
+        .snapshot()
+        .unit(enemy)
+        .unwrap()
+        .is_visible_to_team(TeamId::GREEN));
 }
 
 #[test]
@@ -53,29 +69,45 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
         .expect("дальний враг");
 
     // The own team's scan is not recomputed when a foreign unit spawns.
-    assert!(!state.unit(near).unwrap().is_visible_to_team(TeamId::RED));
+    assert!(!state
+        .snapshot()
+        .unit(near)
+        .unwrap()
+        .is_visible_to_team(TeamId::RED));
 
     // `Access_UpdateVisibilityStatus(false)`: rebuilds scan coverage.
     state.update_visibility_status(false);
 
     assert!(
-        state.unit(near).unwrap().is_visible_to_team(TeamId::RED),
+        state
+            .snapshot()
+            .unit(near)
+            .unwrap()
+            .is_visible_to_team(TeamId::RED),
         "враг в радиусе обзора (TANK scan = 4) обнаружен"
     );
     assert!(
-        state.unit(near).unwrap().is_detected_by_team(TeamId::RED),
+        state
+            .snapshot()
+            .unit(near)
+            .unwrap()
+            .is_detected_by_team(TeamId::RED),
         "SpotByTeam ставит spotted_by_team"
     );
     assert!(
-        !state.unit(far).unwrap().is_visible_to_team(TeamId::RED),
+        !state
+            .snapshot()
+            .unit(far)
+            .unwrap()
+            .is_visible_to_team(TeamId::RED),
         "враг вне FOV остаётся скрытым"
     );
     assert!(
-        state.ai_heat_map_complete(TeamId::RED, 20, 20) > 0,
+        state.state().ai_heat_map_complete(TeamId::RED, 20, 20) > 0,
         "клетка своего юнита разведана"
     );
     assert_eq!(
-        state.ai_heat_map_complete(TeamId::RED, 80, 80),
+        state.state().ai_heat_map_complete(TeamId::RED, 80, 80),
         0,
         "дальняя клетка не разведана"
     );
@@ -86,7 +118,7 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
 #[test]
 fn all_visible_marks_every_spawned_unit_visible() {
     let mut state = state();
-    state.ai.all_visible = true;
+    state.state_mut().ai.all_visible = true;
 
     let own = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 20), 0)
@@ -96,11 +128,23 @@ fn all_visible_marks_every_spawned_unit_visible() {
         .unwrap();
 
     // `InitStealthStatus`: invisible types — no, ordinary ones — `AllVisible`.
-    assert!(state.unit(enemy).unwrap().is_visible_to_team(TeamId::RED));
-    assert!(state.unit(own).unwrap().is_visible_to_team(TeamId::GREEN));
+    assert!(state
+        .snapshot()
+        .unit(enemy)
+        .unwrap()
+        .is_visible_to_team(TeamId::RED));
+    assert!(state
+        .snapshot()
+        .unit(own)
+        .unwrap()
+        .is_visible_to_team(TeamId::GREEN));
 
     state.update_visibility_status(true);
-    assert!(state.unit(enemy).unwrap().is_visible_to_team(TeamId::RED));
+    assert!(state
+        .snapshot()
+        .unit(enemy)
+        .unwrap()
+        .is_visible_to_team(TeamId::RED));
 }
 
 #[test]
@@ -118,6 +162,7 @@ fn stealth_units_stay_hidden_outside_fov() {
 
     assert!(
         !state
+            .snapshot()
             .unit(commando)
             .unwrap()
             .is_visible_to_team(TeamId::RED),
@@ -130,6 +175,7 @@ fn stealth_units_stay_hidden_outside_fov() {
         .unwrap()
         .set_visible_to_team(TeamId::RED, true);
     assert!(state
+        .snapshot()
         .unit(commando)
         .unwrap()
         .is_visible_to_team(TeamId::RED));

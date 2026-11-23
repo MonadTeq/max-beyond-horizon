@@ -10,15 +10,15 @@ mod support;
 use max_core::access;
 use max_core::crc;
 use max_core::enums::{Surface, UnitOrder, UnitOrderState, UnitType};
-use max_core::game::GameState;
 use max_core::geo::{Point, MAP_WIDTH};
 use max_core::team::TeamId;
+use max_core::universe::GameUniverse;
 
 use support::{game, order_move, spawn, start_turn, ticks};
 
-fn wall(state: &mut GameState, x: i16, from_y: i16, to_y: i16) {
+fn wall(state: &mut GameUniverse, x: i16, from_y: i16, to_y: i16) {
     for y in from_y..=to_y {
-        state.map.surface.set(x, y, Surface::WATER);
+        state.state_mut().map.surface.set(x, y, Surface::WATER);
     }
 }
 
@@ -26,7 +26,7 @@ fn wall(state: &mut GameState, x: i16, from_y: i16, to_y: i16) {
 /// traversed cell is land. Two runs are bit-identical (D).
 #[test]
 fn tank_routes_around_a_water_wall() {
-    fn run() -> (GameState, usize) {
+    fn run() -> (GameUniverse, usize) {
         let mut state = game();
         wall(&mut state, 10, 0, 15);
         let unit = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5));
@@ -44,10 +44,10 @@ fn tank_routes_around_a_water_wall() {
             order_move(&mut state, unit, goal);
             for _ in 0..12 {
                 state.tick();
-                let tank = state.unit(unit).expect("unit");
+                let tank = state.snapshot().unit(unit).expect("unit");
                 if tank.grid != previous {
                     assert_eq!(
-                        state.map.surface_at(tank.grid.x, tank.grid.y),
+                        state.state().map.surface_at(tank.grid.x, tank.grid.y),
                         Surface::LAND,
                         "the tank entered water at {:?}",
                         tank.grid
@@ -62,7 +62,7 @@ fn tank_routes_around_a_water_wall() {
             }
         }
 
-        let unit = state.unit(unit).expect("unit");
+        let unit = state.snapshot().unit(unit).expect("unit");
         assert!(arrived, "the tank did not reach the goal: {:?}", unit.grid);
         assert_eq!(unit.orders, UnitOrder::Await);
         assert!(unit.path.is_none(), "the route is dropped on arrival");
@@ -74,11 +74,17 @@ fn tank_routes_around_a_water_wall() {
     let (first, first_steps) = run();
     let (second, second_steps) = run();
     assert_eq!(first_steps, second_steps);
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
+    assert_eq!(
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
     );
 }
 
@@ -86,14 +92,18 @@ fn tank_routes_around_a_water_wall() {
 /// the tank keeps its cell and `AWAIT`, and no request stays queued.
 #[test]
 fn unreachable_goal_leaves_the_tank_waiting() {
-    fn run() -> GameState {
+    fn run() -> GameUniverse {
         let mut state = game();
         for dy in -1..=1 {
             for dx in -1..=1 {
                 if dx == 0 && dy == 0 {
                     continue;
                 }
-                state.map.surface.set(15 + dx, 15 + dy, Surface::WATER);
+                state
+                    .state_mut()
+                    .map
+                    .surface
+                    .set(15 + dx, 15 + dy, Surface::WATER);
             }
         }
 
@@ -101,20 +111,29 @@ fn unreachable_goal_leaves_the_tank_waiting() {
         order_move(&mut state, unit, Point::new(15, 15));
         ticks(&mut state, 8);
 
-        let unit_ref = state.unit(unit).expect("unit");
+        let unit_ref = state.snapshot().unit(unit).expect("unit");
         assert_eq!(unit_ref.grid, Point::new(5, 5), "no movement possible");
         assert_eq!(unit_ref.orders, UnitOrder::Await);
         assert_eq!(unit_ref.state, UnitOrderState::ExecutingOrder);
         assert!(unit_ref.path.is_none());
-        assert!(state.path_requests.is_empty(), "the queue is drained");
-        assert!(state.path_requests.is_empty());
+        assert!(
+            state.state().path_requests.is_empty(),
+            "the queue is drained"
+        );
+        assert!(state.state().path_requests.is_empty());
         state
     }
 
     let first = run();
     let second = run();
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
 }
 
 /// A naval unit routes along the only water lane; a land unit cannot use it.
@@ -123,7 +142,7 @@ fn sea_unit_routes_along_the_water_lane() {
     let mut state = game();
     // Only the row y = 5 is water; everything else is land.
     for x in 0..MAP_WIDTH {
-        state.map.surface.set(x, 5, Surface::WATER);
+        state.state_mut().map.surface.set(x, 5, Surface::WATER);
     }
 
     let ship = spawn(
@@ -142,7 +161,7 @@ fn sea_unit_routes_along_the_water_lane() {
         order_move(&mut state, ship, goal);
         for _ in 0..12 {
             state.tick();
-            let unit = state.unit(ship).expect("ship");
+            let unit = state.snapshot().unit(ship).expect("ship");
             if unit.grid != last {
                 assert_eq!(
                     unit.grid.y, 5,
@@ -150,7 +169,7 @@ fn sea_unit_routes_along_the_water_lane() {
                     unit.grid
                 );
                 assert_eq!(
-                    state.map.surface_at(unit.grid.x, unit.grid.y),
+                    state.state().map.surface_at(unit.grid.x, unit.grid.y),
                     Surface::WATER,
                     "ship on non-water {:?}",
                     unit.grid
@@ -166,13 +185,16 @@ fn sea_unit_routes_along_the_water_lane() {
 
     assert_eq!(last, Point::new(15, 5), "ship did not reach the goal");
     assert_eq!(moves, 10, "one cell per tick along the lane");
-    assert_eq!(state.unit(ship).unwrap().orders, UnitOrder::Await);
+    assert_eq!(
+        state.snapshot().unit(ship).unwrap().orders,
+        UnitOrder::Await
+    );
 
     // A tank cannot enter the water lane, so the same destination is unreachable
     // from a land cell (the only route would cross water or leave the map edge).
     let mut land_state = game();
     for x in 0..MAP_WIDTH {
-        land_state.map.surface.set(x, 5, Surface::WATER);
+        land_state.state_mut().map.surface.set(x, 5, Surface::WATER);
     }
     let tank = spawn(
         &mut land_state,
@@ -182,8 +204,14 @@ fn sea_unit_routes_along_the_water_lane() {
     );
     order_move(&mut land_state, tank, Point::new(15, 5));
     ticks(&mut land_state, 8);
-    assert_eq!(land_state.unit(tank).unwrap().grid, Point::new(5, 6));
-    assert_eq!(land_state.unit(tank).unwrap().orders, UnitOrder::Await);
+    assert_eq!(
+        land_state.snapshot().unit(tank).unwrap().grid,
+        Point::new(5, 6)
+    );
+    assert_eq!(
+        land_state.snapshot().unit(tank).unwrap().orders,
+        UnitOrder::Await
+    );
 }
 
 /// `MOVE_TO_ATTACK` path assignment stops in attack range: the tank never steps
@@ -215,6 +243,7 @@ fn move_to_attack_stops_within_range() {
     state.set_order(red, UnitOrder::MoveToAttack, UnitOrderState::Init);
 
     let range = state
+        .snapshot()
         .unit(red)
         .unwrap()
         .base_values
@@ -236,7 +265,7 @@ fn move_to_attack_stops_within_range() {
         state.set_order(red, UnitOrder::MoveToAttack, UnitOrderState::Init);
         for _ in 0..12 {
             state.tick();
-            let red_unit = state.unit(red).expect("red unit");
+            let red_unit = state.snapshot().unit(red).expect("red unit");
             closest = closest.min(access::squared_distance(red_unit.grid, Point::new(20, 5)));
             assert_ne!(
                 red_unit.grid,
@@ -261,7 +290,7 @@ fn move_to_attack_stops_within_range() {
 /// and the resulting state is deterministic (D).
 #[test]
 fn queued_path_requests_are_deterministic() {
-    fn run() -> GameState {
+    fn run() -> GameUniverse {
         let mut state = game();
         let first = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5));
         let second = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 9));
@@ -269,15 +298,16 @@ fn queued_path_requests_are_deterministic() {
         order_move(&mut state, second, Point::new(9, 9));
 
         ticks(&mut state, 1);
-        assert_eq!(state.path_requests.len(), 2);
-        assert_eq!(state.path_requests[0].unit, first);
-        assert_eq!(state.path_requests[1].unit, second);
+        assert_eq!(state.state().path_requests.len(), 2);
+        assert_eq!(state.state().path_requests[0].unit, first);
+        assert_eq!(state.state().path_requests[1].unit, second);
 
         ticks(&mut state, 9);
-        assert!(state.path_requests.is_empty());
+        assert!(state.state().path_requests.is_empty());
         for unit in [first, second] {
             assert!(
-                state.unit(unit).unwrap().path.is_some() || state.unit(unit).unwrap().grid.x > 5
+                state.snapshot().unit(unit).unwrap().path.is_some()
+                    || state.snapshot().unit(unit).unwrap().grid.x > 5
             );
         }
         state
@@ -285,6 +315,12 @@ fn queued_path_requests_are_deterministic() {
 
     let first = run();
     let second = run();
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
 }

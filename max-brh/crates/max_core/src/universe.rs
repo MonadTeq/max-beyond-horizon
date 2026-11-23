@@ -901,6 +901,69 @@ impl<D: Dispatcher> GameUniverse<D> {
         self.state.step_crc_barrier(team)
     }
 
+    // — stage B: simulation/turn passthroughs for the scenario harness (§4.1) —
+    //
+    // The phase 1-5 integration scenarios drive the simulation in steps that are
+    // not a `Command` and not a plain `tick()`: the start-of-turn economy pass,
+    // the team-turn machine, the end-turn phase and the visibility scan. Stage B
+    // §4.1 moves these test harness calls onto the facade, so each one is a 1:1
+    // passthrough with the same behavior as the `GameState` call it wraps. They
+    // are **not** lockstep mutations of the `submit` path (no `seq` bump, no
+    // outgoing plan): the caller observes the returned value, exactly as the
+    // old harness did.
+
+    /// `GameManager_ManageEconomy` (`game.rs:1886`) — the start-of-turn economy
+    /// pass (`start_turn` in `tests/support/mod.rs`).
+    pub fn manage_economy(&mut self, team: TeamId) {
+        self.state.manage_economy(team);
+    }
+
+    /// `GameManager_TeamTurnTurnBased` step (`game.rs:2400`); returns the
+    /// transition so the harness can observe `Human`/`Computer`/`RoundClosed`/
+    /// `GameOver` without touching the state.
+    pub fn next_team(&mut self) -> TurnEvent {
+        self.state.next_team()
+    }
+
+    /// Round entry `GameManager_TeamTurnTurnBased` (`game.rs:2336`).
+    pub fn begin_round(&mut self) {
+        self.state.begin_round();
+    }
+
+    /// `GameManager_TeamTurnFinish` (`game.rs:2486`); `true` when the match is
+    /// over.
+    pub fn end_round(&mut self) -> bool {
+        self.state.end_round()
+    }
+
+    /// Load entry (`game.rs:2361`): starts the saved active team without a second
+    /// economy pass; `None` when no playing slot is left.
+    pub fn resume_round(&mut self) -> Option<TurnEvent> {
+        self.state.resume_round()
+    }
+
+    /// Enters `GAME_STATE_9_END_TURN` (`game.rs:2607`) — the phase
+    /// [`Self::finish_turn`] requires.
+    pub fn enter_end_turn(&mut self) {
+        self.state.enter_end_turn();
+    }
+
+    /// `GameManager_TeamTurnFinish` (`game.rs:2649`); `true` when the match is
+    /// over.
+    pub fn finish_turn(&mut self) -> bool {
+        self.state.finish_turn()
+    }
+
+    /// `Access_UpdateVisibilityStatus` (`ai/threat.rs:859`).
+    pub fn update_visibility_status(&mut self, reset_visibility: bool) {
+        self.state.update_visibility_status(reset_visibility);
+    }
+
+    /// `UnitInfo::SpotByTeam` + `Ai_UnitSpotted` (`ai/mod.rs:296`).
+    pub fn spot_by_team(&mut self, id: UnitId, team: TeamId) {
+        self.state.spot_by_team(id, team);
+    }
+
     // — stage A only: temporary accesses, removed in stage B —
 
     /// The wrapped state (stage A only, guardrail 2).

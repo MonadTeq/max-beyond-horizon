@@ -11,10 +11,10 @@ mod support;
 use max_core::combat;
 use max_core::crc;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::team::TeamId;
 use max_core::unit_order;
+use max_core::universe::GameUniverse;
 
 use support::{game, order_move, run_until, set_hovering, spawn, ticks};
 
@@ -106,7 +106,7 @@ fn order_dispatch_effects_match_cpp() {
         state.set_order(unit, order, from_state);
         state.tick();
 
-        let unit = state.unit(unit).expect("unit survives the tick");
+        let unit = state.snapshot().unit(unit).expect("unit survives the tick");
         assert_eq!(
             (unit.orders, unit.state),
             (expected_order, expected_state),
@@ -130,8 +130,11 @@ fn upgrade_and_deferred_orders_keep_prior_state() {
     state.unit_mut(unit).unwrap().parent_unit = Some(parent);
     state.set_order(unit, UnitOrder::Upgrade, UnitOrderState::Init);
     state.tick();
-    assert!(state.unit(unit).unwrap().parent_unit.is_none());
-    assert_eq!(state.unit(unit).unwrap().orders, UnitOrder::Await);
+    assert!(state.snapshot().unit(unit).unwrap().parent_unit.is_none());
+    assert_eq!(
+        state.snapshot().unit(unit).unwrap().orders,
+        UnitOrder::Await
+    );
 }
 
 /// A lethal hit puts the target into `EXPLODE/INIT`; the effect unit appears on
@@ -139,15 +142,15 @@ fn upgrade_and_deferred_orders_keep_prior_state() {
 /// animation (`UnitsManager_StartExplosion`/`ProgressExplosion`).
 #[test]
 fn explode_lifecycle_spawns_and_despawns_the_effect() {
-    fn run() -> GameState {
+    fn run() -> GameUniverse {
         let mut state = game();
         let victim = spawn(&mut state, UnitType::Tank, TeamId::GREEN, Point::new(5, 5));
         let attacker = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(6, 5));
 
         state.unit_mut(victim).unwrap().hits = 1;
-        combat::attack_unit(&mut state, victim, attacker, 0, 2);
+        combat::attack_unit(state.state_mut(), victim, attacker, 0, 2);
         {
-            let victim_unit = state.unit(victim).expect("victim");
+            let victim_unit = state.snapshot().unit(victim).expect("victim");
             assert_eq!(victim_unit.hits, 0);
             assert_eq!(victim_unit.orders, UnitOrder::Explode);
             assert_eq!(victim_unit.state, UnitOrderState::Init);
@@ -155,23 +158,31 @@ fn explode_lifecycle_spawns_and_despawns_the_effect() {
 
         // First tick: the explosion effect is deployed, the victim waits in DESTROY.
         state.tick();
-        assert_eq!(state.unit(victim).unwrap().state, UnitOrderState::Destroy);
+        assert_eq!(
+            state.snapshot().unit(victim).unwrap().state,
+            UnitOrderState::Destroy
+        );
         let explosion = state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
                 state
+                    .snapshot()
                     .unit(*id)
                     .is_some_and(|unit| unit.unit_type == UnitType::LandExplosion)
             })
             .expect("land explosion on the victim cell");
-        assert_eq!(state.unit(explosion).unwrap().grid, Point::new(5, 5));
+        assert_eq!(
+            state.snapshot().unit(explosion).unwrap().grid,
+            Point::new(5, 5)
+        );
 
         // Frames advance while the effect lives.
         let mut frames = Vec::new();
         for _ in 0..40 {
             state.tick();
-            if let Some(effect) = state.unit(explosion) {
+            if let Some(effect) = state.snapshot().unit(explosion) {
                 frames.push(effect.image_index);
             }
         }
@@ -181,15 +192,24 @@ fn explode_lifecycle_spawns_and_despawns_the_effect() {
             frames.windows(2).all(|pair| pair[0] <= pair[1]),
             "no frame rewind"
         );
-        assert!(!state.has_unit(explosion), "the effect is removed");
-        assert!(!state.has_unit(victim), "the corpse is removed");
+        assert!(
+            !state.snapshot().has_unit(explosion),
+            "the effect is removed"
+        );
+        assert!(!state.snapshot().has_unit(victim), "the corpse is removed");
         state
     }
 
     let first = run();
     let second = run();
-    assert_eq!(first.snapshot_bytes(), second.snapshot_bytes());
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
+    assert_eq!(
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes()
+    );
+    assert_eq!(
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
 }
 
 /// `LAND` → `TAKE_OFF` round trip: nine landing steps clear `HOVERING`, five
@@ -208,7 +228,7 @@ fn land_and_takeoff_cycle_restores_await() {
     state.set_order(fighter, UnitOrder::Land, UnitOrderState::Init);
     ticks(&mut state, 12);
     {
-        let unit = state.unit(fighter).expect("fighter");
+        let unit = state.snapshot().unit(fighter).expect("fighter");
         assert_eq!(unit.orders, UnitOrder::Await);
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert_eq!(
@@ -222,7 +242,7 @@ fn land_and_takeoff_cycle_restores_await() {
     state.set_order(fighter, UnitOrder::TakeOff, UnitOrderState::Init);
     ticks(&mut state, 7);
     {
-        let unit = state.unit(fighter).expect("fighter");
+        let unit = state.snapshot().unit(fighter).expect("fighter");
         assert_eq!(unit.orders, UnitOrder::Await);
         assert_ne!(
             unit.flags & max_core::enums::unit_flags::HOVERING,
@@ -244,18 +264,25 @@ fn move_request_path_and_emergency_stop() {
 
     // Tick 1: the path request is queued, the order waits for it.
     state.tick();
-    assert_eq!(state.unit(unit).unwrap().state, UnitOrderState::NewOrder);
-    assert_eq!(state.path_requests.len(), 1);
+    assert_eq!(
+        state.snapshot().unit(unit).unwrap().state,
+        UnitOrderState::NewOrder
+    );
+    assert_eq!(state.state().path_requests.len(), 1);
 
     // Tick 2: the path is applied; the hull turns toward the next step before
     // the first cell transition (`GroundPath::Execute` + `Move`).
     state.tick();
-    assert!(state.unit(unit).unwrap().path.is_some());
-    assert_eq!(state.unit(unit).unwrap().state, UnitOrderState::InProgress);
+    assert!(state.snapshot().unit(unit).unwrap().path.is_some());
+    assert_eq!(
+        state.snapshot().unit(unit).unwrap().state,
+        UnitOrderState::InProgress
+    );
 
     assert!(
         run_until(&mut state, 8, |state| {
             state
+                .snapshot()
                 .unit(unit)
                 .is_some_and(|unit| unit.grid == Point::new(11, 10))
         }),
@@ -266,7 +293,7 @@ fn move_request_path_and_emergency_stop() {
     let unit_ref = state.unit_mut(unit).expect("unit");
     unit_order::stop_movement(unit_ref, false);
     {
-        let unit = state.unit(unit).expect("unit");
+        let unit = state.snapshot().unit(unit).expect("unit");
         assert_eq!(unit.orders, UnitOrder::Await);
         assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
         assert!(unit.path.is_none());
@@ -274,9 +301,9 @@ fn move_request_path_and_emergency_stop() {
     }
 
     // Nothing moves after the stop.
-    let grid = state.unit(unit).unwrap().grid;
+    let grid = state.snapshot().unit(unit).unwrap().grid;
     ticks(&mut state, 5);
-    assert_eq!(state.unit(unit).unwrap().grid, grid);
+    assert_eq!(state.snapshot().unit(unit).unwrap().grid, grid);
 }
 
 /// Determinism of the whole order cycle (land → takeoff → move) on two runs.
@@ -298,14 +325,15 @@ fn order_cycle_is_bit_identical() {
         order_move(&mut state, fighter, Point::new(15, 10));
         assert!(run_until(&mut state, 64, |state| {
             state
+                .snapshot()
                 .unit(fighter)
                 .is_some_and(|unit| unit.grid == Point::new(15, 10))
         }));
 
         (
-            state.snapshot_bytes(),
-            crc::state_checksum(&state),
-            crc::replay_digest_bytes(&state),
+            state.snapshot().snapshot_bytes(),
+            crc::state_checksum(state.state()),
+            crc::replay_digest_bytes(state.state()),
         )
     }
 

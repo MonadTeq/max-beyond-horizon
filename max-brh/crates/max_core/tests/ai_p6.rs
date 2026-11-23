@@ -29,8 +29,8 @@ use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
 use max_core::map::{Map, ResourceKind, ResourceMapEntry};
 use max_core::team::{TeamId, TeamKind};
+use max_core::universe::GameUniverse;
 use max_core::victory;
-use max_core::GameState;
 
 /// A small map: land 24×24 in the top-left corner, the rest — water.
 fn small_land_map() -> Map {
@@ -52,9 +52,9 @@ fn small_land_map() -> Map {
 }
 
 /// An AI computer for red; the other teams are `None`.
-fn computer_state() -> GameState {
+fn computer_state() -> GameUniverse {
     let map = small_land_map();
-    let mut state = GameState::with_setup(
+    let mut state = GameUniverse::with_setup(
         map,
         [
             TeamKind::Computer,
@@ -64,15 +64,15 @@ fn computer_state() -> GameState {
         ],
     );
 
-    state.teams[0].team_type = TeamKind::Computer;
-    state.teams[0].team_clan = TeamClan::Musashi;
-    state.ai.settings.opponent = Opponent::Average as u8;
+    state.state_mut().teams[0].team_type = TeamKind::Computer;
+    state.state_mut().teams[0].team_clan = TeamClan::Musashi;
+    state.state_mut().ai.settings.opponent = Opponent::Average as u8;
     state
 }
 
 /// Places a materials deposit on a cell.
-fn put_ore(state: &mut GameState, site: Point, amount: u8) {
-    state.map.resources.set(
+fn put_ore(state: &mut GameUniverse, site: Point, amount: u8) {
+    state.state_mut().map.resources.set(
         site.x,
         site.y,
         ResourceMapEntry::new(amount, Some(ResourceKind::Raw), 0x0F),
@@ -80,8 +80,9 @@ fn put_ore(state: &mut GameState, site: Point, amount: u8) {
 }
 
 /// Team tasks by type.
-fn tasks_of_type(state: &GameState, team: TeamId, task_type: u8) -> Vec<u32> {
+fn tasks_of_type(state: &GameUniverse, team: TeamId, task_type: u8) -> Vec<u32> {
     state
+        .state()
         .ai
         .task_manager
         .tasks()
@@ -92,17 +93,17 @@ fn tasks_of_type(state: &GameState, team: TeamId, task_type: u8) -> Vec<u32> {
 }
 
 /// One team turn: economy → `Ai_BeginTurn` → `ticks` ticks → end of turn.
-fn play_turn(state: &mut GameState, ticks: usize) {
+fn play_turn(state: &mut GameUniverse, ticks: usize) {
     let team = TeamId::RED;
 
     state.manage_economy(team);
-    state.ai_begin_turn(team);
+    state.state_mut().ai_begin_turn(team);
 
     for _ in 0..ticks {
         state.tick();
     }
 
-    state.game_state = GameStateType::EndTurn;
+    state.state_mut().game_state = GameStateType::EndTurn;
     let _ = state.finish_turn();
 }
 
@@ -118,7 +119,7 @@ fn ai_constructor_builds_mining_station() {
 
     // `Ai_SetupStrategy` — strategy only (without map regeneration).
     assert!(
-        max_core::ai_setup_strategy(&mut state, TeamId::RED),
+        max_core::ai_setup_strategy(state.state_mut(), TeamId::RED),
         "strategy must be selected for a viable map"
     );
 
@@ -131,7 +132,7 @@ fn ai_constructor_builds_mining_station() {
     // at the turn boundary missed it.
     for _ in 0..12 {
         state.manage_economy(TeamId::RED);
-        state.ai_begin_turn(TeamId::RED);
+        state.state_mut().ai_begin_turn(TeamId::RED);
 
         for _ in 0..24 {
             state.tick();
@@ -144,17 +145,18 @@ fn ai_constructor_builds_mining_station() {
                 saw_move = true;
             }
 
-            for task in state.ai.task_manager.tasks() {
+            for task in state.state().ai.task_manager.tasks() {
                 if let TaskKind::CreateBuilding { op_state, .. } = &task.kind {
                     max_op_state = max_op_state.max(*op_state);
                 }
             }
         }
 
-        state.game_state = GameStateType::EndTurn;
+        state.state_mut().game_state = GameStateType::EndTurn;
         let _ = state.finish_turn();
 
         let building = state
+            .snapshot()
             .unit(constructor)
             .map(|unit| {
                 unit.orders == UnitOrder::Build
@@ -180,7 +182,10 @@ fn ai_constructor_builds_mining_station() {
         "TaskCreateBuilding must progress past INITIALIZING, got {max_op_state}"
     );
 
-    let constructor_unit = state.unit(constructor).expect("constructor alive");
+    let constructor_unit = state
+        .snapshot()
+        .unit(constructor)
+        .expect("constructor alive");
 
     assert_eq!(
         constructor_unit.build_list.first().copied(),
@@ -210,19 +215,27 @@ fn ai_army_attacks_enemy() {
         .expect("green tank");
 
     // The enemy is visible to red: mark visibility and notify the AI.
-    let mut enemy = state.unit(defender).expect("green tank exists").clone();
+    let mut enemy = state
+        .snapshot()
+        .unit(defender)
+        .expect("green tank exists")
+        .clone();
     enemy.set_visible_to_team(TeamId::RED, true);
     state.write_unit(defender, enemy);
-    max_core::ai_unit_spotted(&mut state, defender, TeamId::RED);
+    max_core::ai_unit_spotted(state.state_mut(), defender, TeamId::RED);
 
-    let hits_before = state.unit(defender).expect("green tank").hits;
+    let hits_before = state.snapshot().unit(defender).expect("green tank").hits;
 
     let mut attacked = false;
 
     for _ in 0..12 {
         play_turn(&mut state, 24);
 
-        let hits_now = state.unit(defender).map(|unit| unit.hits).unwrap_or(0);
+        let hits_now = state
+            .snapshot()
+            .unit(defender)
+            .map(|unit| unit.hits)
+            .unwrap_or(0);
         if hits_now < hits_before {
             attacked = true;
             break;
@@ -240,6 +253,7 @@ fn ai_army_attacks_enemy() {
     // reaction (the `RemindAttack` reminder), so the test criterion is the damage dealt.
     assert!(
         state
+            .snapshot()
             .unit(defender)
             .map(|unit| unit.hits < hits_before)
             .unwrap_or(true),
@@ -272,12 +286,17 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         .expect("training hall");
 
     // The site: tape/cones/slab — as after `StartBuilding`.
-    max_core::production::deploy_construction_site(&mut state, builder, UnitType::TrainingHall, site)
-        .expect("construction site");
+    max_core::production::deploy_construction_site(
+        state.state_mut(),
+        builder,
+        UnitType::TrainingHall,
+        site,
+    )
+    .expect("construction site");
 
     // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520-3592`): mutual parents,
     // the building `ORDER_IDLE`/`BUILDING_READY`, the builder `ORDER_BUILD`/`UNIT_READY`.
-    let mut builder_unit = state.unit(builder).expect("builder").clone();
+    let mut builder_unit = state.snapshot().unit(builder).expect("builder").clone();
     builder_unit.grid = site;
     builder_unit.parent_unit = Some(building);
     builder_unit.orders = UnitOrder::Build;
@@ -285,19 +304,19 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
     builder_unit.build_list.clear();
     state.write_unit(builder, builder_unit);
 
-    let mut building_unit = state.unit(building).expect("building").clone();
+    let mut building_unit = state.snapshot().unit(building).expect("building").clone();
     building_unit.parent_unit = Some(builder);
     building_unit.orders = UnitOrder::Idle;
     building_unit.state = UnitOrderState::BuildingReady;
     state.write_unit(building, building_unit);
 
     assert_eq!(
-        max_core::production::builder_awaiting_exit(&state, builder),
+        max_core::production::builder_awaiting_exit(state.state(), builder),
         Some(building)
     );
 
     // The AI task in state `BUILDING` (as after `BeginBuilding`).
-    let task = state.ai_append_task(
+    let task = state.state_mut().ai_append_task(
         TeamId::RED,
         None,
         0,
@@ -313,13 +332,15 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         },
     );
     state
+        .state_mut()
         .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(builder, task));
 
     // `TaskCreateBuilding::EndTurn` on the team turn: `Activate()` → `TaskActivate`.
     state.manage_economy(TeamId::RED);
-    state.ai_begin_turn(TeamId::RED);
+    state.state_mut().ai_begin_turn(TeamId::RED);
 
     let activated = state
+        .snapshot()
         .unit(builder)
         .map(|unit| (unit.orders, unit.state))
         .expect("builder alive");
@@ -344,6 +365,7 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         state.tick();
 
         if state
+            .snapshot()
             .unit(building)
             .is_some_and(|unit| unit.orders != UnitOrder::Idle)
         {
@@ -358,22 +380,23 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         "здание обязано раскрыться после ухода строителя (соло-ИИ не зависает)"
     );
     assert!(
-        max_core::production::construction_utility(&state, TeamId::RED, site).is_none(),
+        max_core::production::construction_utility(state.state(), TeamId::RED, site).is_none(),
         "лента и конусы снимаются `UnitsManager_BuildingReady`"
     );
     assert!(
-        state
-            .unit(builder)
-            .is_some_and(|unit| !max_core::production::unit_bounds_contains(
-                state.unit(building).expect("building"),
-                unit.grid
-            )),
+        state.snapshot().unit(builder).is_some_and(|unit| {
+            !max_core::production::unit_bounds_contains(
+                state.snapshot().unit(building).expect("building"),
+                unit.grid,
+            )
+        }),
         "строитель вне габаритов 2×2"
     );
 }
 
 #[test]
-fn ai_two_runs_have_identical_digest() {    fn run() -> Vec<u8> {
+fn ai_two_runs_have_identical_digest() {
+    fn run() -> Vec<u8> {
         let mut state = computer_state();
         put_ore(&mut state, Point::new(12, 11), 20);
 
@@ -384,18 +407,18 @@ fn ai_two_runs_have_identical_digest() {    fn run() -> Vec<u8> {
             .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(20, 20), 0)
             .expect("green tank");
 
-        let mut enemy_unit = state.unit(enemy).expect("enemy").clone();
+        let mut enemy_unit = state.snapshot().unit(enemy).expect("enemy").clone();
         enemy_unit.set_visible_to_team(TeamId::RED, true);
         state.write_unit(enemy, enemy_unit);
-        max_core::ai_unit_spotted(&mut state, enemy, TeamId::RED);
+        max_core::ai_unit_spotted(state.state_mut(), enemy, TeamId::RED);
 
-        max_core::ai_setup_strategy(&mut state, TeamId::RED);
+        max_core::ai_setup_strategy(state.state_mut(), TeamId::RED);
 
         for _ in 0..8 {
             play_turn(&mut state, 16);
         }
 
-        state.snapshot_bytes()
+        state.snapshot().snapshot_bytes()
     }
 
     let first = run();
@@ -420,15 +443,17 @@ fn ai_turns_advance_and_reminders_are_processed() {
     // The reminder queue is processed deterministically: the `deferred` tail
     // (carried to the next `ExecuteReminders` call) is limited by the number of tasks.
     assert!(
-        state.ai.task_manager.reminders_count() <= state.ai.task_manager.task_count() * 2 + 1,
+        state.state().ai.task_manager.reminders_count()
+            <= state.state().ai.task_manager.task_count() * 2 + 1,
         "reminder queues must stay bounded ({} reminders, {} tasks)",
-        state.ai.task_manager.reminders_count(),
-        state.ai.task_manager.task_count()
+        state.state().ai.task_manager.reminders_count(),
+        state.state().ai.task_manager.task_count()
     );
 
     // The construction manager and starting tasks are alive.
     assert!(
         state
+            .state()
             .ai
             .task_manager
             .tasks()
@@ -437,7 +462,10 @@ fn ai_turns_advance_and_reminders_are_processed() {
         "TaskManageBuildings must stay active"
     );
 
-    let unit = state.unit(constructor).expect("constructor alive");
+    let unit = state
+        .snapshot()
+        .unit(constructor)
+        .expect("constructor alive");
     assert!(
         matches!(
             unit.orders,
@@ -483,24 +511,27 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     // `DeployUnit`: `team == PLAYER_TEAM_ALIEN && flags & REGENERATING_UNIT`
     // → `ORDER_DISABLE` (flags are taken from the type, not only from the argument).
     assert_eq!(
-        state.unit(alien_tank).map(|unit| unit.orders),
+        state.snapshot().unit(alien_tank).map(|unit| unit.orders),
         Some(UnitOrder::Disable)
     );
     assert_eq!(
-        state.unit(alien_gun).map(|unit| unit.orders),
+        state.snapshot().unit(alien_gun).map(|unit| unit.orders),
         Some(UnitOrder::Disable)
     );
 
     // Units in the lists and in the map hash; the building occupies 2×2, as
     // `Hash_MapHash.Add(unit, flags & GROUND_COVER)` in C++.
     for id in [alien_tank, alien_gun, alien_building] {
-        let unit = state.unit(id).expect("alien unit alive");
+        let unit = state.snapshot().unit(id).expect("alien unit alive");
         assert_eq!(unit.team, TeamId::ALIEN);
-        assert!(state.unit_list(unit.unit_list).contains(&id));
-        assert!(state.units_at(unit.grid).contains(&id));
+        assert!(state.snapshot().unit_list(unit.unit_list).contains(&id));
+        assert!(state.snapshot().units_at(unit.grid).contains(&id));
     }
 
-    let building = state.unit(alien_building).expect("building alive");
+    let building = state
+        .snapshot()
+        .unit(alien_building)
+        .expect("building alive");
     assert_ne!(building.flags & unit_flags::BUILDING, 0);
     for cell in [
         Point::new(building.grid.x + 1, building.grid.y),
@@ -508,7 +539,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         Point::new(building.grid.x + 1, building.grid.y + 1),
     ] {
         assert!(
-            state.units_at(cell).contains(&alien_building),
+            state.snapshot().units_at(cell).contains(&alien_building),
             "building must occupy {cell:?}"
         );
     }
@@ -518,30 +549,44 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
         for cell in [Point::new(12, 12), Point::new(13, 12), Point::new(15, 15)] {
             let team = TeamId(team as u8);
             assert_eq!(
-                state.ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)),
+                state
+                    .state()
+                    .ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
             assert_eq!(
-                state.ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)),
+                state
+                    .state()
+                    .ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
             assert_eq!(
-                state.ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)),
+                state
+                    .state()
+                    .ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
         }
     }
 
     // There is no map for `ALIEN`: the C++ checks `heat_map && …` give 0/false.
-    assert_eq!(state.ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
-    assert_eq!(state.ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12), 0);
-    assert_eq!(state.ai_heat_map_stealth_land(TeamId::ALIEN, 12, 12), 0);
-    let unit = state.unit(alien_tank).expect("alien tank alive");
-    assert!(!state.is_visible_on_heat_map(unit, TeamId::ALIEN));
+    assert_eq!(state.state().ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
+    assert_eq!(
+        state.state().ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12),
+        0
+    );
+    assert_eq!(
+        state
+            .state()
+            .ai_heat_map_stealth_land(TeamId::ALIEN, 12, 12),
+        0
+    );
+    let unit = state.snapshot().unit(alien_tank).expect("alien tank alive");
+    assert!(!state.state().is_visible_on_heat_map(unit, TeamId::ALIEN));
 
     // The service team does not participate in victory conditions: previously `ALIEN` with
     // `team_type = Computer` got into `teams_total`.
-    let status = victory::evaluate_status(&state, state.turn_counter);
+    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
     assert_eq!(status.teams_total, 1, "в партии только красные");
     assert_eq!(
         status.teams_in_play, 0,
@@ -564,7 +609,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     let commando = state
         .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(11, 12), 0)
         .expect("commando deploys");
-    max_core::combat::attack_unit(&mut state, alien_tank, commando, 0, 0);
+    max_core::combat::attack_unit(state.state_mut(), alien_tank, commando, 0, 0);
     state.tick();
 
     state.destroy_unit(alien_building);
@@ -575,7 +620,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
 
     for id in [alien_building, alien_tank, alien_gun, commando] {
         assert!(
-            state.unit(id).is_none(),
+            state.snapshot().unit(id).is_none(),
             "юнит {id:?} должен быть уничтожен"
         );
     }
@@ -595,7 +640,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
 fn ai_completes_a_build_queue_through_production() {
     let mut state = computer_state();
     // Team gold: production charges the C++ rate per turn.
-    state.team_units[TeamId::RED.0 as usize].set_gold(500);
+    state.state_mut().team_units[TeamId::RED.0 as usize].set_gold(500);
     put_ore(&mut state, Point::new(12, 11), 20);
     put_ore(&mut state, Point::new(13, 11), 20);
 
@@ -605,34 +650,31 @@ fn ai_completes_a_build_queue_through_production() {
     // Real landing gives the constructor raw material (`DEFAULT_MISSION_LOADOUT`);
     // `UnitsManager_DeployUnit` zeroes the new unit's storage, so the test
     // sets the cargo explicitly — otherwise `BuildMenu::Build` would refuse (no 24 units).
-    state
-        .unit_mut(constructor)
-        .expect("constructor")
-        .storage = 60;
-    assert!(max_core::ai_setup_strategy(&mut state, TeamId::RED));
+    state.unit_mut(constructor).expect("constructor").storage = 60;
+    assert!(max_core::ai_setup_strategy(state.state_mut(), TeamId::RED));
 
     let mut built = None;
     let mut saw_queue = false;
 
     for _ in 0..26 {
         state.manage_economy(TeamId::RED);
-        state.ai_begin_turn(TeamId::RED);
+        state.state_mut().ai_begin_turn(TeamId::RED);
 
         for _ in 0..24 {
             state.tick();
         }
 
         // Team production turn (C++ `GameManager_ProgressBuildState`).
-        max_core::production::progress_build_state(&mut state, TeamId::RED);
+        max_core::production::progress_build_state(state.state_mut(), TeamId::RED);
 
-        if let Some(unit) = state.unit(constructor) {
+        if let Some(unit) = state.snapshot().unit(constructor) {
             if !unit.build_list.is_empty() {
                 saw_queue = true;
             }
         }
 
-        built = state.unit_ids_in_order().into_iter().find(|id| {
-            state.unit(*id).is_some_and(|unit| {
+        built = state.snapshot().unit_ids_in_order().into_iter().find(|id| {
+            state.snapshot().unit(*id).is_some_and(|unit| {
                 unit.team == TeamId::RED && unit.unit_type == UnitType::MiningStation
             })
         });
@@ -651,4 +693,3 @@ fn ai_completes_a_build_queue_through_production() {
         "ИИ должен достроить шахту через очередь производства (12 ходов)"
     );
 }
-

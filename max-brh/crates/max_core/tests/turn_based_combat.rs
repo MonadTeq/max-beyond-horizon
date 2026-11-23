@@ -18,25 +18,25 @@
 use max_core::combat;
 use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
 use max_core::enums::{PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
+use max_core::universe::GameUniverse;
 
-fn combat_state() -> GameState {
-    let mut state = GameState::new();
-    state.play_mode = PlayMode::TurnBased;
-    state.game_state = max_core::enums::GameStateType::InGame;
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Computer;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[1] = TeamUnits::with_clan(TeamClan::Random);
+fn combat_state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().play_mode = PlayMode::TurnBased;
+    state.state_mut().game_state = max_core::enums::GameStateType::InGame;
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().teams[1].team_type = TeamKind::Computer;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
     // The target is visible to the shooter: in game this comes from reconnaissance, here — determinism.
-    state.ai.all_visible = true;
+    state.state_mut().ai.all_visible = true;
     state
 }
 
 fn spawn(
-    state: &mut GameState,
+    state: &mut GameUniverse,
     unit_type: UnitType,
     team: TeamId,
     grid: Point,
@@ -68,7 +68,7 @@ fn is_combat_effect(unit_type: UnitType) -> bool {
 #[test]
 fn turn_based_ai_turn_ends_after_its_missile_impact() {
     let mut state = combat_state();
-    state.active_turn_team = TeamId::GREEN;
+    state.state_mut().active_turn_team = TeamId::GREEN;
     let launcher = spawn(
         &mut state,
         UnitType::MissileCrawler,
@@ -78,8 +78,8 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
     let target = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(13, 5));
     state.update_visibility_status(false);
 
-    state.ai_begin_turn(TeamId::GREEN);
-    let mut data = state.order_data(launcher);
+    state.state_mut().ai_begin_turn(TeamId::GREEN);
+    let mut data = state.snapshot().order_data(launcher);
     data.fire_on = Point::new(13, 5);
     state.set_order_data(launcher, data);
     state.set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
@@ -90,21 +90,22 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
     for tick in 0..400 {
         state.tick();
 
-        for id in state.unit_ids_in_order() {
-            if let Some(unit) = state.unit(id) {
+        for id in state.snapshot().unit_ids_in_order() {
+            if let Some(unit) = state.snapshot().unit(id) {
                 saw_rocket |= unit.unit_type == UnitType::Rocket;
                 saw_explosion |=
                     is_combat_effect(unit.unit_type) && unit.unit_type != UnitType::Rocket;
             }
         }
 
-        if state.ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter > 120 {
+        if state.state().ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter > 120 {
             assert!(tick < 300, "ход ИИ закрылся только на тике {tick}");
 
             let leftovers: Vec<_> = state
+                .snapshot()
                 .unit_ids_in_order()
                 .into_iter()
-                .filter_map(|id| state.unit(id))
+                .filter_map(|id| state.snapshot().unit(id))
                 .filter(|unit| is_combat_effect(unit.unit_type))
                 .map(|unit| unit.unit_type)
                 .collect();
@@ -113,7 +114,10 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
                 "юниты-эффекты остались на карте: {leftovers:?}"
             );
             assert!(
-                state.unit(target).is_none_or(|unit| unit.hits < 24),
+                state
+                    .snapshot()
+                    .unit(target)
+                    .is_none_or(|unit| unit.hits < 24),
                 "ракета должна была попасть в цель"
             );
             assert!(saw_rocket, "снаряд ROCKET должен был появиться");
@@ -124,11 +128,12 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
 
     panic!(
         "ход ИИ не закрылся за 400 тиков: counter={}, units={:?}",
-        state.ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter,
+        state.state().ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter,
         state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| state.unit(id))
+            .filter_map(|id| state.snapshot().unit(id))
             .map(|unit| (unit.unit_type, unit.orders, unit.state, unit.grid))
             .collect::<Vec<_>>()
     );
@@ -143,14 +148,14 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     state.update_visibility_status(false);
 
     // Shoot at an empty cell within range: `Fire` without a target.
-    combat::attack(&mut state, shooter, Point::new(6, 5));
+    combat::attack(state.state_mut(), shooter, Point::new(6, 5));
 
     let mut explosion = None;
     for _ in 0..30 {
         state.tick();
 
-        for id in state.unit_ids_in_order() {
-            if let Some(unit) = state.unit(id) {
+        for id in state.snapshot().unit_ids_in_order() {
+            if let Some(unit) = state.snapshot().unit(id) {
                 if unit.unit_type == UnitType::HitExplosion {
                     explosion = Some(unit.image_index_max);
                 }
@@ -159,9 +164,10 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
 
         if explosion.is_some()
             && !state
+                .snapshot()
                 .unit_ids_in_order()
                 .into_iter()
-                .filter_map(|id| state.unit(id))
+                .filter_map(|id| state.snapshot().unit(id))
                 .any(|unit| unit.unit_type == UnitType::HitExplosion)
         {
             break;
@@ -171,9 +177,10 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     assert_eq!(explosion, Some(4), "HITEXPLD: image_index_max = 4");
     assert!(
         !state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| state.unit(id))
+            .filter_map(|id| state.snapshot().unit(id))
             .any(|unit| unit.unit_type == UnitType::HitExplosion),
         "HITEXPLD удаляется после анимации"
     );
@@ -221,7 +228,7 @@ fn missiles_leave_three_particle_trails_behind_them() {
         spawn(&mut state, case.target, TeamId::RED, Point::new(9, 5));
         state.update_visibility_status(false);
 
-        let mut data = state.order_data(launcher);
+        let mut data = state.snapshot().order_data(launcher);
         data.fire_on = Point::new(9, 5);
         state.set_order_data(launcher, data);
         state.set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
@@ -238,8 +245,10 @@ fn missiles_leave_three_particle_trails_behind_them() {
             let mut fresh = Vec::new();
             let mut alive = 0;
 
-            for id in state.unit_ids_in_order() {
-                let Some(unit) = state.unit(id) else { continue };
+            for id in state.snapshot().unit_ids_in_order() {
+                let Some(unit) = state.snapshot().unit(id) else {
+                    continue;
+                };
                 if unit.unit_type != case.particle {
                     continue;
                 }
@@ -251,7 +260,8 @@ fn missiles_leave_three_particle_trails_behind_them() {
                 }
 
                 assert_eq!(
-                    unit.image_index_max, case.image_index_max,
+                    unit.image_index_max,
+                    case.image_index_max,
                     "{:?}: кадров в D_* — {}",
                     case.particle,
                     case.image_index_max + 1
@@ -273,7 +283,7 @@ fn missiles_leave_three_particle_trails_behind_them() {
             }
 
             if fresh.len() == 3 {
-                spawn_ticks.push(state.turn_counter);
+                spawn_ticks.push(state.state().turn_counter);
 
                 // All three — in the cell the projectile left, and the pixel
                 // `x/y` are spread by 0/⅓/⅔ of the segment toward the new cell.
@@ -306,7 +316,11 @@ fn missiles_leave_three_particle_trails_behind_them() {
             case.particle,
             spawn_ticks.len()
         );
-        assert!(checked_position, "{:?}: три частицы на клетку", case.particle);
+        assert!(
+            checked_position,
+            "{:?}: три частицы на клетку",
+            case.particle
+        );
         assert!(!frames.is_empty(), "{:?}: кадры частицы", case.particle);
         assert!(
             despawned,
@@ -331,7 +345,7 @@ fn missile_trails_are_deterministic() {
         spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(9, 5));
         state.update_visibility_status(false);
 
-        let mut data = state.order_data(launcher);
+        let mut data = state.snapshot().order_data(launcher);
         data.fire_on = Point::new(9, 5);
         state.set_order_data(launcher, data);
         state.set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
@@ -340,7 +354,7 @@ fn missile_trails_are_deterministic() {
             state.tick();
         }
 
-        max_core::crc::state_digest(&state)
+        max_core::crc::state_digest(state.state())
     }
 
     assert_eq!(run(), run(), "следы ракеты должны быть детерминированы");
@@ -386,8 +400,8 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
         for _ in 0..80 {
             state.tick();
 
-            for id in state.unit_ids_in_order() {
-                if let Some(unit) = state.unit(id) {
+            for id in state.snapshot().unit_ids_in_order() {
+                if let Some(unit) = state.snapshot().unit(id) {
                     if matches!(
                         unit.unit_type,
                         UnitType::LandExplosion
@@ -406,9 +420,10 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
 
             if explosion.is_some()
                 && !state
+                    .snapshot()
                     .unit_ids_in_order()
                     .into_iter()
-                    .filter_map(|id| state.unit(id))
+                    .filter_map(|id| state.snapshot().unit(id))
                     .any(|unit| {
                         matches!(
                             unit.unit_type,
@@ -431,9 +446,10 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
         );
         assert!(
             !state
+                .snapshot()
                 .unit_ids_in_order()
                 .into_iter()
-                .filter_map(|id| state.unit(id))
+                .filter_map(|id| state.snapshot().unit(id))
                 .any(|unit| unit.unit_type == expected),
             "{expected:?} должен исчезнуть после анимации"
         );

@@ -1,19 +1,19 @@
-//! V70 writing from `GameState` (P3): round-trip and byte-exact comparison with references.
+//! V70 writing from `GameUniverse` (P3): round-trip and byte-exact comparison with references.
 //!
 //! The strongest check of the layer — "load a real save and write it back
-//! from live state": `SAVE1.CAM`/`SAVE2.CAM` → [`GameState::from_save`] →
-//! [`GameState::to_save`] → the bytes must match **byte for byte**. Any
+//! from live state": `SAVE1.CAM`/`SAVE2.CAM` → [`GameUniverse::from_save`] →
+//! [`GameUniverse::to_save`] → the bytes must match **byte for byte**. Any
 //! discrepancy is printed with the field it refers to (see
 //! `first_difference`), so the test also works as diagnostics.
 
 use std::collections::BTreeMap;
 
 use max_core::enums::{GameStateType, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::save::{SaveFile, SaveUnit};
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
+use max_core::universe::GameUniverse;
 
 /// `max-original/SAVE1.CAM` — the training campaign "Islands in the Sun".
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
@@ -49,8 +49,9 @@ fn first_difference(actual: &[u8], expected: &[u8]) -> String {
 
 fn round_trip(source: &[u8], tag: &str) -> Vec<u8> {
     let save = SaveFile::parse(source).unwrap_or_else(|error| panic!("{tag}: разбор: {error}"));
-    let state = GameState::from_save(&save);
+    let state = GameUniverse::from_save(&save);
     let written = state
+        .state()
         .to_save()
         .to_bytes()
         .unwrap_or_else(|error| panic!("{tag}: запись: {error}"));
@@ -68,31 +69,47 @@ fn round_trip(source: &[u8], tag: &str) -> Vec<u8> {
 #[test]
 fn save1_load_to_save_is_byte_identical() {
     let written = round_trip(SAVE1, "SAVE1.CAM");
-    assert_eq!(written, SAVE1, "SAVE1.CAM: {}", first_difference(&written, SAVE1));
+    assert_eq!(
+        written,
+        SAVE1,
+        "SAVE1.CAM: {}",
+        first_difference(&written, SAVE1)
+    );
 }
 
 #[test]
 fn save2_load_to_save_is_byte_identical() {
     let written = round_trip(SAVE2, "SAVE2.CAM");
-    assert_eq!(written, SAVE2, "SAVE2.CAM: {}", first_difference(&written, SAVE2));
+    assert_eq!(
+        written,
+        SAVE2,
+        "SAVE2.CAM: {}",
+        first_difference(&written, SAVE2)
+    );
 }
 
-/// Key fields survive the `SaveFile -> GameState -> SaveFile` cycle.
+/// Key fields survive the `SaveFile -> GameUniverse -> SaveFile` cycle.
 #[test]
 fn round_trip_preserves_key_fields() {
     for (source, tag) in [(SAVE1, "SAVE1"), (SAVE2, "SAVE2")] {
         let original = SaveFile::parse(source).expect("parses");
-        let state = GameState::from_save(&original);
-        let rebuilt = state.to_save();
+        let state = GameUniverse::from_save(&original);
+        let rebuilt = state.state().to_save();
 
         // Header/settings.
         assert_eq!(rebuilt.header, original.header, "{tag}: заголовок");
-        assert_eq!(rebuilt.ini_options, original.ini_options, "{tag}: IniOptions");
+        assert_eq!(
+            rebuilt.ini_options, original.ini_options,
+            "{tag}: IniOptions"
+        );
         assert_eq!(
             rebuilt.ini_preferences, original.ini_preferences,
             "{tag}: IniPreferences"
         );
-        assert_eq!(rebuilt.surface_map, original.surface_map, "{tag}: SurfaceMap");
+        assert_eq!(
+            rebuilt.surface_map, original.surface_map,
+            "{tag}: SurfaceMap"
+        );
         assert_eq!(rebuilt.cargo_map, original.cargo_map, "{tag}: ResourceMap");
 
         // Teams, economy, complexes.
@@ -156,13 +173,19 @@ fn round_trip_preserves_key_fields() {
                 "{tag}: enemy_unit"
             );
             assert_eq!(other.info.complex, unit.info.complex, "{tag}: комплекс");
-            assert_eq!(other.info.build_list, unit.info.build_list, "{tag}: build_list");
+            assert_eq!(
+                other.info.build_list, unit.info.build_list,
+                "{tag}: build_list"
+            );
             assert_eq!(
                 other.info.ai_state_bits, unit.info.ai_state_bits,
                 "{tag}: ai_state_bits"
             );
             assert_eq!(other.info.hits, unit.info.hits, "{tag}: hits");
-            assert_eq!(other.info.build_rate, unit.info.build_rate, "{tag}: build_rate");
+            assert_eq!(
+                other.info.build_rate, unit.info.build_rate,
+                "{tag}: build_rate"
+            );
         }
 
         // Five lists: the same units in the same order.
@@ -209,7 +232,11 @@ fn round_trip_preserves_key_fields() {
             ids_of(&original, &original.unit_hash),
             "{tag}: UnitHash"
         );
-        assert_eq!(rebuilt.unit_hash.size(), original.unit_hash.size(), "{tag}: размер UnitHash");
+        assert_eq!(
+            rebuilt.unit_hash.size(),
+            original.unit_hash.size(),
+            "{tag}: размер UnitHash"
+        );
         let map_cells = |save: &SaveFile| {
             save.map_hash
                 .buckets()
@@ -289,7 +316,10 @@ fn round_trip_preserves_key_fields() {
                         left.minefield_density, right.minefield_density,
                         "{tag}: minefield {team}"
                     );
-                    assert_eq!(left.target_location, right.target_location, "{tag}: ai target {team}");
+                    assert_eq!(
+                        left.target_location, right.target_location,
+                        "{tag}: ai target {team}"
+                    );
                     assert_eq!(
                         left.unused_v70, right.unused_v70,
                         "{tag}: unused_v70 {team}"
@@ -321,15 +351,19 @@ fn round_trip_preserves_key_fields() {
         // Our file is parsed without errors and is stable on repeated writing.
         let bytes = rebuilt.to_bytes().expect("writes");
         let reparsed = SaveFile::parse(&bytes).expect("повторный разбор нашего сейва");
-        assert_eq!(reparsed.to_bytes().expect("writes"), bytes, "{tag}: стабильность");
+        assert_eq!(
+            reparsed.to_bytes().expect("writes"),
+            bytes,
+            "{tag}: стабильность"
+        );
     }
 }
 
 #[test]
 fn save_of_a_fresh_game_parses_and_reloads() {
-    let mut state = GameState::new();
+    let mut state = GameUniverse::default();
     for index in 0..4 {
-        state.teams[index].team_type = if index == 0 {
+        state.state_mut().teams[index].team_type = if index == 0 {
             TeamKind::Player
         } else if index == 1 {
             TeamKind::Computer
@@ -337,19 +371,25 @@ fn save_of_a_fresh_game_parses_and_reloads() {
             TeamKind::None
         };
         if index < 2 {
-            state.teams[index].team_clan = max_core::TeamClan::VonGriffin;
-            state.team_units[index] =
+            state.state_mut().teams[index].team_clan = max_core::TeamClan::VonGriffin;
+            state.state_mut().team_units[index] =
                 max_core::TeamUnits::with_clan(max_core::TeamClan::VonGriffin);
-            state.team_units[index].gold = 150;
+            state.state_mut().team_units[index].gold = 150;
         }
     }
-    state.player_team = TeamId::RED;
-    state.play_mode = max_core::PlayMode::TurnBased;
-    state.turn_counter = 3;
-    state.save_meta.save_name = [0; 30];
-    max_core::save_write::SaveMeta::set_name(&mut state.save_meta.save_name, "Test Save");
-    state.save_meta.team_names[0] = [0; 30];
-    max_core::save_write::SaveMeta::set_name(&mut state.save_meta.team_names[0], "Player 1");
+    state.state_mut().player_team = TeamId::RED;
+    state.state_mut().play_mode = max_core::PlayMode::TurnBased;
+    state.state_mut().turn_counter = 3;
+    state.state_mut().save_meta.save_name = [0; 30];
+    max_core::save_write::SaveMeta::set_name(
+        &mut state.state_mut().save_meta.save_name,
+        "Test Save",
+    );
+    state.state_mut().save_meta.team_names[0] = [0; 30];
+    max_core::save_write::SaveMeta::set_name(
+        &mut state.state_mut().save_meta.team_names[0],
+        "Player 1",
+    );
 
     let tank = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
@@ -357,11 +397,13 @@ fn save_of_a_fresh_game_parses_and_reloads() {
     let harvester = state
         .spawn_unit(UnitType::Harvester, TeamId::GREEN, Point::new(20, 20), 0)
         .expect("harvester spawns");
-    state.add_to_draw_list(harvester);
-    state.add_to_draw_list(tank);
-    state.push_message(0, "Hello", Point::new(10, 10), Some(tank));
+    state.state_mut().add_to_draw_list(harvester);
+    state.state_mut().add_to_draw_list(tank);
+    state
+        .state_mut()
+        .push_message(0, "Hello", Point::new(10, 10), Some(tank));
 
-    let bytes = state.to_save_bytes().expect("our save writes");
+    let bytes = state.state().to_save_bytes().expect("our save writes");
     let save = SaveFile::parse(&bytes).expect("our save parses");
 
     assert_eq!(save.header.save_name(), "Test Save");
@@ -370,37 +412,44 @@ fn save_of_a_fresh_game_parses_and_reloads() {
     assert_eq!(save.game.game_state, GameStateType::InGame);
     assert_eq!(save.units.len(), 2);
     assert_eq!(save.message_logs[0].len(), 1);
-    assert!(save.heat_maps[0].is_some(), "у играющей команды есть heat map");
+    assert!(
+        save.heat_maps[0].is_some(),
+        "у играющей команды есть heat map"
+    );
     assert!(save.heat_maps[2].is_none());
-    assert!(save.ai_players[1].is_some(), "у компьютерной команды есть AiPlayer");
+    assert!(
+        save.ai_players[1].is_some(),
+        "у компьютерной команды есть AiPlayer"
+    );
     assert!(save.ai_players[0].is_none());
 
     // Loading the saved game returns the same key values.
-    let reloaded = GameState::from_save(&save);
-    assert_eq!(reloaded.turn_counter, 3);
-    assert_eq!(reloaded.unit_count(), 2);
+    let reloaded = GameUniverse::from_save(&save);
+    assert_eq!(reloaded.state().turn_counter, 3);
+    assert_eq!(reloaded.snapshot().unit_count(), 2);
     assert_eq!(
         reloaded
+            .snapshot()
             .unit(tank)
             .map(|unit| (unit.unit_type, unit.grid))
             .unwrap_or((UnitType::Tank, Point::ZERO)),
         (UnitType::Tank, Point::new(10, 10))
     );
-    assert!(reloaded.has_unit(harvester));
-    assert_eq!(reloaded.team_units[0].gold, 150);
+    assert!(reloaded.snapshot().has_unit(harvester));
+    assert_eq!(reloaded.state().team_units[0].gold, 150);
 
     // Writing again after loading gives the same bytes.
-    let again = reloaded.to_save_bytes().expect("writes again");
+    let again = reloaded.state().to_save_bytes().expect("writes again");
     assert_eq!(again, bytes, "save -> load -> save стабилен");
 }
 
-/// `map_hash` and `unit_hash` of the live `GameState` correspond to the save: after
+/// `map_hash` and `unit_hash` of the live `GameUniverse` correspond to the save: after
 /// loading the reference, the state has exactly the same cells and buckets.
 #[test]
 fn hashes_of_loaded_state_match_the_file() {
     let original = SaveFile::parse(SAVE1).expect("parses");
-    let state = GameState::from_save(&original);
-    let rebuilt = state.to_save();
+    let state = GameUniverse::from_save(&original);
+    let rebuilt = state.state().to_save();
 
     assert_eq!(
         rebuilt.map_hash.buckets().len(),
@@ -411,8 +460,8 @@ fn hashes_of_loaded_state_match_the_file() {
 
 #[test]
 fn all_units_are_reachable_through_lists_and_hash() {
-    let state = GameState::from_save(&SaveFile::parse(SAVE1).expect("parses"));
-    let save = state.to_save();
+    let state = GameUniverse::from_save(&SaveFile::parse(SAVE1).expect("parses"));
+    let save = state.state().to_save();
 
     let mut in_lists: BTreeMap<UnitId, ()> = BTreeMap::new();
     for kind in max_core::UnitListKind::ALL {
@@ -441,7 +490,7 @@ fn all_units_are_reachable_through_lists_and_hash() {
 /// are not part of the four saved teams).
 #[test]
 fn derelict_units_save_and_reload() {
-    let mut state = GameState::with_setup(
+    let mut state = GameUniverse::with_setup(
         max_core::map::Map::new(),
         [
             TeamKind::Player,
@@ -450,24 +499,27 @@ fn derelict_units_save_and_reload() {
             TeamKind::None,
         ],
     );
-    state.player_team = TeamId::RED;
+    state.state_mut().player_team = TeamId::RED;
     let alien = state
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(10, 10), 0)
         .expect("alien tank spawns");
     assert_eq!(
-        state.unit(alien).map(|unit| unit.base_values),
+        state.snapshot().unit(alien).map(|unit| unit.base_values),
         Some(max_core::unit_values::base_unit_values(UnitType::AlienTank)),
         "The Chosen does not modify alien debris types"
     );
 
-    let bytes = state.to_save_bytes().expect("save with a derelict unit writes");
+    let bytes = state
+        .state()
+        .to_save_bytes()
+        .expect("save with a derelict unit writes");
     let save = SaveFile::parse(&bytes).expect("save with a derelict unit parses");
     assert!(save.units.iter().any(|unit| unit.info.id == alien));
 
-    let reloaded = GameState::from_save(&save);
-    assert!(reloaded.has_unit(alien));
+    let reloaded = GameUniverse::from_save(&save);
+    assert!(reloaded.snapshot().has_unit(alien));
     assert_eq!(
-        reloaded.to_save_bytes().expect("writes again"),
+        reloaded.state().to_save_bytes().expect("writes again"),
         bytes,
         "save -> load -> save стабилен с derelict-юнитом"
     );

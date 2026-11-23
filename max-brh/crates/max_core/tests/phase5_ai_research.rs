@@ -35,14 +35,14 @@ fn ai_spends_gold_on_upgrades_for_the_unit_under_construction() {
     }
 
     let index = TeamId::RED.0 as usize;
-    let base_attack = state.team_units[index].current_values[UnitType::Tank as usize]
+    let base_attack = state.state().team_units[index].current_values[UnitType::Tank as usize]
         .get_attribute(ATTRIB_ATTACK);
 
     let (_, over) = play_rounds(&mut state, 1, ROUND_TICKS);
     assert!(!over);
 
-    let gold_after_first = state.team_units[index].gold;
-    let spent_after_first = state.teams[index].stats_gold_spent_on_upgrades;
+    let gold_after_first = state.state().team_units[index].gold;
+    let spent_after_first = state.state().teams[index].stats_gold_spent_on_upgrades;
 
     assert!(
         spent_after_first > 0,
@@ -53,13 +53,13 @@ fn ai_spends_gold_on_upgrades_for_the_unit_under_construction() {
         "the team treasury must be charged: {gold_after_first}"
     );
     assert!(
-        state.team_units[index].current_values[UnitType::Tank as usize]
+        state.state().team_units[index].current_values[UnitType::Tank as usize]
             .get_attribute(ATTRIB_ATTACK)
             > base_attack,
         "the tank attack upgrade must land in the current values"
     );
     assert!(
-        state.ai.players[index].build_order.is_some(),
+        state.state().ai.players[index].build_order.is_some(),
         "the turn keeps the pending upgrade order on the player"
     );
 
@@ -67,7 +67,8 @@ fn ai_spends_gold_on_upgrades_for_the_unit_under_construction() {
     let (_, over) = play_rounds(&mut state, 2, ROUND_TICKS);
     assert!(!over);
     assert_eq!(
-        state.teams[index].stats_gold_spent_on_upgrades, spent_after_first,
+        state.state().teams[index].stats_gold_spent_on_upgrades,
+        spent_after_first,
         "without gold the purchase loop must not spend more"
     );
 }
@@ -88,14 +89,14 @@ fn ai_without_gold_buys_nothing() {
     }
 
     let index = TeamId::RED.0 as usize;
-    let before = state.team_units[index].current_values;
+    let before = state.state().team_units[index].current_values;
 
     let (_, over) = play_rounds(&mut state, 2, ROUND_TICKS);
     assert!(!over);
 
-    assert_eq!(state.team_units[index].current_values, before);
-    assert_eq!(state.teams[index].stats_gold_spent_on_upgrades, 0);
-    assert_eq!(state.team_units[index].gold, 0);
+    assert_eq!(state.state().team_units[index].current_values, before);
+    assert_eq!(state.state().teams[index].stats_gold_spent_on_upgrades, 0);
+    assert_eq!(state.state().team_units[index].gold, 0);
 }
 
 /// `DetermineResearchProjects`: the powered centre is moved to the fastest
@@ -120,28 +121,34 @@ fn ai_moves_the_research_centre_to_the_fastest_topic() {
     // RANGE is halved (2 → 1), SHOTS is multiplied by the remaining levels
     // (40 × 5 = 200), everything else stays at 12 → RANGE is the fastest.
     for topic in ResearchTopic::ALL.iter().copied() {
-        state.teams[TeamId::RED.0 as usize].research_topics[topic as usize].turns_to_complete = 12;
+        state.state_mut().teams[TeamId::RED.0 as usize].research_topics[topic as usize]
+            .turns_to_complete = 12;
     }
-    state.teams[TeamId::RED.0 as usize].research_topics[ResearchTopic::Range as usize]
+    state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+        [ResearchTopic::Range as usize]
         .turns_to_complete = 2;
-    state.teams[TeamId::RED.0 as usize].research_topics[ResearchTopic::Shots as usize]
+    state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+        [ResearchTopic::Shots as usize]
         .turns_to_complete = 40;
 
     let (_, over) = play_rounds(&mut state, 1, ROUND_TICKS);
     assert!(!over);
 
     assert_eq!(
-        state.unit(centre).map(|unit| unit.orders),
+        state.snapshot().unit(centre).map(|unit| unit.orders),
         Some(UnitOrder::PowerOn),
         "the centre must be powered when the planner runs"
     );
     assert_eq!(
-        state.unit(centre).map(|unit| unit.research_topic),
+        state
+            .snapshot()
+            .unit(centre)
+            .map(|unit| unit.research_topic),
         Some(ResearchTopic::Range),
         "DetermineResearchProjects must move the centre to the fastest topic"
     );
 
-    let allocation = state.research_allocation(TeamId::RED);
+    let allocation = state.state().research_allocation(TeamId::RED);
     assert_eq!(allocation[ResearchTopic::Range as usize], 1);
     assert_eq!(allocation[ResearchTopic::Speed as usize], 0);
 }
@@ -167,28 +174,32 @@ fn an_unpowered_research_centre_keeps_its_topic() {
         unit.research_topic = ResearchTopic::Speed;
     }
 
-    state.teams[TeamId::RED.0 as usize].research_topics[ResearchTopic::Range as usize]
+    state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+        [ResearchTopic::Range as usize]
         .turns_to_complete = 2;
 
     let (_, over) = play_rounds(&mut state, 1, ROUND_TICKS);
     assert!(!over);
 
     assert_ne!(
-        state.unit(centre).map(|unit| unit.orders),
+        state.snapshot().unit(centre).map(|unit| unit.orders),
         Some(UnitOrder::PowerOn),
         "a complex without power must switch the centre off"
     );
     assert_eq!(
-        state.unit(centre).map(|unit| unit.research_topic),
+        state
+            .snapshot()
+            .unit(centre)
+            .map(|unit| unit.research_topic),
         Some(ResearchTopic::Speed),
         "an unpowered centre is not reassigned"
     );
     assert_eq!(
-        state.research_allocation(TeamId::RED)[ResearchTopic::Speed as usize],
+        state.state().research_allocation(TeamId::RED)[ResearchTopic::Speed as usize],
         0
     );
     assert_eq!(
-        state.research_allocation(TeamId::RED)[ResearchTopic::Range as usize],
+        state.state().research_allocation(TeamId::RED)[ResearchTopic::Range as usize],
         0
     );
 }

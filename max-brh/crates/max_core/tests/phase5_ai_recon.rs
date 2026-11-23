@@ -30,7 +30,7 @@ fn ai_explores_the_map_with_a_scout() {
 
     let scout = spawn(&mut state, UnitType::Scout, TeamId::RED, Point::new(12, 12));
 
-    let start = state.unit(scout).expect("scout").grid;
+    let start = state.snapshot().unit(scout).expect("scout").grid;
     let explored_before = explored_count(&state, TeamId::RED);
 
     let mut observation = AiObservation::default();
@@ -46,7 +46,7 @@ fn ai_explores_the_map_with_a_scout() {
         "TaskExplore must issue a TaskMove to a search destination"
     );
 
-    let position = state.unit(scout).expect("scout alive").grid;
+    let position = state.snapshot().unit(scout).expect("scout alive").grid;
     assert_ne!(
         position, start,
         "the scout must travel to an unexplored site (start {start:?})"
@@ -112,6 +112,7 @@ fn explore_uses_the_available_scout() {
     assert_eq!(count_units(&state, TeamId::RED, UnitType::Scout), 1);
 
     let attached = state
+        .state()
         .ai
         .task_manager
         .tasks()
@@ -120,6 +121,7 @@ fn explore_uses_the_available_scout() {
         .any(|task| {
             matches!(task.kind, max_core::ai::TaskKind::Explore { .. })
                 && state
+                    .state()
                     .ai
                     .task_manager
                     .unit_task(scout)
@@ -132,7 +134,7 @@ fn explore_uses_the_available_scout() {
         "the scout must be attached to TaskExplore (or already moving)"
     );
     assert!(
-        state.unit(scout).expect("scout").hits > 0,
+        state.snapshot().unit(scout).expect("scout").hits > 0,
         "the scout survives the exploration turn"
     );
 }

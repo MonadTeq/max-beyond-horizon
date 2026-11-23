@@ -16,22 +16,23 @@
 //! **pauses** instead of C++ `ORDER_STATE_BUILD_ABORT` and no resource ever goes
 //! negative; the observed balance and the consumer order stay C++-exact.
 
+use max_core::crc;
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::power::{complex_totals, optimize_complex, EnergyTotals};
 use max_core::production::{self, ProductionManager};
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
 use max_core::unit::UnitId;
-use max_core::{crc, GameState};
+use max_core::universe::GameUniverse;
 
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+fn state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
-fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> UnitId {
+fn spawn(state: &mut GameUniverse, unit_type: UnitType, grid: Point) -> UnitId {
     state
         .spawn_unit(unit_type, TeamId::RED, grid, 0)
         .expect("spawn")
@@ -40,24 +41,29 @@ fn spawn(state: &mut GameState, unit_type: UnitType, grid: Point) -> UnitId {
 /// A connector band at `y = 21`, `x = 20..=40`. Every building is placed at
 /// `y = 22` and touches the band from the north, so buildings of any footprint
 /// (1×1 or 2×2) end up in one complex — no manual complex surgery.
-fn connector_band(state: &mut GameState) {
+fn connector_band(state: &mut GameUniverse) {
     for x in 20..=40 {
         spawn(state, UnitType::Connector, Point::new(x, 21));
     }
 }
 
-fn building(state: &mut GameState, unit_type: UnitType, x: i16) -> UnitId {
+fn building(state: &mut GameUniverse, unit_type: UnitType, x: i16) -> UnitId {
     spawn(state, unit_type, Point::new(x, 22))
 }
 
-fn power_on(state: &mut GameState, id: UnitId) {
-    // `GameState::set_order` returns the `delete_path` flag, not success
+fn power_on(state: &mut GameUniverse, id: UnitId) {
+    // `GameUniverse::set_order` returns the `delete_path` flag, not success
     // (C++ `UnitsManager_SetNewOrder` always applies the order).
     let _ = state.set_order(id, UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
 }
 
-fn complex_of(state: &GameState, id: UnitId) -> ComplexId {
-    state.unit(id).expect("unit").complex.expect("complex")
+fn complex_of(state: &GameUniverse, id: UnitId) -> ComplexId {
+    state
+        .snapshot()
+        .unit(id)
+        .expect("unit")
+        .complex
+        .expect("complex")
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +85,10 @@ fn deficit_shuts_down_research_then_greenhouse_then_comm_tower() {
 
     let complex = complex_of(&state, mine);
     for id in [research, greenhouse, comm, generator, fuel] {
-        assert_eq!(state.unit(id).expect("member").complex, Some(complex));
+        assert_eq!(
+            state.snapshot().unit(id).expect("member").complex,
+            Some(complex)
+        );
     }
 
     power_on(&mut state, mine);
@@ -88,10 +97,10 @@ fn deficit_shuts_down_research_then_greenhouse_then_comm_tower() {
     power_on(&mut state, comm);
 
     // Demand 4 (mine/RESEARCH/GREENHSE/COMMTWR); the POWGEN is still off.
-    let before = complex_totals(&state, TeamId::RED, complex);
+    let before = complex_totals(state.state(), TeamId::RED, complex);
     assert_eq!(before.power, -4, "four consumers, producer off");
 
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, true);
 
     assert_eq!(
         outcome.powered_off,
@@ -99,12 +108,12 @@ fn deficit_shuts_down_research_then_greenhouse_then_comm_tower() {
         "C++ order: RESEARCH → GREENHSE → COMMTWR"
     );
     assert_eq!(
-        state.unit(mine).expect("mine").orders,
+        state.snapshot().unit(mine).expect("mine").orders,
         UnitOrder::PowerOn,
         "MININGST is the last consumer C++ switches off"
     );
     assert_eq!(
-        state.unit(generator).expect("gen").orders,
+        state.snapshot().unit(generator).expect("gen").orders,
         UnitOrder::PowerOn
     );
     assert!(!outcome.unresolved, "{outcome:?}");
@@ -118,13 +127,16 @@ fn deficit_shuts_down_research_then_greenhouse_then_comm_tower() {
     // Fuel is gone: the generator cannot run, and the last consumer (the mine)
     // is switched off too.
     state.unit_mut(fuel).expect("fuel").storage = 0;
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, true);
 
     assert_eq!(
-        state.unit(generator).expect("gen").orders,
+        state.snapshot().unit(generator).expect("gen").orders,
         UnitOrder::PowerOff
     );
-    assert_eq!(state.unit(mine).expect("mine").orders, UnitOrder::PowerOff);
+    assert_eq!(
+        state.snapshot().unit(mine).expect("mine").orders,
+        UnitOrder::PowerOff
+    );
     assert_eq!(
         outcome.powered_off,
         vec![generator, mine],
@@ -157,14 +169,14 @@ fn surplus_power_switches_producers_between_stations_and_generators() {
 
     // Demand 1: a POWGEN (+1 for 2 fuel) is enough, the POWERSTN (+6 for 6) is not
     // started.
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert!(!outcome.unresolved, "{outcome:?}");
     assert_eq!(
-        state.unit(generator).expect("gen").orders,
+        state.snapshot().unit(generator).expect("gen").orders,
         UnitOrder::PowerOn
     );
     assert_eq!(
-        state.unit(station).expect("station").orders,
+        state.snapshot().unit(station).expect("station").orders,
         UnitOrder::PowerOff
     );
 
@@ -172,19 +184,22 @@ fn surplus_power_switches_producers_between_stations_and_generators() {
     // generator is switched off again.
     for x in [28, 30, 32, 34, 36] {
         let extra = building(&mut state, UnitType::MiningStation, x);
-        assert_eq!(state.unit(extra).expect("mine").complex, Some(complex));
+        assert_eq!(
+            state.snapshot().unit(extra).expect("mine").complex,
+            Some(complex)
+        );
         power_on(&mut state, extra);
     }
 
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert!(!outcome.unresolved, "{outcome:?}");
     assert_eq!(
-        state.unit(station).expect("station").orders,
+        state.snapshot().unit(station).expect("station").orders,
         UnitOrder::PowerOn,
         "one POWERSTN gives the 6 units of demand"
     );
     assert_eq!(
-        state.unit(generator).expect("gen").orders,
+        state.snapshot().unit(generator).expect("gen").orders,
         UnitOrder::PowerOff,
         "the surplus generator is switched off"
     );
@@ -207,7 +222,7 @@ fn a_running_construction_pauses_before_the_mine_is_switched_off() {
     let complex = complex_of(&state, mine);
     for id in [factory, dump, generator, fuel, habitat] {
         assert_eq!(
-            state.unit(id).expect("member").complex,
+            state.snapshot().unit(id).expect("member").complex,
             Some(complex),
             "member {id:?} must be in the complex"
         );
@@ -216,7 +231,7 @@ fn a_running_construction_pauses_before_the_mine_is_switched_off() {
     // `DeployUnit` puts a mine into `POWER_ON`; switch it off for the commit so the
     // first turn of the construction is affordable with one generator.
     let _ = state.set_order(mine, UnitOrder::PowerOff, UnitOrderState::ExecutingOrder);
-    let mut manager = ProductionManager::new(&mut state, TeamId::RED);
+    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager
         .commit(factory)
@@ -225,25 +240,31 @@ fn a_running_construction_pauses_before_the_mine_is_switched_off() {
 
     power_on(&mut state, mine);
     assert_eq!(
-        state.unit(habitat).expect("habitat").orders,
+        state.snapshot().unit(habitat).expect("habitat").orders,
         UnitOrder::PowerOn,
         "HABITAT supplies the factory workers"
     );
 
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, true);
 
     assert!(
         outcome.paused.iter().any(|(id, _)| *id == factory),
         "construction pauses first ({outcome:?})"
     );
-    assert!(state.unit(factory).expect("factory").build_paused);
+    assert!(
+        state
+            .snapshot()
+            .unit(factory)
+            .expect("factory")
+            .build_paused
+    );
     assert_eq!(
-        state.unit(mine).expect("mine").orders,
+        state.snapshot().unit(mine).expect("mine").orders,
         UnitOrder::PowerOn,
         "the mine is not switched off while a construction can be paused"
     );
     assert_eq!(
-        production::ProductionManager::new(&mut state, TeamId::RED).queue(factory),
+        production::ProductionManager::new(state.state_mut(), TeamId::RED).queue(factory),
         vec![UnitType::Infantry],
         "pause keeps the queue"
     );
@@ -253,22 +274,29 @@ fn a_running_construction_pauses_before_the_mine_is_switched_off() {
     let second = building(&mut state, UnitType::PowerGenerator, 32);
     let second_fuel = building(&mut state, UnitType::FuelStorage, 34);
     state.unit_mut(second_fuel).expect("FDUMP").storage = 50;
-    assert_eq!(state.unit(second).expect("gen").complex, Some(complex));
+    assert_eq!(
+        state.snapshot().unit(second).expect("gen").complex,
+        Some(complex)
+    );
 
-    let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    let outcome = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     assert!(outcome.paused.is_empty(), "{outcome:?}");
     assert!(
-        !state.unit(factory).expect("factory").build_paused,
+        !state
+            .snapshot()
+            .unit(factory)
+            .expect("factory")
+            .build_paused,
         "the pause is a per-turn decision"
     );
-    assert!(state.unit(factory).expect("factory").build_time > 0);
+    assert!(state.snapshot().unit(factory).expect("factory").build_time > 0);
 }
 
 // ---------------------------------------------------------------------------
 // D — determinism
 // ---------------------------------------------------------------------------
 
-fn deficit_run() -> GameState {
+fn deficit_run() -> GameUniverse {
     let mut state = state();
     connector_band(&mut state);
     let mine = building(&mut state, UnitType::MiningStation, 20);
@@ -283,7 +311,7 @@ fn deficit_run() -> GameState {
         power_on(&mut state, id);
     }
     let _ = generator;
-    let _ = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+    let _ = optimize_complex(state.state_mut(), TeamId::RED, complex, None, None, false);
     state
 }
 
@@ -292,11 +320,17 @@ fn power_deficit_digests_are_reproducible() {
     let first = deficit_run();
     let second = deficit_run();
 
-    assert_eq!(crc::state_checksum(&first), crc::state_checksum(&second));
-    assert_eq!(crc::state_digest(&first), crc::state_digest(&second));
     assert_eq!(
-        crc::replay_digest_bytes(&first),
-        crc::replay_digest_bytes(&second)
+        crc::state_checksum(first.state()),
+        crc::state_checksum(second.state())
+    );
+    assert_eq!(
+        crc::state_digest(first.state()),
+        crc::state_digest(second.state())
+    );
+    assert_eq!(
+        crc::replay_digest_bytes(first.state()),
+        crc::replay_digest_bytes(second.state())
     );
 
     // The power orders are part of the canonical snapshot and of the replay
@@ -305,35 +339,42 @@ fn power_deficit_digests_are_reproducible() {
     // for the difference assertion.
     let mut changed = first.clone();
     let research = changed
+        .snapshot()
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
             changed
+                .snapshot()
                 .unit(*id)
                 .is_some_and(|unit| unit.unit_type == UnitType::ResearchCentre)
         })
         .expect("research center");
     let _ = changed.set_order(research, UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
 
-    assert_ne!(crc::state_digest(&changed), crc::state_digest(&first));
     assert_ne!(
-        crc::replay_digest_crc(&changed),
-        crc::replay_digest_crc(&first)
+        crc::state_digest(changed.state()),
+        crc::state_digest(first.state())
+    );
+    assert_ne!(
+        crc::replay_digest_crc(changed.state()),
+        crc::replay_digest_crc(first.state())
     );
 
     // The totals helper is pure: the same state yields the same balance.
     let complex = complex_of(
         &first,
         first
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
                 first
+                    .snapshot()
                     .unit(*id)
                     .is_some_and(|unit| unit.unit_type == UnitType::MiningStation)
             })
             .expect("mine"),
     );
-    let totals: EnergyTotals = complex_totals(&first, TeamId::RED, complex);
-    assert_eq!(totals, complex_totals(&first, TeamId::RED, complex));
+    let totals: EnergyTotals = complex_totals(first.state(), TeamId::RED, complex);
+    assert_eq!(totals, complex_totals(first.state(), TeamId::RED, complex));
 }

@@ -17,47 +17,48 @@ use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::map::{ResourceKind, ResourceMapEntry};
 use max_core::team::TeamId;
 use max_core::team::TeamKind;
-use max_core::GameState;
+use max_core::universe::GameUniverse;
 
 /// Game: the whole map is land, each cell has 8 materials, RED is a human,
 /// GREEN is a computer. `UNKNOWN` — no team has surveyed.
-fn land_state_with_resources() -> GameState {
-    let mut state = GameState::new();
+fn land_state_with_resources() -> GameUniverse {
+    let mut state = GameUniverse::default();
 
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let _ = state.map.surface.set(x, y, Surface::LAND);
-            state
-                .map
-                .resources
-                .set(x, y, ResourceMapEntry::new(8, Some(ResourceKind::Raw), 0));
+            let _ = state.state_mut().map.surface.set(x, y, Surface::LAND);
+            state.state_mut().map.resources.set(
+                x,
+                y,
+                ResourceMapEntry::new(8, Some(ResourceKind::Raw), 0),
+            );
         }
     }
 
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Computer;
-    state.team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.team_units[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.state_mut().teams[1].team_type = TeamKind::Computer;
+    state.state_mut().team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.state_mut().team_units[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
 
     state
 }
 
 /// Whether the cell is surveyed by the team (`ResourceManager_CargoMap & hash_team_id`).
-fn known(state: &GameState, x: i16, y: i16, team: u8) -> bool {
-    state.map.resources.get(x, y).is_visible_to(team)
+fn known(state: &GameUniverse, x: i16, y: i16, team: u8) -> bool {
+    state.state().map.resources.get(x, y).is_visible_to(team)
 }
 
 #[test]
 fn surveyor_marks_its_3x3_for_its_own_team_only() {
     let mut state = land_state_with_resources();
     // A cell in the survey square with surface AIR — C++ skips it.
-    let _ = state.map.surface.set(21, 21, Surface::AIR);
+    let _ = state.state_mut().map.surface.set(21, 21, Surface::AIR);
 
     let surveyor = state
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
         .expect("surveyor");
 
-    // `spawn_unit` → `GameState::update_map_status(id, true)` — like
+    // `spawn_unit` → `GameUniverse::update_map_status(id, true)` — like
     // `Access_UpdateMapStatus` after `DeployUnit`.
     let _ = surveyor;
 
@@ -91,12 +92,12 @@ fn surveyor_marks_its_3x3_for_its_own_team_only() {
 
     // The RED bit — `HASH_TEAM_RED = 0x2000` (bit 13), not the low bit.
     assert_eq!(
-        state.map.resources.get(19, 19).visibility(),
+        state.state().map.resources.get(19, 19).visibility(),
         0b1000,
         "RED помечает клетку битом 13 (HASH_TEAM_RED)"
     );
     assert_eq!(
-        state.map.resources.get(20, 20).bits() & 0x3C00,
+        state.state().map.resources.get(20, 20).bits() & 0x3C00,
         0x2000,
         "маска разведанности — ровно hash_team_id красных"
     );
@@ -111,7 +112,7 @@ fn survey_knowledge_accumulates_and_is_not_removed_by_movement() {
 
     // The surveyor drove four cells east: `write_unit` recomputes
     // the coverage of the old and new cells (`Access_UpdateMapStatus`).
-    let mut unit = state.unit(surveyor).expect("surveyor").clone();
+    let mut unit = state.snapshot().unit(surveyor).expect("surveyor").clone();
     unit.grid = Point::new(24, 20);
     state.write_unit(surveyor, unit);
 
@@ -153,7 +154,7 @@ fn only_a_surveyor_marks_resources() {
             .spawn_unit(unit_type, TeamId::RED, Point::new(40, 40), 0)
             .expect("unit");
         assert_eq!(
-            state.map.resources.get(40, 40).visibility(),
+            state.state().map.resources.get(40, 40).visibility(),
             0,
             "{unit_type:?} не помечает ресурсы"
         );
@@ -164,17 +165,17 @@ fn only_a_surveyor_marks_resources() {
     let _ = state
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(40, 40), 0)
         .expect("surveyor");
-    assert_eq!(state.map.resources.get(40, 40).visibility(), 0b1000);
+    assert_eq!(state.state().map.resources.get(40, 40).visibility(), 0b1000);
 }
 
 #[test]
 fn knowledge_is_part_of_the_state_and_deterministic() {
-    fn run() -> GameState {
+    fn run() -> GameUniverse {
         let mut state = land_state_with_resources();
         let surveyor = state
             .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(30, 30), 0)
             .expect("surveyor");
-        let mut unit = state.unit(surveyor).expect("surveyor").clone();
+        let mut unit = state.snapshot().unit(surveyor).expect("surveyor").clone();
         unit.grid = Point::new(32, 30);
         state.write_unit(surveyor, unit);
         state
@@ -184,23 +185,28 @@ fn knowledge_is_part_of_the_state_and_deterministic() {
     let second = run();
 
     assert_eq!(
-        first.map.resources.to_le_bytes(),
-        second.map.resources.to_le_bytes(),
+        first.state().map.resources.to_le_bytes(),
+        second.state().map.resources.to_le_bytes(),
         "знание ресурсов — часть состояния и детерминировано"
     );
     assert_eq!(
-        first.snapshot_bytes(),
-        second.snapshot_bytes(),
+        first.snapshot().snapshot_bytes(),
+        second.snapshot().snapshot_bytes(),
         "снапшот включает карту ресурсов с битами знания"
     );
 
     // Snapshot/CRC change together with knowledge: it is not a UI field.
     let mut learned = first.clone();
-    let entry = learned.map.resources.get(50, 50).with_team_visible(0);
-    learned.map.resources.set(50, 50, entry);
+    let entry = learned
+        .state()
+        .map
+        .resources
+        .get(50, 50)
+        .with_team_visible(0);
+    learned.state_mut().map.resources.set(50, 50, entry);
     assert_ne!(
-        first.snapshot_bytes(),
-        learned.snapshot_bytes(),
+        first.snapshot().snapshot_bytes(),
+        learned.snapshot().snapshot_bytes(),
         "новое знание меняет снапшот (CRC/десинк-детектор)"
     );
 }
@@ -212,21 +218,21 @@ fn render_mask_matches_the_cpp_hash_team_id() {
     let mut state = land_state_with_resources();
 
     // RED marks (10,10), GREEN does not.
-    let entry = state.map.resources.get(10, 10).with_team_visible(0);
-    state.map.resources.set(10, 10, entry);
+    let entry = state.state().map.resources.get(10, 10).with_team_visible(0);
+    state.state_mut().map.resources.set(10, 10, entry);
 
     let mask_red = max_core::map::team_visibility_bit(0) as u16;
     let mask_green = max_core::map::team_visibility_bit(1) as u16;
 
     assert_eq!(mask_red, 0b1000, "HASH_TEAM_RED = 0x2000 (бит 13)");
     assert_eq!(mask_green, 0b0100, "HASH_TEAM_GREEN = 0x1000 (бит 12)");
-    assert!(state.map.resources.get(10, 10).is_visible_to(0));
-    assert!(!state.map.resources.get(10, 10).is_visible_to(1));
+    assert!(state.state().map.resources.get(10, 10).is_visible_to(0));
+    assert!(!state.state().map.resources.get(10, 10).is_visible_to(1));
 
     // `Survey_RenderMarkers` additionally requires `surface != AIR`.
-    let _ = state.map.surface.set(10, 10, Surface::AIR);
+    let _ = state.state_mut().map.surface.set(10, 10, Surface::AIR);
     assert_eq!(
-        access::modified_surface_type(&state, Point::new(10, 10), false),
+        access::modified_surface_type(state.state(), Point::new(10, 10), false),
         access::SURFACE_TYPE_AIR,
         "иконка на AIR-клетке не рисуется (проверка в рендере)"
     );
@@ -240,7 +246,7 @@ fn render_mask_matches_the_cpp_hash_team_id() {
         .expect("surveyor");
     assert!(known(&state, 60, 60, 1), "спавн разведал клетку");
 
-    let mut unit = state.unit(surveyor).expect("surveyor").clone();
+    let mut unit = state.snapshot().unit(surveyor).expect("surveyor").clone();
     unit.orders = UnitOrder::Disable;
     unit.state = UnitOrderState::ExecutingOrder;
     unit.grid = Point::new(64, 64);
