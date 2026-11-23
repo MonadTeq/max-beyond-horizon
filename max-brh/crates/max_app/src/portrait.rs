@@ -29,6 +29,7 @@
 use max_assets::flic::{Flic, FlicError, FlicFrame};
 use max_core::enums::UnitType;
 use max_core::unit::UnitId;
+use max_core::universe::Dispatcher;
 
 use crate::App;
 
@@ -142,7 +143,11 @@ impl PortraitAnim {
 // Integration with App
 // ---------------------------------------------------------------------------
 
-impl App {
+// The portrait depends only on the selection and the assets, never on the
+// transport policy, so it belongs to the dispatcher-agnostic `App<D>` surface
+// (`game-universe-stage-c.md` §2): `App::update_visual_units` and `App::select_unit`
+// are generic and drive it.
+impl<D: Dispatcher> App<D> {
     /// Current FLC portrait animation (`None` — no selection/FLC).
     #[inline]
     pub fn portrait(&self) -> Option<&PortraitAnim> {

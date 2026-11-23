@@ -98,7 +98,7 @@ use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::universe::{
-    GameEvent, GameUniverse, LocalDispatcher, RemoteCommand, StateRef, SubmitOutcome,
+    Dispatcher, GameEvent, GameUniverse, LocalDispatcher, RemoteCommand, StateRef, SubmitOutcome,
 };
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
@@ -535,20 +535,27 @@ impl fmt::Display for AppDigest {
 
 /// Application: match state + assets + camera + counters.
 ///
+/// `D` is the transport policy of the facade ([`Dispatcher`]); the default
+/// `LocalDispatcher` keeps every existing call-site — `App` means
+/// `App<LocalDispatcher>` unless a network driver names the parameter explicitly
+/// (`game-universe-stage-c.md` §2). Switching the mode means creating another
+/// `App<D>`, not mutating this one (ADR §7.8).
+///
 /// Created without game files ([`App::new`]); assets are loaded explicitly
 /// ([`App::init_assets`]), and the state — from a save ([`App::load_game`]) or by
 /// generation ([`App::new_game`]). Everything else (tick, commands, frame,
 /// digest) works without assets too: the map is rendered in a simplified way, units —
 /// with team markers.
 #[derive(Debug, Clone)]
-pub struct App {
+pub struct App<D: Dispatcher = LocalDispatcher> {
     config: AppConfig,
     /// The owning facade over the match state (stage A).
     ///
     /// The state itself is not a field of `App`: the facade owns it and exposes
     /// [`App::state`]/[`App::state_mut`] as temporary stage-A delegates
-    /// (`game-universe-stage-a.md` §4).
-    universe: max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    /// (`game-universe-stage-a.md` §4). The dispatcher type is the `App` parameter:
+    /// the universe and the application share the same transport policy.
+    universe: GameUniverse<D>,
     /// The application event cursor (stage A: the combat sounds of a tick are read
     /// from the facade event stream, see [`App::tick`]).
     universe_events: max_core::universe::EventStream,
@@ -809,58 +816,9 @@ pub struct OrderSnapshot {
     pub speed: u16,
 }
 
-impl App {
-    /// Empty application (no assets; the state — an empty `GameState::new` match).
-    pub fn new(config: AppConfig) -> Self {
-        let viewport = Viewport::new(config.screen_width, config.screen_height);
-        let universe = GameUniverse::default();
-        let universe_events = universe.subscribe();
-        let turn_events = universe.subscribe();
-
-        Self {
-            config,
-            universe,
-            universe_events,
-            turn_events,
-            assets: None,
-            viewport,
-            ticks: 0,
-            applied_commands: 0,
-            hud: hud::HudState::new(),
-            local: None,
-            build_menu: None,
-            build_site: None,
-            save_load: None,
-            upgrade_menu: None,
-            research_menu: None,
-            unit_menu: None,
-            self_destruct: None,
-            sounds: Vec::new(),
-            unit_sounds: Vec::new(),
-            pause_dialog: None,
-            pause_was_paused: false,
-            alloc_menu: None,
-            transfer_menu: None,
-            help: None,
-            help_mode: None,
-            visual_units: std::collections::HashMap::new(),
-            visual_goals: std::collections::HashMap::new(),
-            visual_paths: std::collections::HashMap::new(),
-            frame_anims: std::collections::HashMap::new(),
-            color_cycles: max_render::palette::ColorCycles::new(),
-            cycle_palette: None,
-            growth_anims: std::collections::HashMap::new(),
-            portrait: None,
-            preferences: Preferences::default(),
-            preferences_dialog: None,
-            build_marker_step: 0,
-            build_marker_elapsed: 0.0,
-            marker_color_index: 0xFF,
-            marker_color_elapsed: 0.0,
-            scroll: scroll::ScrollState::new(),
-        }
-    }
-
+// Dispatcher-agnostic surface (`game-universe-stage-c.md` §2): simulation, the
+// HUD/menu/UI layers, rendering and the temporary network bridge.
+impl<D: Dispatcher> App<D> {
     /// Configuration.
     pub fn config(&self) -> &AppConfig {
         &self.config
@@ -899,17 +857,17 @@ impl App {
 
     /// The facade instance (stage B step 1, temporary access for the network driver).
     ///
-    /// `NetworkDispatcher` is not the universe dispatcher yet — §6 switches the
-    /// network path to `GameUniverse<NetworkDispatcher>` and drops this access.
-    /// Until then the barrier FSM reads the counters through [`App::state_ref`]
+    /// The bridge is re-typed to `D` in stage C §2 and stays until §5: the driver
+    /// reaches the barrier FSM through it while the network path still lives in
+    /// `max_app::net`. The barrier FSM reads the counters through [`App::state_ref`]
     /// and steps them through the facade passthroughs
     /// (`GameUniverse::step_*_barrier`), which needs a direct facade reference.
-    pub fn universe(&self) -> &GameUniverse<LocalDispatcher> {
+    pub fn universe(&self) -> &GameUniverse<D> {
         &self.universe
     }
 
     /// The facade instance, mutable (stage B step 1, see [`App::universe`]).
-    pub fn universe_mut(&mut self) -> &mut GameUniverse<LocalDispatcher> {
+    pub fn universe_mut(&mut self) -> &mut GameUniverse<D> {
         &mut self.universe
     }
 
@@ -2749,353 +2707,6 @@ impl App {
         Ok(report)
     }
 
-    /// Loads the save from [`AppConfig::save`].
-    ///
-    /// # Errors
-    ///
-    /// The save is not set or cannot be read/parsed as V70.
-    pub fn load_game(&mut self) -> Result<()> {
-        let save = self
-            .config
-            .save
-            .clone()
-            .context("в AppConfig не задан путь к сейву (--demo <save>)")?;
-
-        self.load_save(save)
-    }
-
-    /// Loads a V70 save by path.
-    ///
-    /// Then the state is normalized ([`GameState::from_save`]) and ready for
-    /// [`App::tick`]; the tick/command counters are reset.
-    pub fn load_save(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref();
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("не удалось прочитать сейв {}", path.display()))?;
-
-        self.load_save_bytes(&bytes)
-            .with_context(|| format!("не удалось разобрать сейв {}", path.display()))
-    }
-
-    /// Loads a V70 save from bytes (tests and embedded fixtures).
-    pub fn load_save_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
-
-        // Stage A: the facade owns the state, so a load replaces the universe
-        // (`GameUniverse::from_save` counts the load as a state version).
-        self.universe = max_core::universe::GameUniverse::from_save(&save);
-        self.universe_events = self.universe.subscribe();
-        self.turn_events = self.universe.subscribe();
-        // `SaveLoad_Load` leaves the player `settings` as is: `enemy_halt`
-        // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
-        // the timers into the settings).
-        let enemy_halt = self.preferences.enemy_halt;
-        self.universe_mut().set_enemy_halt(enemy_halt);
-        self.ticks = 0;
-        self.applied_commands = 0;
-        self.hud.clear();
-        self.local = None;
-        self.build_menu = None;
-        self.save_load = None;
-        self.upgrade_menu = None;
-        self.research_menu = None;
-        self.unit_menu = None;
-        self.self_destruct = None;
-        self.alloc_menu = None;
-        self.transfer_menu = None;
-        self.help = None;
-        self.help_mode = None;
-        self.reset_visual_state();
-        self.focus_player();
-        // Starting snapshot: the first tick with `dt > 0` will see from which cell
-        // the unit started moving, otherwise the first route step would "teleport".
-        self.update_visual_units(0.0);
-
-        Ok(())
-    }
-
-    /// Creates a local match from [`NewGameConfig`] on the planet map from the assets.
-    ///
-    /// If the assets are not loaded yet or were loaded for another planet, they
-    /// are re-read from [`AppConfig`] with `planet = config.planet`: the map
-    /// (`.WRL`) is part of the game data, not of the match state.
-    pub fn new_game(&mut self, config: &NewGameConfig) -> Result<NewGameReport> {
-        self.config.planet = config.planet;
-
-        if self.assets.as_ref().map(|assets| assets.planet) != Some(config.planet) {
-            self.init_assets()?;
-        }
-
-        let surface = self
-            .assets
-            .as_ref()
-            .expect("assets loaded above")
-            .world
-            .surface_map();
-
-        Ok(self.new_game_on_surface(config, &surface))
-    }
-
-    /// Creates a local match on a ready surface map.
-    ///
-    /// A port of `GameManager_InitGame` to the extent of P2 + M3.2: `setup::generate_map`
-    /// (resources + alien debris), then `GameState::with_setup`, deployment of
-    /// alien debris (`UnitsManager_DeployUnit` with `team = PLAYER_TEAM_ALIEN`),
-    /// landing of the starting armies
-    /// ([`max_core::deploy::deploy_starting_units`] —
-    /// `GameManager_ProcessTeamMissionSupplyUnits`) and continuation of the RNG stream
-    /// (as in C++, where `Randomizer_SetSeed` stands at the start of the match generation).
-    ///
-    /// # Starting armies
-    ///
-    /// Each playing team gets a mine, a generator, two slabs and the `SC_L0001`
-    /// loadout (`CONSTRCT` 40, `ENGINEER` 20, `SURVEYOR` 0), gold —
-    /// [`NewGameConfig::start_gold`]. Without this the victory/defeat conditions
-    /// (`SC_L0002`) consider the team eliminated already on the first turn.
-    ///
-    /// # Alien debris
-    ///
-    /// The [`NewGameReport::aliens`] order is the `setup::generate_map` order
-    /// (slab → building → bridges → units), in which C++
-    /// `GameManager_SpawnAlienDerelicts` calls `UnitsManager_DeployUnit`.
-    /// The units are created in `GameState` on behalf of `TeamId::ALIEN`; heat maps
-    /// and team statistics/victory conditions do not see them (as in C++:
-    /// `PLAYER_TEAM_ALIEN` has `team_type == TEAM_TYPE_NONE` and `heat_map == null`).
-    pub fn new_game_on_surface(
-        &mut self,
-        config: &NewGameConfig,
-        surface: &SurfaceMap,
-    ) -> NewGameReport {
-        let settings = GenerationSettings::from_menu_levels(
-            config.raw,
-            config.fuel,
-            config.gold,
-            config.derelicts,
-        );
-        let alien_costs = AlienUnitCosts {
-            alien_tank: base_unit_values(UnitType::AlienTank).get_attribute(ATTRIB_TURNS),
-            juggernaut: base_unit_values(UnitType::Juggernaut).get_attribute(ATTRIB_TURNS),
-            alien_assault_gun: base_unit_values(UnitType::AlienAssaultGun)
-                .get_attribute(ATTRIB_TURNS),
-            alien_plane: base_unit_values(UnitType::AlienPlane).get_attribute(ATTRIB_TURNS),
-        };
-        let mut setup = GameSetup {
-            planet: config.planet,
-            settings,
-            teams: config.teams.clone(),
-            alien_costs,
-        };
-        let mut rng = Randomizer::new(config.seed);
-
-        // The start phases (`CargoMenu` + site select) have already run: humans chose
-        // the points themselves, the computers choose them like `Ai_SelectStartingPosition`
-        // (`GameManager_InitGame`: a loop over computer teams after the humans, but
-        // before `GameManager_PopulateMapWithResources`).
-        //
-        // C++ re-seeds the RNG in `GameManager_PopulateMapWithResources`, so the
-        // AI choice goes in a separate stream from the same seed, while the map generation —
-        // already from a clean seed (as before).
-        let mut deployments = config.deployments.clone();
-
-        if !deployments.is_empty() {
-            let mut choice_rng = Randomizer::new(config.seed);
-            let mut taken: Vec<Point> = deployments.iter().map(|entry| entry.position).collect();
-
-            for start in setup.teams.iter_mut() {
-                if deployments.iter().any(|entry| entry.team == start.team) {
-                    continue;
-                }
-
-                let position =
-                    max_core::setup::ai_choose_starting_position(surface, &mut choice_rng, &taken);
-
-                start.position = position;
-                taken.push(position);
-                deployments.push(TeamDeployment::default_loadout(
-                    start.team,
-                    position,
-                    config.start_gold,
-                ));
-            }
-        }
-
-        let output = generate_map(&mut setup, surface, &mut rng);
-        // Resource map snapshot **right after generation**
-        // (`GameManager_PopulateMapWithResources`, `game_manager.cpp:4730`):
-        // `NewGameReport::resources_crc` is checked against the P2 generation vector and must
-        // not contain the team survey accumulated by the landed
-        // scouts (`Survey_SurveyArea` → `CargoMap |= hash_team_id`).
-        let generated_resources_crc = crc::crc16(&output.map.resources.to_le_bytes());
-
-        // `GameManager_PopulateMapWithResources` (`game_manager.cpp:4730`) before
-        // landing moves `TeamMissionSupplies[team].starting_position` of
-        // **each** playing team: `FindValidStartingPosition`, then
-        // `Optimize` of materials/fuel. Therefore `ProcessTeamMissionSupplyUnits`
-        // (and `GetStartPositionMiningStation`) sees the final point — for
-        // the AI and for a human who chose the point in the site select phase.
-        //
-        // Previously only the points added here for the AI were synchronized;
-        // the interactive path (`start_positions` from the landing phase) went into
-        // `deploy_starting_units_with` with its own original value. While the point
-        // is valid (checked by `LandingScreen`), the result matches, but with
-        // any future change of `Optimize` the layout would diverge from C++.
-        for deployment in deployments.iter_mut() {
-            if let Some(start) = setup
-                .teams
-                .iter()
-                .find(|start| start.team == deployment.team)
-            {
-                deployment.position = start.position;
-            }
-        }
-
-        // Teams from setup (positions could have been moved by `FindValidStartingPosition`).
-        let mut team_kinds = [TeamKind::None; PLAYER_TEAM_COUNT];
-        for start in &setup.teams {
-            let index = start.team.0 as usize;
-            if index < PLAYER_TEAM_COUNT {
-                team_kinds[index] = if start.team == config.player_team {
-                    TeamKind::Player
-                } else {
-                    TeamKind::Computer
-                };
-            }
-        }
-
-        // Stage B §7: the generated world enters the facade through its config
-        // layer — `GameState` fields are crate-private now.
-        let mut state = max_core::universe::GameUniverse::with_setup(output.map, team_kinds);
-        state.set_player_team(config.player_team);
-        // Live settings the simulation reads (`settings["enemy_halt"]`).
-        state.set_enemy_halt(self.preferences.enemy_halt);
-        // Clans from the settings — before deploying units: `deploy_starting_units`
-        // takes the attributes from `team_units` (`ResourceManager_InitClanUnitValues`).
-        // The call rebuilds base and current values from `SC_ATTRI` and clears the
-        // team complexes, exactly like the C++ initialization; the derelict slot
-        // (`PLAYER_TEAM_ALIEN`) was already set by `GameState::with_setup`.
-        for index in 0..PLAYER_TEAM_COUNT {
-            let clan = config.clans.get(index).copied().unwrap_or(TeamClan::Random);
-            let team = TeamId(index as u8);
-            state.team_mut(team).expect("team slot").team_clan = clan;
-            state
-                .team_units_mut(team)
-                .expect("team economy")
-                .init_clan_unit_values(clan);
-        }
-
-        // `CargoMenu::CommitUpgradeChanges`: upgrades bought before landing
-        // (`unitvalues_actual`) replace the team's current values before
-        // `GameManager_ProcessTeamMissionSupplyUnits`, so the landed units
-        // get the already improved attributes.
-        for deployment in &deployments {
-            let index = deployment.team.0 as usize;
-
-            if index >= PLAYER_TEAM_COUNT {
-                continue;
-            }
-
-            for (unit_type, values) in &deployment.upgrades {
-                let slot = *unit_type as usize;
-                if slot < state.snapshot().team_units()[index].current_values.len() {
-                    state
-                        .team_units_mut(deployment.team)
-                        .expect("team economy")
-                        .current_values[slot] = *values;
-                }
-            }
-            state
-                .team_mut(deployment.team)
-                .expect("team slot")
-                .stats_gold_spent_on_upgrades = deployment.gold_spent_on_upgrades;
-        }
-        // The RNG stream continues after generation — as in the original.
-        *state.rng_mut() = rng;
-
-        // `GameManager_SpawnAlienDerelicts`: all placements — `DeployUnit` with
-        // `team = PLAYER_TEAM_ALIEN`, in generation order. C++ passes
-        // `skip_map_status_update = true`; in max_core `update_map_status`
-        // ignores `ALIEN` itself (the team has no heat map), so
-        // the result is the same — the team layers are not touched.
-        for placement in &output.aliens {
-            let _ = state.spawn_unit(placement.unit_type, TeamId::ALIEN, placement.position, 0);
-        }
-
-        // `GameManager_ProcessTeamMissionSupplyUnits` for each team
-        // (`team_type != NONE`), in ascending team index order and already
-        // after the alien debris — exactly as in `GameManager_InitGame`. Without this
-        // `menu_check_end_game_conditions` ends the match right after the first
-        // turn: the teams have neither infrastructure nor troops.
-        //
-        // If the start phases have already run (`Mobilization` + site select), each
-        // team has its own landing point, credits and loadout
-        // (`TeamMissionSupplies` in C++).
-        let start_units = if deployments.is_empty() {
-            state.deploy_starting_units(
-                config.start_gold,
-                setup.settings.max_resources,
-                &setup.teams,
-            )
-        } else {
-            state.deploy_starting_units_with(setup.settings.max_resources, &deployments)
-        };
-
-        // `Access_UpdateVisibilityStatus` after landing (`game_manager.cpp:1965`):
-        // resets unit visibility by `InitStealthStatus` and rebuilds
-        // the scanning coverage/heat maps. Without this the landing order
-        // left "one-way" visibility (whoever landed later sees
-        // those landed earlier, but not vice versa), and `visible_to_team` from spawn
-        // made foreign bases visible to everyone without survey.
-        state.update_visibility_status(true);
-
-        let report = NewGameReport {
-            planet: config.planet,
-            seed: config.seed,
-            teams: setup.teams.len(),
-            aliens: output.aliens.len(),
-            start_units,
-            units: state.snapshot().unit_count(),
-            surface_crc: crc::crc16(&state.snapshot().map().surface.to_bytes()),
-            resources_crc: generated_resources_crc,
-        };
-
-        tracing::info!(
-            "new game: planet={:?} seed={} teams={} aliens={} start_units={} units={} surface_crc=0x{:04X}",
-            report.planet,
-            report.seed,
-            report.teams,
-            report.aliens,
-            report.start_units,
-            report.units,
-            report.surface_crc
-        );
-
-        // Stage A: the generated state becomes the new facade-owned state; the
-        // event cursor is re-subscribed because the buffer starts empty.
-        self.universe = state;
-        self.universe_events = self.universe.subscribe();
-        self.turn_events = self.universe.subscribe();
-        self.ticks = 0;
-        self.applied_commands = 0;
-        self.hud.clear();
-        self.local = None;
-        self.build_menu = None;
-        self.save_load = None;
-        self.upgrade_menu = None;
-        self.research_menu = None;
-        self.unit_menu = None;
-        self.self_destruct = None;
-        self.alloc_menu = None;
-        self.transfer_menu = None;
-        self.help = None;
-        self.help_mode = None;
-        self.reset_visual_state();
-        self.focus_player();
-        // Starting snapshot of the visual positions (see `load_game`).
-        self.update_visual_units(0.0);
-
-        report
-    }
-
     /// One simulation tick (`GameManager_ProcessTick`).
     ///
     /// It also repeats the UI hook `UnitInfo::MoveFinished` → `AutoSelectNext`
@@ -3589,19 +3200,6 @@ impl App {
         self.state_ref().snapshot_bytes()
     }
 
-    /// Headless demo: load a save, run `turns` ticks, return the digest.
-    ///
-    /// This is exactly the `--demo` scenario, so the test and the CLI check the same code.
-    pub fn run_demo(&mut self, save: impl AsRef<Path>, turns: u32) -> Result<AppDigest> {
-        self.load_save(save)?;
-
-        for _ in 0..turns {
-            self.tick();
-        }
-
-        Ok(self.digest())
-    }
-
     /// Centers the camera on the first significant unit of the local player.
     ///
     /// This is `GameManager_GetFirstRelevantUnit` (`game_manager.cpp:3140`), not
@@ -3654,6 +3252,420 @@ impl App {
         if let Some(grid) = grid {
             self.viewport.center_on_grid(grid.x, grid.y);
         }
+    }
+}
+
+// Local (single-player) surface: constructors and loading on `LocalDispatcher`.
+impl App<LocalDispatcher> {
+    /// Empty application (no assets; the state — an empty `GameState::new` match).
+    pub fn new(config: AppConfig) -> Self {
+        let viewport = Viewport::new(config.screen_width, config.screen_height);
+        let universe = GameUniverse::default();
+        let universe_events = universe.subscribe();
+        let turn_events = universe.subscribe();
+
+        Self {
+            config,
+            universe,
+            universe_events,
+            turn_events,
+            assets: None,
+            viewport,
+            ticks: 0,
+            applied_commands: 0,
+            hud: hud::HudState::new(),
+            local: None,
+            build_menu: None,
+            build_site: None,
+            save_load: None,
+            upgrade_menu: None,
+            research_menu: None,
+            unit_menu: None,
+            self_destruct: None,
+            sounds: Vec::new(),
+            unit_sounds: Vec::new(),
+            pause_dialog: None,
+            pause_was_paused: false,
+            alloc_menu: None,
+            transfer_menu: None,
+            help: None,
+            help_mode: None,
+            visual_units: std::collections::HashMap::new(),
+            visual_goals: std::collections::HashMap::new(),
+            visual_paths: std::collections::HashMap::new(),
+            frame_anims: std::collections::HashMap::new(),
+            color_cycles: max_render::palette::ColorCycles::new(),
+            cycle_palette: None,
+            growth_anims: std::collections::HashMap::new(),
+            portrait: None,
+            preferences: Preferences::default(),
+            preferences_dialog: None,
+            build_marker_step: 0,
+            build_marker_elapsed: 0.0,
+            marker_color_index: 0xFF,
+            marker_color_elapsed: 0.0,
+            scroll: scroll::ScrollState::new(),
+        }
+    }
+
+    /// Loads the save from [`AppConfig::save`].
+    ///
+    /// # Errors
+    ///
+    /// The save is not set or cannot be read/parsed as V70.
+    pub fn load_game(&mut self) -> Result<()> {
+        let save = self
+            .config
+            .save
+            .clone()
+            .context("в AppConfig не задан путь к сейву (--demo <save>)")?;
+
+        self.load_save(save)
+    }
+
+    /// Loads a V70 save by path.
+    ///
+    /// Then the state is normalized ([`GameState::from_save`]) and ready for
+    /// [`App::tick`]; the tick/command counters are reset.
+    pub fn load_save(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("не удалось прочитать сейв {}", path.display()))?;
+
+        self.load_save_bytes(&bytes)
+            .with_context(|| format!("не удалось разобрать сейв {}", path.display()))
+    }
+
+    /// Loads a V70 save from bytes (tests and embedded fixtures).
+    pub fn load_save_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        // Stage A: the facade owns the state, so a load replaces the universe
+        // (`GameUniverse::from_save` counts the load as a state version).
+        self.universe = max_core::universe::GameUniverse::from_save(&save);
+        self.universe_events = self.universe.subscribe();
+        self.turn_events = self.universe.subscribe();
+        // `SaveLoad_Load` leaves the player `settings` as is: `enemy_halt`
+        // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
+        // the timers into the settings).
+        let enemy_halt = self.preferences.enemy_halt;
+        self.universe_mut().set_enemy_halt(enemy_halt);
+        self.ticks = 0;
+        self.applied_commands = 0;
+        self.hud.clear();
+        self.local = None;
+        self.build_menu = None;
+        self.save_load = None;
+        self.upgrade_menu = None;
+        self.research_menu = None;
+        self.unit_menu = None;
+        self.self_destruct = None;
+        self.alloc_menu = None;
+        self.transfer_menu = None;
+        self.help = None;
+        self.help_mode = None;
+        self.reset_visual_state();
+        self.focus_player();
+        // Starting snapshot: the first tick with `dt > 0` will see from which cell
+        // the unit started moving, otherwise the first route step would "teleport".
+        self.update_visual_units(0.0);
+
+        Ok(())
+    }
+
+    /// Creates a local match from [`NewGameConfig`] on the planet map from the assets.
+    ///
+    /// If the assets are not loaded yet or were loaded for another planet, they
+    /// are re-read from [`AppConfig`] with `planet = config.planet`: the map
+    /// (`.WRL`) is part of the game data, not of the match state.
+    pub fn new_game(&mut self, config: &NewGameConfig) -> Result<NewGameReport> {
+        self.config.planet = config.planet;
+
+        if self.assets.as_ref().map(|assets| assets.planet) != Some(config.planet) {
+            self.init_assets()?;
+        }
+
+        let surface = self
+            .assets
+            .as_ref()
+            .expect("assets loaded above")
+            .world
+            .surface_map();
+
+        Ok(self.new_game_on_surface(config, &surface))
+    }
+
+    /// Creates a local match on a ready surface map.
+    ///
+    /// A port of `GameManager_InitGame` to the extent of P2 + M3.2: `setup::generate_map`
+    /// (resources + alien debris), then `GameState::with_setup`, deployment of
+    /// alien debris (`UnitsManager_DeployUnit` with `team = PLAYER_TEAM_ALIEN`),
+    /// landing of the starting armies
+    /// ([`max_core::deploy::deploy_starting_units`] —
+    /// `GameManager_ProcessTeamMissionSupplyUnits`) and continuation of the RNG stream
+    /// (as in C++, where `Randomizer_SetSeed` stands at the start of the match generation).
+    ///
+    /// # Starting armies
+    ///
+    /// Each playing team gets a mine, a generator, two slabs and the `SC_L0001`
+    /// loadout (`CONSTRCT` 40, `ENGINEER` 20, `SURVEYOR` 0), gold —
+    /// [`NewGameConfig::start_gold`]. Without this the victory/defeat conditions
+    /// (`SC_L0002`) consider the team eliminated already on the first turn.
+    ///
+    /// # Alien debris
+    ///
+    /// The [`NewGameReport::aliens`] order is the `setup::generate_map` order
+    /// (slab → building → bridges → units), in which C++
+    /// `GameManager_SpawnAlienDerelicts` calls `UnitsManager_DeployUnit`.
+    /// The units are created in `GameState` on behalf of `TeamId::ALIEN`; heat maps
+    /// and team statistics/victory conditions do not see them (as in C++:
+    /// `PLAYER_TEAM_ALIEN` has `team_type == TEAM_TYPE_NONE` and `heat_map == null`).
+    pub fn new_game_on_surface(
+        &mut self,
+        config: &NewGameConfig,
+        surface: &SurfaceMap,
+    ) -> NewGameReport {
+        let settings = GenerationSettings::from_menu_levels(
+            config.raw,
+            config.fuel,
+            config.gold,
+            config.derelicts,
+        );
+        let alien_costs = AlienUnitCosts {
+            alien_tank: base_unit_values(UnitType::AlienTank).get_attribute(ATTRIB_TURNS),
+            juggernaut: base_unit_values(UnitType::Juggernaut).get_attribute(ATTRIB_TURNS),
+            alien_assault_gun: base_unit_values(UnitType::AlienAssaultGun)
+                .get_attribute(ATTRIB_TURNS),
+            alien_plane: base_unit_values(UnitType::AlienPlane).get_attribute(ATTRIB_TURNS),
+        };
+        let mut setup = GameSetup {
+            planet: config.planet,
+            settings,
+            teams: config.teams.clone(),
+            alien_costs,
+        };
+        let mut rng = Randomizer::new(config.seed);
+
+        // The start phases (`CargoMenu` + site select) have already run: humans chose
+        // the points themselves, the computers choose them like `Ai_SelectStartingPosition`
+        // (`GameManager_InitGame`: a loop over computer teams after the humans, but
+        // before `GameManager_PopulateMapWithResources`).
+        //
+        // C++ re-seeds the RNG in `GameManager_PopulateMapWithResources`, so the
+        // AI choice goes in a separate stream from the same seed, while the map generation —
+        // already from a clean seed (as before).
+        let mut deployments = config.deployments.clone();
+
+        if !deployments.is_empty() {
+            let mut choice_rng = Randomizer::new(config.seed);
+            let mut taken: Vec<Point> = deployments.iter().map(|entry| entry.position).collect();
+
+            for start in setup.teams.iter_mut() {
+                if deployments.iter().any(|entry| entry.team == start.team) {
+                    continue;
+                }
+
+                let position =
+                    max_core::setup::ai_choose_starting_position(surface, &mut choice_rng, &taken);
+
+                start.position = position;
+                taken.push(position);
+                deployments.push(TeamDeployment::default_loadout(
+                    start.team,
+                    position,
+                    config.start_gold,
+                ));
+            }
+        }
+
+        let output = generate_map(&mut setup, surface, &mut rng);
+        // Resource map snapshot **right after generation**
+        // (`GameManager_PopulateMapWithResources`, `game_manager.cpp:4730`):
+        // `NewGameReport::resources_crc` is checked against the P2 generation vector and must
+        // not contain the team survey accumulated by the landed
+        // scouts (`Survey_SurveyArea` → `CargoMap |= hash_team_id`).
+        let generated_resources_crc = crc::crc16(&output.map.resources.to_le_bytes());
+
+        // `GameManager_PopulateMapWithResources` (`game_manager.cpp:4730`) before
+        // landing moves `TeamMissionSupplies[team].starting_position` of
+        // **each** playing team: `FindValidStartingPosition`, then
+        // `Optimize` of materials/fuel. Therefore `ProcessTeamMissionSupplyUnits`
+        // (and `GetStartPositionMiningStation`) sees the final point — for
+        // the AI and for a human who chose the point in the site select phase.
+        //
+        // Previously only the points added here for the AI were synchronized;
+        // the interactive path (`start_positions` from the landing phase) went into
+        // `deploy_starting_units_with` with its own original value. While the point
+        // is valid (checked by `LandingScreen`), the result matches, but with
+        // any future change of `Optimize` the layout would diverge from C++.
+        for deployment in deployments.iter_mut() {
+            if let Some(start) = setup
+                .teams
+                .iter()
+                .find(|start| start.team == deployment.team)
+            {
+                deployment.position = start.position;
+            }
+        }
+
+        // Teams from setup (positions could have been moved by `FindValidStartingPosition`).
+        let mut team_kinds = [TeamKind::None; PLAYER_TEAM_COUNT];
+        for start in &setup.teams {
+            let index = start.team.0 as usize;
+            if index < PLAYER_TEAM_COUNT {
+                team_kinds[index] = if start.team == config.player_team {
+                    TeamKind::Player
+                } else {
+                    TeamKind::Computer
+                };
+            }
+        }
+
+        // Stage B §7: the generated world enters the facade through its config
+        // layer — `GameState` fields are crate-private now.
+        let mut state = max_core::universe::GameUniverse::with_setup(output.map, team_kinds);
+        state.set_player_team(config.player_team);
+        // Live settings the simulation reads (`settings["enemy_halt"]`).
+        state.set_enemy_halt(self.preferences.enemy_halt);
+        // Clans from the settings — before deploying units: `deploy_starting_units`
+        // takes the attributes from `team_units` (`ResourceManager_InitClanUnitValues`).
+        // The call rebuilds base and current values from `SC_ATTRI` and clears the
+        // team complexes, exactly like the C++ initialization; the derelict slot
+        // (`PLAYER_TEAM_ALIEN`) was already set by `GameState::with_setup`.
+        for index in 0..PLAYER_TEAM_COUNT {
+            let clan = config.clans.get(index).copied().unwrap_or(TeamClan::Random);
+            let team = TeamId(index as u8);
+            state.team_mut(team).expect("team slot").team_clan = clan;
+            state
+                .team_units_mut(team)
+                .expect("team economy")
+                .init_clan_unit_values(clan);
+        }
+
+        // `CargoMenu::CommitUpgradeChanges`: upgrades bought before landing
+        // (`unitvalues_actual`) replace the team's current values before
+        // `GameManager_ProcessTeamMissionSupplyUnits`, so the landed units
+        // get the already improved attributes.
+        for deployment in &deployments {
+            let index = deployment.team.0 as usize;
+
+            if index >= PLAYER_TEAM_COUNT {
+                continue;
+            }
+
+            for (unit_type, values) in &deployment.upgrades {
+                let slot = *unit_type as usize;
+                if slot < state.snapshot().team_units()[index].current_values.len() {
+                    state
+                        .team_units_mut(deployment.team)
+                        .expect("team economy")
+                        .current_values[slot] = *values;
+                }
+            }
+            state
+                .team_mut(deployment.team)
+                .expect("team slot")
+                .stats_gold_spent_on_upgrades = deployment.gold_spent_on_upgrades;
+        }
+        // The RNG stream continues after generation — as in the original.
+        *state.rng_mut() = rng;
+
+        // `GameManager_SpawnAlienDerelicts`: all placements — `DeployUnit` with
+        // `team = PLAYER_TEAM_ALIEN`, in generation order. C++ passes
+        // `skip_map_status_update = true`; in max_core `update_map_status`
+        // ignores `ALIEN` itself (the team has no heat map), so
+        // the result is the same — the team layers are not touched.
+        for placement in &output.aliens {
+            let _ = state.spawn_unit(placement.unit_type, TeamId::ALIEN, placement.position, 0);
+        }
+
+        // `GameManager_ProcessTeamMissionSupplyUnits` for each team
+        // (`team_type != NONE`), in ascending team index order and already
+        // after the alien debris — exactly as in `GameManager_InitGame`. Without this
+        // `menu_check_end_game_conditions` ends the match right after the first
+        // turn: the teams have neither infrastructure nor troops.
+        //
+        // If the start phases have already run (`Mobilization` + site select), each
+        // team has its own landing point, credits and loadout
+        // (`TeamMissionSupplies` in C++).
+        let start_units = if deployments.is_empty() {
+            state.deploy_starting_units(
+                config.start_gold,
+                setup.settings.max_resources,
+                &setup.teams,
+            )
+        } else {
+            state.deploy_starting_units_with(setup.settings.max_resources, &deployments)
+        };
+
+        // `Access_UpdateVisibilityStatus` after landing (`game_manager.cpp:1965`):
+        // resets unit visibility by `InitStealthStatus` and rebuilds
+        // the scanning coverage/heat maps. Without this the landing order
+        // left "one-way" visibility (whoever landed later sees
+        // those landed earlier, but not vice versa), and `visible_to_team` from spawn
+        // made foreign bases visible to everyone without survey.
+        state.update_visibility_status(true);
+
+        let report = NewGameReport {
+            planet: config.planet,
+            seed: config.seed,
+            teams: setup.teams.len(),
+            aliens: output.aliens.len(),
+            start_units,
+            units: state.snapshot().unit_count(),
+            surface_crc: crc::crc16(&state.snapshot().map().surface.to_bytes()),
+            resources_crc: generated_resources_crc,
+        };
+
+        tracing::info!(
+            "new game: planet={:?} seed={} teams={} aliens={} start_units={} units={} surface_crc=0x{:04X}",
+            report.planet,
+            report.seed,
+            report.teams,
+            report.aliens,
+            report.start_units,
+            report.units,
+            report.surface_crc
+        );
+
+        // Stage A: the generated state becomes the new facade-owned state; the
+        // event cursor is re-subscribed because the buffer starts empty.
+        self.universe = state;
+        self.universe_events = self.universe.subscribe();
+        self.turn_events = self.universe.subscribe();
+        self.ticks = 0;
+        self.applied_commands = 0;
+        self.hud.clear();
+        self.local = None;
+        self.build_menu = None;
+        self.save_load = None;
+        self.upgrade_menu = None;
+        self.research_menu = None;
+        self.unit_menu = None;
+        self.self_destruct = None;
+        self.alloc_menu = None;
+        self.transfer_menu = None;
+        self.help = None;
+        self.help_mode = None;
+        self.reset_visual_state();
+        self.focus_player();
+        // Starting snapshot of the visual positions (see `load_game`).
+        self.update_visual_units(0.0);
+
+        report
+    }
+
+    /// Headless demo: load a save, run `turns` ticks, return the digest.
+    ///
+    /// This is exactly the `--demo` scenario, so the test and the CLI check the same code.
+    pub fn run_demo(&mut self, save: impl AsRef<Path>, turns: u32) -> Result<AppDigest> {
+        self.load_save(save)?;
+
+        for _ in 0..turns {
+            self.tick();
+        }
+
+        Ok(self.digest())
     }
 }
 

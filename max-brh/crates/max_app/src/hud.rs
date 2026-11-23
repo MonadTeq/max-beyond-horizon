@@ -41,7 +41,7 @@ use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
 use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::command_finished_turn;
-use max_core::universe::StateRef;
+use max_core::universe::{Dispatcher, StateRef};
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{
     Command, MovePathData, OrderPayload, Packet08Order, Packet38Move, PayloadP1, PayloadP2,
@@ -1164,7 +1164,11 @@ pub fn unit_can_move(unit: &UnitInfo) -> bool {
 // App methods: selection, orders, End Turn
 // ---------------------------------------------------------------------------
 
-impl App {
+// Selection, orders and End Turn read/mutate only the facade and the UI state,
+// never the transport policy — so they live in the dispatcher-agnostic `App<D>`
+// surface (`game-universe-stage-c.md` §2). The generic `App::select_next_unit`
+// calls `select_unit`, and the network driver sends the same queued orders.
+impl<D: Dispatcher> App<D> {
     /// HUD state (selection, log, preview).
     pub fn hud(&self) -> &HudState {
         &self.hud
@@ -1189,28 +1193,6 @@ impl App {
     /// Local player team (`player_team` of the match).
     pub fn player_team(&self) -> TeamId {
         self.state_ref().player_team()
-    }
-
-    /// Remaining turn timer in seconds — `GameManager_TurnTimerValue`.
-    ///
-    /// C++ stores it as an integer number of seconds and decreases it by 1 per second
-    /// (`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`); the panel shows
-    /// `"%2.2i:%2.2i"` of this value (`GameManager_DrawTurnTimer`). In the port
-    /// the local match counts `f32` seconds ([`crate::local::LocalGame`]),
-    /// so `ceil` is taken here — exactly the number C++ would show in
-    /// the current second (`180.0 → «03:00»`, `179.4 → «03:00»`, `178.9 → «02:59»`).
-    ///
-    /// Network matches do not model the turn timer (in C++ it lives in
-    /// `Remote_UpdatePauseTimer`): there the panel value remains, by default 0 —
-    /// `GameManager_DrawTurnTimer(0)` → «00:00» in `COLOR_RED`.
-    pub fn turn_timer_seconds(&self) -> u32 {
-        if let Some(local) = self.local() {
-            let seconds = local.timer_left.ceil();
-
-            return seconds.clamp(0.0, 3599.0) as u32;
-        }
-
-        self.hud().panels.timer_seconds
     }
 
     /// The selected unit, if it still exists.
@@ -1272,6 +1254,32 @@ impl App {
 
         self.hud.push_log(line);
         over
+    }
+}
+
+// Local (single-player) surface: the turn timer lives in the local match
+// (`local::LocalGame`), so it stays on `App<LocalDispatcher>`.
+impl App {
+    /// Remaining turn timer in seconds — `GameManager_TurnTimerValue`.
+    ///
+    /// C++ stores it as an integer number of seconds and decreases it by 1 per second
+    /// (`GameManager_SyncTurnTimer`, `game_manager.cpp:5033`); the panel shows
+    /// `"%2.2i:%2.2i"` of this value (`GameManager_DrawTurnTimer`). In the port
+    /// the local match counts `f32` seconds ([`crate::local::LocalGame`]),
+    /// so `ceil` is taken here — exactly the number C++ would show in
+    /// the current second (`180.0 → «03:00»`, `179.4 → «03:00»`, `178.9 → «02:59»`).
+    ///
+    /// Network matches do not model the turn timer (in C++ it lives in
+    /// `Remote_UpdatePauseTimer`): there the panel value remains, by default 0 —
+    /// `GameManager_DrawTurnTimer(0)` → «00:00» in `COLOR_RED`.
+    pub fn turn_timer_seconds(&self) -> u32 {
+        if let Some(local) = self.local() {
+            let seconds = local.timer_left.ceil();
+
+            return seconds.clamp(0.0, 3599.0) as u32;
+        }
+
+        self.hud().panels.timer_seconds
     }
 }
 
