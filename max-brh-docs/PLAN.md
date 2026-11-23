@@ -172,3 +172,12 @@
   (`MonadTeq/mtq-sdl`, 3.5.0) через `sdl3-src-fork`; сборка `sdl-from-source`
   проверена.
 - GitHub Workflow собирает только клиент (`max-brh`), с checkout SDL-сабмодуля.
+- DSL кланов/команд/режимов/исследований внесён в `domain-map.md` (Interplay+Klei);
+  имена канонизированы (Sacred Eight, Ayers Hand, Axis Inc.).
+- Полный порт ИИ из C++ (вес-таблицы → стратегия → производство → бой →
+  исследования → разведка/флот) — `analysis/ai-port-status.md`.
+- Машина хода перенесена в `max_core` (`TurnEvent` + `begin_round`/`next_team`/
+  `end_round` + барьеры) — нарушение слоёв устранено.
+- Полное автоматическое покрытие движка (фазы 1–5, ~460 новых тестов, всего
+  790+ в `max_core`): ядро/юниты/бой/экономика/сейв/детерминизм/ИИ — каждый
+  модуль доказан U+I+D. `max-brh-qa/plans/engine-coverage-plan.md`.
