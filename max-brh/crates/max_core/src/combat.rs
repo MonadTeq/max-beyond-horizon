@@ -162,9 +162,11 @@ pub fn attack_unit(
         unit_order::set_new_order_int(&mut target, UnitOrder::Explode, UnitOrderState::Init);
     }
 
-    // Attacker experience: `enemy->GainExperience(...)` in C++ (see `GainExperience`).
-    let damaged_unit_turns = i32::from(attacker.base_values.get_attribute(ATTRIB_TURNS));
-    let attacker_turns = i32::from(target.base_values.get_attribute(ATTRIB_TURNS));
+    // Attacker experience: `enemy->GainExperience(...)` in C++ (`unitinfo.cpp:1622`):
+    // `target.TURNS * damage * 5 / (attacker.TURNS * target.HITS)`. The target is
+    // `this` in C++, the attacker is `enemy`.
+    let damaged_unit_turns = i32::from(target.base_values.get_attribute(ATTRIB_TURNS));
+    let attacker_turns = i32::from(attacker.base_values.get_attribute(ATTRIB_TURNS));
     let damaged_unit_max_hits = i32::from(target.base_values.get_attribute(ATTRIB_HITS));
     state.write_unit(target_id, target);
 
@@ -2034,11 +2036,7 @@ mod tests {
 
     /// Oracle check for the experience formula (`unitinfo.cpp:1622`):
     /// `target.TURNS * damage * 5 / (attacker.TURNS * target.HITS)`.
-    ///
-    /// The port swaps the two `ATTRIB_TURNS` operands (see the phase 2 report);
-    /// this test documents the oracle and is ignored until the owner decides.
     #[test]
-    #[ignore = "known divergence: attack_unit swaps the ATTRIB_TURNS operands (P2 report)"]
     fn experience_gain_uses_cpp_turns_operands() {
         let mut state = state();
         state.ai.all_visible = true;

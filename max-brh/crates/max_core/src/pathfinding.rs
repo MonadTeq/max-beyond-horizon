@@ -799,7 +799,8 @@ pub fn isqrt(value: u32) -> u32 {
         return value;
     }
     let mut x = value;
-    let mut y = (x + 1) / 2;
+    // `(value + 1) / 2`, but without the overflow at `value == u32::MAX`.
+    let mut y = (value >> 1) + (value & 1);
     while y < x {
         x = y;
         y = (x + value / x) / 2;
@@ -1757,12 +1758,9 @@ mod tests {
         );
     }
 
-    /// Public `isqrt` boundary: `u32::MAX` is `65535² + …`. The current
-    /// implementation computes `(value + 1) / 2` and overflows at this one
-    /// input (debug panic, division by zero after a release wrap) — see the
-    /// phase 2 report; ignored until the owner approves a fix.
+    /// Public `isqrt` boundary: `u32::MAX` is `65535² + …`. The initial guess
+    /// must not overflow at this input (`value + 1` would wrap to zero).
     #[test]
-    #[ignore = "known bug: isqrt(u32::MAX) overflows x + 1 (P2 report)"]
     fn isqrt_max_value_is_exact() {
         assert_eq!(isqrt(u32::MAX), 65_535);
     }
