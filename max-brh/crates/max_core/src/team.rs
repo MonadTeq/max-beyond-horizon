@@ -439,4 +439,47 @@ mod tests {
         assert_eq!(ui.selected_unit, None);
         assert_eq!(ui.display_buttons, [0; DISPLAY_BUTTON_COUNT]);
     }
+
+    /// `TeamUnits::SetGold` stores the full `u32` (V70 narrows it on disk).
+    #[test]
+    fn gold_boundaries() {
+        let mut units = TeamUnits::new();
+        assert_eq!(units.gold(), 0);
+        units.set_gold(u32::MAX);
+        assert_eq!(units.gold(), u32::MAX);
+        units.set_gold(0);
+        assert_eq!(units.gold(), 0);
+    }
+
+    /// `TeamInfo` per-type counters and casualty accessors cover all 93 slots.
+    #[test]
+    fn team_info_type_indexed_accessors() {
+        let mut info = TeamInfo::new();
+        let last = crate::unit_values::UNIT_COUNT as u16 - 1;
+        assert_eq!(info.unit_counter(0), 1);
+        assert_eq!(info.unit_counter(last), 1);
+        assert_eq!(info.casualties_for(0), 0);
+        assert_eq!(info.casualties_for(last), 0);
+        info.unit_counters[last as usize] = 77;
+        info.casualties[0] = 5;
+        assert_eq!(info.unit_counter(last), 77);
+        assert_eq!(info.casualties_for(0), 5);
+    }
+
+    /// Complex lookup/removal semantics of `TeamUnits`.
+    #[test]
+    fn complex_lookup_and_remove_semantics() {
+        let mut units = TeamUnits::new();
+        let id = units.create_complex();
+        assert!(units.get_complex(id).is_some());
+        units
+            .get_complex_mut(id)
+            .expect("complex")
+            .buildings = 3;
+        assert_eq!(units.get_complex(id).map(|complex| complex.buildings), Some(3));
+        assert!(units.remove_complex(id));
+        assert!(!units.remove_complex(id));
+        assert!(units.get_complex(id).is_none());
+        assert!(units.get_complex_mut(id).is_none());
+    }
 }

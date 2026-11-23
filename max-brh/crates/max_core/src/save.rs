@@ -2563,4 +2563,68 @@ mod tests {
             plain.get_attribute(ATTRIB_ATTACK)
         );
     }
+
+    /// `SaveFormatHeader::save_name`/`team_name` stop at the first NUL and
+    /// tolerate non-UTF-8 bytes (raw V70 names are not guaranteed to be UTF-8).
+    #[test]
+    fn header_name_accessors_boundaries() {
+        let mut header = SaveFormatHeader {
+            version: SAVE_VERSION_V70,
+            save_game_type: FileType::Custom,
+            save_name: [0; 30],
+            world: Planet::Snowcrab,
+            mission_index: 0,
+            team_names: [[0; 30]; 4],
+            team_type: [TeamKind::None; 5],
+            team_clan: [TeamClan::Random; 5],
+            rng_seed: 0,
+            opponent: Opponent::Average,
+            turn_timer_time: 0,
+            endturn_time: 0,
+            play_mode: PlayMode::TurnBased,
+        };
+        assert_eq!(header.save_name(), "");
+        assert_eq!(header.team_name(0), "");
+        // Out-of-range team index: empty, no panic.
+        assert_eq!(header.team_name(4), "");
+        assert_eq!(header.team_name(usize::MAX), "");
+
+        // Exactly 30 non-NUL bytes are a full name.
+        header.save_name = [b'N'; 30];
+        assert_eq!(header.save_name(), "N".repeat(30));
+        // An embedded NUL terminates.
+        header.save_name = [0; 30];
+        header.save_name[..5].copy_from_slice(b"ABCDE");
+        header.save_name[5] = 0;
+        header.save_name[6] = b'X';
+        assert_eq!(header.save_name(), "ABCDE");
+        // Invalid UTF-8 is replaced, not an error.
+        header.team_names[2][0] = 0xFF;
+        header.team_names[2][1] = b'A';
+        assert_eq!(header.team_name(2), "\u{FFFD}A");
+    }
+
+    /// `HeatMap::complete_clamped` matches `HeatMap::LoadV70` for the whole
+    /// `int8_t` range.
+    #[test]
+    fn heat_map_clamp_boundaries() {
+        let mut heat_map = HeatMap {
+            complete: [0; MAP_TILES],
+            stealth_sea: [0; MAP_TILES],
+            stealth_land: [0; MAP_TILES],
+        };
+        for (value, expected) in [
+            (i8::MIN, 0u8),
+            (-1, 0),
+            (0, 0),
+            (1, 1),
+            (127, 127),
+        ] {
+            heat_map.complete[0] = value;
+            assert_eq!(heat_map.complete_clamped(0), expected, "value {value}");
+        }
+        // The raw value is preserved (the byte-exact round-trip needs it).
+        heat_map.complete[0] = -42;
+        assert_eq!(heat_map.complete[0], -42);
+    }
 }

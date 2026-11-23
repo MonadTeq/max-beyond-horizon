@@ -488,4 +488,79 @@ mod tests {
             [0x7B1D_CDAF, 0xA1B9_65F4, 0x8009_454F, 0x724C_81EC]
         );
     }
+
+    /// An all-zero Xoshiro state is absorbing: the generator emits zeros forever.
+    /// This is the mathematical boundary of the algorithm (a seed never produces
+    /// it, but a restored save could), so the behavior is pinned.
+    #[test]
+    fn zero_state_is_absorbing() {
+        let mut rng = Randomizer::from_state([0; 4]);
+        for _ in 0..64 {
+            assert_eq!(rng.next_u32(), 0);
+        }
+        assert_eq!(rng.state(), [0; 4]);
+    }
+
+    /// `Randomizer_Generate<T>` boundaries: value 0 is always 0, value 1 maps the
+    /// high bits only, and the result never reaches the range.
+    #[test]
+    fn generate_boundaries_for_every_type() {
+        let seeds = [0u32, 1, 0xDEAD_BEEF, 1_234_567_890];
+
+        for seed in seeds {
+            let mut probe = Randomizer::new(seed);
+            let next = probe.next_u32();
+
+            // value 0 -> 0 (C++ `(int64)next * 0 >> 32`).
+            assert_eq!(Randomizer::new(seed).generate(0u32), 0);
+            assert_eq!(Randomizer::new(seed).generate(0i32), 0);
+            assert_eq!(Randomizer::new(seed).generate(0u16), 0);
+            assert_eq!(Randomizer::new(seed).generate(0i8), 0);
+            assert_eq!(Randomizer::new(seed).generate(0u64), 0);
+            assert_eq!(Randomizer::new(seed).generate_i64(0), 0);
+
+            // The result of a type is the 32-bit branch narrowed to the type.
+            let expected_i64 = ((next as i64) * i64::from(i32::MAX)) >> 32;
+            assert_eq!(
+                Randomizer::new(seed).generate(i32::MAX),
+                expected_i64 as i32
+            );
+            let expected_u64 = ((next as u64) * u64::from(u32::MAX)) >> 32;
+            assert_eq!(Randomizer::new(seed).generate_u64(u64::from(u32::MAX)), expected_u64);
+
+            // `bool`: C++ multiplies by `static_cast<int>(value)` (0/1) and shifts
+            // by 32, so `true` always yields 0 — a documented C++ quirk.
+            assert!(!Randomizer::new(seed).generate(false));
+            assert!(!Randomizer::new(seed).generate(true));
+        }
+    }
+
+    /// The result of `generate(range)` is always `< range` for the maximum
+    /// representable range of each type (masking never produces `range`).
+    #[test]
+    fn generate_stays_strictly_below_max_range() {
+        let mut rng = Randomizer::new(0x0BAD_F00D);
+        for _ in 0..100_000 {
+            assert!(rng.generate(u8::MAX) < u8::MAX);
+            assert!(rng.generate(i8::MAX) < i8::MAX);
+            assert!(rng.generate(u16::MAX) < u16::MAX);
+            assert!(rng.generate(i16::MAX) < i16::MAX);
+            assert!(rng.generate(u32::MAX) < u32::MAX);
+            assert!(rng.generate(i32::MAX) < i32::MAX);
+        }
+    }
+
+    /// Reseeding in the middle of a stream restarts it exactly (C++
+    /// `Randomizer_SetSeed` semantics, already used by the save loader).
+    #[test]
+    fn set_seed_restarts_the_stream() {
+        let mut rng = Randomizer::default();
+        let first: Vec<u32> = (0..8).map(|_| rng.next_u32()).collect();
+        for _ in 0..1000 {
+            let _ = rng.next_u32();
+        }
+        rng.set_seed(DEFAULT_SEED);
+        let again: Vec<u32> = (0..8).map(|_| rng.next_u32()).collect();
+        assert_eq!(again, first);
+    }
 }

@@ -558,4 +558,71 @@ mod tests {
         assert_eq!(ATTRIB_TURNS, ResearchTopic::Cost as u8);
         assert_eq!(ATTRIB_COUNT as usize, ATTRIB_NAMES.len());
     }
+
+    /// `base_unit_values_by_index` is a checked accessor: 0..92 valid, 93 is
+    /// `UNIT_END` and everything above is out of range.
+    #[test]
+    fn base_values_by_index_boundaries() {
+        assert_eq!(
+            base_unit_values_by_index(0),
+            Some(base_unit_values(UnitType::GoldRefinery))
+        );
+        assert_eq!(
+            base_unit_values_by_index(UNIT_COUNT as u16 - 1),
+            Some(base_unit_values(UnitType::DeadWaldo))
+        );
+        assert_eq!(base_unit_values_by_index(UNIT_COUNT as u16), None);
+        assert_eq!(base_unit_values_by_index(u16::MAX), None);
+        // The index and the enum path describe the same row for all 93 types.
+        for (index, unit_type) in UnitType::ALL.iter().copied().enumerate() {
+            assert_eq!(
+                base_unit_values_by_index(index as u16),
+                Some(base_unit_values(unit_type)),
+                "{unit_type:?}"
+            );
+        }
+    }
+
+    /// Attribute narrowing at the type boundaries (C++ `uint16_t = int32_t`
+    /// keeps the low 16 bits; `move_and_fire` is a `uint8_t`).
+    #[test]
+    fn set_attribute_narrowing_boundaries() {
+        let mut values = UnitValues::new();
+        for (input, expected) in [
+            (0, 0),
+            (1, 1),
+            (i32::from(u16::MAX), 0xFFFF),
+            (i32::from(u16::MAX) + 1, 0),
+            (-1, 0xFFFF),
+            (i32::MIN, 0),
+            (i32::MAX, 0xFFFF),
+        ] {
+            values.set_attribute(ATTRIB_ARMOR, input);
+            assert_eq!(i32::from(values.armor), expected, "armor {input}");
+        }
+        for (input, expected) in [(0i32, 0u8), (255, 255), (256, 0), (-1, 255)] {
+            values.set_attribute(ATTRIB_MOVE_AND_FIRE, input);
+            assert_eq!(values.move_and_fire, expected, "move_and_fire {input}");
+        }
+        // `AddAttribute` wraps at the field width.
+        values.set_attribute(ATTRIB_AMMO, i32::from(u16::MAX));
+        values.add_attribute(ATTRIB_AMMO, 1);
+        assert_eq!(values.ammo, 0);
+    }
+
+    /// `agent_skill` and the "mark" version boundaries.
+    #[test]
+    fn agent_skill_and_version() {
+        let mut values = UnitValues::new();
+        assert_eq!(values.agent_skill(), 0);
+        values.agent_adjust = 7;
+        assert_eq!(values.agent_skill(), 7);
+        // `UpdateVersion` wraps at `u16::MAX` (wrapping add, no panic).
+        values.mark_as_in_use();
+        values.version = u16::MAX;
+        values.update_version();
+        assert_eq!(values.version, 0);
+        values.update_version();
+        assert_eq!(values.version, 1);
+    }
 }

@@ -1947,7 +1947,9 @@ pub fn disable_turns(infiltrator: &UnitInfo, target: &UnitInfo) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enums::unit_flags::{ELECTRONIC_UNIT, GROUND_COVER, MOBILE_LAND_UNIT, SELECTABLE};
+    use crate::enums::unit_flags::{
+        ELECTRONIC_UNIT, GROUND_COVER, MOBILE_LAND_UNIT, MOBILE_SEA_UNIT, SELECTABLE,
+    };
     use crate::enums::{Surface, TeamClan};
     use crate::team::TeamKind;
 
@@ -2427,5 +2429,133 @@ mod tests {
         assert_eq!(found(Point::new(7, 5), &[Environment::Air]), Some(air));
         assert_eq!(found(Point::new(8, 5), &[Environment::Sea]), Some(sea));
         assert_eq!(found(Point::new(8, 5), &[Environment::Air]), None);
+    }
+
+    /// `Access_GetApproximateDistance` / `Access_GetSquaredDistance` boundaries.
+    #[test]
+    fn distance_helpers_boundaries() {
+        assert_eq!(approximate_distance(0, 0), 0);
+        assert_eq!(approximate_distance(1, 0), 2);
+        assert_eq!(approximate_distance(0, 1), 2);
+        assert_eq!(approximate_distance(3, 4), 11);
+        assert_eq!(approximate_distance(-3, -4), 11);
+        assert_eq!(approximate_distance(-5, 2), 12);
+        assert_eq!(approximate_distance(2, -5), 12);
+        assert_eq!(approximate_distance_points(Point::new(10, 10), Point::new(10, 10)), 0);
+        assert_eq!(
+            approximate_distance_points(Point::new(10, 10), Point::new(13, 14)),
+            11
+        );
+
+        assert_eq!(squared_distance(Point::new(0, 0), Point::new(0, 0)), 0);
+        assert_eq!(squared_distance(Point::new(0, 0), Point::new(1, 0)), 1);
+        assert_eq!(squared_distance(Point::new(0, 0), Point::new(3, 4)), 25);
+        assert_eq!(squared_distance(Point::new(5, 5), Point::new(5, 5)), 0);
+        // The maximum map diagonal (111,111) still fits in `i32`.
+        assert_eq!(
+            squared_distance(Point::new(0, 0), Point::new(111, 111)),
+            111 * 111 + 111 * 111
+        );
+    }
+
+    /// `Access_IsWithinAttackRange` boundaries and the line-of-fire rule for
+    /// submarines/corvettes.
+    #[test]
+    fn attack_range_boundaries() {
+        let mut state = state();
+        let tank = spawn(
+            &mut state,
+            UnitType::Tank,
+            TeamId::RED,
+            Point::new(10, 10),
+            MOBILE_LAND_UNIT | SELECTABLE,
+        );
+        let unit = state.unit(tank).expect("tank").clone();
+        // The exact edge is inside (`distance > attack_range` rejects).
+        assert!(is_within_attack_range(&state, &unit, Point::new(13, 10), 3));
+        assert!(!is_within_attack_range(&state, &unit, Point::new(14, 10), 3));
+        assert!(is_within_attack_range(&state, &unit, Point::new(12, 12), 3));
+        assert!(!is_within_attack_range(&state, &unit, Point::new(12, 12), 2));
+        // Range 0 — only the own cell.
+        assert!(is_within_attack_range(&state, &unit, Point::new(10, 10), 0));
+        assert!(!is_within_attack_range(&state, &unit, Point::new(11, 10), 0));
+
+        // A submarine may not fire across land; the same cell distance is fine
+        // over water.
+        let submarine = spawn(
+            &mut state,
+            UnitType::Submarine,
+            TeamId::RED,
+            Point::new(20, 20),
+            MOBILE_SEA_UNIT | SELECTABLE,
+        );
+        let submarine = state.unit(submarine).expect("submarine").clone();
+        assert!(
+            !is_within_attack_range(&state, &submarine, Point::new(23, 20), 3),
+            "a land cell blocks the line of fire"
+        );
+        for y in 18..=22 {
+            for x in 18..=22 {
+                state.map.surface.set(x, y, Surface::WATER);
+            }
+        }
+        assert!(
+            is_within_attack_range(&state, &submarine, Point::new(23, 20), 3),
+            "over water the line of fire is clear"
+        );
+        // A coast cell is allowed as well (`SURFACE_TYPE_COAST`).
+        state.map.surface.set(21, 20, Surface::COAST);
+        assert!(is_within_attack_range(&state, &submarine, Point::new(23, 20), 3));
+    }
+
+    /// `UnitsManager_DisableUnit` — the saboteur formula boundaries.
+    #[test]
+    fn disable_turns_boundaries() {
+        let mut infiltrator =
+            UnitInfo::new(UnitType::Infiltrator, TeamId::RED, UnitId::NO_ID);
+        infiltrator.experience = 0;
+
+        // `ATTRIB_TURNS == 0` is unreachable for game types; C++ would divide by
+        // zero, the port returns 1.
+        let mut target = UnitInfo::new(UnitType::Tank, TeamId::GREEN, UnitId::NO_ID);
+        target.base_values.turns = 0;
+        assert_eq!(disable_turns(&infiltrator, &target), 1);
+
+        // A stationary target (`ATTRIB_SPEED == 0`) uses the other branch.
+        target.base_values.turns = 10;
+        target.base_values.speed = 0;
+        assert!(disable_turns(&infiltrator, &target) >= 1);
+
+        // A moving target: the result is clamped to at least one turn.
+        target.base_values.speed = 5;
+        target.base_values.turns = 4;
+        target.speed = 20;
+        assert_eq!(disable_turns(&infiltrator, &target), 1);
+        // More experience never shortens the disable below one turn.
+        for experience in [0i16, 1, 4, 8, 16, 100, 1000] {
+            infiltrator.experience = experience;
+            assert!(disable_turns(&infiltrator, &target) >= 1, "experience {experience}");
+        }
+    }
+
+    /// `Access_GetModifiedSurfaceType` returns the raw byte when no overlay is
+    /// present — including `AIR` and `NONE`.
+    #[test]
+    fn modified_surface_without_overlay() {
+        let mut state = state();
+        for (grid, value, expected) in [
+            (Point::new(0, 0), Surface::NONE, 0u8),
+            (Point::new(1, 0), Surface::LAND, SURFACE_TYPE_LAND),
+            (Point::new(2, 0), Surface::WATER, SURFACE_TYPE_WATER),
+            (Point::new(3, 0), Surface::COAST, SURFACE_TYPE_COAST),
+            (Point::new(4, 0), Surface::AIR, crate::access::SURFACE_TYPE_AIR),
+        ] {
+            state.map.surface.set(grid.x, grid.y, value);
+            assert_eq!(surface_type(&state, grid), expected);
+            assert_eq!(modified_surface_type(&state, grid, false), expected);
+            assert_eq!(modified_surface_type(&state, grid, true), expected);
+        }
+        // Off-map: `NONE`.
+        assert_eq!(modified_surface_type(&state, Point::new(-1, -1), false), 0);
     }
 }

@@ -988,4 +988,59 @@ mod tests {
             "объектные номера должны быть непрерывны"
         );
     }
+
+    /// `SaveMeta::default` matches the V70 initialization of a new game: four
+    /// 512-bucket tables, `Custom` file type, no RNG seed, snow planet.
+    #[test]
+    fn save_meta_defaults_match_v70() {
+        let meta = SaveMeta::default();
+        assert_eq!(meta.save_game_type, FileType::Custom);
+        assert_eq!(meta.world, Planet::Snowcrab);
+        assert_eq!(meta.rng_seed, 0);
+        assert_eq!(meta.opponent, Opponent::Average);
+        assert_eq!(meta.unit_hash_size, SAVE_UNIT_HASH_SIZE);
+        assert_eq!(meta.map_hash_size, SAVE_UNIT_HASH_SIZE);
+        assert_eq!(meta.map_hash_x_shift, 2);
+        assert_eq!(meta.alien_team_type, TeamKind::None);
+        assert_eq!(meta.alien_team_clan, TeamClan::Random);
+        assert_eq!(meta.turn_timer, 0);
+        assert!(meta.unit_hash_order.is_empty());
+        assert!(meta.map_hash_cells.is_empty());
+        assert!(meta.save_name().is_empty());
+        assert!(meta.team_name(0).is_empty());
+        assert!(meta.team_name(9).is_empty());
+        assert!(meta.message_logs.iter().all(Vec::is_empty));
+    }
+
+    /// `Layout` numbers objects from 1 and saturates at `u16::MAX` instead of
+    /// wrapping (a game cannot reach 65535 objects, but the counter must not
+    /// silently reuse a number).
+    #[test]
+    fn layout_numbers_saturate_at_u16_max() {
+        let mut layout = Layout::new();
+        for id in 0..u16::MAX {
+            let index = layout.object(ObjectKey::Unit { id });
+            assert_eq!(index, id.wrapping_add(1), "unit {id}");
+            // Re-requesting an existing key returns the same number.
+            assert_eq!(layout.object(ObjectKey::Unit { id }), index);
+        }
+        let last = layout.object(ObjectKey::Unit { id: u16::MAX });
+        assert_eq!(last, u16::MAX);
+        // The counter is saturated: a further object reuses the last number
+        // (the writer then rejects the file with `ForwardReference`, it never
+        // wraps around to 1).
+        assert_eq!(layout.object(ObjectKey::Unit { id: 0 }), 1);
+        assert_eq!(
+            layout.object(ObjectKey::Unit {
+                id: u16::MAX - 1
+            }),
+            u16::MAX
+        );
+        assert_eq!(
+            layout.object(ObjectKey::Unit {
+                id: u16::MAX - 2
+            }),
+            u16::MAX - 1
+        );
+    }
 }

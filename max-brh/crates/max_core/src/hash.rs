@@ -444,4 +444,67 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), ids.len());
     }
+
+    /// `MapHash::Init` boundary sizes: the shift changes exactly above 128.
+    #[test]
+    fn x_shift_boundaries() {
+        assert_eq!(MapHash::<UnitId>::new(1).x_shift(), 0);
+        assert_eq!(MapHash::<UnitId>::new(128).x_shift(), 0);
+        assert_eq!(MapHash::<UnitId>::new(129).x_shift(), 1);
+        assert_eq!(MapHash::<UnitId>::new(255).x_shift(), 1);
+        assert_eq!(MapHash::<UnitId>::new(256).x_shift(), 1);
+        assert_eq!(MapHash::<UnitId>::new(257).x_shift(), 1);
+        assert_eq!(MapHash::<UnitId>::new(258).x_shift(), 2);
+        assert_eq!(MapHash::<UnitId>::new(512).x_shift(), 2);
+        assert_eq!(MapHash::<UnitId>::new(1024).x_shift(), 3);
+        assert_eq!(MapHash::<UnitId>::new(2048).x_shift(), 4);
+        assert_eq!(MapHash::<UnitId>::new(32768).x_shift(), 8);
+    }
+
+    /// `MapHash::SetMapSize` — the exact "8 cells per bucket" boundary.
+    #[test]
+    fn set_map_size_boundary_cells() {
+        // 64×64 = 4096 = 512*8: the `<` keeps 512; one more cell doubles it.
+        assert_eq!(MapHash::<UnitId>::set_map_size(Point::new(64, 64)).size(), 512);
+        assert_eq!(MapHash::<UnitId>::set_map_size(Point::new(65, 65)).size(), 1024);
+        // The maximum size is reached and not exceeded.
+        let huge = MapHash::<UnitId>::set_map_size(Point::new(i16::MAX, i16::MAX));
+        assert_eq!(huge.size(), HASH_MAP_HASH_SIZE_MAX);
+        assert_eq!(huge.x_shift(), 8);
+    }
+
+    /// The bucket key is `key % size`; `u32::MAX` and `NO_ID` are valid keys.
+    #[test]
+    fn unit_hash_key_modulo_boundaries() {
+        let mut hash = UnitHash::<u16>::new(512);
+        hash.push_at(u32::MAX, 1);
+        // `NO_ID` (0xFFFF) and `u32::MAX` both reduce to bucket 511.
+        hash.push_at(u32::from(UnitId::NO_ID.0), 2);
+        hash.push_at(0, 3);
+        assert_eq!(hash.bucket(511), Some(&vec![1, 2]));
+        assert_eq!(hash.bucket(0), Some(&vec![3]));
+        assert_eq!(u32::MAX % 512, 511);
+        assert_eq!(u32::from(UnitId::NO_ID.0) % 512, 511);
+        // A table of size 1 puts every key into bucket 0.
+        let mut single = UnitHash::<u16>::new(1);
+        for key in [0u32, 1, 511, u32::MAX] {
+            single.push_at(key, key as u16);
+        }
+        assert_eq!(single.bucket(0).map(Vec::len), Some(4));
+    }
+
+    /// `(y ^ (x << x_shift)) % size` with the `uint16_t` truncation of the shift.
+    #[test]
+    fn bucket_index_shift_truncation() {
+        let hash = MapHash::<UnitId>::new(512); // x_shift = 2
+        assert_eq!(hash.x_shift(), 2);
+        // 65535 << 2 truncates to 0xFFFC; XOR 0xFFFF = 3.
+        assert_eq!(hash.bucket_index(65535, 65535), 3);
+        assert_eq!(hash.bucket_index(0, 0), 0);
+        assert_eq!(hash.bucket_index(32, 0), 128);
+        assert_eq!(hash.bucket_index(16, 0), 64);
+        assert_eq!(hash.bucket_index(127, 0), 508);
+        // 128 << 2 == 512 -> wraps to bucket 0.
+        assert_eq!(hash.bucket_index(128, 0), 0);
+    }
 }
