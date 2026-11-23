@@ -20,8 +20,9 @@
 //!
 //! * **Stage A (this module):** the facade lives **on top of** `GameState`; the
 //!   turn machine (`GameState::next_team`) is called **only from this module**
-//!   ([`GameUniverse::end_local_turn`] / [`GameUniverse::begin_local_round`], gated
-//!   by [`Dispatcher::advances_turns`]), the barrier steppers are **not** called
+//!   ([`GameUniverse::end_local_turn`] / [`GameUniverse::begin_local_round`] and
+//!   [`GameUniverse::resume_local_round`], gated by [`Dispatcher::advances_turns`]),
+//!   the barrier steppers are **not** called
 //!   from [`GameUniverse::tick`], `StateDelta` is coarse, and
 //!   [`GameUniverse::state`]/[`GameUniverse::state_mut`] are temporary accesses.
 //! * **Stage B:** `GameState` becomes private, the barrier FSM (`NetworkDispatcher`)
@@ -732,13 +733,17 @@ impl GameUniverse<LocalDispatcher> {
     }
 
     /// Enters a round of the local team-turn machine and advances it to the first
-    /// acting team (match start / resume entry, stage-A task §6 item 4).
+    /// acting team (match start entry, stage-A task §6 item 4).
     ///
     /// `GameState::begin_round` stays `pub` for configuration scenarios, but
     /// `next_team` is facade-only (stage-A task §6 item 4): the round cursor reset
     /// and the first step therefore belong together here. The state before the call
     /// is already configured by the application (`team_types`, `play_mode`, …),
     /// exactly as `start_local_game` does.
+    ///
+    /// A match **loaded from V70** enters through [`Self::resume_local_round`]
+    /// instead: its first slot is the saved `active_turn_team`, not
+    /// `PLAYER_TEAM_RED`, and its economy must not run for a second time.
     pub fn begin_local_round(&mut self) {
         if !self.dispatcher.advances_turns() {
             return;
@@ -749,6 +754,50 @@ impl GameUniverse<LocalDispatcher> {
         // Round entry is an observable state change (ADR §1.3): bump the facade
         // version once per atomic facade operation.
         self.seq += 1;
+    }
+
+    /// Resumes the local team-turn machine after a V70 load —
+    /// `GAME_STATE_10_LOAD_GAME` (`game_manager.cpp:458-480`).
+    ///
+    /// C++ starts the team-turn loop at `GameManager_ActiveTurnTeam` (the active
+    /// team restored by `SaveLoad_Load`, `saveload.cpp:905-910`) and, because the
+    /// phase is the load phase, skips `GameManager_ManageEconomy`
+    /// (`game_manager.cpp:462-464`) and `GameManager_ProgressBuildState`
+    /// (`:2450/2468/2484`) for that team: its economy was applied **before** the
+    /// save. The task's ADR §1 item 6 — the same one-step entry without a second
+    /// economy pass — is implemented by `GameState::resume_round`; the facade owns
+    /// the single `TurnNotice` (the application's hot-seat/UI start, ADR §4).
+    ///
+    /// Unlike [`Self::begin_local_round`] exactly **one** team is started (C++ breaks
+    /// out of the loop after the first `GameManager_UpdateGui`, `:476-480`), and
+    /// `finished_turn` of that team is reset as in `:472`; no round is closed.
+    ///
+    /// Returns `true` when a team was started. `false` means no playing slot is left
+    /// at or after the saved active team (C++ then never enters the loop body); the
+    /// caller has to decide how to continue, the facade leaves the state untouched.
+    pub fn resume_local_round(&mut self) -> bool {
+        if !self.dispatcher.advances_turns() {
+            return false;
+        }
+
+        // `GameManager_UpdateGui` compares `GameManager_PlayerTeam` with the started
+        // team; that value is peeked before the step, as in `run_turn_machine`.
+        let previous_player_team = self.state.player_team;
+        let Some(event) = self.state.resume_round() else {
+            return false;
+        };
+
+        self.bus.push(GameEvent::Turn(TurnNotice {
+            event,
+            previous_player_team,
+            // The load entry never closes a round, so there is no `finish_turn`
+            // status to peek (`GAME_STATE_10_LOAD_GAME` breaks out before it).
+            status: None,
+        }));
+        // The resumed turn start is an observable state change (ADR §1.3): bump the
+        // facade version once per atomic facade operation.
+        self.seq += 1;
+        true
     }
 
     /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or

@@ -188,6 +188,25 @@ pub enum TurnEvent {
     GameOver,
 }
 
+/// How the team-turn machine enters the team it starts
+/// (`GameManager_TeamTurnTurnBased`, `game_manager.cpp:451-498`).
+///
+/// The body of the loop is the same in both cases; only the start-of-turn work
+/// differs, exactly as the C++ `GAME_STATE_10_LOAD_GAME` checks do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamTurnEntry {
+    /// A round started by the game loop: `GameManager_ManageEconomy(team)` runs
+    /// before `GameManager_UpdateGui` (`game_manager.cpp:462-464`), and the phase
+    /// becomes `GAME_STATE_11_TURN_ACTIVE` (`:2423`, `InGame` in the port).
+    RoundStart,
+    /// A match resumed from a V70 save (`GAME_STATE_10_LOAD_GAME`): the economy and
+    /// the build progress of this team were applied **before** the save, so they
+    /// are not repeated (`game_manager.cpp:458-464`, `:2450/2468/2484`), and the
+    /// loaded phase is kept (`GameManager_GameState = SaveLoadMenu_GameState`,
+    /// `:2417`).
+    Resumed,
+}
+
 // ---------------------------------------------------------------------------
 // GameState
 // ---------------------------------------------------------------------------
@@ -544,8 +563,10 @@ impl GameState {
         self.turn_counter = save.game.turn_counter;
         self.active_turn_team = save.game.active_turn_team;
         self.player_team = save.game.player_team;
-        // The round cursor is not stored in V70: a loaded match starts a new
-        // round iteration from `PLAYER_TEAM_RED`.
+        // The round cursor is not stored in V70: a loaded match resumes at the
+        // saved `active_turn_team` ([`Self::resume_round`], the
+        // `GAME_STATE_10_LOAD_GAME` entry); a plain round start would begin at
+        // `PLAYER_TEAM_RED`.
         self.round_team = 0;
         // V70 does not store the RNG state (see "Intentional divergences").
         self.rng = Randomizer::new(save.header.rng_seed);
@@ -2308,8 +2329,41 @@ impl GameState {
     ///
     /// The economy of every team is managed by [`Self::next_team`] at the start
     /// of that team's turn (`GameManager_ManageEconomy` inside the C++ loop).
+    ///
+    /// A **loaded** match does not use this entry: its starting slot is
+    /// `GameManager_ActiveTurnTeam`, not `PLAYER_TEAM_RED`, and the economy of that
+    /// team must not run again — see [`Self::resume_round`].
     pub fn begin_round(&mut self) {
         self.round_team = 0;
+    }
+
+    /// Resumes the team-turn machine at the saved active team after a V70 load
+    /// (`GAME_STATE_10_LOAD_GAME`, `game_manager.cpp:458-480`).
+    ///
+    /// C++ starts the `for` loop of `GameManager_TeamTurnTurnBased` at
+    /// `GameManager_ActiveTurnTeam` (`:458`), skips `GameManager_ManageEconomy`
+    /// (`:462-464`) and `GameManager_ProgressBuildState` (`:2450/2468/2484`) for the
+    /// loaded phase, and starts **one** team: the load branch breaks out of the loop
+    /// after the first `GameManager_UpdateGui` (`:476-480`). This method is that one
+    /// step of the loop body:
+    ///
+    /// * the round cursor is armed at `active_turn_team` (the slot V70 stores in
+    ///   `SaveLoad_Load`, `saveload.cpp:905-910`), because the C++ loop variable is
+    ///   not part of the save;
+    /// * the first playing slot at or after it is started ([`Self::upcoming_team`]
+    ///   skips `TEAM_TYPE_NONE`/`TEAM_TYPE_ELIMINATED`, as the C++ loop condition
+    ///   does);
+    /// * [`TeamTurnEntry::Resumed`] skips the economy/build-progress start-of-turn
+    ///   work and keeps the loaded phase.
+    ///
+    /// Returns `None` when no playing slot is left at or after the saved active
+    /// team — C++ then never enters the loop body (`for` bound reached).
+    pub fn resume_round(&mut self) -> Option<TurnEvent> {
+        // `GameManager_TeamTurnTurnBased` loop start for the load phase
+        // (`game_manager.cpp:458`).
+        self.round_team = usize::from(self.active_turn_team.0);
+        let team = self.upcoming_team()?;
+        Some(self.start_team(team, TeamTurnEntry::Resumed))
     }
 
     /// One step of the team-turn machine (`GameManager_TeamTurnTurnBased`,
@@ -2317,10 +2371,11 @@ impl GameState {
     /// `game_manager.cpp:500-581`; the `GameManager_GameLoop` body, `:651-665`).
     ///
     /// Finds the next playing slot (skipping `TEAM_TYPE_NONE`/`TEAM_TYPE_ELIMINATED`),
-    /// resets its `finished_turn`, runs `GameManager_ManageEconomy(team)`, sets
-    /// `GameManager_ActiveTurnTeam`/`GameManager_GameState` and, for a computer
-    /// team, calls `Ai_BeginTurn(team)` — the `GameManager_UpdateGui` switch
-    /// (`game_manager.cpp:2430-2488`). For a human team it switches
+    /// resets its `finished_turn`, runs `GameManager_ManageEconomy(team)` (round
+    /// start only — a loaded match resumes through [`Self::resume_round`], which
+    /// skips it), sets `GameManager_ActiveTurnTeam`/`GameManager_GameState` and, for
+    /// a computer team, calls `Ai_BeginTurn(team)` — the `GameManager_UpdateGui`
+    /// switch (`game_manager.cpp:2430-2488`). For a human team it switches
     /// `GameManager_PlayerTeam` (`:2445`) and returns [`TurnEvent::Human`].
     ///
     /// # Both play modes
@@ -2363,36 +2418,60 @@ impl GameState {
                 };
             };
 
-            let slot = team.0 as usize;
-            let kind = self.teams[slot].team_type;
+            // A round start enters the team with its economy — the C++ loop body
+            // (`game_manager.cpp:462-464`).
+            return self.start_team(team, TeamTurnEntry::RoundStart);
+        }
+    }
 
-            // `GameManager_TeamTurnTurnBased`: `finished_turn` is reset before
-            // `GameManager_UpdateGui` (`game_manager.cpp:472`).
-            self.teams[slot].finished_turn = false;
-            // `GameManager_ManageEconomy(team)` at the start of the team turn.
+    /// One started team of the loop body: `finished_turn` reset, the start-of-turn
+    /// work selected by `entry`, `GameManager_ActiveTurnTeam`/phase, the round
+    /// cursor moved past the team and the AI start.
+    ///
+    /// The caller owns the slot selection ([`Self::next_team`] scans a whole round,
+    /// [`Self::resume_round`] starts exactly one saved slot).
+    fn start_team(&mut self, team: TeamId, entry: TeamTurnEntry) -> TurnEvent {
+        let slot = team.0 as usize;
+        let kind = self.teams[slot].team_type;
+
+        // `GameManager_TeamTurnTurnBased`: `finished_turn` is reset before
+        // `GameManager_UpdateGui` (`game_manager.cpp:472`).
+        self.teams[slot].finished_turn = false;
+
+        if entry == TeamTurnEntry::RoundStart {
+            // `GameManager_ManageEconomy(team)` at the start of the team turn
+            // (`game_manager.cpp:462-464`). The load branch skips it: the economy of
+            // the saved team was already applied before the save.
             self.manage_economy(team);
-            // `GameManager_UpdateGui`: `GameManager_ActiveTurnTeam = team`,
-            // `GameManager_GameState = GAME_STATE_8_IN_GAME` (`:2411`, `:2423`).
-            self.active_turn_team = team;
-            self.game_state = GameStateType::InGame;
-            // The cursor moves past the started team: after the turn is closed
-            // by packet 06 the next step continues with the following slot.
-            self.round_team = slot + 1;
+        }
 
-            return match kind {
-                TeamKind::Player => {
-                    // `TEAM_TYPE_PLAYER`: the local player owns the turn.
-                    self.player_team = team;
-                    TurnEvent::Human(team)
-                }
-                _ => {
-                    // `TEAM_TYPE_COMPUTER`: `Ai_BeginTurn(team)`. A local match
-                    // never has `TEAM_TYPE_REMOTE` teams, so the remote branch of
-                    // `GameManager_UpdateGui` has no event of its own here.
-                    self.ai_begin_turn(team);
-                    TurnEvent::Computer(team)
-                }
-            };
+        // `GameManager_UpdateGui`: `GameManager_ActiveTurnTeam = team` (`:2411`).
+        // The phase is `GAME_STATE_11_TURN_ACTIVE` on a round start (`:2423`), but
+        // the loaded `SaveLoadMenu_GameState` on a resume (`:2417`); the port has no
+        // 8/11 split (`InGame` is its active phase), so the loaded value is kept.
+        self.active_turn_team = team;
+        if entry == TeamTurnEntry::RoundStart {
+            self.game_state = GameStateType::InGame;
+        }
+        // The cursor moves past the started team: after the turn is closed
+        // by packet 06 the next step continues with the following slot.
+        self.round_team = slot + 1;
+
+        match kind {
+            TeamKind::Player => {
+                // `TEAM_TYPE_PLAYER`: the local player owns the turn.
+                self.player_team = team;
+                TurnEvent::Human(team)
+            }
+            _ => {
+                // `TEAM_TYPE_COMPUTER`: `Ai_BeginTurn(team)`. A local match
+                // never has `TEAM_TYPE_REMOTE` teams, so the remote branch of
+                // `GameManager_UpdateGui` has no event of its own here. C++ starts
+                // the AI unconditionally, also for the load phase
+                // (`game_manager.cpp:2478`).
+                self.ai_begin_turn(team);
+                TurnEvent::Computer(team)
+            }
         }
     }
 

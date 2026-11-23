@@ -774,6 +774,33 @@ impl App {
         self.local_next_team();
     }
 
+    /// Round entry of a **loaded** match — `GAME_STATE_10_LOAD_GAME`
+    /// (`game_manager.cpp:458-480`).
+    ///
+    /// The facade resumes at the saved `active_turn_team` and skips the economy of
+    /// that team ([`max_core::universe::GameUniverse::resume_local_round`]): it was
+    /// already applied before the save. C++ starts exactly one team here and breaks
+    /// out of the turn loop (`:476-480`), so the application does not run the round
+    /// machine beyond that first notice.
+    ///
+    /// If the saved active slot is not a playing team any more (a team
+    /// `TEAM_TYPE_NONE`/`TEAM_TYPE_ELIMINATED`, or a slot after the last playing
+    /// one), C++ never enters the loop body and the game loop falls through; a local
+    /// match in the port cannot exit that way, so it falls back to the normal round
+    /// entry — the only path that can make progress (economy applied once, there is
+    /// no saved turn to duplicate).
+    fn local_resume_round(&mut self) {
+        {
+            let mut local = self.local.take().expect("local game must exist");
+            local.phase = LocalPhase::Advancing;
+            self.local = Some(local);
+        }
+        if !self.universe.resume_local_round() {
+            self.universe.begin_local_round();
+        }
+        self.local_next_team();
+    }
+
     /// Consumes [`max_core::universe::GameEvent::Turn`] notices until a team has to
     /// act (a human turn or a computer turn) or the match is over.
     ///
@@ -1725,7 +1752,9 @@ impl App {
         self.local = Some(local);
         self.hud.clear();
         self.hud.push_log("Local game loaded from a V70 save");
-        self.local_begin_round();
+        // `GAME_STATE_10_LOAD_GAME` resumes at the saved active team without
+        // re-running its economy (`game_manager.cpp:458-464`).
+        self.local_resume_round();
 
         Ok(())
     }

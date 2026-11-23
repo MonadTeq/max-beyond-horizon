@@ -312,6 +312,85 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Load-path gate (ADR `game-universe-facade.md` §1 item 6): a local match loaded
+/// from V70 resumes at the saved active team and does **not** re-apply the economy
+/// the turn already had before the save (`GAME_STATE_10_LOAD_GAME`,
+/// `game_manager.cpp:458-480`).
+///
+/// The marker is a `CONSTRCT` with a `Build` order: every `manage_economy` pass
+/// charges `Cargo_GetRawConsumptionRate` from its storage
+/// (`UnitInfo::UpdateProduction`), so a second pass is visible as `40 → 38`.
+#[test]
+fn local_load_resumes_without_replaying_the_turn_economy() {
+    let dir = temp_dir("local_resume");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+
+    let setup = setup_vs_one_ai();
+    app.start_local_game(&setup)
+        .expect("локальная партия стартует");
+    assert_eq!(
+        app.local().map(|local| local.phase),
+        Some(max_app::local::LocalPhase::PlayerTurn),
+        "RED's turn is active: the round entry already applied its economy"
+    );
+    let saved_active = app.state().active_turn_team;
+    let saved_turn = app.state().turn_counter;
+
+    // The builder is injected after the round entry, so its storage records the
+    // number of economy passes after the save only.
+    let builder = app
+        .state_mut()
+        .spawn_unit(
+            max_core::UnitType::Constructor,
+            TeamId::RED,
+            max_core::geo::Point::new(30, 30),
+            0,
+        )
+        .expect("builder spawns");
+    {
+        let state = app.state_mut();
+        let mut unit = state.unit(builder).expect("builder").clone();
+        unit.storage = 40;
+        unit.build_list = vec![max_core::UnitType::TrainingHall];
+        unit.build_time = 10;
+        unit.build_rate = 1;
+        unit.orders = max_core::UnitOrder::Build;
+        unit.state = max_core::UnitOrderState::ExecutingOrder;
+        state.write_unit(builder, unit);
+    }
+
+    let bytes = app
+        .save_v70_bytes("resume gate")
+        .expect("V70 write of the live match");
+
+    let mut fresh = local_app(&dir).expect("ассеты");
+    fresh
+        .start_local_game_from_save(&setup, &bytes)
+        .expect("V70 loads as a local match");
+
+    assert_eq!(
+        fresh.state().active_turn_team,
+        saved_active,
+        "the loaded match resumes at the saved active team"
+    );
+    assert_eq!(fresh.state().turn_counter, saved_turn);
+    assert_eq!(
+        fresh.local().map(|local| local.phase),
+        Some(max_app::local::LocalPhase::PlayerTurn),
+        "the resumed turn is the human turn, not a round close"
+    );
+    assert_eq!(
+        fresh.state().unit(builder).expect("builder").storage,
+        40,
+        "the loaded turn applied manage_economy a second time"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// Snapshot of the key state fields for the "before/after load" comparison.
 struct Snapshot {
     turn: i32,

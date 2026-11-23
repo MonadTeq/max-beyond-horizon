@@ -165,7 +165,7 @@ pub use max_types::enums::{
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
-    GameState, LiveAttack, OrderData, TurnEvent, UnitSound, UnitSoundKind,
+    GameState, LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound, UnitSoundKind,
     GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT,
     PLAYER_TEAM_MAX, TEAM_SLOTS,
 };
