@@ -4237,4 +4237,532 @@ mod tests {
             "попадание должно нанести урон"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // State-machine boundaries: waiting, stopping, order override, building
+    // -----------------------------------------------------------------------
+
+    /// `UnitInfo::MovementWaitCount`: saturates at `MOVEMENT_WAIT_LIMIT`, reports
+    /// `true` from that point on and never wraps; `ClearMovementWait` resets it.
+    #[test]
+    fn movement_wait_limit_saturates() {
+        let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        assert_eq!(unit.movement_wait_count, 0);
+        assert!(!register_movement_wait(&mut unit));
+
+        // One step before the limit becomes the timed-out state.
+        unit.movement_wait_count = MOVEMENT_WAIT_LIMIT - 1;
+        assert!(register_movement_wait(&mut unit));
+        assert_eq!(unit.movement_wait_count, MOVEMENT_WAIT_LIMIT);
+
+        // At the limit every further call reports the timeout and keeps the count.
+        assert!(register_movement_wait(&mut unit));
+        assert!(register_movement_wait(&mut unit));
+        assert_eq!(unit.movement_wait_count, MOVEMENT_WAIT_LIMIT, "no wrap");
+
+        clear_movement_wait(&mut unit);
+        assert_eq!(unit.movement_wait_count, 0);
+        assert!(!register_movement_wait(&mut unit));
+    }
+
+    /// `UnitInfo::StopMove` only converts movement orders to a stopped `MOVE`;
+    /// other orders and their counters are untouched.
+    #[test]
+    fn stop_move_affects_only_move_orders() {
+        for order in [
+            UnitOrder::Move,
+            UnitOrder::MoveToUnit,
+            UnitOrder::MoveToAttack,
+        ] {
+            let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+            unit.orders = order;
+            unit.state = UnitOrderState::InProgress;
+            unit.path = Some(UnitPath::Ground(GroundPath::default()));
+            unit.moved = 5;
+            unit.velocity = 7;
+            unit.in_transit = true;
+
+            stop_move(&mut unit, false);
+            assert_eq!(unit.orders, UnitOrder::Move, "{order:?}");
+            assert_eq!(unit.state, UnitOrderState::ExecutingOrder, "{order:?}");
+            assert_eq!(unit.moved, 0);
+            assert_eq!(unit.velocity, 0);
+            assert!(!unit.in_transit);
+            assert_eq!(unit.delayed_reaction, 0, "mode=false");
+        }
+
+        let mut awaiting = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        awaiting.moved = 3;
+        stop_move(&mut awaiting, true);
+        assert_eq!(awaiting.orders, UnitOrder::Await);
+        assert_eq!(awaiting.moved, 3, "non-movement order is not reset");
+
+        let mut firing = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(3));
+        firing.orders = UnitOrder::Fire;
+        firing.state = UnitOrderState::FireInProgress;
+        stop_move(&mut firing, true);
+        assert_eq!(firing.orders, UnitOrder::Fire);
+        assert_eq!(firing.state, UnitOrderState::FireInProgress);
+    }
+
+    /// `UnitInfo::StopMovement` (emergency stop): `IN_PROGRESS` blocks the route,
+    /// `IN_TRANSITION` truncates it to a zero step; other states are left alone.
+    #[test]
+    fn stop_movement_handles_in_progress_and_in_transition() {
+        let path = || {
+            Some(UnitPath::Ground(GroundPath {
+                end_x: 5,
+                end_y: 5,
+                step_index: 1,
+                steps: vec![PathStep::new(1, 0), PathStep::new(0, 1)],
+            }))
+        };
+
+        let mut moving = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        moving.orders = UnitOrder::Move;
+        moving.state = UnitOrderState::InProgress;
+        moving.path = path();
+        stop_movement(&mut moving, false);
+        assert_eq!(moving.orders, UnitOrder::Await);
+        assert_eq!(moving.state, UnitOrderState::ExecutingOrder);
+        assert!(moving.path.is_none());
+        assert_eq!(moving.delayed_reaction, 1);
+
+        let mut transitioning = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        transitioning.orders = UnitOrder::Move;
+        transitioning.state = UnitOrderState::InTransition;
+        transitioning.path = path();
+        stop_movement(&mut transitioning, false);
+        assert_eq!(transitioning.orders, UnitOrder::Move);
+        assert_eq!(transitioning.state, UnitOrderState::InTransition);
+        match transitioning.path.as_ref() {
+            Some(UnitPath::Ground(path)) => {
+                assert_eq!(path.step_index, 0);
+                assert_eq!(path.steps, vec![PathStep::new(0, 0)]);
+            }
+            other => panic!("expected a truncated ground path, got {other:?}"),
+        }
+
+        // No path — nothing to stop.
+        let mut idle = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(3));
+        idle.orders = UnitOrder::Move;
+        idle.state = UnitOrderState::InProgress;
+        stop_movement(&mut idle, false);
+        assert_eq!(idle.orders, UnitOrder::Move);
+
+        // Wrong order keeps the path.
+        let mut awaiting = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(4));
+        awaiting.orders = UnitOrder::Await;
+        awaiting.state = UnitOrderState::InProgress;
+        awaiting.path = path();
+        stop_movement(&mut awaiting, false);
+        assert!(awaiting.path.is_some());
+
+        // `disable_fire` suppresses the delayed reaction.
+        let mut quiet = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(5));
+        quiet.orders = UnitOrder::Move;
+        quiet.state = UnitOrderState::InProgress;
+        quiet.path = path();
+        stop_movement(&mut quiet, true);
+        assert_eq!(quiet.delayed_reaction, 0);
+    }
+
+    /// `UnitsManager_SetNewOrderInt`: an active `FIRE` (and terminal `EXPLODE`/`DESTROY`)
+    /// cannot be replaced, `NEW_ALLOCATE` does not become the prior order, and
+    /// `NEW_ORDER` collapses to `AWAIT` first.
+    #[test]
+    fn set_new_order_int_override_boundaries() {
+        // A unit that is firing ignores a non-EXPLODE order (`units_manager.cpp:1945`).
+        let mut firing = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        firing.orders = UnitOrder::Fire;
+        firing.state = UnitOrderState::FireInProgress;
+        firing.prior_orders = UnitOrder::Await;
+        assert!(!set_new_order_int(
+            &mut firing,
+            UnitOrder::Move,
+            UnitOrderState::Init
+        ));
+        assert_eq!(firing.orders, UnitOrder::Fire);
+        assert_eq!(firing.state, UnitOrderState::FireInProgress);
+
+        // EXPLODE is always accepted but keeps the firing order's prior.
+        assert!(!set_new_order_int(
+            &mut firing,
+            UnitOrder::Explode,
+            UnitOrderState::Init
+        ));
+        assert_eq!(firing.orders, UnitOrder::Explode);
+
+        // Terminal states are frozen.
+        let mut exploding = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        exploding.orders = UnitOrder::Explode;
+        exploding.state = UnitOrderState::Destroy;
+        assert!(!set_new_order_int(
+            &mut exploding,
+            UnitOrder::Await,
+            UnitOrderState::ExecutingOrder
+        ));
+        assert_eq!(exploding.orders, UnitOrder::Explode);
+        assert_eq!(exploding.state, UnitOrderState::Destroy);
+
+        // `NEW_ALLOCATE` is not recorded as the prior order.
+        let mut allocating = UnitInfo::new(UnitType::GoldRefinery, TeamId::RED, UnitId(3));
+        allocating.orders = UnitOrder::NewAllocate;
+        allocating.state = UnitOrderState::Init;
+        allocating.prior_orders = UnitOrder::Await;
+        allocating.prior_state = UnitOrderState::ExecutingOrder;
+        assert!(!set_new_order_int(
+            &mut allocating,
+            UnitOrder::Move,
+            UnitOrderState::Init
+        ));
+        assert_eq!(allocating.orders, UnitOrder::Move);
+        assert_eq!(
+            allocating.prior_orders,
+            UnitOrder::Await,
+            "NewAllocate kept out of prior"
+        );
+    }
+
+    /// `UnitInfo::RestoreOrders` exception list: powered buildings keep a prior
+    /// equal to the current order; every other type resets it to `AWAIT`.
+    #[test]
+    fn restore_orders_building_exception_table() {
+        for unit_type in [
+            UnitType::GoldRefinery,
+            UnitType::MiningStation,
+            UnitType::Habitat,
+            UnitType::PowerGenerator,
+            UnitType::PowerStation,
+            UnitType::ResearchCentre,
+        ] {
+            let mut unit = UnitInfo::new(unit_type, TeamId::RED, UnitId(1));
+            unit.orders = UnitOrder::Move;
+            unit.state = UnitOrderState::InProgress;
+            unit.prior_orders = UnitOrder::Move;
+            unit.prior_state = UnitOrderState::InProgress;
+            restore_orders(&mut unit);
+            assert_eq!(unit.orders, UnitOrder::Move, "{unit_type:?}");
+            assert_eq!(unit.state, UnitOrderState::InProgress, "{unit_type:?}");
+        }
+
+        for unit_type in [UnitType::Tank, UnitType::Scout, UnitType::Constructor] {
+            let mut unit = UnitInfo::new(unit_type, TeamId::RED, UnitId(1));
+            unit.orders = UnitOrder::Move;
+            unit.state = UnitOrderState::InProgress;
+            unit.prior_orders = UnitOrder::Move;
+            unit.prior_state = UnitOrderState::InProgress;
+            restore_orders(&mut unit);
+            assert_eq!(unit.orders, UnitOrder::Await, "{unit_type:?}");
+            assert_eq!(unit.state, UnitOrderState::ExecutingOrder, "{unit_type:?}");
+        }
+
+        // A differing prior is never reset, even for a building.
+        let mut building = UnitInfo::new(UnitType::Habitat, TeamId::RED, UnitId(2));
+        building.orders = UnitOrder::PowerOff;
+        building.state = UnitOrderState::Init;
+        building.prior_orders = UnitOrder::PowerOn;
+        building.prior_state = UnitOrderState::ExecutingOrder;
+        restore_orders(&mut building);
+        assert_eq!(building.orders, UnitOrder::PowerOn);
+        assert_eq!(building.state, UnitOrderState::ExecutingOrder);
+    }
+
+    /// `UnitInfo::CancelBuilding`: mobile builders return to `AWAIT` and drop the
+    /// queue/route; a stationary structure switches to the halt-building order.
+    #[test]
+    fn cancel_building_variants() {
+        let mut builder = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId(1));
+        builder.flags = crate::access::unit_type_flags(UnitType::Constructor);
+        builder.orders = UnitOrder::Build;
+        builder.state = UnitOrderState::BuildInProgress;
+        builder.build_list = vec![UnitType::PowerGenerator];
+        builder.build_time = 5;
+        builder.path = Some(UnitPath::Ground(GroundPath::default()));
+        builder.moved = 4;
+        cancel_building(&mut builder);
+        assert_eq!(builder.orders, UnitOrder::Await);
+        assert_eq!(builder.state, UnitOrderState::ExecutingOrder);
+        assert!(builder.build_list.is_empty());
+        assert_eq!(builder.build_time, 0);
+        assert!(builder.path.is_none());
+        assert_eq!(builder.moved, 0);
+
+        // Stationary structure, cancel requested.
+        let mut structure = UnitInfo::new(UnitType::GoldRefinery, TeamId::RED, UnitId(2));
+        structure.flags = crate::access::unit_type_flags(UnitType::GoldRefinery);
+        structure.orders = UnitOrder::Build;
+        structure.state = UnitOrderState::BuildCancel;
+        structure.build_list = vec![UnitType::Tank];
+        structure.build_time = 3;
+        cancel_building(&mut structure);
+        assert_eq!(structure.orders, UnitOrder::HaltBuilding);
+        assert_eq!(structure.state, UnitOrderState::ExecutingOrder);
+        assert_eq!(
+            structure.build_list,
+            vec![UnitType::Tank],
+            "queue kept until halt"
+        );
+        assert_eq!(structure.build_time, 3);
+
+        // Stationary structure, abort without a cancel request.
+        structure.orders = UnitOrder::Build;
+        structure.state = UnitOrderState::BuildInProgress;
+        cancel_building(&mut structure);
+        assert_eq!(structure.orders, UnitOrder::HaltBuilding2);
+        assert_eq!(structure.state, UnitOrderState::ExecutingOrder);
+
+        // Any other stationary order just clears the queue.
+        structure.orders = UnitOrder::Await;
+        structure.state = UnitOrderState::ExecutingOrder;
+        cancel_building(&mut structure);
+        assert_eq!(structure.orders, UnitOrder::Await);
+        assert!(structure.build_list.is_empty());
+        assert_eq!(structure.build_time, 0);
+    }
+
+    /// `UnitInfo::ClearBuildListAndPath`: a parented unit waits for `ACTIVATE`,
+    /// a free one returns to `AWAIT`; both lose the queue and the path.
+    #[test]
+    fn clear_build_list_and_path_variants() {
+        let mut parented = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId(1));
+        parented.parent_unit = Some(UnitId(2));
+        parented.path = Some(UnitPath::Ground(GroundPath::default()));
+        parented.build_list = vec![UnitType::Tank];
+        clear_build_list_and_path(&mut parented);
+        assert_eq!(parented.orders, UnitOrder::Build);
+        assert_eq!(parented.state, UnitOrderState::UnitReady);
+        assert!(parented.path.is_none());
+        assert!(parented.build_list.is_empty());
+
+        let mut free = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId(3));
+        free.path = Some(UnitPath::Ground(GroundPath::default()));
+        free.build_list = vec![UnitType::Tank];
+        clear_build_list_and_path(&mut free);
+        assert_eq!(free.orders, UnitOrder::Await);
+        assert_eq!(free.state, UnitOrderState::ExecutingOrder);
+        assert!(free.path.is_none());
+        assert!(free.build_list.is_empty());
+    }
+
+    /// `active_build_site` returns the site only for a mobile builder with a
+    /// running construction and a non-empty queue; terminal states hide it.
+    #[test]
+    fn active_build_site_boundaries() {
+        let mut builder = UnitInfo::new(UnitType::Constructor, TeamId::RED, UnitId(1));
+        builder.flags = crate::access::unit_type_flags(UnitType::Constructor);
+        builder.orders = UnitOrder::Build;
+        builder.state = UnitOrderState::BuildInProgress;
+        builder.build_list = vec![UnitType::PowerGenerator];
+        builder.target_grid = Point::new(7, 8);
+        assert_eq!(active_build_site(&builder), Some(Point::new(7, 8)));
+
+        builder.orders = UnitOrder::AwaitTapePositioning;
+        builder.state = UnitOrderState::TapePositioningEnter;
+        assert_eq!(active_build_site(&builder), Some(Point::new(7, 8)));
+
+        for state in [
+            UnitOrderState::SelectSite,
+            UnitOrderState::UnitReady,
+            UnitOrderState::BuildCancel,
+            UnitOrderState::BuildAbort,
+        ] {
+            builder.state = state;
+            assert_eq!(active_build_site(&builder), None, "{state:?}");
+        }
+
+        builder.state = UnitOrderState::BuildInProgress;
+        builder.build_list.clear();
+        assert_eq!(active_build_site(&builder), None, "empty queue");
+
+        builder.build_list = vec![UnitType::PowerGenerator];
+        builder.orders = UnitOrder::Await;
+        assert_eq!(active_build_site(&builder), None, "not a build order");
+
+        let tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        assert_eq!(active_build_site(&tank), None, "not a mobile builder");
+    }
+
+    /// `Paths_CalculateStep` cost classes: `< 4` doubles `max_velocity`, `> 4`
+    /// halves it; the diagonal costs `cost * 3 / 2`; `move_fraction` carries the
+    /// remainder and `shots` are reduced only for `MOVE_AND_FIRE == 0`.
+    #[test]
+    fn paths_calculate_step_cost_classes_and_fraction() {
+        fn tank() -> UnitInfo {
+            let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+            unit.base_values.set_attribute(ATTRIB_SPEED, 6);
+            unit.base_values.set_attribute(ATTRIB_ROUNDS, 2);
+            unit.base_values.set_attribute(ATTRIB_MOVE_AND_FIRE, 0);
+            unit.shots = 2;
+            unit.speed = 12;
+            unit.move_fraction = 0;
+            unit
+        }
+
+        // cost 2: max_velocity 8 → 16, normalized 1, remainder 2.
+        let mut cheap = tank();
+        assert!(paths_calculate_step(&mut cheap, 2, false, false, false));
+        assert_eq!(cheap.max_velocity, 16);
+        assert_eq!(cheap.speed, 11);
+        assert_eq!(cheap.move_fraction, 2);
+        assert_eq!(cheap.shots, 2, "2*11/6 = 3 is not below 2");
+
+        // The carried fraction is consumed by the next step of the same cost:
+        // the whole cost is covered by the fraction, so no speed is spent.
+        assert!(paths_calculate_step(&mut cheap, 2, false, false, false));
+        assert_eq!(cheap.move_fraction, 0);
+        assert_eq!(cheap.speed, 11);
+
+        // cost 4: max_velocity 8, normalized 1, no remainder.
+        let mut normal = tank();
+        assert!(paths_calculate_step(&mut normal, 4, false, false, false));
+        assert_eq!(normal.max_velocity, 8);
+        assert_eq!(normal.speed, 11);
+        assert_eq!(normal.move_fraction, 0);
+
+        // cost 6: max_velocity 4, normalized 2, remainder 2.
+        let mut expensive = tank();
+        assert!(paths_calculate_step(&mut expensive, 6, false, false, false));
+        assert_eq!(expensive.max_velocity, 4);
+        assert_eq!(expensive.speed, 10);
+        assert_eq!(expensive.move_fraction, 2);
+
+        // Diagonal: cost 4 is charged as 6, but the velocity class follows the
+        // raw cost argument.
+        let mut diagonal = tank();
+        assert!(paths_calculate_step(&mut diagonal, 4, true, false, false));
+        assert_eq!(diagonal.max_velocity, 8);
+        assert_eq!(diagonal.speed, 10);
+        assert_eq!(diagonal.move_fraction, 2);
+
+        // `MOVE_AND_FIRE` units keep their shot count; the others recompute it.
+        let mut fire_on_move = tank();
+        fire_on_move
+            .base_values
+            .set_attribute(ATTRIB_MOVE_AND_FIRE, 1);
+        fire_on_move.speed = 1;
+        assert!(paths_calculate_step(
+            &mut fire_on_move,
+            4,
+            false,
+            false,
+            false
+        ));
+        assert_eq!(fire_on_move.speed, 0);
+        assert_eq!(fire_on_move.shots, 2);
+
+        let mut stationary_fire = tank();
+        stationary_fire.speed = 1;
+        assert!(paths_calculate_step(
+            &mut stationary_fire,
+            4,
+            false,
+            false,
+            false
+        ));
+        assert_eq!(stationary_fire.shots, 0, "2*0/6 = 0");
+
+        // Not enough speed: the step does not start, the counter is charged into
+        // `move_fraction`, the group speed collapses to 1.
+        let mut slow = tank();
+        slow.speed = 1;
+        slow.group_speed = 5;
+        assert!(!paths_calculate_step(&mut slow, 6, false, false, false));
+        assert_eq!(slow.speed, 0);
+        assert_eq!(slow.move_fraction, 4);
+        assert_eq!(slow.group_speed, 1);
+
+        // Infantry halves `max_velocity` and records `velocity`.
+        let mut infantry = UnitInfo::new(UnitType::Infantry, TeamId::RED, UnitId(2));
+        infantry.speed = 4;
+        infantry.move_fraction = 0;
+        assert!(paths_calculate_step(&mut infantry, 4, false, false, false));
+        assert_eq!(infantry.max_velocity, 4);
+        assert_eq!(infantry.velocity, 4);
+    }
+
+    /// `UnitInfo::Land`/`Take` animation counters are 6-bit and saturate at the
+    /// 9th/5th call; `HOVERING` flips exactly on completion.
+    #[test]
+    fn land_and_take_boundaries_wrap() {
+        let mut unit = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(1));
+        unit.moved = 8;
+        assert!(land(&mut unit));
+        assert_eq!(unit.moved, 9);
+        assert_eq!(unit.flags & HOVERING, 0, "landing clears HOVERING");
+
+        unit.moved = 0x3F;
+        assert!(!land(&mut unit), "0x3F wraps to 0: animation restarts");
+        assert_eq!(unit.moved, 0);
+
+        let mut unit = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(2));
+        unit.moved = 3;
+        assert!(!take(&mut unit));
+        assert_eq!(unit.moved, 4);
+        assert!(take(&mut unit));
+        assert_eq!(unit.moved, 5);
+        assert_ne!(unit.flags & HOVERING, 0, "takeoff sets HOVERING");
+
+        unit.moved = 0x3F;
+        assert!(!take(&mut unit));
+        assert_eq!(unit.moved, 0);
+    }
+
+    /// `is_bridge_elevated`: only the bridge type, only while its frame differs
+    /// from the base frame (`UnitInfo::IsBridgeElevated`).
+    #[test]
+    fn bridge_elevation_boundaries() {
+        let mut bridge = UnitInfo::new(UnitType::Bridge, TeamId::RED, UnitId(1));
+        bridge.image_base = 10;
+        bridge.image_index = 10;
+        assert!(!is_bridge_elevated(&bridge));
+        bridge.image_index = 11;
+        assert!(is_bridge_elevated(&bridge));
+
+        let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+        tank.image_base = 0;
+        tank.image_index = 1;
+        assert!(!is_bridge_elevated(&tank));
+    }
+
+    /// `Paths_UpdateAngle` rotates one 45° step the short way, wraps 7↔0 and
+    /// rotates the turret with the hull.
+    #[test]
+    fn paths_update_angle_wraps_between_7_and_0() {
+        let mut unit = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+        unit.flags = crate::access::unit_type_flags(UnitType::Tank);
+        unit.angle = 7;
+        unit.turret_angle = 7;
+        assert!(paths_update_angle(&mut unit, 0));
+        assert_eq!(unit.angle, 0);
+        assert_eq!(unit.turret_angle, 0);
+
+        assert!(
+            !paths_update_angle(&mut unit, 0),
+            "already facing the target"
+        );
+
+        unit.angle = 0;
+        unit.turret_angle = 0;
+        assert!(paths_update_angle(&mut unit, 7));
+        assert_eq!(unit.angle, 7);
+        assert_eq!(unit.turret_angle, 7);
+    }
+
+    /// `UnitInfo::PowerUp`/`PowerDown` leave the unit in `EXECUTING_ORDER`.
+    #[test]
+    fn power_up_and_down_set_executing_order() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+        let mut unit = UnitInfo::new(UnitType::PowerGenerator, TeamId::RED, UnitId(1));
+        unit.state = UnitOrderState::Init;
+        power_up(&mut unit, 1);
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+
+        unit.state = UnitOrderState::Init;
+        power_down(&mut state, &mut unit);
+        assert_eq!(unit.state, UnitOrderState::ExecutingOrder);
+    }
 }

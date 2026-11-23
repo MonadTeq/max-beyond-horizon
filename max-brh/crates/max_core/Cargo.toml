@@ -7,3 +7,7 @@ license.workspace = true
 [dependencies]
 max_types = { path = "../max_types" }
 serde.workspace = true
+
+[dev-dependencies]
+# Wire round-trip of the client order DSL (`order.rs` unit tests).
+serde_json.workspace = true

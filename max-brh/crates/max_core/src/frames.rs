@@ -209,4 +209,86 @@ mod tests {
         // Hull rotation shifts `image_index` (`image_base + angle`).
         assert_eq!(image_index_max(UnitType::Tank, 3), 10);
     }
+
+    /// The table is game data for **all** 93 types (`UNIT_END`), in `UnitType` order,
+    /// and every lookup returns the table row (`Unit::GetFrameInfo`).
+    #[test]
+    fn frame_table_covers_every_unit_type_in_enum_order() {
+        assert_eq!(UNIT_FRAME_INFO.len(), crate::enums::UNIT_END as usize);
+        assert_eq!(UNIT_FRAME_INFO.len(), UnitType::COUNT);
+
+        for (index, info) in UNIT_FRAME_INFO.iter().enumerate() {
+            let unit_type = UnitType::try_from(index as u16).expect("index < UNIT_END");
+            assert_eq!(frame_info(unit_type), *info, "{unit_type:?}");
+            // `D_*` rows always describe at least the idle frame.
+            assert!(info.image_count >= 1, "{unit_type:?}: empty frame row");
+            assert!(info.turret_image_count >= 0, "{unit_type:?}");
+            // A turret-less type has no turret base either (`Unit::GetFrameInfo`).
+            if info.turret_image_count == 0 {
+                assert_eq!(info.turret_image_base, 0, "{unit_type:?}");
+            }
+        }
+    }
+
+    /// Turret frames come from `D_*` and are the source of `image_index_max` for
+    /// spinning turrets (`UnitsManager_DeployUnit`, `units_manager.cpp:2443`).
+    #[test]
+    fn turret_frame_rows_match_the_resource_data() {
+        assert_eq!(
+            (
+                frame_info(UnitType::Tank).turret_image_base,
+                frame_info(UnitType::Tank).turret_image_count
+            ),
+            (8, 8)
+        );
+        // Fixed turrets use `D_FIXED`: base 1, 8 rotations.
+        for turret in [
+            UnitType::GunTurret,
+            UnitType::AntiAir,
+            UnitType::Artillery,
+            UnitType::MissileLauncher,
+        ] {
+            let info = frame_info(turret);
+            assert_eq!(
+                (info.turret_image_base, info.turret_image_count),
+                (1, 8),
+                "{turret:?}"
+            );
+        }
+        assert_eq!(frame_info(UnitType::Scanner).turret_image_count, 16);
+        assert_eq!(frame_info(UnitType::Awac).turret_image_count, 30);
+    }
+
+    /// `image_index_max = image_count + image_base + angle - 1` for all 8 hull
+    /// angles; infantry and the infiltrator are the fixed-`103` exception
+    /// (`unitinfo.cpp:288-294`).
+    #[test]
+    fn image_index_max_covers_all_hull_angles_and_exceptions() {
+        for unit_type in [UnitType::Tank, UnitType::LandExplosion, UnitType::Scout] {
+            let info = frame_info(unit_type);
+            for angle in 0..=7u8 {
+                assert_eq!(
+                    image_index_max(unit_type, angle),
+                    info.image_count + info.image_base + i16::from(angle) - 1,
+                    "{unit_type:?} angle {angle}"
+                );
+            }
+            // The first frame is `image_base` and the last one at angle 0 is
+            // `image_base + image_count - 1` — the animation range is never inverted.
+            assert!(image_index_max(unit_type, 0) >= info.image_base);
+        }
+
+        for unit_type in [UnitType::Infantry, UnitType::Infiltrator] {
+            for angle in 0..=7u8 {
+                assert_eq!(image_index_max(unit_type, angle), 103, "{unit_type:?}");
+            }
+        }
+
+        // One-frame effect types: `image_index_max == image_base` (no animation).
+        for unit_type in [UnitType::DeadWaldo, UnitType::SmallSlab] {
+            let info = frame_info(unit_type);
+            assert_eq!(info.image_count, 1, "{unit_type:?}");
+            assert_eq!(image_index_max(unit_type, 0), info.image_base);
+        }
+    }
 }
