@@ -71,6 +71,12 @@ impl<D: Dispatcher> GameUniverse<D> {
     pub fn from_save(save: &crate::save::SaveFile) -> Self;
     pub fn into_state(self) -> GameState;                    // только этап (A), для миграции
 }
+
+impl GameUniverse<LocalDispatcher> {
+    // — локальное завершение хода (только LocalDispatcher, этап A) —
+    pub fn end_local_turn(&mut self, team: TeamId);
+    // 06 немедленно + enter_end_turn() + машина хода до Human/Computer/GameOver (§4)
+}
 ```
 
 Ключевые семантические решения:
@@ -92,6 +98,13 @@ impl<D: Dispatcher> GameUniverse<D> {
 4. **`snapshot() -> StateRef`** — заимствование, привязанное к `&self`;
    заимствование заканчивается до следующего `submit`/`tick` (borrow-checker это
    гарантирует). Никакого клона, `Arc`, буфера (Q20).
+5. **Машина хода — фасадная операция, гейтированная политикой, а не фаза `tick()`.**
+   `next_team()` вызывается только фасадом и только когда `dispatcher.advances_turns()`
+   (Local = `true`, Network = `false`). Триггер — `end_local_turn(team)` (немедленный `06` +
+   `enter_end_turn()` + прогон `next_team()` до `Human`/`Computer`/`GameOver`), а не каждый
+   тик: сетевой матч продвигает ход барьерной FSM (`net.rs:2020-2024`), а не `next_team()`,
+   и одновременный режим требует синхронного `finished_turn` (`are_teams_finished_turn`,
+   `game.rs:2277`). Подробно — §2, §3 (`TurnNotice`), §4, §7.1.
 
 ---
 
@@ -113,6 +126,15 @@ pub trait Dispatcher {
     /// Барьерный план после тика — какие DTO отправить.
     /// `facts` — read-only срез барьерных счётчиков (фасад строит из GameState).
     fn plan(&mut self, facts: &BarrierFacts) -> Vec<NetworkCommand>;
+
+    /// Владеет ли фасад последовательной машиной хода (`next_team`).
+    ///
+    /// `LocalDispatcher` → `true` (фасад продвигает ход сам);
+    /// `NetworkDispatcher` → `false` (ход продвигает барьерная FSM, `net.rs:2020-2024`).
+    /// Default `false` (fail-closed): диспетчер, не объявивший машину, её не запускает.
+    fn advances_turns(&mut self) -> bool {
+        false
+    }
 }
 
 pub enum RoutedCommand {
@@ -141,7 +163,7 @@ pub struct BarrierFacts {
 ### `LocalDispatcher` (в `max_core`)
 
 Zero-sized, детерминированный. `route` → всегда `Local` (сети нет); `receive` →
-`Ignore`; `plan` → `vec![]`.
+`Ignore`; `plan` → `vec![]`; `advances_turns` → `true` (фасад сам владеет машиной хода).
 
 > **Барьерные степперы — только сетевой путь (уточнение к пункту 4 владельца).**
 > `step_begin_turn_barrier`/`step_end_turn_barrier`/`step_crc_barrier`
@@ -173,6 +195,10 @@ Zero-sized, детерминированный. `route` → всегда `Local`
 (в порядке поступления); `RemoteCommand::StateSync` → `ApplyStateSync`. `plan`:
 пре-инкремент барьерных счётчиков и генерация
 `NetworkCommand::Command(TurnBarrier/EndTurnBarrier/CrcBarrier)` + resume-54.
+
+> `advances_turns()` → `false`: сетевой матч продвигает ход через `TurnBarrierFsm`
+> (`net.rs:2020-2024`), а **не** через `next_team()`. Фасадный `tick()` не трогает
+> машину хода при любом сетевом матче.
 
 ### Где живёт барьерная логика (точное разделение)
 
@@ -263,7 +289,7 @@ impl EventStream {
 }
 
 pub enum GameEvent {
-    Turn(TurnEvent),                    // Human/Computer/RoundClosed/GameOver (game.rs:176)
+    Turn(TurnNotice),                   // машина хода: TurnEvent + peek-данные до перехода
     Production(ProductionEvent),        // spawn/interrupt (game.rs:281)
     Research(ResearchEvent),            // уровни тем (game.rs:284)
     Sound(UnitSound),                   // боевые звуки (game.rs:153)
@@ -278,6 +304,20 @@ pub enum GameEvent {
 }
 
 pub enum RejectSource { DroppedByRoute, RejectedBySimulation }
+
+/// Отчёт машины хода: ядровой [`TurnEvent`] + значения, которые приложение берёт
+/// ДО перехода (peek, `local.rs:790-804`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnNotice {
+    /// Сам переход ядра (`Human`/`Computer`/`RoundClosed`/`GameOver`, `game.rs:176`).
+    pub event: TurnEvent,
+    /// `GameManager_PlayerTeam` ДО смены (`next_team` переключает его для Human) —
+    /// для hot-seat окна «Begin turn» (`previous_player_team != team`).
+    pub previous_player_team: TeamId,
+    /// `WinLoss_EvaluateStatus` ДО `finish_turn` — только на закрывающем шаге
+    /// (`upcoming_team().is_none()`); `None` для Human/Computer/RoundClosed.
+    pub status: Option<WinLossStatus>,
+}
 ```
 
 **Буфер и курсоры (решение владельца, пункт 6):** `EventBus` (private) хранит
@@ -288,7 +328,7 @@ pub enum RejectSource { DroppedByRoute, RejectedBySimulation }
 `game.rs:2663-2667`). События — UI/QA-отчёт, не состояние, поэтому обрезка не
 влияет на детерминизм.
 
-`TurnEvent` попадает в поток при продвижении машины хода (см. §4).
+`TurnNotice` (с `TurnEvent` внутри) попадает в поток при продвижении машины хода (см. §4).
 
 ### `NetworkCommand` / `RemoteCommand` — транспортные DTO (не протокол)
 
@@ -339,14 +379,14 @@ pub enum RemoteCommand {
 | `max_app::App::apply`/`enqueue`/`state_mut` (`lib.rs:3430/3441/857`) | заменяются на `submit`/`snapshot` (два пути → один) |
 | `max_app::local.rs`/`net.rs` (TurnEvent-потребители) | мигрируют на `EventStream` + `drain_outgoing`/`submit_remote` |
 
-**Особо: машина хода внутри `tick` (решение владельца, пункт 1).** `next_team()`
-и эмиссия `TurnEvent` в `EventStream` — **внутри `tick()`**. Владелец (рендер,
-`local.rs`, `net.rs`) не зовёт `next_team()` сам. Логика из
-`local.rs:790-804` (peek до перехода: `evaluate_status` до `finish_turn`, сравнение
-`player_team` до смены команды) и hot-seat «Begin turn»-окно **переносится в ядро**,
-а не остаётся снаружи. `manage_economy` остаётся фазой внутри `next_team`
-(`game.rs:2373`). На этапе A допустимо временно оставить `begin_round`/`end_round`
-публичными для конфигурационных сценариев, но `next_team` — только внутри `tick()`.
+**Особо: машина хода — внутри фасада, гейтированная политикой (уточнение решения 1).**
+`next_team()` и эмиссия события вызываются **только** фасадом, но через операцию
+`end_local_turn(team)`, а не безусловно внутри `tick()`. Логика из `local.rs:790-804`
+(peek: `previous_player_team` до смены, `evaluate_status` до `finish_turn`) переносится
+в ядро фасада и упаковывается в `TurnNotice`. Прогон идёт до `Human`/`Computer`/`GameOver`
+(по `RoundClosed` — продолжение цикла, как `local.rs:789-826`). `manage_economy` остаётся
+фазой внутри `next_team` (`game.rs:2373`). `begin_round`/`end_round` на этапе A допустимо
+оставить `pub` для конфигурационных сценариев; `next_team` — только внутри фасада.
 
 ---
 
@@ -358,7 +398,7 @@ pub enum RemoteCommand {
 |---|---|---|
 | 1 | **команды** | `state.poll_path_results()` (P5, `game.rs:2670`) + приём `submit` уже в очереди |
 | 2 | **apply** | `state.apply_pending_commands()` → `events::apply_command` в порядке поступления (`game.rs:2673`) |
-| 3 | **правила/счётчики** | `state.process_orders()` (если фаза ≠ `TurnActive`, `game.rs:2676`); затем AI: `check_reactions`/`dispatch_path_jobs`/`check_reactions`/`check_end_turn` (если `!orders_pending`, `game.rs:2681-2690`); при закрытии хода — машина хода `next_team`/`manage_economy`/`finish_turn` (счётчики ходов, `game.rs:2585-2610`) |
+| 3 | **правила/счётчики** | `state.process_orders()` (если фаза ≠ `TurnActive`, `game.rs:2676`); затем AI: `check_reactions`/`dispatch_path_jobs`/`check_reactions`/`check_end_turn` (если `!orders_pending`, `game.rs:2681-2690`) |
 | 4 | **hash/CRC** | `seq += 1`; `checksum = crc::state_digest(&state)` (`crc.rs:205`) — **после** мутаций |
 | 5 | **события** | push `GameEvent::{Production,Research,Sound,Industry,Chat,Turn,CommandRejected}` в `EventBus` |
 | 6 | **outgoing** | `self.outgoing = dispatcher.plan(&BarrierFacts{…})` (Q24: синхронный Vec, отдаётся `drain_outgoing`) |
@@ -367,6 +407,15 @@ pub enum RemoteCommand {
 (`game.rs:2659-2692`) — фасад лишь добавляет 4–6 (версию, события, outgoing)
 *после* симуляции, не трогая детерминизм. `seq`/`bus`/`outgoing` в `snapshot_bytes`
 не входят.
+
+> **Машина хода НЕ входит в `tick()` (уточнение решения 1).** Фазы 1–3 — симуляционный
+> шаг; `next_team()`/`manage_economy`/`finish_turn` — отдельная фасадная операция
+> `end_local_turn` (§1), гейтированная `Dispatcher::advances_turns()` (§2). Безусловный
+> прогон в `tick()` продвинул бы сетевой ход до барьеров 52/45 (`net.rs:2020-2024`) и
+> сломал бы одновременный режим (синхронный `finished_turn` для
+> `are_teams_finished_turn`, `game.rs:2277`). `finish_turn` внутри машины наполняет
+> `production_events`/`research_events`, которые фасад затем забирает в фазе 5; порядок
+> их доставки в `EventBus` относительно `TurnNotice` — обязательный гейт ТЗ (§6, риск 4).
 
 > **Момент построения `BarrierFacts` (уточнение владельца, пункт 3):**
 > `BarrierFacts` строится **после фазы 3, до фазы 4**. Тогда `dispatcher.plan()`
@@ -454,9 +503,18 @@ pub enum RemoteCommand {
 
 ## 7. Решения владельца (зафиксировано)
 
-1. **Машина хода — внутри фасада.** `next_team()` и эмиссия `TurnEvent` — внутри
-   `tick()`. `begin_round`/`end_round` на этапе A допустимо оставить публичными для
-   конфигурационных сценариев; `next_team` — только внутри `tick()`.
+1. **Машина хода — внутри фасада, гейтированная политикой (уточнено 2026-11-23,
+   взамен исходной формулировки «внутри `tick()`»).** Машина хода принадлежит фасаду
+   и только фасаду (`next_team()` не зовут ни `local.rs`, ни `net.rs`), но это
+   **фасадная операция, гейтированная `Dispatcher::advances_turns()`**
+   (`LocalDispatcher` → `true`, `NetworkDispatcher` → `false`), а **не фаза каждого
+   `tick()`**. Триггер — `GameUniverse<LocalDispatcher>::end_local_turn(team)`:
+   немедленный `06` + `enter_end_turn()` + прогон `next_team()` до
+   `Human`/`Computer`/`GameOver`, с эмиссией `GameEvent::Turn(TurnNotice)` (peek-данные
+   `previous_player_team`/`status` считаются **до** перехода). `NetworkDispatcher`
+   (этап B) возвращает `false` и продвигает ход барьерной FSM, как сейчас
+   (`net.rs:2020-2024`). `begin_round`/`end_round` на этапе A допустимо оставить
+   публичными для конфигурационных сценариев.
 2. **`submit` — только очередь; `StateSync` — немедленно.** Сдвиг `06`/лобби-команд
    на один тик — принятая цена; гейт — §6, риск 3.
 3. **`StateDelta` — грубая сейчас, полевой diff — этап B.** Не делать сразу.

@@ -29,8 +29,9 @@
    для рендера; `state()`/`state_mut()` — временные делегаты (не удалять).
 4. Гейт 3 (обязательный): миграция `06`/lobby на `submit` (очередь), сверка
    `snapshot_bytes` с компенсацией сдвига на один тик.
-5. Решение 1 владельца: `next_team()` — внутрь `tick()`; `local.rs` становится
-   потребителем `TurnEvent` из `EventStream`.
+5. Решение 1 (уточнённое): `next_team()` — внутрь фасада, гейтирован
+   `Dispatcher::advances_turns()`; триггер — `end_local_turn(team)`, а не каждый `tick()`;
+   `local.rs` становится потребителем `GameEvent::Turn(TurnNotice)` из `EventStream`.
 
 **В этапе A НЕ делается** (guardrails, см. §7): инкапсуляция `GameState`,
 `NetworkDispatcher`, перенос `TurnBarrierFsm`, полевой diff `StateDelta`,
@@ -166,46 +167,62 @@ pub enum SubmitOutcome { Accepted, Dropped }
 Критерий: `cargo check -p max_app` и `cargo test -p max_app` зелёные; рендер
 читает состояние через `snapshot()` без изменения вывода.
 
-## 5. Шаг 4 — Гейт 3 (обязательный): миграция `06`/lobby на `submit`
+## 5. Шаг 4 — Гейт 3 (обязательный): миграция queue-able команд на `submit`
 
-**Задача:** унифицировать путь команд: `local_end_turn` (`local.rs:1032`) и
-приём lobby-команд (`net.rs:1049`, `run_lobby`) переводятся с немедленного
-`apply` на `submit` (очередь → применение в начале следующего тика).
+**Задача:** унифицировать путь команд НА ОЧЕРЕДЬ `submit` для тех команд, что можно
+сдвинуть на один тик — **но НЕ для завершения хода.** `local_end_turn` (`local.rs:1032`)
+**НЕ** переводится на `submit(06)`: он становится фасадным методом `end_local_turn(team)`
+(§6), который применяет `06` **немедленно**. На `submit` переводятся lobby-команды
+(`net.rs:1049`, `run_lobby`) и прочие queue-able команды (применение в начале следующего тика).
 
 **Гейт 3 (обязательный, не «проверить в конце»):**
 
-1. Прогнать сценарии `06`/lobby/hot-seat в двух режимах:
+1. Прогнать queue-able сценарии (lobby 13/12) в двух режимах:
    - старый: `enqueue`/`apply` + `tick` (текущий код);
    - новый: `submit` + `tick`.
 2. Сравнить `snapshot_bytes` **с компенсацией сдвига** — новый прогон делает
    `N+1` тиков вместо `N` (команда применяется на тик позже).
-3. Критерий: байт-в-байт совпадение после компенсации **для каждого** сценария
-   (`06` в пошаговом, `06` в одновременном, hot-seat, lobby-команды 13/12).
+3. Критерий: байт-в-байт совпадение после компенсации для queue-able сценариев
+   (lobby 13/12).
 4. Если хоть один сценарий не сходится — это не «приемлемый сдвиг», а баг
-   классификации `RoutedCommand::Local` vs `Broadcast`, либо неявная немедленная
-   мутация в `local_end_turn`. Её вынести в отдельный конфигурационный метод
-   фасада (не возвращать немедленный `apply`). Стоп → Архитектор.
+   классификации `RoutedCommand::Local` vs `Broadcast`. Стоп → Архитектор.
+5. **`06` (завершение хода) НЕ мигрирует на `submit` (решение Архитектора; ADR §1/§5).**
+   В одновременном режиме `06` ставит только `finished_turn` без `EndTurn`
+   (`events.rs:574-580`); раунд закрывается через `are_teams_finished_turn`
+   (`game.rs:2277`), которому нужен **синхронный** `finished_turn`. Отложенный `06` на
+   следующем тике снова войдёт в `EndTurn` и закроет ход новой команды. Сценарии `06`
+   валидируются в §6 (гейт «без сдвига», байт-в-байт), а не здесь.
 
-## 6. Шаг 5 — Решение 1 владельца: `next_team()` внутрь `tick()`
+## 6. Шаг 5 — Решение 1 (уточнённое): машина хода внутрь фасада, гейтированная политикой
 
 После зелёного гейта 3:
 
-1. В `GameUniverse::tick()` после симуляционного шага: если
-   `game_state == EndTurn` (`game.rs:2528`), прогонять `next_team()`
-   (`game.rs:2345`) до `Human`/`Computer`/`GameOver`, эмитя каждый `TurnEvent` в
-   `EventBus` как `GameEvent::Turn`.
-2. `local.rs`: `local_next_team` (`local.rs:784`) перестаёт звать
-   `state_mut().next_team()`; `local_end_turn` (`local.rs:1032`) становится
-   `submit(06)`; `TurnEvent` читается из `EventStream`. Peek-логика
-   (`local.rs:790-804`: `evaluate_status` до `finish_turn`, сравнение
-   `player_team` до смены) переносится в ядро, как в решении.
-3. `begin_round`/`end_round` на этапе A допустимо оставить `pub` для
-   конфигурационных сценариев (`start_local_game`, `local.rs:615`);
-   `next_team` — только внутри `tick()`.
+1. В `Dispatcher` добавить `fn advances_turns(&mut self) -> bool` (default `false`);
+   `LocalDispatcher` → `true` (ADR §2).
+2. В `GameUniverse<LocalDispatcher>` добавить `end_local_turn(team)` (ADR §1):
+   немедленный `events::apply_command(command_finished_turn(team))` + `enter_end_turn()`
+   + прогон `next_team()` до `Human`/`Computer`/`GameOver` (по `RoundClosed` —
+   продолжение), эмитируя каждый шаг как `GameEvent::Turn(TurnNotice)`. Peek-данные
+   (`previous_player_team` до смены, `evaluate_status` до `finish_turn` при
+   `upcoming_team().is_none()`) вычисляются **до** перехода и кладутся в `TurnNotice` (ADR §3).
+3. `local.rs`: `local_next_team` (`local.rs:784`) перестаёт звать `state_mut().next_team()`
+   и становится потребителем `TurnNotice` из `EventStream`; `local_end_turn` (`local.rs:1032`)
+   становится `universe.end_local_turn(team)`. Тот же переход для AI-пути
+   (`local.rs:1235-1247`: `apply(06)+enter_end_turn+local_next_team` → `end_local_turn`).
+4. `begin_round`/`end_round` на этапе A допустимо оставить `pub` для конфигурационных
+   сценариев (`start_local_game`, `local.rs:615`); `next_team` — только внутри фасада.
 
 **Регресс-гейт (риск 4):** hot-seat «Begin turn»-окно, AI-тики,
-`finish_turn`/`evaluate_status` должны вести себя идентично; прогон golden
-`hs-2.qa`/`sp-tb.qa` без изменений кадров, `snapshot_bytes` детерминирован.
+`finish_turn`/`evaluate_status` идентичны; golden `hs-2.qa`/`sp-tb.qa` без изменений кадров;
+`snapshot_bytes` детерминирован; порядок строк HUD-лога (RoundClosed → production/research →
+следующий Human) сохранён. Гейт «06 без сдвига»: `end_local_turn` даёт байт-в-байт тот же
+`snapshot_bytes`, что текущий `apply(06)+enter_end_turn+local_next_team`.
+
+**Гейт различимости путей (уточнение владельца):** `end_local_turn(team)` — единственный
+триггер машины хода в одиночной игре; он применяет `06` немедленно. Отдельно: `submit(06)`
+в одиночной игре **не** должен закрывать ход немедленно (идёт в очередь, применяется в
+начале следующего `tick()`). Два пути должны быть **различимы в тесте**: если их поведение
+неотличимо — `end_local_turn` и `submit` недостаточно разделены.
 
 ## 7. Guardrails (запрещено в этапе A)
 
@@ -232,13 +249,17 @@ pub enum SubmitOutcome { Accepted, Dropped }
 - `cargo check` — зелёный.
 - `cargo test -p max_core` — зелёный (существующие фазы 1–5 **плюс** новые тесты фасада).
 - `cargo test -p max_app` — зелёный.
-- Гейт 3 пройден: `snapshot_bytes` идентичен после компенсации сдвига для всех
-  сценариев `06`/lobby/hot-seat.
+- Гейт 3 пройден: `snapshot_bytes` идентичен после компенсации сдвига для queue-able
+  сценариев (lobby 13/12); `06` (завершение хода) НЕ мигрирует на `submit` и валидируется
+  в §6 без сдвига.
 - Гейт 4 (пункт 4) пройден: одиночный цикл `submit → tick → finish_turn →
   turn_counter+1` без `step_*_barrier`; `snapshot_bytes` идентичен сетевому
   прогону с выключенными барьерами.
-- Решение 1 пройдено: `next_team` вызывается только из `tick()`; `local.rs` не
-  зовёт его напрямую; `TurnEvent` — только через `EventStream`.
+- Решение 1 (уточнённое) пройдено: `next_team` вызывается только фасадом и только через
+  `end_local_turn`, гейтированный `advances_turns()`; `local.rs`/`net.rs` не зовут его
+  напрямую; `TurnEvent` доставляется только как `GameEvent::Turn(TurnNotice)` через `EventStream`.
+- Гейт различимости путей пройден: `end_local_turn` (немедленный `06`) и `submit(06)`
+  (очередь) дают **различимое** поведение в тесте.
 - Детерминизм не нарушен: golden `snapshot_bytes`/`replay_digest` не изменились
   (кроме задокументированного сдвига, закрытого гейтом 3).
 
