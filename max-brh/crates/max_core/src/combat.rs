@@ -173,7 +173,13 @@ pub fn attack_unit(
     let denominator = attacker_turns * damaged_unit_max_hits;
     if denominator != 0 {
         let gain = (damaged_unit_turns * attack_damage * 5) / denominator;
-        gain_experience(state, attacker_id, gain);
+        // C++ (`unitinfo.cpp:1620-1625`) pays experience only when the **attacker's**
+        // team is neither remote nor eliminated (`enemy` is the attacker, `this`
+        // is the target); a remote team is simulated by its own client.
+        let kind = state.teams[attacker.team.0 as usize].team_type;
+        if kind != TeamKind::Remote && kind != TeamKind::Eliminated {
+            gain_experience(state, attacker_id, gain);
+        }
     }
 }
 
@@ -2063,5 +2069,52 @@ mod tests {
 
         // C++: FIGHTER turns 8 * damage 12 * 5 / (ALNTANK turns 4 * FIGHTER hits 12) = 10.
         assert_eq!(state.unit(attacker).unwrap().experience, 10);
+    }
+
+    /// `unitinfo.cpp:1620-1625`: the attacker earns experience only when **its**
+    /// team is neither `Remote` nor `Eliminated`; player, computer and empty
+    /// (`None`) teams still earn it.
+    #[test]
+    fn experience_is_skipped_for_remote_and_eliminated_attacker_teams() {
+        let cases = [
+            (TeamKind::Player, 10),
+            (TeamKind::Computer, 10),
+            (TeamKind::None, 10),
+            (TeamKind::Remote, 0),
+            (TeamKind::Eliminated, 0),
+        ];
+
+        for (kind, expected) in cases {
+            let mut state = state();
+            state.ai.all_visible = true;
+            state.teams[0].team_type = kind;
+            let attacker = state
+                .spawn_unit(
+                    UnitType::AlienTank,
+                    TeamId::RED,
+                    Point::new(5, 5),
+                    MOBILE_LAND_UNIT | SELECTABLE,
+                )
+                .unwrap();
+            let target = state
+                .spawn_unit(
+                    UnitType::Fighter,
+                    TeamId::GREEN,
+                    Point::new(8, 5),
+                    crate::enums::unit_flags::MOBILE_AIR_UNIT | SELECTABLE,
+                )
+                .unwrap();
+            state.update_visibility_status(false);
+
+            // ALNTANK attack 20 vs FIGHTER armor 4 → 16, capped to 12 hits;
+            // `target.TURNS 8 * damage 12 * 5 / (attacker.TURNS 4 * target.HITS 12)` = 10.
+            attack_unit(&mut state, target, attacker, 0, 2);
+
+            assert_eq!(
+                state.unit(attacker).unwrap().experience,
+                expected,
+                "attacker team {kind:?}"
+            );
+        }
     }
 }

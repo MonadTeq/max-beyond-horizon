@@ -473,11 +473,16 @@ impl UnitInfo {
 
     /// The "unit is a complex member" predicate (`UnitInfo::IsComplexMember`).
     ///
-    /// The `BUILDING` bit is read, not `is_building()`: C++ (`unitinfo.hpp:255`)
-    /// includes structures with `CONNECTOR_UNIT | BUILDING | STANDALONE` in the complex.
-    /// A turret is a building semantically (`Mobility::Building`), but **not** a complex
-    /// member (its `BUILDING`/`CONNECTOR_UNIT`/`STANDALONE` are cleared), so
-    /// replacing it with `is_building()` would change connectors — the behavior is preserved.
+    /// The raw `CONNECTOR_UNIT | BUILDING | STANDALONE` bits are read, not
+    /// `is_building()`: C++ (`unitinfo.hpp:255-256`) counts a unit as a complex member
+    /// when **any** of these three flags is set, excluding only `GROUND_COVER` and
+    /// `NO_ID`. A fixed turret (`GUNTURRT`/`ARTYTRRT`/`ANTIAIR`/`ANTIMSSL`) has the
+    /// `BUILDING` bit cleared in `SC_UNITS` but carries `STANDALONE`, so it **is** a
+    /// complex member — the semantic `Mobility::Building` axis and complex membership
+    /// are not the same predicate. Connectors (`CNCT_4W`: `CONNECTOR_UNIT` without
+    /// `BUILDING`) and 1×1 standalone structures (`ADUMP`/`FDUMP`/`GOLDSM`:
+    /// `STANDALONE` without `BUILDING`) are members too, although `is_building()` is
+    /// false for them; the flag predicate is therefore the only correct source.
     #[inline]
     pub fn is_complex_member(&self) -> bool {
         use crate::enums::unit_flags::{BUILDING, CONNECTOR_UNIT, GROUND_COVER, STANDALONE};
