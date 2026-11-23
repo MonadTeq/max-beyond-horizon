@@ -756,7 +756,11 @@ impl Panels {
     /// Draws the panels over the frame (after `FRAMEPIC` and the map).
     ///
     /// Returns the number of filled pixels.
-    pub fn draw(&self, frame: &mut RgbaBuffer, app: &crate::App) -> u32 {
+    pub fn draw<D: max_core::universe::Dispatcher>(
+        &self,
+        frame: &mut RgbaBuffer,
+        app: &crate::App<D>,
+    ) -> u32 {
         let Some(assets) = app.assets() else {
             return 0;
         };
@@ -1014,10 +1018,10 @@ impl Panels {
         painted
     }
 
-    fn draw_portrait(
+    fn draw_portrait<D: max_core::universe::Dispatcher>(
         &self,
         frame: &mut RgbaBuffer,
-        app: &crate::App,
+        app: &crate::App<D>,
         assets: &Assets,
         palette: &UiPalette,
     ) -> u32 {
@@ -2222,9 +2226,9 @@ fn minimap_unit_color(team: max_core::TeamId) -> u8 {
 }
 
 /// Minimap from the `minimap` layer of `.WRL` (112×112 for standard planets).
-fn draw_minimap(
+fn draw_minimap<D: max_core::universe::Dispatcher>(
     frame: &mut RgbaBuffer,
-    app: &crate::App,
+    app: &crate::App<D>,
     assets: &Assets,
     palette: &UiPalette,
 ) -> u32 {

@@ -29,6 +29,7 @@ use max_render::viewport::{Viewport, MAP_TILE_PIXELS};
 
 use crate::panels::UiPalette;
 use crate::App;
+use max_core::universe::Dispatcher;
 
 /// Window palette indices (`color.h:36-43`).
 pub const COLOR_BLACK: u8 = 0x00;
@@ -498,9 +499,9 @@ fn draw_unit_name(
 ///
 /// Called after [`crate::App::draw_units`], as in C++: `DrawMap_RenderUnit`
 /// draws the sprite, and immediately after it — the indicators of this unit.
-pub fn draw_unit_overlays(
+pub fn draw_unit_overlays<D: Dispatcher>(
     frame: &mut RgbaBuffer,
-    app: &App,
+    app: &App<D>,
     viewport: &Viewport,
     palette: &UiPalette,
 ) -> u32 {
@@ -589,9 +590,9 @@ pub fn draw_unit_overlays(
 /// The RANGE color is `COLOR_RED`, but `COLOR_CHROME_YELLOW` if the unit can hit
 /// air (`Access_GetValidAttackTargetTypes(type) & MOBILE_AIR_UNIT`);
 /// SCAN — `COLOR_YELLOW`.
-pub fn draw_range_scan(
+pub fn draw_range_scan<D: Dispatcher>(
     frame: &mut RgbaBuffer,
-    app: &App,
+    app: &App<D>,
     viewport: &Viewport,
     palette: &UiPalette,
 ) -> u32 {
@@ -684,9 +685,9 @@ pub fn draw_range_scan(
 ///   in the **land** color (`GetGridOverlayColor(SURFACE_TYPE_LAND)`);
 /// * `complex_grid_overlay = 1` → `DrawMap_RenderComplexGridOverlay`: the top and
 ///   left border of each cell in the color of its surface.
-pub fn draw_grid(
+pub fn draw_grid<D: Dispatcher>(
     frame: &mut RgbaBuffer,
-    app: &App,
+    app: &App<D>,
     viewport: &Viewport,
     palette: &UiPalette,
     complex: bool,

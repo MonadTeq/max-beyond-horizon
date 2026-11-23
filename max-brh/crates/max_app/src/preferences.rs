@@ -112,6 +112,7 @@ use std::path::{Path, PathBuf};
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{Opponent, PlayMode, VictoryType};
 use max_core::save::IniPreferences;
+use max_core::universe::Dispatcher;
 use max_render::buffer::{PixelRect, RgbaBuffer};
 use max_render::text::{draw_text_gnw_centered, draw_text_gnw_shadowed, GnwFontId};
 
@@ -1864,12 +1865,10 @@ impl PreferencesAssets {
 // Integration with the application
 // ---------------------------------------------------------------------------
 
-impl crate::App {
-    /// Current user settings.
-    pub fn preferences(&self) -> &Preferences {
-        &self.preferences
-    }
-
+// Preferences are carried by every application type: the session input path is
+// generic over the dispatcher (stage C §4.2), and the network application must
+// accept a settings change from the `Preferences` dialog too.
+impl<D: Dispatcher> crate::App<D> {
     /// Replaces the settings (effects/sound are applied by rendering/the audio layer).
     pub fn set_preferences(&mut self, preferences: Preferences) {
         self.preferences = preferences;
@@ -1895,16 +1894,6 @@ impl crate::App {
         }
     }
 
-    /// Whether visual effects are enabled (`settings["effects"]`).
-    pub fn effects_enabled(&self) -> bool {
-        self.preferences.effects
-    }
-
-    /// Whether SFX sound is enabled (`!disable_fx`).
-    pub fn sound_enabled(&self) -> bool {
-        self.preferences.sound_enabled()
-    }
-
     /// Settings file: `<save_dir>/preferences.ini` (C++ `settings.json` in
     /// `FilePathGamePref`).
     pub fn preferences_path(&self) -> PathBuf {
@@ -1919,6 +1908,23 @@ impl crate::App {
             self.hud
                 .push_log(format!("Preferences: не удалось сохранить {}: {error}", path.display()));
         }
+    }
+}
+
+impl<D: Dispatcher> crate::App<D> {
+    /// Current user settings.
+    pub fn preferences(&self) -> &Preferences {
+        &self.preferences
+    }
+
+    /// Whether visual effects are enabled (`settings["effects"]`).
+    pub fn effects_enabled(&self) -> bool {
+        self.preferences.effects
+    }
+
+    /// Whether SFX sound is enabled (`!disable_fx`).
+    pub fn sound_enabled(&self) -> bool {
+        self.preferences.sound_enabled()
     }
 
     /// Loads `preferences.ini`, if present (interactive launch only).

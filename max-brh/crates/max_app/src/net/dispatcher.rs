@@ -16,6 +16,14 @@
 //! [`GameUniverse::step_crc_barrier`]. The FSM never mutates `GameState` directly;
 //! the counters stay simulation state (`snapshot_bytes`).
 //!
+//! Stage C §4.4 (A1) splits the FSM steps into a **counter step** (the facade
+//! `step_*_barrier`) and a **clean record + packet** half
+//! (`record_begin`/`record_end`/`record_crc`, plus `record_complex`/`record_sync`
+//! for the read-only projections): the driver then never holds two `&mut` borrows
+//! of the universe at once (`universe.dispatcher_mut().begin(&mut universe)`).
+//! The packets, the counters, the phases and the timing constants are unchanged —
+//! the split is mechanical.
+//!
 //! [`NetworkDispatcher`] implements [`Dispatcher`] on top: simulation commands are
 //! broadcast, packet 54 is applied as authoritative state, and the facade turn
 //! machine is off (`advances_turns = false`) — a networked match advances the turn
@@ -27,14 +35,14 @@ use std::time::Duration;
 
 use max_core::enums::PlayMode;
 use max_core::game::PLAYER_TEAM_COUNT;
-use max_core::input::{Command, Packet00TurnBarrier, Packet52EndTurnBarrier};
+use max_core::input::{Command, Packet00TurnBarrier, Packet45CrcBarrier, Packet52EndTurnBarrier};
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::{
     BarrierFacts, Dispatcher, GameUniverse, NetworkCommand, RemoteCommand, RemoteHandling,
     RoutedCommand,
 };
 use max_net::session::{DEFAULT_BARRIER_REPEAT, DEFAULT_BARRIER_TIMEOUT};
-use max_net::{complex_summary_for, crc_barrier_for, state_sync_for, Packet};
+use max_net::{state_sync_for, Packet};
 use tokio::time::Instant;
 
 /// Barrier repeat (`REMOTE_PING_TIME_PERIOD`).
@@ -113,11 +121,6 @@ impl TurnBarrierFsm {
         }
     }
 
-    /// C++ turn number (1-based `GameManager_TurnCounter`).
-    fn cxx_turn<D: Dispatcher>(universe: &GameUniverse<D>) -> i32 {
-        universe.snapshot().turn_counter() + 1
-    }
-
     /// Peer teams: those whose barriers must be awaited (`TEAM_TYPE_REMOTE`).
     fn remote_teams<'a, D: Dispatcher>(
         &'a self,
@@ -129,12 +132,12 @@ impl TurnBarrierFsm {
 
     /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[own]` → 00.
     ///
-    /// The counter lives in `GameState` (`snapshot_bytes`), so the increment is a
-    /// core transition through the facade passthrough
-    /// ([`GameUniverse::step_begin_turn_barrier`]); the FSM keeps the packet, the
-    /// wait and the retransmit.
-    fn begin<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        let counter = universe.step_begin_turn_barrier(self.local_team);
+    /// Stage C decision A1 (`game-universe-stage-c.md` §0.2): the counter step stays
+    /// a core transition through the facade passthrough
+    /// ([`GameUniverse::step_begin_turn_barrier`]), while this method is the clean
+    /// **record + packet** half — it takes the already stepped counter, so the
+    /// driver never needs two `&mut` borrows of the universe at once.
+    fn record_begin(&mut self, counter: u8) -> Vec<Packet> {
         self.begin_counter = counter;
         self.phase = BarrierPhase::Begin;
 
@@ -150,19 +153,14 @@ impl TurnBarrierFsm {
             .begin_turn_barrier_reached(self.begin_counter)
     }
 
-    /// `Remote_WaitComplexTotals`: own team's 53 for the current turn.
-    fn complex<D: Dispatcher>(&mut self, universe: &GameUniverse<D>) -> Vec<Packet> {
-        self.complex_turn = Self::cxx_turn(universe);
+    /// `Remote_WaitComplexTotals`: records the C++ turn number of the own 53.
+    ///
+    /// Stage C A1: the record half of the former `complex`; the packet itself is a
+    /// read-only projection over the snapshot
+    /// ([`max_net::complex_summary_for`]) built by the driver.
+    fn record_complex(&mut self, turn: i32) {
+        self.complex_turn = turn;
         self.phase = BarrierPhase::Play;
-
-        // Read-only projection: `complex_summary_for` only reads `TeamUnits`
-        // (stage B step 1 keeps the stage-A facade read access; §6/§7 move the
-        // projection onto a complete `StateRef`).
-        vec![complex_summary_for(
-            universe.snapshot(),
-            self.local_team,
-            self.complex_turn,
-        )]
     }
 
     /// Remembers an incoming 53 (called for all teams, including own).
@@ -178,8 +176,10 @@ impl TurnBarrierFsm {
     }
 
     /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[own]` → 52.
-    fn end<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        let counter = universe.step_end_turn_barrier(self.local_team);
+    ///
+    /// Stage C A1: the clean record half of the former `end` (see
+    /// [`Self::record_begin`]).
+    fn record_end(&mut self, counter: u8) -> Vec<Packet> {
         self.end_counter = counter;
         self.phase = BarrierPhase::End;
 
@@ -198,14 +198,14 @@ impl TurnBarrierFsm {
     }
 
     /// `Remote_SynchronizeUnitStates`: `++Remote_StateSyncIndex` → 54.
-    fn sync<D: Dispatcher>(&mut self, universe: &GameUniverse<D>) -> Vec<Packet> {
+    ///
+    /// Stage C A1: the record half of the former `sync`; it advances the own index
+    /// (pre-increment, the first report is 1) and returns it — the packet itself is
+    /// the read-only [`max_net::state_sync_for`] projection built by the driver.
+    fn record_sync(&mut self) -> u8 {
         self.sync_index = self.sync_index.wrapping_add(1);
         self.phase = BarrierPhase::Sync;
-
-        state_sync_for(universe.snapshot(), self.local_team, self.sync_index)
-            .into_iter()
-            .map(Packet::StateSync)
-            .collect()
+        self.sync_index
     }
 
     fn sync_reached<D: Dispatcher>(&self, universe: &GameUniverse<D>) -> bool {
@@ -230,13 +230,22 @@ impl TurnBarrierFsm {
     }
 
     /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[own]` → 45.
-    fn crc<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        let index = universe.step_crc_barrier(self.local_team);
+    ///
+    /// Stage C A1: the clean record half of the former `crc` — the facade stepped
+    /// the counter (`GameUniverse::step_crc_barrier`) and the driver read the
+    /// checksum (`StateRef::state_checksum`), so this method only stores the facts
+    /// and builds the packet (the same fields
+    /// [`max_net::crc_barrier_for`] projected from the snapshot).
+    fn record_crc(&mut self, index: u8, checksum: u16) -> Vec<Packet> {
         self.crc_index = index;
-        self.crc_checksum = universe.snapshot().state_checksum();
+        self.crc_checksum = checksum;
         self.phase = BarrierPhase::Crc;
 
-        vec![crc_barrier_for(self.local_team, index, universe.snapshot())]
+        vec![Packet::Command(Command::CrcBarrier(Packet45CrcBarrier {
+            team: self.local_team,
+            next_turn_index: index,
+            crc16: checksum,
+        }))]
     }
 
     fn crc_reached<D: Dispatcher>(&self, universe: &GameUniverse<D>) -> bool {
@@ -353,14 +362,14 @@ impl NetworkDispatcher {
 
     // — the barrier FSM, driven by the async game loop (verbatim transfer) —
 
-    /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[own]` → 00.
-    pub(crate) fn begin<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        self.fsm.begin(universe)
+    /// Records the stepped 00 counter and builds the packet (stage C A1).
+    pub(crate) fn record_begin(&mut self, counter: u8) -> Vec<Packet> {
+        self.fsm.record_begin(counter)
     }
 
-    /// `Remote_WaitComplexTotals`: own team's 53 for the current turn.
-    pub(crate) fn complex<D: Dispatcher>(&mut self, universe: &GameUniverse<D>) -> Vec<Packet> {
-        self.fsm.complex(universe)
+    /// Records the C++ turn number of the own 53 (stage C A1).
+    pub(crate) fn record_complex(&mut self, turn: i32) {
+        self.fsm.record_complex(turn);
     }
 
     /// Remembers an incoming 53 (called for all teams, including own).
@@ -368,14 +377,14 @@ impl NetworkDispatcher {
         self.fsm.note_complex(team, turn);
     }
 
-    /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[own]` → 52.
-    pub(crate) fn end<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        self.fsm.end(universe)
+    /// Records the stepped 52 counter and builds the packet (stage C A1).
+    pub(crate) fn record_end(&mut self, counter: u8) -> Vec<Packet> {
+        self.fsm.record_end(counter)
     }
 
-    /// `Remote_SynchronizeUnitStates`: `++Remote_StateSyncIndex` → 54.
-    pub(crate) fn sync<D: Dispatcher>(&mut self, universe: &GameUniverse<D>) -> Vec<Packet> {
-        self.fsm.sync(universe)
+    /// Advances the own 54 index and returns it (stage C A1).
+    pub(crate) fn record_sync(&mut self) -> u8 {
+        self.fsm.record_sync()
     }
 
     /// Own team state for restoration after a reconnect (resume-54).
@@ -386,9 +395,9 @@ impl NetworkDispatcher {
         self.fsm.resume_state_sync(universe)
     }
 
-    /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[own]` → 45.
-    pub(crate) fn crc<D: Dispatcher>(&mut self, universe: &mut GameUniverse<D>) -> Vec<Packet> {
-        self.fsm.crc(universe)
+    /// Records the stepped 45 index and checksum, builds the packet (stage C A1).
+    pub(crate) fn record_crc(&mut self, index: u8, checksum: u16) -> Vec<Packet> {
+        self.fsm.record_crc(index, checksum)
     }
 
     /// The current phase is complete (all peers sent the expected value).
@@ -568,7 +577,7 @@ fn is_consent_barrier(command: &Command) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use max_core::enums::{TeamClan, UnitType};
     use max_core::geo::Point;
     use max_core::input::{
@@ -578,6 +587,7 @@ mod tests {
     use max_core::team::TeamUnits;
     use max_core::universe::{LocalDispatcher, RemoteCommand, SubmitOutcome};
     use max_core::UnitId;
+    use max_net::complex_summary_for;
 
     /// Synthetic world: the local team is `Player`, `remotes` are `Remote`, the rest
     /// are `None` (`Remote_SetupPlayers` team types).
@@ -591,20 +601,13 @@ mod tests {
         }
         *universe.team_units_table_mut() =
             std::array::from_fn(|_| TeamUnits::with_clan(TeamClan::Random));
-        universe
-            .team_mut(local)
-            .expect("local slot")
-            .team_type = TeamKind::Player;
+        universe.team_mut(local).expect("local slot").team_type = TeamKind::Player;
         for team in remotes {
-            universe
-                .team_mut(*team)
-                .expect("remote slot")
-                .team_type = TeamKind::Remote;
+            universe.team_mut(*team).expect("remote slot").team_type = TeamKind::Remote;
         }
         universe.set_player_team(local);
         universe
     }
-
 
     /// The synthetic team setup on top of an empty world with an arbitrary dispatcher.
     fn synthetic_universe_with<D: Dispatcher>(
@@ -621,15 +624,9 @@ mod tests {
         }
         *universe.team_units_table_mut() =
             std::array::from_fn(|_| TeamUnits::with_clan(TeamClan::Random));
-        universe
-            .team_mut(local)
-            .expect("local slot")
-            .team_type = TeamKind::Player;
+        universe.team_mut(local).expect("local slot").team_type = TeamKind::Player;
         for team in remotes {
-            universe
-                .team_mut(*team)
-                .expect("remote slot")
-                .team_type = TeamKind::Remote;
+            universe.team_mut(*team).expect("remote slot").team_type = TeamKind::Remote;
         }
         universe.set_player_team(local);
         universe
@@ -644,16 +641,69 @@ mod tests {
         }
     }
 
+    // Stage C A1: the driver's two-step barrier calls — the facade counter step
+    // followed by the FSM record. These are exactly the two lines
+    // `App<NetworkDispatcher>` runs, so the tests keep covering the production path.
+
+    fn begin<D: Dispatcher>(
+        fsm: &mut NetworkDispatcher,
+        universe: &mut GameUniverse<D>,
+    ) -> Vec<Packet> {
+        let counter = universe.step_begin_turn_barrier(fsm.local_team());
+        fsm.record_begin(counter)
+    }
+
+    fn complex<D: Dispatcher>(
+        fsm: &mut NetworkDispatcher,
+        universe: &GameUniverse<D>,
+    ) -> Vec<Packet> {
+        let turn = universe.snapshot().turn_counter() + 1;
+        fsm.record_complex(turn);
+        vec![complex_summary_for(
+            universe.snapshot(),
+            fsm.local_team(),
+            turn,
+        )]
+    }
+
+    fn end<D: Dispatcher>(
+        fsm: &mut NetworkDispatcher,
+        universe: &mut GameUniverse<D>,
+    ) -> Vec<Packet> {
+        let counter = universe.step_end_turn_barrier(fsm.local_team());
+        fsm.record_end(counter)
+    }
+
+    fn sync<D: Dispatcher>(fsm: &mut NetworkDispatcher, universe: &GameUniverse<D>) -> Vec<Packet> {
+        let index = fsm.record_sync();
+        state_sync_for(universe.snapshot(), fsm.local_team(), index)
+            .into_iter()
+            .map(Packet::StateSync)
+            .collect()
+    }
+
+    fn crc<D: Dispatcher>(
+        fsm: &mut NetworkDispatcher,
+        universe: &mut GameUniverse<D>,
+    ) -> Vec<Packet> {
+        let index = universe.step_crc_barrier(fsm.local_team());
+        let checksum = universe.snapshot().state_checksum();
+        fsm.record_crc(index, checksum)
+    }
+
     #[test]
     fn counters_start_at_one_and_are_pre_incremented_per_team() {
         let local = TeamId::RED;
         let mut universe = synthetic_universe(local, &[TeamId::GREEN, TeamId::BLUE]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
 
-        let begin = fsm.begin(&mut universe);
+        let begin = begin(&mut fsm, &mut universe);
         assert_eq!(begin.len(), 1);
         assert_eq!(barrier_counter(&begin[0]), 1, "the first 00 is 1");
-        assert_eq!(universe.snapshot().frame_sync_counter()[local.0 as usize], 1);
+        assert_eq!(
+            universe.snapshot().frame_sync_counter()[local.0 as usize],
+            1
+        );
         // The own counter is not yet agreed with the peers.
         assert!(!fsm.begin_reached(&universe));
         universe.set_frame_sync_counter(TeamId::GREEN, 1);
@@ -661,7 +711,7 @@ mod tests {
         universe.set_frame_sync_counter(TeamId::BLUE, 1);
         assert!(fsm.begin_reached(&universe));
 
-        let end = fsm.end(&mut universe);
+        let end = end(&mut fsm, &mut universe);
         assert_eq!(barrier_counter(&end[0]), 1, "the first 52 is 1");
         assert_eq!(universe.snapshot().turn_indices()[local.0 as usize], 1);
         assert!(!fsm.end_reached(&universe));
@@ -669,7 +719,7 @@ mod tests {
         universe.set_turn_index(TeamId::BLUE, 1);
         assert!(fsm.end_reached(&universe));
 
-        let sync = fsm.sync(&universe);
+        let sync = sync(&mut fsm, &universe);
         assert!(!sync.is_empty());
         match &sync[0] {
             Packet::StateSync(packet) => {
@@ -684,7 +734,7 @@ mod tests {
         universe.set_state_sync_index(TeamId::BLUE, 1);
         assert!(fsm.sync_reached(&universe));
 
-        let crc = fsm.crc(&mut universe);
+        let crc = crc(&mut fsm, &mut universe);
         assert_eq!(barrier_counter(&crc[0]), 1, "the first 45 is 1");
         assert_eq!(universe.snapshot().next_turn_indices()[local.0 as usize], 1);
         let own_crc = match &crc[0] {
@@ -712,14 +762,14 @@ mod tests {
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
 
         // 00
-        let begin = fsm.begin(&mut universe);
+        let begin = begin(&mut fsm, &mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::Begin);
         assert_eq!(barrier_counter(&begin[0]), 1);
         universe.set_frame_sync_counter(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 53
-        let play = fsm.complex(&universe);
+        let play = complex(&mut fsm, &universe);
         assert_eq!(fsm.phase(), BarrierPhase::Play);
         assert!(matches!(
             &play[0],
@@ -733,21 +783,21 @@ mod tests {
         assert!(fsm.local_finished_sent());
 
         // 52
-        let end = fsm.end(&mut universe);
+        let end = end(&mut fsm, &mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::End);
         assert_eq!(barrier_counter(&end[0]), 1);
         universe.set_turn_index(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 54
-        let sync = fsm.sync(&universe);
+        let sync = sync(&mut fsm, &universe);
         assert_eq!(fsm.phase(), BarrierPhase::Sync);
         assert!(matches!(&sync[0], Packet::StateSync(packet) if packet.sync_index == 1));
         universe.set_state_sync_index(TeamId::GREEN, 1);
         assert!(fsm.reached(&universe));
 
         // 45
-        let crc = fsm.crc(&mut universe);
+        let crc = crc(&mut fsm, &mut universe);
         assert_eq!(fsm.phase(), BarrierPhase::Crc);
         assert_eq!(barrier_counter(&crc[0]), 1);
         universe.set_next_turn_index(TeamId::GREEN, 1);
@@ -766,10 +816,10 @@ mod tests {
         let mut universe = synthetic_universe(local, &[TeamId::GREEN]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
 
-        fsm.begin(&mut universe);
-        fsm.end(&mut universe);
-        fsm.sync(&universe);
-        fsm.crc(&mut universe);
+        begin(&mut fsm, &mut universe);
+        end(&mut fsm, &mut universe);
+        sync(&mut fsm, &universe);
+        crc(&mut fsm, &mut universe);
         assert_eq!(fsm.begin_counter(), 1);
         assert_eq!(fsm.end_counter(), 1);
         assert_eq!(fsm.sync_index(), 1);
@@ -777,16 +827,16 @@ mod tests {
 
         // Next turn: each counter has its own pre-increment (2).
         fsm.on_turn_finished();
-        let begin = fsm.begin(&mut universe);
+        let begin = begin(&mut fsm, &mut universe);
         assert_eq!(barrier_counter(&begin[0]), 2);
-        let end = fsm.end(&mut universe);
+        let end = end(&mut fsm, &mut universe);
         assert_eq!(barrier_counter(&end[0]), 2);
-        let sync = fsm.sync(&universe);
+        let sync = sync(&mut fsm, &universe);
         assert!(matches!(
             &sync[0],
             Packet::StateSync(packet) if packet.sync_index == 2
         ));
-        let crc = fsm.crc(&mut universe);
+        let crc = crc(&mut fsm, &mut universe);
         assert_eq!(barrier_counter(&crc[0]), 2);
 
         // 52 and 45 are different C++ arrays, not one shared counter.
@@ -802,7 +852,7 @@ mod tests {
         let mut universe = synthetic_universe(local, &[TeamId::GREEN, TeamId::BLUE]);
         // Rust turn_counter = 0 → C++ GameManager_TurnCounter = 1.
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
-        let packet = fsm.complex(&universe);
+        let packet = complex(&mut fsm, &universe);
         assert!(matches!(
             &packet[0],
             Packet::Command(Command::ComplexSummary(summary)) if summary.turn == 1
@@ -816,7 +866,7 @@ mod tests {
 
         // The 53 of the previous turn does not close the new one.
         universe.set_turn_counter(1);
-        let packet = fsm.complex(&universe);
+        let packet = complex(&mut fsm, &universe);
         assert!(matches!(
             &packet[0],
             Packet::Command(Command::ComplexSummary(summary)) if summary.turn == 2
@@ -833,23 +883,23 @@ mod tests {
         let mut universe = synthetic_universe(local, &[]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
 
-        let packets = fsm.begin(&mut universe);
+        let packets = begin(&mut fsm, &mut universe);
         assert!(!packets.is_empty());
         assert!(fsm.reached(&universe), "00 with no peers");
 
-        let packets = fsm.complex(&universe);
+        let packets = complex(&mut fsm, &universe);
         assert!(!packets.is_empty());
         assert!(fsm.reached(&universe), "53 with no peers");
 
-        let packets = fsm.end(&mut universe);
+        let packets = end(&mut fsm, &mut universe);
         assert!(!packets.is_empty());
         assert!(fsm.reached(&universe), "52 with no peers");
 
-        let packets = fsm.sync(&universe);
+        let packets = sync(&mut fsm, &universe);
         assert!(!packets.is_empty());
         assert!(fsm.reached(&universe), "54 with no peers");
 
-        let packets = fsm.crc(&mut universe);
+        let packets = crc(&mut fsm, &mut universe);
         assert!(!packets.is_empty());
         assert!(fsm.reached(&universe), "45 with no peers");
         assert!(fsm.crc_matches(&universe));
@@ -1098,10 +1148,7 @@ mod tests {
         }
 
         // `01` is a pacing packet, not a consent barrier: it keeps the replay path.
-        let frame = Command::FrameBarrier(Packet01FrameBarrier {
-            team,
-            counter: 1,
-        });
+        let frame = Command::FrameBarrier(Packet01FrameBarrier { team, counter: 1 });
         assert_eq!(
             dispatcher.receive(RemoteCommand::Command(frame.clone())),
             RemoteHandling::Replay(frame)

@@ -1257,9 +1257,9 @@ impl<D: Dispatcher> App<D> {
     }
 }
 
-// Local (single-player) surface: the turn timer lives in the local match
-// (`local::LocalGame`), so it stays on `App<LocalDispatcher>`.
-impl App {
+// The turn timer value is read by the panel for every application type; the local
+// match is the only one that counts it (`App::local`, dispatcher-agnostic field).
+impl<D: Dispatcher> App<D> {
     /// Remaining turn timer in seconds — `GameManager_TurnTimerValue`.
     ///
     /// C++ stores it as an integer number of seconds and decreases it by 1 per second

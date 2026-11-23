@@ -430,7 +430,7 @@ pub fn site_center_world(unit_type: UnitType, anchor: Point) -> (i32, i32) {
 // Integration with the application
 // ---------------------------------------------------------------------------
 
-impl crate::App {
+impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// Open build site selection mode; `None` — a regular match.
     pub fn build_site(&self) -> Option<&BuildSiteSelect> {
         self.build_site.as_ref()

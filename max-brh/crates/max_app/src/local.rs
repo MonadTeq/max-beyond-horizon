@@ -609,6 +609,25 @@ pub fn team_name(team: TeamId) -> &'static str {
     }
 }
 
+// The local-match accessors are plain field reads on the dispatcher-agnostic
+// `App` state (stage C §4.2: the UI path is generic over the dispatcher); the turn
+// machine itself stays on `App<LocalDispatcher>` (guardrail 6).
+impl<D: max_core::universe::Dispatcher> App<D> {
+    /// Current local match.
+    pub fn local(&self) -> Option<&LocalGame> {
+        self.local.as_ref()
+    }
+
+    /// Editable local match.
+    pub fn local_mut(&mut self) -> Option<&mut LocalGame> {
+        self.local.as_mut()
+    }
+
+    /// Whether a local match is in progress.
+    pub fn local_active(&self) -> bool {
+        self.local.is_some()
+    }
+}
 impl App {
     /// Starts a local match (`menu_custom_game_menu` → `GameManager_InitGame`).
     ///
@@ -740,21 +759,6 @@ impl App {
         self.local = Some(local);
     }
 
-    /// Current local match.
-    pub fn local(&self) -> Option<&LocalGame> {
-        self.local.as_ref()
-    }
-
-    /// Editable local match.
-    pub fn local_mut(&mut self) -> Option<&mut LocalGame> {
-        self.local.as_mut()
-    }
-
-    /// Whether a local match is in progress.
-    pub fn local_active(&self) -> bool {
-        self.local.is_some()
-    }
-
     /// Exit to the menu: the local match is forgotten.
     pub fn leave_local_game(&mut self) {
         self.local = None;
@@ -854,9 +858,9 @@ impl App {
                 TurnEvent::GameOver => {
                     // `GameOver` is only reported by the closing step, so the
                     // pre-step status is the one C++ passes to the screen.
-                    let status = notice.status.unwrap_or_else(|| {
-                        self.state_ref().evaluate_status()
-                    });
+                    let status = notice
+                        .status
+                        .unwrap_or_else(|| self.state_ref().evaluate_status());
                     self.local_game_over(status);
                     return;
                 }
@@ -1015,9 +1019,7 @@ impl App {
                 max_core::ProductionEventKind::NoSpawnCell => self
                     .hud
                     .push_log("Production: no free cell near the factory"),
-                max_core::ProductionEventKind::RubbleCleared => {
-                    self.hud.push_log("Rubble cleared")
-                }
+                max_core::ProductionEventKind::RubbleCleared => self.hud.push_log("Rubble cleared"),
             }
         }
 
@@ -1802,5 +1804,74 @@ impl App {
         let bytes = std::fs::read(path.as_ref())
             .map_err(|error| format!("read {}: {error}", path.as_ref().display()))?;
         LocalSave::decode(&bytes)
+    }
+}
+
+/// Local-match operations the shared session input/render path reads (stage C §4.2).
+///
+/// The session input and the session frame are generic over the dispatcher because
+/// after the lobby the sink receives `App<NetworkDispatcher>` (§4.2). Guardrail 6
+/// keeps the local turn machine (`begin_local_round`/`resume_local_round`/
+/// `end_local_turn`) on `App<LocalDispatcher>`, so it is reached through this
+/// trait; a network application has no `LocalGame` and answers exactly what the
+/// inherent methods answer for `App::local == None`.
+pub trait SessionLocal {
+    fn local_notice(&self) -> Option<&TurnNotice>;
+    fn local_input_blocked(&self) -> bool;
+    fn local_acknowledge_turn(&mut self) -> bool;
+    fn local_toggle_pause(&mut self) -> bool;
+    fn local_end_turn(&mut self);
+    fn load_game_slot(&mut self, slot: i32) -> Result<std::path::PathBuf, String>;
+}
+
+impl SessionLocal for App<max_core::universe::LocalDispatcher> {
+    fn local_notice(&self) -> Option<&TurnNotice> {
+        self.local.as_ref().and_then(|local| local.notice())
+    }
+
+    fn local_input_blocked(&self) -> bool {
+        self.local
+            .as_ref()
+            .is_some_and(|local| local.input_blocked())
+    }
+
+    fn local_acknowledge_turn(&mut self) -> bool {
+        self.local_acknowledge_turn()
+    }
+
+    fn local_toggle_pause(&mut self) -> bool {
+        self.local_toggle_pause()
+    }
+
+    fn local_end_turn(&mut self) {
+        self.local_end_turn();
+    }
+
+    fn load_game_slot(&mut self, slot: i32) -> Result<std::path::PathBuf, String> {
+        self.load_game_slot(slot)
+    }
+}
+
+impl SessionLocal for App<crate::net::NetworkDispatcher> {
+    fn local_notice(&self) -> Option<&TurnNotice> {
+        None
+    }
+
+    fn local_input_blocked(&self) -> bool {
+        false
+    }
+
+    fn local_acknowledge_turn(&mut self) -> bool {
+        false
+    }
+
+    fn local_toggle_pause(&mut self) -> bool {
+        false
+    }
+
+    fn local_end_turn(&mut self) {}
+
+    fn load_game_slot(&mut self, _slot: i32) -> Result<std::path::PathBuf, String> {
+        Err("Load requires a local game (Single Player or Hot Seat)".to_string())
     }
 }

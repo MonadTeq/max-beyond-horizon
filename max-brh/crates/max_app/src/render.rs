@@ -30,7 +30,7 @@ use max_render::viewport::draw_order;
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::unit::UnitPresentation;
-use max_core::universe::StateRef;
+use max_core::universe::{Dispatcher, StateRef};
 
 use crate::panels::UiPalette;
 use crate::App;
@@ -1052,7 +1052,7 @@ pub fn draw_unit_selector(
     painted
 }
 
-impl App {
+impl<D: Dispatcher> App<D> {
     /// Draws a frame of the current state into the `screen_width × screen_height` buffer.
     pub fn render_frame(&self) -> RgbaBuffer {
         self.render_frame_with_stats().0

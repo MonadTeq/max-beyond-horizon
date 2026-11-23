@@ -780,7 +780,9 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 // Integration with the application
 // ---------------------------------------------------------------------------
 
-impl crate::App {
+// The save directory belongs to the `AppConfig`, not to the match: it is needed by
+// every application type (the network application writes `preferences.ini` too).
+impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// Save directory: `--save-dir`, otherwise the `MAX.RES` directory (`max-original`),
     /// like `FilePathGameData` for campaigns and `FilePathGamePref` for custom.
     pub fn save_dir(&self) -> PathBuf {
@@ -795,7 +797,9 @@ impl crate::App {
             })
             .unwrap_or_else(|| PathBuf::from("."))
     }
+}
 
+impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// Match category for file/slot names.
     pub fn save_category(&self) -> MissionCategory {
         if self.local().is_some_and(|local| local.is_hot_seat()) {
@@ -991,6 +995,11 @@ impl crate::App {
         Some(path)
     }
 
+}
+
+// Loading a V70 save starts a **local** match (`start_local_game_from_save`), so the
+// two loaders stay on `App<LocalDispatcher>` (guardrail 6).
+impl crate::App {
     /// Loads a V70 save into the current session: a local match restarts from
     /// the saved turn (C++ `GameManager_LoadGame`), otherwise the state is simply
     /// replaced.

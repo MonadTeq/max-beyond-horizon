@@ -31,6 +31,8 @@ use max_app::assets::AssetsReport;
 use max_app::audio::AudioPlayer;
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
+#[cfg(feature = "sdl")]
+use max_app::net::NetworkDispatcher;
 use max_app::net::{run_network, JoinRetryPolicy, NetworkOptions, NetworkReport, ReconnectPolicy};
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
@@ -656,7 +658,7 @@ struct WindowSink {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for WindowSink {
-    fn frame(&mut self, app: &mut App) -> bool {
+    fn frame(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
         let buffer = app.render_frame();
 
@@ -1322,7 +1324,7 @@ struct UiSessionSink<'a> {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for UiSessionSink<'_> {
-    fn frame(&mut self, app: &mut App) -> bool {
+    fn frame(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
 
         // 1. This frame's input → HUD (selection, orders, buttons).
@@ -1398,7 +1400,8 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
     /// `SessionHandle::start` is repeated, there are no match frames yet.
     fn join_status(&mut self, message: &str) -> bool {
         self.status = message.to_string();
-        let view = ScreenView {
+        // No match yet — the menu application type (default dispatcher).
+        let view: ScreenView<'_> = ScreenView {
             width: self.buffer.width(),
             height: self.buffer.height(),
             status: &self.status,

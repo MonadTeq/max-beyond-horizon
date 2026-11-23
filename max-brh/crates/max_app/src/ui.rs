@@ -50,6 +50,7 @@ use max_core::enums::Planet;
 use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
+use max_core::universe::{Dispatcher, LocalDispatcher};
 use max_net::{CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 use max_render::text::{draw_text_gnw, draw_text_line, GnwFontId, GLYPH_HEIGHT};
@@ -65,17 +66,15 @@ use crate::helpmenu::{self, HelpAction, HelpPlacement, HelpSection};
 use crate::hud::{self, HudButton};
 use crate::intro;
 use crate::landing::LandingAction;
-use crate::local::LocalSetup;
+use crate::local::{LocalSetup, SessionLocal};
 use crate::menu;
 use crate::mobilize::CargoAction;
 use crate::panels::{self, PanelButton};
-use crate::preferences::{
-    self, Preferences, PreferencesDialog, PreferencesVariant,
-};
+use crate::preferences::{self, Preferences, PreferencesDialog, PreferencesVariant};
 use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::researchmenu::ResearchAction;
-use crate::sfx::Sfx;
 use crate::setup::{self, GameSetupForm, SetupTransition};
+use crate::sfx::Sfx;
 use crate::winloss;
 use crate::App;
 
@@ -633,8 +632,10 @@ impl fmt::Debug for UiContext {
 }
 
 /// Everything [`Screen::render`] needs besides the screen itself.
-#[derive(Clone, Copy)]
-pub struct ScreenView<'a> {
+///
+/// `D` is the dispatcher of the session application (stage C §4.2): menus use the
+/// `LocalDispatcher` default, the network sink renders `App<NetworkDispatcher>`.
+pub struct ScreenView<'a, D: Dispatcher = LocalDispatcher> {
     /// Frame width.
     pub width: u32,
     /// Frame height.
@@ -645,9 +646,19 @@ pub struct ScreenView<'a> {
     pub mouse: Option<Point>,
     /// Main menu focus.
     pub focus: usize,
-    /// Match state for [`Screen::InSession`].
-    pub app: Option<&'a App>,
+    /// Match state for [`Screen::InSession`] — the dispatcher of the match.
+    pub app: Option<&'a App<D>>,
 }
+
+// `Copy`/`Clone` are structural here; the derived bounds would wrongly require
+// `D: Copy` (a dispatcher holds an FSM and is not `Copy`).
+impl<D: Dispatcher> Clone for ScreenView<'_, D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D: Dispatcher> Copy for ScreenView<'_, D> {}
 
 /// Input action on the start phase screens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1083,7 +1094,13 @@ impl Screen {
     ///
     /// For [`Screen::InSession`] the map is taken from [`crate::App::render_frame`]
     /// (which draws `max_render::map_render`), with the status line on top.
-    pub fn render(&self, buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
+    ///
+    /// `D` is the dispatcher of the session application: after the lobby the
+    /// network sink renders `App<NetworkDispatcher>` (stage C §4.2).
+    pub fn render<D: Dispatcher>(&self, buffer: &mut RgbaBuffer, view: ScreenView<'_, D>)
+    where
+        App<D>: SessionLocal,
+    {
         // The menu on the original resources (item E) — only in a 640×480 frame:
         // all coordinates and pictures are taken from the C++ port for the original window.
         let menu_assets = view
@@ -1265,7 +1282,8 @@ impl Screen {
             Self::Preferences(dialog) => {
                 // `OptionsMenu` — a separate window over the main menu: in C++
                 // the menu background remains visible around `PREFSPIC`.
-                if let (Some(menu_assets), Some(app), true) = (menu_assets, view.app, native_frame) {
+                if let (Some(menu_assets), Some(app), true) = (menu_assets, view.app, native_frame)
+                {
                     menu::draw_main_menu(buffer, menu_assets, view.status, mouse);
 
                     if let Some(assets) = app.assets() {
@@ -1385,7 +1403,10 @@ impl Screen {
                 // `shot`/`dt = 0` are deterministic; Esc/click — back to the menu.
                 let screen = intro::IntroScreen::new(ctx.intro_mve_path.clone());
                 ctx.status = if screen.is_loaded() {
-                    format!("Introduction: maxint.mve — кадр {} (Esc)", screen.frame_index())
+                    format!(
+                        "Introduction: maxint.mve — кадр {} (Esc)",
+                        screen.frame_index()
+                    )
                 } else if let Some(error) = screen.error() {
                     format!("Introduction: {error} — Esc returns")
                 } else {
@@ -1777,7 +1798,14 @@ impl Screen {
 /// `online = true` — orders and chat accumulate in `App::hud().pending` and go to
 /// the session (`net::flush_hud_orders`); `false` — demo mode, commands are applied
 /// immediately via `max_core::events::apply_command` ([`App::flush_orders`]).
-pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+pub fn handle_session_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let (width, height) = app.viewport().screen();
     let chrome = app.chrome_active();
 
@@ -2062,11 +2090,14 @@ pub fn handle_session_input(app: &mut App, event: InputEvent, online: bool) -> T
 /// The window is modal: `Arm`/`Enter` starts the `SLFDOPN1..6` animation, after it
 /// `OK`/`Enter` gives `ORDER_EXPLODE`, `Esc`/`Cancel` closes without an order
 /// (C++ `UnitsManager_SelfDestructMenu` returns `false`).
-fn session_self_destruct_input(
-    app: &mut App,
+fn session_self_destruct_input<D: Dispatcher>(
+    app: &mut App<D>,
     event: InputEvent,
     online: bool,
-) -> Transition {
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let unit = app.self_destruct().map(|menu| menu.unit);
     let stage_before = app.self_destruct().map(|menu| menu.stage);
 
@@ -2107,7 +2138,10 @@ fn session_self_destruct_input(
 }
 
 /// Input in the pause dialog (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
-fn session_pause_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_pause_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     match app.pause_dialog_input(event) {
         Some(crate::dialog::DialogAction::Close) => {
             app.hud_mut().push_log("Resumed");
@@ -2125,7 +2159,14 @@ fn session_pause_input(app: &mut App, event: InputEvent) -> Transition {
 /// (`GameManager_ProcessPopupMenuInput`) invoke the item handler
 /// (`App::activate_unit_menu_item`). Arrows and Enter do not work in the C++ menu —
 /// neither here (they go to `MenuEvent::None`).
-fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+fn session_unit_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let Some(outcome) = app.unit_menu_input(event) else {
         return Transition::None;
     };
@@ -2161,7 +2202,14 @@ fn session_unit_menu_input(app: &mut App, event: InputEvent, online: bool) -> Tr
 /// the window — the values are already applied by clicks (`UpdateRawAllocation`), and on exit
 /// C++ broadcasts `Remote_SendNetPacket_11` → `ORDER_NEW_ALLOCATE` (08/P5) to
 /// each mine of the complex ([`App::queue_alloc_orders`]).
-fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+fn session_alloc_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let Some(action) = app.alloc_menu_input(event) else {
         return Transition::None;
     };
@@ -2193,7 +2241,14 @@ fn session_alloc_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
 /// `Done`/`Enter` gives `ORDER_TRANSFER` (08/**P3**, `transfer_cargo`),
 /// `Esc`/`Cancel` closes without an order, `?` opens `TRANSFER_SETUP`
 /// over the window (in C++ `HelpMenu_Menu` returns to `TransferMenu`).
-fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+fn session_transfer_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let Some(action) = app.transfer_menu_input(event) else {
         return Transition::None;
     };
@@ -2228,7 +2283,10 @@ fn session_transfer_menu_input(app: &mut App, event: InputEvent, online: bool) -
 /// Window actions — [`crate::SaveLoadAction`]: write a slot, load a slot or
 /// close. File I/O errors remain in the window status line so that the player
 /// sees the reason instead of a silent close.
-fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_saveload_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let Some(menu) = app.save_load_mut() else {
         return Transition::None;
     };
@@ -2277,7 +2335,14 @@ fn session_saveload_input(app: &mut App, event: InputEvent) -> Transition {
 /// `Done`/Enter — `Build()`: the order goes as `Command::Order` with `PayloadP4`
 /// (packet 08) — applied locally immediately, in the network it goes to the HUD queue.
 /// `Cancel`/Esc — close without an order.
-fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+fn session_build_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let action = app.build_menu_input(event);
 
     match action {
@@ -2320,15 +2385,18 @@ fn session_build_menu_input(app: &mut App, event: InputEvent, online: bool) -> T
 ///
 /// `None` — the event is not ours (a click on a panel/a key other than Esc): the caller
 /// will handle it the usual way, like C++ with the main menu enabled.
-fn session_build_site_input(
-    app: &mut App,
+fn session_build_site_input<D: Dispatcher>(
+    app: &mut App<D>,
     event: InputEvent,
     online: bool,
     chrome: bool,
-) -> Option<Transition> {
+) -> Option<Transition>
+where
+    App<D>: SessionLocal,
+{
     // The map cell under the frame point — the same projection as for regular clicks
     // (`session_map_left_click`: `screen_to_map` with chrome).
-    let grid_at = |app: &App, x: i32, y: i32| -> Option<max_core::geo::Point> {
+    let grid_at = |app: &App<D>, x: i32, y: i32| -> Option<max_core::geo::Point> {
         let (gx, gy) = if chrome {
             let (map_x, map_y) = panels::screen_to_map(x, y)?;
             app.map_viewport().screen_to_grid(map_x, map_y)
@@ -2417,7 +2485,14 @@ fn session_build_site_input(
 /// `TeamUnits` (packets 10 in the network), gold is debited. `Cancel`/Esc — close
 /// without changes (C++ `UpgradeMenu::Run` returns `false`). `Help` —
 /// `UPGRADES_SETUP` over the screen (`HelpMenu_Menu`).
-fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) -> Transition {
+fn session_upgrade_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let action = app.upgrade_menu_input(event);
 
     match action {
@@ -2445,12 +2520,18 @@ fn session_upgrade_menu_input(app: &mut App, event: InputEvent, online: bool) ->
 /// The window is modal; `Done`/`Enter`/`Esc` close it (`event_click_cancel`), and
 /// the screen under it (game/`ResearchMenu`/`UpgradeMenu`) keeps working with the same
 /// state.
-fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_help_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     // Window buttons: `Done` — `NDONE0`, scrolling/`Keys` — `KCARG0`
     // (`helpmenu.cpp:91/131/135`).
     match event {
         InputEvent::MouseClick(x, y) => {
-            if app.help_screen().is_some_and(|help| help.done_rect().contains(x, y)) {
+            if app
+                .help_screen()
+                .is_some_and(|help| help.done_rect().contains(x, y))
+            {
                 app.play_sfx(Sfx::Done);
             } else {
                 app.play_sfx(Sfx::Click);
@@ -2479,7 +2560,10 @@ fn session_help_input(app: &mut App, event: InputEvent) -> Transition {
 /// an empty place does not open the window and does not disable the mode (C++: empty text —
 /// the window is not created). `Esc`, the right button or a repeated `?` disable the mode
 /// (`MOUSE_RELEASE_RIGHT`/`GNW_KB_KEY_CTRL_ESCAPE`/`GNW_KB_KEY_SHIFT_DIVIDE`).
-fn session_help_mode_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_help_mode_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     match event {
         InputEvent::MouseClick(x, y) => {
             if app.help_mode_click(x, y) {
@@ -2512,7 +2596,10 @@ fn session_help_mode_input(app: &mut App, event: InputEvent) -> Transition {
 /// `Done`/`Enter` apply and save the settings, `Esc` restores the opening
 /// snapshot, `?` opens the `PREFS_MENU_SETUP` help window. While the dialog is open,
 /// `App::local_update` does not tick (the C++ loop sits in `Run`).
-fn session_preferences_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_preferences_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     match app.preferences_input(event) {
         Some(preferences::PreferencesAction::Done) => {
             // The values are already in `App::preferences`; for the next frame the frame
@@ -2541,7 +2628,10 @@ fn session_preferences_input(app: &mut App, event: InputEvent) -> Transition {
 /// into `GameState` ([`max_core::game::GameState::set_research_allocation`]) and
 /// picked up by `finish_turn` (`ResearchMenu_NewTurn`). `Cancel`/`Esc` —
 /// close without changes. `Help` — `RESEARCH_SETUP`.
-fn session_research_menu_input(app: &mut App, event: InputEvent) -> Transition {
+fn session_research_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let action = app.research_menu_input(event);
 
     match action {
@@ -2575,7 +2665,10 @@ fn session_research_menu_input(app: &mut App, event: InputEvent) -> Transition {
 ///
 /// The other keys (arrows/Tab) are ignored in the chat so as not to
 /// accidentally open a menu/order.
-fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
+fn session_chat_key<D: Dispatcher>(app: &mut App<D>, key: Key, online: bool) -> Transition
+where
+    App<D>: SessionLocal,
+{
     match key {
         Key::Char(character) => {
             app.hud_mut().chat.push_char(character);
@@ -2595,7 +2688,8 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
         | Key::Right
         | Key::PageUp
         | Key::PageDown
-        | Key::Alt(_) | Key::Other => {}
+        | Key::Alt(_)
+        | Key::Other => {}
     }
 
     Transition::None
@@ -2605,7 +2699,10 @@ fn session_chat_key(app: &mut App, key: Key, online: bool) -> Transition {
 ///
 /// An empty line is not sent (like `Remote_SendNetPacket_18`, which
 /// returns on `message[0] == '\0'`), the input is simply closed.
-fn submit_chat(app: &mut App, online: bool) -> Transition {
+fn submit_chat<D: Dispatcher>(app: &mut App<D>, online: bool) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let Some(message) = app.hud_mut().chat.take_message() else {
         return Transition::None;
     };
@@ -2626,14 +2723,17 @@ fn submit_chat(app: &mut App, online: bool) -> Transition {
 }
 
 /// Left button without chrome: procedural HUD buttons → minimap → map.
-fn session_left_click(
-    app: &mut App,
+fn session_left_click<D: Dispatcher>(
+    app: &mut App<D>,
     width: u32,
     height: u32,
     x: i32,
     y: i32,
     online: bool,
-) -> Transition {
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     if let Some(button) = hud::hud_button_at(width, height, x, y) {
         return match button {
             HudButton::EndTurn => {
@@ -2662,7 +2762,15 @@ fn session_left_click(
 /// The window screen coordinates are converted into map area coordinates
 /// ([`panels::screen_to_map`]) before `screen_to_grid` — otherwise the click drifts by
 /// (180,18) (risk 4 in `max-brh-docs/visual-1to1-status.md`).
-fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+fn session_chrome_left_click<D: Dispatcher>(
+    app: &mut App<D>,
+    x: i32,
+    y: i32,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     if let Some(button) = panels::panel_button_at(x, y) {
         return session_panel_button(app, button, x, online);
     }
@@ -2697,7 +2805,15 @@ fn session_chrome_left_click(app: &mut App, x: i32, y: i32, online: bool) -> Tra
 }
 
 /// 1:1 panel button: End Turn, toggles, zoom, minimap, menu.
-fn session_panel_button(app: &mut App, button: PanelButton, x: i32, online: bool) -> Transition {
+fn session_panel_button<D: Dispatcher>(
+    app: &mut App<D>,
+    button: PanelButton,
+    x: i32,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     // Panel buttons — `PlaySfx(MBUTT0)` (`game_manager.cpp:5446/5692/5713`).
     app.play_sfx(Sfx::Button);
 
@@ -2801,13 +2917,16 @@ fn debug_input() -> bool {
 }
 
 /// Selection/attack by a **map camera** point (448×448 with chrome).
-fn session_map_left_click(
-    app: &mut App,
+fn session_map_left_click<D: Dispatcher>(
+    app: &mut App<D>,
     viewport: &Viewport,
     x: i32,
     y: i32,
     online: bool,
-) -> Transition {
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6711`): releasing LMB
     // on the map — `PlaySfx(KCARG0)`.
     app.play_sfx(Sfx::Click);
@@ -2866,9 +2985,10 @@ fn session_map_left_click(
                     app.state_ref().is_within_attack_range(
                         unit,
                         cell,
-                        i32::from(unit.base_values.get_attribute(
-                            max_core::unit_values::ATTRIB_RANGE,
-                        )),
+                        i32::from(
+                            unit.base_values
+                                .get_attribute(max_core::unit_values::ATTRIB_RANGE),
+                        ),
                     )
                 });
 
@@ -3011,11 +3131,13 @@ fn session_map_left_click(
         // unit — `ORDER_MOVE_TO_UNIT` into its cell (boarding a transport).
         if app.hud().enter_mode {
             if let Some(selected) = selected.filter(|selected| *selected != id) {
-                if let Some(command) = crate::unitmenu::enter_mode_click(app.state_ref(), selected, id)
+                if let Some(command) =
+                    crate::unitmenu::enter_mode_click(app.state_ref(), selected, id)
                 {
                     app.hud_mut().pending.push(command);
                     app.hud_mut().enter_mode = false;
-                    app.hud_mut().push_log(format!("Enter: move to unit ({label})"));
+                    app.hud_mut()
+                        .push_log(format!("Enter: move to unit ({label})"));
                     if !online {
                         apply_pending_orders(app);
                     }
@@ -3082,7 +3204,8 @@ fn session_map_left_click(
                 };
                 // `GameManager_StealUnit`/`DisableUnit` — target selection like KCARG0.
                 app.play_sfx(Sfx::Click);
-                app.hud_mut().push_log(format!("{label}: действие назначено"));
+                app.hud_mut()
+                    .push_log(format!("{label}: действие назначено"));
                 if !online {
                     apply_pending_orders(app);
                 }
@@ -3123,7 +3246,10 @@ fn session_map_left_click(
 /// completion: N.» (`ee24`), for a completed one (`ORDER_STATE_UNIT_READY`) —
 /// «Finished building X. …» (`276c`). For other units the message window
 /// is closed, like `MessageManager_ClearMessageBox` in `GameManager_UnitSelect`.
-fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
+fn session_show_unit_status<D: Dispatcher>(app: &mut App<D>, id: max_core::unit::UnitId)
+where
+    App<D>: SessionLocal,
+{
     let message = app
         .state_ref()
         .unit(id)
@@ -3136,14 +3262,25 @@ fn session_show_unit_status(app: &mut App, id: max_core::unit::UnitId) {
 }
 
 /// Right button without chrome.
-fn session_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+fn session_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32, online: bool) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let viewport = *app.viewport();
 
     session_map_right_click(app, &viewport, x, y, online)
 }
 
 /// Right button with chrome: first the panels (they give no order), then the map.
-fn session_chrome_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Transition {
+fn session_chrome_right_click<D: Dispatcher>(
+    app: &mut App<D>,
+    x: i32,
+    y: i32,
+    online: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     if panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y) {
         return Transition::None;
     }
@@ -3156,13 +3293,16 @@ fn session_chrome_right_click(app: &mut App, x: i32, y: i32, online: bool) -> Tr
 }
 
 /// Right click on the map: cancel on a unit, otherwise a move order to the cell.
-fn session_map_right_click(
-    app: &mut App,
+fn session_map_right_click<D: Dispatcher>(
+    app: &mut App<D>,
     viewport: &Viewport,
     x: i32,
     y: i32,
     online: bool,
-) -> Transition {
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
     let team = app.player_team();
     let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
     let debug = debug_input();
@@ -3246,7 +3386,11 @@ fn session_map_right_click(
     // Aviation moves via `ORDER_MOVE`/`INIT` (packet 08/P3): the `AirPath` is built
     // by the simulation (`Paths_GetAirPath`), and `unit_can_move` deliberately
     // excludes `MOBILE_AIR_UNIT` (the ground `Packet38Move` does not suit it).
-    if app.state_ref().unit(selected).is_some_and(|unit| unit.is_air()) {
+    if app
+        .state_ref()
+        .unit(selected)
+        .is_some_and(|unit| unit.is_air())
+    {
         match hud::build_air_move_order(app.state_ref(), selected, destination) {
             Some(command) => {
                 app.hud_mut().preview = None;
@@ -3268,7 +3412,10 @@ fn session_map_right_click(
         return Transition::None;
     }
 
-    let can_move = app.state_ref().unit(selected).is_some_and(hud::unit_can_move);
+    let can_move = app
+        .state_ref()
+        .unit(selected)
+        .is_some_and(hud::unit_can_move);
 
     if !can_move {
         if debug {
@@ -3371,7 +3518,10 @@ fn session_map_right_click(
 
 /// End Turn: in a local match — the AI turn, in the network — a flag for the game loop
 /// (`06`+`52` there), in demo — a local pass of [`App::end_turn`].
-fn session_end_turn(app: &mut App, online: bool) {
+fn session_end_turn<D: Dispatcher>(app: &mut App<D>, online: bool)
+where
+    App<D>: SessionLocal,
+{
     if app.local_active() {
         app.local_end_turn();
     } else if online {
@@ -3383,7 +3533,10 @@ fn session_end_turn(app: &mut App, online: bool) {
 }
 
 /// Applies the accumulated orders locally (demo mode) and writes about it to the log.
-fn apply_pending_orders(app: &mut App) {
+fn apply_pending_orders<D: Dispatcher>(app: &mut App<D>)
+where
+    App<D>: SessionLocal,
+{
     let applied = app.flush_orders();
 
     if applied > 0 {
@@ -3411,7 +3564,10 @@ fn unit_label(unit: &UnitInfo) -> String {
 /// over the map area. Without chrome — the former look.
 ///
 /// Without `App` (headless rendering before the network) the former background with the status line remains.
-fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
+fn render_session<D: Dispatcher>(buffer: &mut RgbaBuffer, view: ScreenView<'_, D>)
+where
+    App<D>: SessionLocal,
+{
     if let Some(app) = view.app {
         let frame = app.render_frame();
         blit(buffer, &frame);
@@ -3431,9 +3587,7 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
             // The extraction allocation dialog (`AllocMenu`) occupies the whole 640×480
             // frame (`ALLOCFRM`), so the status line is not drawn over
             // it — like a modal C++ window.
-            if app.build_menu().is_none()
-                && app.save_load().is_none()
-                && app.alloc_menu().is_none()
+            if app.build_menu().is_none() && app.save_load().is_none() && app.alloc_menu().is_none()
             {
                 if let Some(assets) = app.assets() {
                     max_render::text::draw_text_gnw_shadowed(
@@ -3487,7 +3641,10 @@ fn render_session(buffer: &mut RgbaBuffer, view: ScreenView<'_>) {
 ///
 /// Drawn only when `LocalGame::notice` is open — i.e. in hot-seat on
 /// a human team change (`GameManager_UpdateGuiControl`).
-fn draw_local_notice(buffer: &mut RgbaBuffer, app: &App, mouse: Option<Point>) {
+fn draw_local_notice<D: Dispatcher>(buffer: &mut RgbaBuffer, app: &App<D>, mouse: Option<Point>)
+where
+    App<D>: SessionLocal,
+{
     let Some(notice) = app.local_notice() else {
         return;
     };
@@ -4789,7 +4946,10 @@ mod tests {
 
         // A click on the `PLAY_MODE` element (426..632, 39..227) opens the entry.
         screen.handle_input(&mut ctx, InputEvent::MouseClick(529, 133));
-        if let Screen::Help { help: Some(help), .. } = &screen {
+        if let Screen::Help {
+            help: Some(help), ..
+        } = &screen
+        {
             assert_eq!(help.section(), HelpSection::Options);
             assert_eq!(help.entry_name(), Some("PLAY_MODE"));
         } else {
@@ -4799,11 +4959,16 @@ mod tests {
         // `PageDown` scrolls the entry; `Esc` closes the window and returns to the
         // mode (C++ `HelpMenu::Run` returns to `HelpMenu_Menu`).
         let rows_before = match &screen {
-            Screen::Help { help: Some(help), .. } => help.line_count(),
+            Screen::Help {
+                help: Some(help), ..
+            } => help.line_count(),
             _ => 0,
         };
         screen.handle_input(&mut ctx, InputEvent::Key(Key::PageDown));
-        if let Screen::Help { help: Some(help), .. } = &screen {
+        if let Screen::Help {
+            help: Some(help), ..
+        } = &screen
+        {
             if rows_before > crate::helpmenu::ROWS_PER_PAGE {
                 assert_eq!(help.row_index(), crate::helpmenu::ROWS_PER_PAGE);
             } else {
@@ -4833,7 +4998,9 @@ mod tests {
 
         let (_ctx, _log) = context(Vec::new(), None);
         let mut app = App::new(AppConfig::default());
-        let id = app.universe_mut().spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
+        let id = app
+            .universe_mut()
+            .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("center");
         let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
@@ -4877,7 +5044,9 @@ mod tests {
         use max_core::team::TeamId;
 
         let mut app = App::new(AppConfig::default());
-        let id = app.universe_mut().spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+        let id = app
+            .universe_mut()
+            .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
             .expect("unit");
         let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::Await;

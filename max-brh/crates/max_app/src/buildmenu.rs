@@ -1371,7 +1371,7 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 // Integration with the application
 // ---------------------------------------------------------------------------
 
-impl crate::App {
+impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// Modal input of `BuildMenu` (C++ `AbstractBuildMenu::Run`).
     ///
     /// `None` — the screen is not open (input goes to the HUD). While the screen is open, the map and

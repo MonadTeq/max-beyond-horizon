@@ -1094,6 +1094,22 @@ impl<D: Dispatcher> GameUniverse<D> {
         Self::new(GameState::with_setup(map, team_kinds), dispatcher)
     }
 
+    /// Replaces the world with a fresh `GameState::with_setup` state, keeping the
+    /// dispatcher (stage C §4.1, A3).
+    ///
+    /// The counterpart of [`Self::with_setup_and_dispatcher`] for a universe that
+    /// already owns its transport policy: the common world generator of the local
+    /// and the network constructors writes the generated state **in place**, so the
+    /// large state is never returned or moved by value. The facade counters
+    /// (`seq`, `outgoing`) and the event bus start over — exactly the state after
+    /// the constructor above, so the canonical bytes are identical.
+    pub fn reset_world(&mut self, map: Map, team_kinds: [TeamKind; PLAYER_TEAM_COUNT]) {
+        self.state = GameState::with_setup(map, team_kinds);
+        self.seq = 0;
+        self.outgoing.clear();
+        self.bus = EventBus::default();
+    }
+
     // — the dispatcher: the asynchronous driver's entry point (A2) —
 
     /// The transport policy stored in this universe (A2).
