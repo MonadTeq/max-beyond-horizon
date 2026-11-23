@@ -511,7 +511,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
         if online {
             self.hud.pending.push(command);
         } else {
-            self.apply(command);
+            self.apply_immediate(command);
         }
 
         Some(format!(

@@ -45,7 +45,7 @@ fn app() -> Option<App> {
 
     app.init_assets().ok()?;
 
-    let state = app.universe_mut();
+    let state = &mut app.universe;
     state.set_player_team(TeamId::RED);
     state.team_units_table_mut()[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
 
@@ -55,11 +55,11 @@ fn app() -> Option<App> {
 /// A unit in the match: `spawn_unit` + `DeployUnit` (a new unit has `storage = 0`).
 fn spawn(app: &mut App, unit_type: UnitType, grid: Point) -> UnitId {
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(unit_type, TeamId::RED, grid, 0)
         .expect("юнит создан");
 
-    app.universe_mut().unit_mut(id).expect("юнит").storage = 0;
+    app.universe.unit_mut(id).expect("юнит").storage = 0;
 
     id
 }

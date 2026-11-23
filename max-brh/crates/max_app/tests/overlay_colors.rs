@@ -57,11 +57,11 @@ fn app_with_assets() -> Option<App> {
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
     for index in 0..4 {
-        app.universe_mut().teams_mut()[index].team_type = TeamKind::Player;
-        app.universe_mut().team_units_table_mut()[index] = max_core::TeamUnits::with_clan(TeamClan::Random);
+        app.universe.teams_mut()[index].team_type = TeamKind::Player;
+        app.universe.team_units_table_mut()[index] = max_core::TeamUnits::with_clan(TeamClan::Random);
     }
     for index in 4..app.state_ref().teams().len() {
-        app.universe_mut().teams_mut()[index].team_type = TeamKind::None;
+        app.universe.teams_mut()[index].team_type = TeamKind::None;
     }
     app.viewport_mut().set_zoom(64);
 
@@ -89,7 +89,7 @@ fn colors_frame_uses_the_team_color() {
     let mut ids = Vec::new();
     for (index, team) in teams.iter().enumerate() {
         let id = app
-            .universe_mut()
+            .universe
             .spawn_unit(
                 UnitType::Tank,
                 *team,
@@ -98,7 +98,7 @@ fn colors_frame_uses_the_team_color() {
             )
             .expect("tank");
         // Visually visible to the player (RED) — otherwise the map does not draw it.
-        if let Some(unit) = app.universe_mut().unit_mut(id) {
+        if let Some(unit) = app.universe.unit_mut(id) {
             unit.visible_to_team = [true; 5];
         }
         assert_eq!(
@@ -180,10 +180,10 @@ fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
     };
 
     let alien = app
-        .universe_mut()
+        .universe
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(20, 30), 0)
         .expect("alien tank");
-    if let Some(unit) = app.universe_mut().unit_mut(alien) {
+    if let Some(unit) = app.universe.unit_mut(alien) {
         unit.visible_to_team = [true; 5];
     }
     app.viewport_mut().center_on_grid(20, 30);
@@ -199,7 +199,7 @@ fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
     );
 
     // C++ draws COLORS only for **non**-stationary (`!(flags & STATIONARY)`).
-    app.universe_mut()
+    app.universe
         .spawn_unit(UnitType::LightVehiclePlant, TeamId::RED, Point::new(60, 60), 0)
         .expect("factory");
     app.hud_mut().panels.colors = false;

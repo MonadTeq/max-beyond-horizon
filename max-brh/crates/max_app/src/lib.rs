@@ -14,7 +14,7 @@
 //! | [`App::load_game`] / [`App::load_save`] | V70 save → [`max_core::game::GameState`] (`SaveLoad_LoadFormatV70` normalizations) |
 //! | [`App::new_game`] / [`App::new_game_on_surface`] | `setup::generate_map` + settings + alien debris |
 //! | [`App::tick`] | one simulation tick (`GameManager_ProcessTick`) |
-//! | [`App::apply`] | `max_core::input::Command` command (network packet or local input) |
+//! | [`App::submit`] | the single lockstep entry: queues a `max_core::input::Command` (network packet or local input) |
 //! | [`App::render_frame`] | a [`max_render::buffer::RgbaBuffer`] frame without SDL |
 //! | [`hud::render_hud`] | HUD (M4.2): minimap, unit panel, log, resources, buttons |
 //! | [`audio::AudioPlayer`] | sound (M6.2): WAV clips, `play_once`/`play_loop`; output — behind the `sound` feature |
@@ -98,7 +98,7 @@ use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::universe::{
-    Dispatcher, GameEvent, GameUniverse, LocalDispatcher, RemoteCommand, StateRef, SubmitOutcome,
+    Dispatcher, GameEvent, GameUniverse, LocalDispatcher, StateRef, SubmitOutcome,
 };
 use max_core::{SurfaceMap, UnitType};
 use max_render::viewport::Viewport;
@@ -553,11 +553,13 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     config: AppConfig,
     /// The owning facade over the match state (stage A).
     ///
-    /// The state itself is not a field of `App`: the facade owns it and exposes
-    /// [`App::state`]/[`App::state_mut`] as temporary stage-A delegates
-    /// (`game-universe-stage-a.md` §4). The dispatcher type is the `App` parameter:
-    /// the universe and the application share the same transport policy.
-    universe: GameUniverse<D>,
+    /// The `GameState` is not a field of `App`: the facade owns it and is the only
+    /// mutable entry to the world. Stage C §5 removed the accessor bridge of
+    /// stage B, so the facade is reached as a field: the driver uses it in-crate
+    /// (`self.universe…`), while integration tests use its documented config/test
+    /// layer. The dispatcher type is the `App` parameter: the universe and the
+    /// application share the same transport policy.
+    pub universe: GameUniverse<D>,
     /// The application event cursor (stage A: the combat sounds of a tick are read
     /// from the facade event stream, see [`App::tick`]).
     universe_events: max_core::universe::EventStream,
@@ -819,7 +821,8 @@ pub struct OrderSnapshot {
 }
 
 // Dispatcher-agnostic surface (`game-universe-stage-c.md` §2): simulation, the
-// HUD/menu/UI layers, rendering and the temporary network bridge.
+// HUD/menu/UI layers and rendering. The temporary network bridge of §2 is removed
+// in §5 — the driver reaches the facade through the `universe` field.
 impl<D: Dispatcher> App<D> {
     /// Configuration.
     pub fn config(&self) -> &AppConfig {
@@ -967,55 +970,29 @@ impl<D: Dispatcher> App<D> {
 
     /// Submits a command through the facade (the single point of change).
     ///
-    /// Stage A keeps [`App::apply`]/[`App::enqueue`] for the paths that are not
-    /// migrated yet; the migrated paths take this one.
+    /// This is the lockstep entry: the facade routes it (`Local`/`Broadcast`/
+    /// `Drop`), queues it and plans the outgoing DTOs. The immediate barrier/FSM
+    /// packets do not come here (stage C §5; decisions A5/A6).
     pub fn submit(&mut self, command: Command) -> SubmitOutcome {
         self.universe.submit(command)
     }
 
-    /// The facade instance (stage B step 1, temporary access for the network driver).
+    /// Applies a command immediately and counts it (the FSM/immediate channel).
     ///
-    /// The bridge is re-typed to `D` in stage C §2 and stays until §5: the driver
-    /// reaches the barrier FSM through it while the network path still lives in
-    /// `max_app::net`. The barrier FSM reads the counters through [`App::state_ref`]
-    /// and steps them through the facade passthroughs
-    /// (`GameUniverse::step_*_barrier`), which needs a direct facade reference.
-    pub fn universe(&self) -> &GameUniverse<D> {
-        &self.universe
-    }
+    /// Stage C §5 removed the public `App::apply` bridge: the lockstep path is
+    /// [`App::submit`]. The HUD order flush, the build menus and the network
+    /// pacing packet (`01`) still need the effect before the next tick, so they
+    /// call the facade FSM channel [`GameUniverse::apply_now`] here, and the
+    /// diagnostic counter [`App::applied_commands`] keeps counting only the
+    /// commands that the application applies itself.
+    fn apply_immediate(&mut self, command: Command) -> ApplyOutcome {
+        let outcome = self.universe.apply_now(command);
 
-    /// The facade instance, mutable (stage B step 1, see [`App::universe`]).
-    pub fn universe_mut(&mut self) -> &mut GameUniverse<D> {
-        &mut self.universe
-    }
-
-    /// Applies a transport DTO that arrived from a peer (stage B step 1).
-    ///
-    /// The network driver no longer calls `apply`/`apply_state_sync` directly: a
-    /// peer packet enters the application as the facade `RemoteCommand`.
-    ///
-    /// **Behaviour bridge (§2.3 of the stage B task).** The facade receive policy
-    /// (`NetworkDispatcher::receive` → `Replay`) queues a command until the next
-    /// `tick`, while the barrier-consent counters (00/52/45) must be visible to
-    /// the barrier wait immediately — `net::wait_barrier` does not tick. Routing
-    /// peer packets through `GameUniverse::submit_remote` therefore becomes
-    /// possible only when the universe itself owns `NetworkDispatcher` (§6).
-    /// Until then the DTO keeps the current immediate semantics, in the same place
-    /// `handle_session_event` had it before.
-    pub fn submit_remote(&mut self, command: RemoteCommand) -> ApplyOutcome {
-        match command {
-            RemoteCommand::Command(command) => self.apply(command),
-            RemoteCommand::StateSync(packet) => self.universe.apply_state_sync(&packet),
+        if outcome == ApplyOutcome::Applied {
+            self.applied_commands += 1;
         }
-    }
 
-    /// Applies the commands that are already queued (a configuration boundary).
-    ///
-    /// Used where the current code must see a lobby packet before the world is
-    /// regenerated (`net::initialize_game` reads the mission supplies) — the
-    /// equivalent of the first tick's `apply_pending_commands`.
-    pub fn flush_commands(&mut self) -> usize {
-        self.universe.flush_commands()
+        outcome
     }
 
     /// Open `BuildMenu` (P2); `None` — the screen is closed.
@@ -1097,7 +1074,7 @@ impl<D: Dispatcher> App<D> {
     /// documented in `upgrademenu` (module header).
     pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.upgrade_menu.take()?;
-        let changed = menu.commit(self.universe_mut());
+        let changed = menu.commit(&mut self.universe);
 
         if online {
             for (unit_type, values) in &changed {
@@ -1220,7 +1197,7 @@ impl<D: Dispatcher> App<D> {
     /// `GameState` (`set_research_allocation`) and close the screen.
     pub fn commit_research_menu(&mut self) -> Option<String> {
         let mut menu = self.research_menu.take()?;
-        let actual = menu.commit(self.universe_mut());
+        let actual = menu.commit(&mut self.universe);
         let total: u32 = actual.iter().sum();
 
         Some(format!("Research: {} center(s) assigned (Done)", total))
@@ -1435,7 +1412,7 @@ impl<D: Dispatcher> App<D> {
             return false;
         }
 
-        let Some(menu) = allocmenu::AllocMenu::new(self.universe_mut(), id) else {
+        let Some(menu) = allocmenu::AllocMenu::new(&mut self.universe, id) else {
             return false;
         };
 
@@ -1460,7 +1437,7 @@ impl<D: Dispatcher> App<D> {
         let Some(mut menu) = self.alloc_menu.take() else {
             return None;
         };
-        let action = menu.input(self.universe_mut(), event);
+        let action = menu.input(&mut self.universe, event);
         self.alloc_menu = Some(menu);
         Some(action)
     }
@@ -1470,7 +1447,7 @@ impl<D: Dispatcher> App<D> {
         let Some(mut menu) = self.alloc_menu.take() else {
             return false;
         };
-        menu.set_level(self.universe_mut(), kind, target);
+        menu.set_level(&mut self.universe, kind, target);
         self.alloc_menu = Some(menu);
         true
     }
@@ -1481,9 +1458,9 @@ impl<D: Dispatcher> App<D> {
             return false;
         };
         let changed = if increase {
-            menu.increase(self.universe_mut(), kind)
+            menu.increase(&mut self.universe, kind)
         } else {
-            menu.decrease(self.universe_mut(), kind)
+            menu.decrease(&mut self.universe, kind)
         };
         self.alloc_menu = Some(menu);
         changed
@@ -1595,7 +1572,7 @@ impl<D: Dispatcher> App<D> {
             return false;
         };
 
-        if let Some(unit) = self.universe_mut().unit_mut(source) {
+        if let Some(unit) = self.universe.unit_mut(source) {
             unit.parent_unit = Some(target);
         }
 
@@ -1637,7 +1614,7 @@ impl<D: Dispatcher> App<D> {
         }
 
         // `unit1->transfer_cargo = cargo_transferred` before `SendNetPacket_08`.
-        if let Some(unit) = self.universe_mut().unit_mut(menu.unit) {
+        if let Some(unit) = self.universe.unit_mut(menu.unit) {
             unit.transfer_cargo = amount;
             unit.parent_unit = Some(menu.target);
         }
@@ -1863,7 +1840,7 @@ impl<D: Dispatcher> App<D> {
                 }
             }
             unitmenu::ItemId::Auto => {
-                let Some(unit) = self.universe_mut().unit_mut(unit_id) else {
+                let Some(unit) = self.universe.unit_mut(unit_id) else {
                     return Some("Auto: юнит исчез".to_string());
                 };
                 unit.auto_survey = !unit.auto_survey;
@@ -1962,7 +1939,7 @@ impl<D: Dispatcher> App<D> {
                     .is_some_and(|unit| unit.is_quad());
                 let clearing_time = if rubble_is_building { 4 } else { 1 };
 
-                if let Some(unit) = self.universe_mut().unit_mut(unit_id) {
+                if let Some(unit) = self.universe.unit_mut(unit_id) {
                     unit.parent_unit = Some(rubble);
                     unit.build_time = clearing_time;
                 }
@@ -2257,7 +2234,7 @@ impl<D: Dispatcher> App<D> {
         // does not grow over tens of thousands of soak frames.
         const MAX_QUEUED: usize = 64;
 
-        let events = self.universe_mut().take_unit_sounds();
+        let events = self.universe.take_unit_sounds();
         let mut added = 0;
 
         for event in events {
@@ -3291,25 +3268,6 @@ impl<D: Dispatcher> App<D> {
         }
     }
 
-    /// Applies a command immediately (the caller sets the command order).
-    ///
-    /// For the network/lockstep loop commands come in [`max_net::SessionEvent`]
-    /// and are applied in receipt order — exactly like `ProcessNetPackets`.
-    pub fn apply(&mut self, command: Command) -> ApplyOutcome {
-        let outcome = self.universe.apply_now(command.clone());
-
-        if outcome == ApplyOutcome::Applied {
-            self.applied_commands += 1;
-        }
-
-        outcome
-    }
-
-    /// Puts a command into the `GameState` queue (applied on the next tick).
-    pub fn enqueue(&mut self, command: Command) {
-        let _ = self.universe.submit(command);
-    }
-
     /// Canonical state digest.
     pub fn digest(&self) -> AppDigest {
         AppDigest::capture(self.state_ref(), self.ticks)
@@ -3426,7 +3384,7 @@ impl App<LocalDispatcher> {
         // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
         // the timers into the settings).
         let enemy_halt = self.preferences.enemy_halt;
-        self.universe_mut().set_enemy_halt(enemy_halt);
+        self.universe.set_enemy_halt(enemy_halt);
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();

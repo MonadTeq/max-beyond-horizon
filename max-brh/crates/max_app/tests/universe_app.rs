@@ -9,8 +9,8 @@
 //! * `App::tick` goes through the facade and adds nothing to the simulation state:
 //!   a run through [`App::tick`] is byte-identical to a run through
 //!   `GameState::tick`;
-//! * `App::submit` reaches the same state as [`App::enqueue`] (the single command
-//!   path of stage A).
+//! * `App::submit` is a 1:1 facade call: it reaches the same state as the
+//!   `GameUniverse::submit` it delegates to (stage C §5 removed the bridge).
 
 use max_app::net::dispatcher::NetworkDispatcher;
 use max_app::{App, AppConfig};
@@ -25,10 +25,10 @@ use max_core::universe::{GameUniverse, SubmitOutcome};
 
 fn app() -> App {
     let mut app = App::new(AppConfig::default());
-    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
-    app.universe_mut().teams_mut()[1].team_type = TeamKind::Computer;
-    app.universe_mut().team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
-    app.universe_mut().team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
+    app.universe.teams_mut()[0].team_type = TeamKind::Player;
+    app.universe.teams_mut()[1].team_type = TeamKind::Computer;
+    app.universe.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    app.universe.team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
     app
 }
 
@@ -60,7 +60,7 @@ fn state_ref_is_the_canonical_state_of_the_app() {
 
     // `Q22`: the presentation fields are part of the facade snapshot.
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(
             max_core::enums::UnitType::Tank,
             TeamId::RED,
@@ -92,7 +92,7 @@ fn app_tick_adds_nothing_to_the_simulation_state() {
 
     for _ in 0..5 {
         facade.tick();
-        direct.universe_mut().tick();
+        direct.universe.tick();
     }
 
     assert_eq!(
@@ -114,28 +114,28 @@ fn app_tick_adds_nothing_to_the_simulation_state() {
 }
 
 #[test]
-fn app_submit_and_enqueue_reach_the_same_state() {
+fn app_submit_matches_the_facade_queue() {
     let mut submitted = app();
-    let mut enqueued = app();
+    let mut direct = app();
 
     for command in commands() {
         assert_eq!(submitted.submit(command.clone()), SubmitOutcome::Accepted);
-        enqueued.enqueue(command);
+        direct.universe.submit(command);
     }
 
     for _ in 0..4 {
         submitted.tick();
-        enqueued.tick();
+        direct.tick();
     }
 
     assert_eq!(
         submitted.snapshot(),
-        enqueued.snapshot(),
-        "App::submit must feed the same queue as App::enqueue"
+        direct.snapshot(),
+        "App::submit must feed the same queue as the facade submit"
     );
     assert_eq!(
         submitted.digest().state_digest,
-        enqueued.digest().state_digest
+        direct.digest().state_digest
     );
 }
 
@@ -145,7 +145,7 @@ fn app_order_command_travels_through_the_facade() {
     // that applies it — the documented one-command stage of the single path.
     let mut app = app();
     let red = app
-        .universe_mut()
+        .universe
         .spawn_unit(
             max_core::enums::UnitType::Tank,
             TeamId::RED,
@@ -153,8 +153,8 @@ fn app_order_command_travels_through_the_facade() {
             max_core::enums::unit_flags::MOBILE_LAND_UNIT | max_core::enums::unit_flags::SELECTABLE,
         )
         .expect("tank");
-    app.universe_mut().set_active_turn_team(TeamId::RED);
-    app.universe_mut().set_player_team(TeamId::RED);
+    app.universe.set_active_turn_team(TeamId::RED);
+    app.universe.set_player_team(TeamId::RED);
 
     let order = command_move_linear(
         red,

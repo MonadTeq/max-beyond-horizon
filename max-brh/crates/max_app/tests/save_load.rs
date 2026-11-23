@@ -342,7 +342,7 @@ fn local_load_resumes_without_replaying_the_turn_economy() {
     // The builder is injected after the round entry, so its storage records the
     // number of economy passes after the save only.
     let builder = app
-        .universe_mut()
+        .universe
         .spawn_unit(
             max_core::UnitType::Constructor,
             TeamId::RED,
@@ -358,7 +358,7 @@ fn local_load_resumes_without_replaying_the_turn_economy() {
         unit.build_rate = 1;
         unit.orders = max_core::UnitOrder::Build;
         unit.state = max_core::UnitOrderState::ExecutingOrder;
-        app.universe_mut().write_unit(builder, unit);
+        app.universe.write_unit(builder, unit);
     }
 
     let bytes = app

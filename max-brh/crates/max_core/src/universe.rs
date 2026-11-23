@@ -1677,23 +1677,36 @@ impl<D: Dispatcher> GameUniverse<D> {
         crate::alloc::balance(&mut self.state, team, complex, kind, material1, material2)
     }
 
-    // — stage B §6: the legacy `App::apply`/`flush_commands` bridges —
+    // — stage C §5: the barrier-FSM channel —
     //
-    // `App::apply` (an immediate application, used by the HUD/menu input and the
-    // network driver before the lockstep path is switched over) and
-    // `App::flush_commands` (the lobby configuration boundary) have no `submit`
-    // equivalent: `submit` queues, while these call sites observe the outcome or
-    // need the packets applied before the world is regenerated. They stay as
-    // documented facade passthroughs until the network path owns
-    // `GameUniverse<NetworkDispatcher>`; they do not bump `seq` (the old code did
-    // not either), so they are not state versions.
+    // `apply_now`/`flush_commands`/`apply_state_sync`/`apply_barrier` are the
+    // **immediate** channel of the barrier FSM (`max_app::NetworkDispatcher`), not
+    // the lockstep `submit` path: the barrier wait (`net::wait_barrier`) and the
+    // per-frame pacing packet (`01`, decision A5) observe the effect before the
+    // next `tick`, and the consent counters they touch are simulation state
+    // (`snapshot_bytes`), so a queued replay would shift them by a tick. Peer
+    // packets reach this channel only through [`Self::submit_remote`]
+    // (`RemoteHandling::ApplyBarrier`/`ApplyStateSync`); the application's
+    // immediate commands (`06`/`01`) use `apply_now` directly. They are not a
+    // second lockstep API: `apply_now`/`flush_commands` do not bump `seq`.
 
-    /// Applies a command right away — the temporary `App::apply` bridge (§6).
+    /// Applies a command right away — the **FSM channel** (stage C §5).
+    ///
+    /// The barrier FSM and the immediate command paths (`06`/`01`, decision A5)
+    /// need the effect before the next `tick`, which the lockstep [`Self::submit`]
+    /// cannot give (it only queues). The outcome is observable by the caller —
+    /// exactly like `Remote_ReceiveNetPacket` — and the call is not a state
+    /// version (`seq` unchanged), so it never shifts the snapshot/CRC.
     pub fn apply_now(&mut self, command: Command) -> ApplyOutcome {
         events::apply_command(&mut self.state, &command)
     }
 
-    /// Applies the already queued commands (`GameState::apply_pending_commands`).
+    /// Applies the already queued commands — the **FSM/config boundary** (§5).
+    ///
+    /// `GameState::apply_pending_commands` at a configuration boundary where the
+    /// caller must observe the queued lobby packets before the world is regenerated
+    /// (`net::initialize_game` reads the mission supplies); the regular path
+    /// applies the queue inside [`Self::tick`].
     pub fn flush_commands(&mut self) -> usize {
         self.state.apply_pending_commands()
     }
@@ -1720,15 +1733,20 @@ impl<D: Dispatcher> GameUniverse<D> {
         self.state.take_unit_sounds()
     }
 
-    /// Applies an authoritative state sync (packet 54) immediately; counts as a
-    /// state version, like the [`Self::submit_remote`] branch (owner decision 2).
+    /// Applies an authoritative state sync (packet 54) immediately — the **FSM
+    /// channel** (stage C §5).
+    ///
+    /// Packet 54 is authoritative state, not an intent, so [`Self::submit_remote`]
+    /// (`RemoteHandling::ApplyStateSync`) applies it without waiting for a tick;
+    /// it counts as a state version, like that branch (owner decision 2).
     pub fn apply_state_sync(&mut self, packet: &StateSyncPacket) -> ApplyOutcome {
         let outcome = events::apply_state_sync(&mut self.state, packet);
         self.seq += 1;
         outcome
     }
 
-    /// Applies a barrier-consent packet (`00`/`52`/`45`) immediately (A4).
+    /// Applies a barrier-consent packet (`00`/`52`/`45`) immediately — the **FSM
+    /// channel** (stage C §5, decision A4).
     ///
     /// Barrier packets are read by the synchronous barrier wait
     /// (`net::wait_barrier`), so they cannot wait for the next `tick`; the state

@@ -506,10 +506,10 @@ impl QaRunner {
             .ok_or_else(|| format!("spawn {name}: нет свободной клетки рядом с {anchor:?}"))?;
 
         let flags = max_core::access::unit_type_flags(unit_type);
-        let id = self.app.universe_mut().spawn_unit(unit_type, team, cell, flags)
+        let id = self.app.universe.spawn_unit(unit_type, team, cell, flags)
             .ok_or_else(|| format!("spawn {name}: не удалось поставить юнита"))?;
 
-        if let Some(unit) = self.app.universe_mut().unit_mut(id) {
+        if let Some(unit) = self.app.universe.unit_mut(id) {
             unit.set_visible_to_team(player, true);
         }
 
@@ -579,10 +579,10 @@ impl QaRunner {
         }
 
         let flags = max_core::access::unit_type_flags(unit_type);
-        let id = self.app.universe_mut().spawn_unit(unit_type, team, cell, flags)
+        let id = self.app.universe.spawn_unit(unit_type, team, cell, flags)
             .ok_or_else(|| format!("spawn at: не удалось поставить юнита {name}"))?;
 
-        if let Some(unit) = self.app.universe_mut().unit_mut(id) {
+        if let Some(unit) = self.app.universe.unit_mut(id) {
             unit.set_visible_to_team(player, true);
         }
 
@@ -712,7 +712,7 @@ impl QaRunner {
             gold.map_or_else(|| i32::from(target.gold).to_string(), |v| v.to_string()),
         );
 
-        self.app.universe_mut().complex_transfer(
+        self.app.universe.complex_transfer(
             team,
             complex,
             delta_raw,
@@ -757,7 +757,7 @@ impl QaRunner {
         };
 
         let team = self.app.player_team();
-        let Some(units) = self.app.universe_mut().team_units_mut(team) else {
+        let Some(units) = self.app.universe.team_units_mut(team) else {
             return Err("teamvalues: у команды нет TeamUnits".to_string());
         };
         units
@@ -4410,11 +4410,11 @@ impl QaRunner {
                 let mut parts = Vec::new();
 
                 for (id, unit_type) in &decals {
-                    if let Some(unit) = self.app.universe_mut().unit_mut(*id) {
+                    if let Some(unit) = self.app.universe.unit_mut(*id) {
                         unit.set_visible_to_team(team, false);
                     }
                     let hidden = self.app.render_frame();
-                    if let Some(unit) = self.app.universe_mut().unit_mut(*id) {
+                    if let Some(unit) = self.app.universe.unit_mut(*id) {
                         unit.set_visible_to_team(team, true);
                     }
 

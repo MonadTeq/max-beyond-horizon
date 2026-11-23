@@ -943,7 +943,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             self.preferences().turn_timer.max(0),
             self.preferences().endturn.max(0),
         );
-        let meta = self.universe_mut().save_meta_mut();
+        let meta = self.universe.save_meta_mut();
         SaveMeta::set_name(&mut meta.save_name, save_name);
         meta.turn_timer = timer_left;
         meta.turn_timer_time = turn_timer.clamp(0, i32::from(u16::MAX)) as u16;

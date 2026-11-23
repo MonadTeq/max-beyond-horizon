@@ -69,11 +69,11 @@ fn run(out: &Path) -> Result<(), String> {
     app.init_assets()
         .map_err(|error| format!("ассеты игры: {error}"))?;
 
-    app.universe_mut().team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
-    *app.universe_mut().team_units_mut(TeamId::RED).expect("RED economy") =
+    app.universe.team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
+    *app.universe.team_units_mut(TeamId::RED).expect("RED economy") =
         TeamUnits::with_clan(TeamClan::Random);
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(
             UnitType::Scout,
             TeamId::RED,
@@ -81,7 +81,7 @@ fn run(out: &Path) -> Result<(), String> {
             unit_flags::MOBILE_LAND_UNIT | unit_flags::SELECTABLE,
         )
         .ok_or("не удалось выставить Scout")?;
-    app.universe_mut()
+    app.universe
         .unit_mut(id)
         .ok_or("юнит не найден")?
         .visible_to_team = [true; 5];
@@ -102,7 +102,7 @@ fn run(out: &Path) -> Result<(), String> {
             PathStep::new(0, -1),
         ],
     }));
-    app.universe_mut().write_unit(id, unit);
+    app.universe.write_unit(id, unit);
 
     app.viewport_mut().center_on_grid(11, 9);
     app.update_visual_units(0.0);

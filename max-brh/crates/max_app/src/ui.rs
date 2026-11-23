@@ -2716,7 +2716,7 @@ where
     if online {
         app.hud_mut().pending.push(command);
     } else {
-        app.apply(command);
+        app.apply_immediate(command);
     }
 
     Transition::None
@@ -3192,7 +3192,7 @@ where
         // `GameManager_StealUnit`/`GameManager_DisableUnit`
         // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` goes into
         // packet 08/P3 (`stealth_dice_roll`), so the roll is generated here.
-        let roll = app.universe_mut().generate_rng_i32(101) as u8;
+        let roll = app.universe.generate_rng_i32(101) as u8;
 
         match crate::unitmenu::stealth_mode_click(app.state_ref(), selected, id, cursor, roll) {
             Ok(Some(command)) => {
@@ -4999,14 +4999,14 @@ mod tests {
         let (_ctx, _log) = context(Vec::new(), None);
         let mut app = App::new(AppConfig::default());
         let id = app
-            .universe_mut()
+            .universe
             .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("center");
         let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
         unit.research_topic = ResearchTopic::Attack;
-        app.universe_mut().write_unit(id, unit);
-        app.universe_mut()
+        app.universe.write_unit(id, unit);
+        app.universe
             .update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
         app.hud_mut().select(Some(id));
 
@@ -5045,12 +5045,12 @@ mod tests {
 
         let mut app = App::new(AppConfig::default());
         let id = app
-            .universe_mut()
+            .universe
             .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
             .expect("unit");
         let mut unit = app.state_ref().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::Await;
-        app.universe_mut().write_unit(id, unit);
+        app.universe.write_unit(id, unit);
 
         // `?`/the HELP_OF button enables help mode (`HelpMenu_Menu`): there is no window,
         // an entry is chosen by clicking an element.

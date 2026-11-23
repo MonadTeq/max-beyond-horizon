@@ -1886,7 +1886,7 @@ impl<D: Dispatcher> crate::App<D> {
     ///   immediately.
     fn sync_preferences_to_game(&mut self) {
         let enemy_halt = self.preferences.enemy_halt;
-        self.universe_mut().set_enemy_halt(enemy_halt);
+        self.universe.set_enemy_halt(enemy_halt);
 
         if let Some(local) = self.local.as_mut() {
             local.setup.timer = self.preferences.turn_timer.max(0) as u32;

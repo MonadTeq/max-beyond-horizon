@@ -181,7 +181,7 @@ fn run_build_cycle(exit: ExitClick) {
     );
 
     let team = app.player_team();
-    app.universe_mut().team_units_table_mut()[team.0 as usize].set_gold(5000);
+    app.universe.team_units_table_mut()[team.0 as usize].set_gold(5000);
 
     let builder = app
         .state_ref()
@@ -213,7 +213,7 @@ fn run_build_cycle(exit: ExitClick) {
         1,
     )
     .expect("пакет заказа");
-    app.apply(command);
+    app.universe.apply_now(command);
 
     // `PositionInTape` ENTER: the builder drives into the tape (four steps + a turn).
     for _ in 0..60 {
@@ -234,7 +234,7 @@ fn run_build_cycle(exit: ExitClick) {
     );
 
     // Accelerate progress directly through the state: one turn left.
-    app.universe_mut().unit_mut(builder).expect("builder").build_time = 1;
+    app.universe.unit_mut(builder).expect("builder").build_time = 1;
 
     // The turn closes interactively: `finish_turn` → `progress_build_state`
     // (`SpawnNewUnit`) at the round boundary, then the AI turn and the human turn again.
@@ -399,7 +399,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
     );
 
     let team = app.player_team();
-    app.universe_mut().team_units_table_mut()[team.0 as usize].set_gold(5000);
+    app.universe.team_units_table_mut()[team.0 as usize].set_gold(5000);
 
     let builder = app
         .state_ref()
@@ -429,7 +429,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
         1,
     )
     .expect("пакет заказа");
-    app.apply(command);
+    app.universe.apply_now(command);
 
     for _ in 0..60 {
         app.local_update(FRAME);
@@ -528,24 +528,24 @@ fn clicking_the_site_decal_returns_the_builder() {
     use max_core::enums::unit_flags;
 
     let mut app = App::new(AppConfig::default().with_screen(512, 384));
-    app.universe_mut().set_player_team(max_core::TeamId::RED);
-    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
-    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe.set_player_team(max_core::TeamId::RED);
+    app.universe.teams_mut()[0].team_type = TeamKind::Player;
+    app.universe.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
 
     let site = Point::new(40, 40);
     let team = max_core::TeamId::RED;
     // The builder in the bottom-right cell of the 2×2 site (as after `PositionInTape`).
     let builder = app
-        .universe_mut()
+        .universe
         .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
         .expect("constructor");
     let building = app
-        .universe_mut()
+        .universe
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
 
     let site_units =
-        app.universe_mut().deploy_construction_site( builder, UnitType::TrainingHall, site)
+        app.universe.deploy_construction_site( builder, UnitType::TrainingHall, site)
             .expect("стройплощадка");
 
     {
@@ -553,14 +553,14 @@ fn clicking_the_site_decal_returns_the_builder() {
         unit.parent_unit = Some(building);
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::UnitReady;
-        app.universe_mut().write_unit(builder, unit);
+        app.universe.write_unit(builder, unit);
     }
     {
         let mut unit = app.state_ref().unit(building).expect("building").clone();
         unit.parent_unit = Some(builder);
         unit.orders = UnitOrder::Idle;
         unit.state = UnitOrderState::BuildingReady;
-        app.universe_mut().write_unit(building, unit);
+        app.universe.write_unit(building, unit);
     }
 
     app.viewport_mut().center_on_grid(site.x, site.y);

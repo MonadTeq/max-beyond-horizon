@@ -658,7 +658,7 @@ impl App {
             .map_err(|error| format!("local game: {error:#}"))?;
 
         let enemy_halt = self.preferences.enemy_halt;
-        let universe = self.universe_mut();
+        let universe = &mut self.universe;
 
         // `Remote_IsNetworkGame = false` — a local match, not lockstep.
         universe.set_network_game(false);
@@ -732,7 +732,7 @@ impl App {
         // plus the player's current `IniPreferences` (7 × `signed int`).
         let meta =
             crate::saveload::save_meta_for_local_game_with(setup, &self.preferences.to_ini());
-        self.universe_mut().set_save_meta(meta);
+        self.universe.set_save_meta(meta);
         self.hud.clear();
         self.close_unit_menu();
         if setup.is_hot_seat() {
@@ -986,7 +986,7 @@ impl App {
         // only for the local player, so that the log is not flooded with foreign
         // factories.
         let player = self.state_ref().player_team();
-        let events = self.universe_mut().take_production_events();
+        let events = self.universe.take_production_events();
 
         for event in events.iter().filter(|event| event.builder.team() == player) {
             let name = crate::buildmenu::unit_name(event.unit_type);
@@ -1024,7 +1024,7 @@ impl App {
         }
 
         // `ResearchMenu_NewTurn`: completed topics (P6).
-        let research = self.universe_mut().take_research_events();
+        let research = self.universe.take_research_events();
         for event in research.iter().filter(|event| event.team == player) {
             self.hud.push_log(format!(
                 "Research complete: {:?} level {}",
@@ -1203,7 +1203,7 @@ impl App {
                 // `GameManager_AutoSelectNext` after an order completes
                 // (`UnitInfo::MoveFinished`): the order snapshot — before the tick.
                 let before = self.selected_order_snapshot();
-                self.universe_mut().tick();
+                self.universe.tick();
                 // Combat sounds of this tick (`UnitInfo::PrepareFire`/
                 // `StartExplosion`): the queue is taken by `main.rs` (`AudioPlayer`).
                 self.collect_facade_sounds();
@@ -1236,7 +1236,7 @@ impl App {
             }
             LocalPhase::AiTurn(team) => {
                 let before = self.selected_order_snapshot();
-                self.universe_mut().tick();
+                self.universe.tick();
                 // AI combat is heard by the player the same as own (`PlaySfx` in C++ does not
                 // depend on the unit owner) — the frame queue.
                 self.collect_facade_sounds();
@@ -1687,7 +1687,7 @@ impl App {
         self.preferences.endturn = saved_endturn;
         // `settings` settings the simulation reads (`enemy_halt`).
         let enemy_halt = self.preferences.enemy_halt;
-        self.universe_mut().set_enemy_halt(enemy_halt);
+        self.universe.set_enemy_halt(enemy_halt);
 
         let play_mode = setup.effective_play_mode();
         let saved_team_types: [TeamKind; LOCAL_TEAM_COUNT] = std::array::from_fn(|index| {
@@ -1712,10 +1712,10 @@ impl App {
         if !team_types.contains(&TeamKind::Player) {
             let player = setup.human_team().unwrap_or(saved_player_team);
             team_types[player.0 as usize] = TeamKind::Player;
-            self.universe_mut().set_player_team(player);
+            self.universe.set_player_team(player);
         }
 
-        let universe = self.universe_mut();
+        let universe = &mut self.universe;
         universe.set_network_game(false);
         universe.set_play_mode(play_mode);
         universe.set_victory_type(setup.victory_type);
@@ -1752,7 +1752,7 @@ impl App {
         // `SaveMeta` to the same form — otherwise a repeated save would "drift"
         // relative to the just loaded one.
         {
-            let universe = self.universe_mut();
+            let universe = &mut self.universe;
             let snapshot = universe.snapshot();
             let mission_category = snapshot.mission_category();
             let play_mode = snapshot.play_mode();

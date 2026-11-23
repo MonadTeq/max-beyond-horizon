@@ -1361,19 +1361,19 @@ impl App<NetworkDispatcher> {
 
     /// Whether the current barrier phase is complete (all peers reported).
     fn barrier_reached(&self) -> bool {
-        self.universe.dispatcher().reached(self.universe())
+        self.universe.dispatcher().reached(&self.universe)
     }
 
     /// Whether all peers' CRC matches the own one (after the 45 barrier).
     fn crc_matches(&self) -> bool {
-        self.universe.dispatcher().crc_matches(self.universe())
+        self.universe.dispatcher().crc_matches(&self.universe)
     }
 
     /// Peer teams whose barriers must be awaited (`TEAM_TYPE_REMOTE`).
     fn peer_count(&self) -> usize {
         self.universe
             .dispatcher()
-            .remote_teams(self.universe())
+            .remote_teams(&self.universe)
             .count()
     }
 
@@ -1569,7 +1569,7 @@ impl App<NetworkDispatcher> {
             team,
             counter: *frame_counter,
         });
-        self.apply(command.clone());
+        self.apply_immediate(command.clone());
         handle
             .send_untracked(Packet::Command(command))
             .await
@@ -1746,7 +1746,7 @@ impl App<NetworkDispatcher> {
             // immediate `apply_now`, untracked send — not `submit`).
             if !self.universe.dispatcher().local_finished_sent() {
                 let finish = Command::FinishedTurn(Packet06FinishedTurn { team: local_team });
-                self.apply(finish.clone());
+                self.apply_immediate(finish.clone());
                 handle
                     .send_untracked(Packet::Command(finish))
                     .await
@@ -1825,7 +1825,7 @@ impl App<NetworkDispatcher> {
                 let peers: Vec<String> = self
                     .universe
                     .dispatcher()
-                    .remote_teams(self.universe())
+                    .remote_teams(&self.universe)
                     .map(|team| {
                         format!(
                             "{}:0x{:04X}",
@@ -1925,7 +1925,7 @@ impl App<NetworkDispatcher> {
                             let packets = self
                                 .universe
                                 .dispatcher()
-                                .resume_state_sync(self.universe());
+                                .resume_state_sync(&self.universe);
                             Self::send_barrier(handle, &packets)
                                 .await
                                 .context("reconnect: публикация своего 54 после TP00")?;
@@ -2137,7 +2137,7 @@ mod tests {
         play_mode: PlayMode,
     ) -> App<NetworkDispatcher> {
         let mut app = App::<NetworkDispatcher>::new_network(AppConfig::default(), local, play_mode);
-        *app.universe_mut() =
+        app.universe =
             synthetic_universe_with(local, remotes, NetworkDispatcher::new(local, play_mode));
         app
     }
@@ -2325,7 +2325,7 @@ mod tests {
         );
         assert_eq!(app.state_ref().frame_sync_counter()[local.0 as usize], 1);
         assert!(!app.barrier_reached(), "the peer has not answered yet");
-        app.universe_mut().set_frame_sync_counter(peer, 1);
+        app.universe.set_frame_sync_counter(peer, 1);
         assert!(app.barrier_reached());
 
         // 53 — the 1-based `GameManager_TurnCounter` and the owner's totals.
@@ -2337,7 +2337,7 @@ mod tests {
                 if summary.turn == 1 && summary.team == local
         ));
         assert!(!app.barrier_reached());
-        app.universe_mut().dispatcher_mut().note_complex(peer, 1);
+        app.universe.dispatcher_mut().note_complex(peer, 1);
         assert!(app.barrier_reached());
 
         // 52 — a separate counter (`Remote_TurnIndices`), also 1.
@@ -2352,7 +2352,7 @@ mod tests {
             ))]
         );
         assert_eq!(app.state_ref().turn_indices()[local.0 as usize], 1);
-        app.universe_mut().set_turn_index(peer, 1);
+        app.universe.set_turn_index(peer, 1);
         assert!(app.barrier_reached());
 
         // 54 — index 1, the own team's state.
@@ -2361,7 +2361,7 @@ mod tests {
             &sync[0],
             Packet::StateSync(packet) if packet.sync_index == 1 && packet.team == local
         ));
-        app.universe_mut().set_state_sync_index(peer, 1);
+        app.universe.set_state_sync_index(peer, 1);
         assert!(app.barrier_reached());
 
         // 45 — index 1, the own CRC after the 54 correction.
@@ -2372,8 +2372,8 @@ mod tests {
             &crc[0],
             Packet::Command(Command::CrcBarrier(barrier)) if barrier.crc16 == own_crc
         ));
-        app.universe_mut().set_next_turn_index(peer, 1);
-        app.universe_mut().set_team_data_crc16(peer, own_crc);
+        app.universe.set_next_turn_index(peer, 1);
+        app.universe.set_team_data_crc16(peer, own_crc);
         assert!(app.barrier_reached());
         assert!(app.crc_matches());
     }
@@ -2474,7 +2474,7 @@ mod tests {
                 local,
                 PlayMode::SimultaneousMoves,
             );
-            *app.universe_mut() = universe;
+            app.universe = universe;
             Self { app }
         }
     }
@@ -2559,12 +2559,12 @@ mod tests {
         let mut finish_packets = Vec::new();
         for client in &mut clients {
             let finish = Command::FinishedTurn(Packet06FinishedTurn {
-                team: client.app.universe().dispatcher().local_team(),
+                team: client.app.universe.dispatcher().local_team(),
             });
-            client.app.apply(finish.clone());
+            client.app.apply_immediate(finish.clone());
             client
                 .app
-                .universe_mut()
+                .universe
                 .dispatcher_mut()
                 .mark_local_finished();
             finish_packets.push(vec![Packet::Command(finish)]);
@@ -2586,7 +2586,7 @@ mod tests {
         for index in [0usize, 2] {
             clients[index]
                 .app
-                .universe_mut()
+                .universe
                 .unit_mut(ids[1])
                 .expect("tank B")
                 .hits = 1;
@@ -2594,7 +2594,7 @@ mod tests {
         // And B's copy of A's tank is stale.
         clients[1]
             .app
-            .universe_mut()
+            .universe
             .unit_mut(ids[0])
             .expect("tank A")
             .hits = 2;
@@ -2614,9 +2614,9 @@ mod tests {
         // Reconnect: B publishes its 54 (sync_index still 0), A/C apply it.
         let resume = clients[1]
             .app
-            .universe()
+            .universe
             .dispatcher()
-            .resume_state_sync(clients[1].app.universe());
+            .resume_state_sync(&clients[1].app.universe);
         assert!(
             resume.iter().any(
                 |packet| matches!(packet, Packet::StateSync(sync) if sync.team == TeamId::GREEN)
@@ -2650,8 +2650,8 @@ mod tests {
             clients
                 .iter()
                 .map(|client| (
-                    client.app.universe().dispatcher().local_team().0,
-                    client.app.universe().dispatcher().end_counter(),
+                    client.app.universe.dispatcher().local_team().0,
+                    client.app.universe.dispatcher().end_counter(),
                     client.app.state_ref().turn_indices(),
                 ))
                 .collect::<Vec<_>>()
@@ -2692,8 +2692,8 @@ mod tests {
         assert_eq!(checksums[0], checksums[2], "CRC A == C");
 
         for client in &mut clients {
-            client.app.universe_mut().enter_end_turn();
-            let _ = client.app.universe_mut().finish_turn();
+            client.app.universe.enter_end_turn();
+            let _ = client.app.universe.finish_turn();
         }
         let turns: Vec<i32> = clients
             .iter()

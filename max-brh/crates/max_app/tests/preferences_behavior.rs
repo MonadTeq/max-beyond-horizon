@@ -238,7 +238,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 
     for app in [&mut slow, &mut fast] {
         let order = build_move_order(app.state_ref(), id, destination).expect("приказ");
-        app.apply(order.command);
+        app.universe.apply_now(order.command);
         app.update_visual_units(0.0);
     }
 
@@ -403,7 +403,7 @@ fn issue_short_move(app: &mut App, id: max_core::unit::UnitId) {
     let destination = destination.expect("рядом есть проходимая клетка");
     let order = build_move_order(app.state_ref(), id, destination).expect("приказ");
 
-    app.apply(order.command);
+    app.universe.apply_now(order.command);
     app.update_visual_units(0.0);
 }
 
@@ -422,7 +422,7 @@ fn finish_path_next_tick(app: &mut App, id: max_core::unit::UnitId) {
             path.step_index = path.steps.len() as u32;
         }
         unit.speed = 0;
-        app.universe_mut().write_unit(id, unit);
+        app.universe.write_unit(id, unit);
     }
 }
 

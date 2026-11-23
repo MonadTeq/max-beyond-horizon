@@ -1998,11 +1998,11 @@ mod tests {
         use max_core::team::TeamId;
 
         let mut app = App::new(AppConfig::default());
-        *app.universe_mut() = max_core::universe::GameUniverse::default();
+        app.universe = max_core::universe::GameUniverse::default();
 
-        let own = app.universe_mut().spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
+        let own = app.universe.spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
             .expect("свой танк");
-        let enemy = app.universe_mut().spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
+        let enemy = app.universe.spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
             .expect("чужой танк");
 
         assert!(app
@@ -2032,7 +2032,7 @@ mod tests {
         );
 
         // Appeared in the FOV (survey/radar) — a foreign one is drawn too.
-        app.universe_mut()
+        app.universe
             .unit_mut(enemy)
             .unwrap()
             .set_visible_to_team(TeamId::RED, true);

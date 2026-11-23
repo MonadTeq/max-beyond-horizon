@@ -1222,7 +1222,7 @@ impl<D: Dispatcher> App<D> {
         let mut applied = 0;
 
         for command in pending {
-            if self.apply(command) == max_core::events::ApplyOutcome::Applied {
+            if self.apply_immediate(command) == max_core::events::ApplyOutcome::Applied {
                 applied += 1;
             }
         }
@@ -1239,13 +1239,13 @@ impl<D: Dispatcher> App<D> {
     /// `true` — the match is over (`check_end_game_conditions`).
     pub fn end_turn(&mut self) -> bool {
         let team = self.state_ref().player_team();
-        let _ = self.apply(command_finished_turn(team));
+        let _ = self.apply_immediate(command_finished_turn(team));
 
         if self.state_ref().game_state() != GameStateType::EndTurn {
-            self.universe_mut().set_game_state(GameStateType::EndTurn);
+            self.universe.set_game_state(GameStateType::EndTurn);
         }
 
-        let over = self.universe_mut().finish_turn();
+        let over = self.universe.finish_turn();
         let line = if over {
             "End Turn: game over".to_string()
         } else {
@@ -1746,7 +1746,7 @@ mod tests {
         let mut app = App::new(AppConfig::default().with_screen(512, 384));
 
         let (tank, enemy) = {
-            let universe = app.universe_mut();
+            let universe = &mut app.universe;
             universe.set_player_team(TeamId::RED);
             if let Some(info) = universe.team_mut(TeamId::RED) {
                 info.team_type = TeamKind::Player;
@@ -1816,10 +1816,10 @@ mod tests {
         let (mut app, _tank, _enemy) = test_app();
         let grid = Point::new(11, 10);
 
-        let slab = app.universe_mut()
+        let slab = app.universe
             .spawn_unit(UnitType::LargeSlab, TeamId::RED, grid, 0)
             .expect("slab");
-        let building = app.universe_mut()
+        let building = app.universe
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, grid, 0)
             .expect("building");
 
@@ -2190,7 +2190,7 @@ mod tests {
     #[test]
     fn unit_panel_lines_never_show_speed() {
         let (mut app, tank, _enemy) = test_app();
-        let mine = app.universe_mut()
+        let mine = app.universe
             .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(16, 10), 0)
             .expect("шахта создана");
 

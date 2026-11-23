@@ -113,7 +113,7 @@ fn spawn(app: &mut App, unit_type: UnitType) -> UnitId {
     let grid = free_grid(app);
     let flags = max_core::access::unit_type_flags(unit_type);
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(unit_type, TeamId::RED, grid, flags)
         .expect("юнит появился");
 
@@ -149,7 +149,7 @@ fn spawn_with_free_2x2(app: &mut App, unit_type: UnitType) -> UnitId {
 
     let flags = max_core::access::unit_type_flags(unit_type);
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(unit_type, TeamId::RED, spot, flags)
         .expect("юнит появился");
 
@@ -546,7 +546,7 @@ fn cursor_mode_repairs_own_unit() {
     };
 
     let repair = spawn(&mut app, UnitType::RepairUnit);
-    app.universe_mut().unit_mut(repair).expect("repair").storage = 2;
+    app.universe.unit_mut(repair).expect("repair").storage = 2;
     let tank = spawn(&mut app, UnitType::Tank);
 
     open_menu(&mut app, repair);

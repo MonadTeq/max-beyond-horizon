@@ -113,7 +113,7 @@ fn spawn_builder(app: &mut App) -> (UnitId, Point) {
     let grid = spot.expect("свободная площадка 2×2 на карте");
     let flags = max_core::access::unit_type_flags(UnitType::Constructor);
     let id = app
-        .universe_mut()
+        .universe
         .spawn_unit(UnitType::Constructor, TeamId::RED, grid, flags)
         .expect("конструктор появился");
 
@@ -274,7 +274,7 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
     // Water under the 2×2 — invalid (`CURSOR_UNIT_NO_GO`).
     for dy in 0..2 {
         for dx in 0..2 {
-            *app.universe_mut()
+            *app.universe
                 .map_mut()
                 .surface
                 .tiles_mut()
@@ -460,12 +460,12 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     // A frame with the builder versus a frame without it (visibility to the team disabled) —
     // the center of the differing pixels must coincide with the 2×2 center.
     let with_builder = app.render_frame();
-    app.universe_mut()
+    app.universe
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, false);
     let without_builder = app.render_frame();
-    app.universe_mut()
+    app.universe
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, true);
@@ -487,12 +487,12 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
 /// with visibility disabled. This measures exactly the sprite, without the tape markup.
 fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
     let with_builder = app.render_frame();
-    app.universe_mut()
+    app.universe
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, false);
     let without_builder = app.render_frame();
-    app.universe_mut()
+    app.universe
         .unit_mut(builder)
         .expect("строитель")
         .set_visible_to_team(TeamId::RED, true);
