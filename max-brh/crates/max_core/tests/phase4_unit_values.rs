@@ -186,11 +186,14 @@ fn every_clan_applies_only_its_own_tradeoffs_without_underflow() {
 ///
 /// `ATTRIB_TURNS` of six factory/missile types is higher in `SAVE2.CAM` than
 /// `BASE_UNIT_VALUES + CLAN_TRADEOFFS` predicts; the attack/range trade-offs of
-/// the same clan are applied, so the clan itself was applied. The likely cause
-/// is a different balance revision of `SC_ATTRI` in the original build that
-/// produced the save (Interplay) versus the Klei resource used by
-/// `gen_unit_values.py`. Reported as a dispute in the phase 4 report; the exact
-/// rows are pinned so that a resource/table change is visible.
+/// the same clan are applied, so the clan itself was applied. The cause (per the
+/// analyst investigation, `analysis/attrib-turns`): the reference saves were
+/// serialized by an EARLIER balance revision of the clan resource `CLANATRB`
+/// (MAX.RES), where AyersHand gave `-1` turn (not `-2`) and AxisInc had no turn
+/// bonus at all (`0` instead of `-2/-4`). The final v1.04 `CLANATRB` equals the
+/// Klei `SC_CLANS` deltas; `ATTRIBS` (base) is identical across both. So the
+/// Klei tables are the canon (Interplay final), and `SAVE2.CAM` is the stale
+/// artifact. The rows are pinned so a resource/table change is visible.
 ///
 /// `(save, team, unit type, file value, table value)`.
 const TURNS_DIVERGENCE: &[(&str, usize, u16, i32, i32)] = &[
