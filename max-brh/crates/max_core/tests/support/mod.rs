@@ -1,4 +1,5 @@
-//! Shared helpers for the phase 2 integration scenarios (`phase2_*.rs`).
+//! Shared helpers for the phase 2 and phase 5 integration scenarios
+//! (`phase2_*.rs`, `phase5_*.rs`; the AI harness lives in [`phase5`]).
 //!
 //! Every scenario has the same shape: a deterministic [`GameState`] (fixed
 //! teams, seeded RNG), units placed by [`spawn`], orders issued through the
@@ -6,6 +7,8 @@
 //! canonical digests (`crc::state_checksum` / `snapshot_bytes`).
 
 #![allow(dead_code)]
+
+pub mod phase5;
 
 use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::game::GameState;

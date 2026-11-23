@@ -340,6 +340,74 @@ replay нет ходов ИИ. Тесты: 294 unit (5 новых — `transport
 строитель может стоять на площадке (без `TaskMove`) и `AwaitTapePositioning`
 считается фазой стройки.
 
+## Фаза 5 — интеграционные сценарии ИИ (AI CRC)
+
+Закрепление порта A сквозными сценариями (`max-brh-qa/plans/engine-coverage-plan.md`
+§3, фаза 5): `max_core/tests/phase5_ai_*.rs` и общий харнесс
+`max_core/tests/support/phase5.rs`. Каждый сценарий: база ИИ (RED,
+`TEAM_TYPE_COMPUTER`) + пассивная база противника (GREEN, `TEAM_TYPE_PLAYER`) →
+N ходов через машинку ходов ядра (`begin_round` → `next_team` → `end_round`;
+`next_team` сам выполняет `GameManager_ManageEconomy` и `Ai_BeginTurn`, поэтому
+`ai_begin_turn` повторно не вызывается) → ожидаемые задачи/юниты/CRC. Задачи,
+живущие внутри хода (`TaskAttack`, `TaskKillUnit`, `TaskMove`, резервы),
+сэмплируются на каждом тике (`AiObservation`); устойчивое состояние (юниты,
+золото, темы исследований, digest'ы) читается на границе хода.
+
+### Сценарии по областям ИИ
+
+| Файл | Область | Что доказывает |
+|---|---|---|
+| `phase5_ai_strategy.rs` | A.2, A.1 | маппинг клан→стратегия в `init_tasks` (все 8 кланов); force-стратегия (`menu_team_strategy_setting`) применяется только при ненулевом score, иначе — взвешенный бросок; `SelectStrategy` расходует RNG (тот же seed → та же стратегия и тот же хвост RNG); все 18 вес-таблиц заполнены, `UpdateWeightTables` умножает веса ровно своих типов во всех таблицах (`RebuildWeightTables`, факторы 10/5/3/2); `GetFilteredWeightTable(0x01)` убирает `STATIONARY`; стратегия и таблицы входят в снапшот |
+| `phase5_ai_production.rs` | A.3 | TankHorde с LIGHTPLT планирует `TaskCreateBuilding(HeavyVehiclePlant)` и не спешит с AIRPLT/SHIPYARD/TRAINHAL; голая база за 14 ходов отдаёт `ORDER_BUILD` строителю и достраивает MININGST; `plan_unit_production` заказывает TANK с LANDPLT по весам (`GetWeightTable(INVALID_ID)` + таблица замеченного танка) и молчит при пустом складе комплекса |
+| `phase5_ai_combat.rs` | A.4 | замеченный ключевой объект → `TaskAttack` + `TaskKillUnit` + `TaskAttackReserve`, `TaskDefenseReserve` накапливает армию (3 танка), объект получает урон; без засветки атак нет и урона нет; `TaskAttack::target_team` — команда противника |
+| `phase5_ai_research.rs` | A.5 | `ChooseUpgrade` + цикл покупки тратят золото команды (`gold` падает, `stats_gold_spent_on_upgrades` растёт, ATTACK танка в `current_values` растёт); без золота не покупается ничего; `DetermineResearchProjects` переводит включённый центр на быстрейшую тему (RANGE) и ведёт `allocation`; выключенный центр тему не меняет |
+| `phase5_ai_recon.rs` | A.6 | `TaskExplore` создаётся, запрашивает SCOUT/AWAC/FASTBOAT/SUBMARNE, отдаёт `TaskMove`, разведчик уходит с места и увеличивает `info_map`; доступный разведчик принимается задачей |
+| `phase5_ai_determinism.rs` | D | каждый сценарий прогоняется дважды: `snapshot_bytes`, `state_checksum`, `replay_digest_crc`, `state_digest` совпадают и равны закреплённым значениям; прогон продолжается с `clone` бит-в-бит; шесть сценариев дают разные digest'ы |
+
+### Детерминизм (D)
+
+Для одного seed прогон **бит-в-бит**: два прогона сценария дают одинаковый
+`snapshot_bytes` (включая задачи, напоминания и карты ИИ), `state_checksum`
+(пакет 45), `replay_digest_crc` и `state_digest`. Прогон, продолженный с `clone`,
+совпадает с непрерывным. Вопрос владельца о «той же стратегии, другом
+seed-пути» остаётся открытым: тесты фиксируют только равенство для одного seed.
+
+### AI CRC сценариев
+
+| Сценарий | Ходы | `state_checksum` | `replay_digest_crc` | `state_digest` (снапшот) |
+|---|---|---|---|---|
+| `strategy` (A.2: клан AyersHand → MISSILES) | 6 | `0x4C90` | `0x26ED` | `0xDB7B` |
+| `production` (A.3: голая база, стройка) | 12 | `0x372E` | `0x79A6` | `0x2FAE` |
+| `factory` (A.1/A.3: замеченный танк → LANDPLT заказывает TANK) | 4 | `0x1DE6` | `0x25CF` | `0x9F84` |
+| `combat` (A.4: замеченный TRAINHAL, штурм) | 6 | `0x56BC` | `0xE313` | `0xCE5B` |
+| `research` (A.5: апгрейды + включённый центр) | 4 | `0xCC41` | `0x0CA2` | `0xADC0` |
+| `recon` (A.6: разведчик) | 8 | `0x5387` | `0x603B` | `0xFD64` |
+
+При изменении ИИ таблицу обновлять здесь; значения закреплены константами
+`*_CRCS` в `phase5_ai_determinism.rs`.
+
+### Наблюдения, зафиксированные сценариями (не правки порта)
+
+1. `Access_UpdateMapStatus` не сканирует `ORDER_IDLE` (`access.cpp:762`), поэтому
+   сценарии ставят наблюдателя в `ORDER_SENTRY` и пересчитывают обзор
+   `Access_UpdateVisibilityStatus` — как после высадки. Заспавненный без приказа
+   юнит не даёт засветки; это поведение C++, а не дефект порта.
+2. `plan_unit_production` катит тип из составной таблицы
+   `GetFilteredWeightTable(INVALID_ID, 3)` (air defense + bomber + submarine +
+   таблицы замеченных типов): без замеченного врага у тяжёлого завода нет
+   кандидатов на постройку, и производство юнитов не стартует. Сценарий `factory`
+   фиксирует это как предусловие (замеченный танк → таблица `tanks` → TANK ×10
+   для TankHorde).
+3. `ProductionManager_OptimizePowerProduction` включает POWERSTN по формуле
+   `(demand + 6 - 3) / 6`, т.е. при спросе меньше трёх станция не включается;
+   одному исследовательскому центру нужны генераторы (в сценарии — три), иначе
+   экономика выключает центр, и `DetermineResearchProjects` его пропускает
+   (негативный контроль в `phase5_ai_research.rs`).
+4. `GameManager_ManageEconomy` пересчитывает склад комплекса из его состава
+   (`Access_UpdateResourcesTotal`), поэтому ручная запись `Complex::raw/fuel`
+   перед ходом бесполезна: сценарии ставят в комплекс реальные склады
+   (ADUMP/FDUMP) либо руду/топливо под шахту.
+
 ## Открытые вопросы владельца
 
 - Требование к детерминизму бит-в-бит ИИ (п. 8) — цель или допустимо «та же
