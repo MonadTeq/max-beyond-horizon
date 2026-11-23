@@ -2,7 +2,8 @@
 //!
 //! # What is ported
 //!
-//! * `AiPlayer::Init` (fields, weight tables, `need_init`), `SelectStrategy`
+//! * `AiPlayer::Init` (fields, `need_init`; the 18 weight tables are filled by
+//!   [`super::weight_tables`]), `SelectStrategy`
 //!   **without map regeneration** (DESIGN: `Ai_SetupStrategy` — strategy selection
 //!   only): continents are computed by flood-fill over `SurfaceMap`,
 //!   strategy scores — by `aiplayer.cpp:3770` formulas, the choice — by one weighted
@@ -280,8 +281,9 @@ impl AiPlayer {
         }
     }
 
-    /// `AiPlayer::Init` (`aiplayer.cpp:2902`) — reset the player state.
-    pub fn init(&mut self) {
+    /// `AiPlayer::Init` (`aiplayer.cpp:2902`) — reset the player state and fill
+    /// the 18 weight tables (`opponent` is the AI difficulty setting).
+    pub fn init(&mut self, opponent: u8) {
         self.strategy = AiStrategy::Random;
         self.greenhouse_ratio = -1;
         self.minefield_density = -1;
@@ -306,6 +308,7 @@ impl AiPlayer {
         self.info_map = vec![INFO_MAP_NO_INFO; MAP_TILES];
         self.mine_map = vec![0; MAP_TILES];
         self.threat_maps.clear();
+        self.init_weight_tables(opponent);
     }
 
     /// `AiPlayer::GetStrategy`.
@@ -1246,6 +1249,10 @@ impl AiPlayer {
         if self.minefield_density < 0 {
             self.roll_minefield_density(world);
         }
+
+        // `UpdateWeightTables` (`aiplayer.cpp:2285`) — right after the strategy
+        // and the rolls, before the information maps are initialized.
+        self.update_weight_tables();
 
         // `info_map` from the team heat map.
         for y in 0..MAP_HEIGHT {

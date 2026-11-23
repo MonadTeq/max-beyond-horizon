@@ -54,6 +54,7 @@ pub mod task_manager;
 pub mod tasks;
 pub mod threat;
 pub mod weight;
+pub mod weight_tables;
 
 pub use attack::evaluate_attack;
 pub use reminders::Reminder;
@@ -433,8 +434,10 @@ pub fn ai_init(world: &mut GameState) {
         task_manager.clear(world);
     });
 
+    let opponent = world.ai.settings.opponent;
+
     for team in 0..PLAYER_TEAM_COUNT {
-        world.ai.players[team].init();
+        world.ai.players[team].init(opponent);
     }
 }
 
