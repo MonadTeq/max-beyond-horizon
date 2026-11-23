@@ -1,4 +1,5 @@
-//! Stage A: `App` on top of `GameUniverse` (ТЗ `game-universe-stage-a.md` §4).
+//! Stage A: `App` on top of `GameUniverse` (stage-A task
+//! `game-universe-stage-a.md` §4).
 //!
 //! What is proved here:
 //!

@@ -245,6 +245,7 @@ pub use unit_values::{
 pub use universe::{
     BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher, NetworkCommand,
     RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, StateDelta, StateRef, SubmitOutcome,
+    TurnNotice,
 };
 pub use victory::{
     cargo_fuel_consumption_rate, cargo_get_net_production, cargo_gold_consumption_rate,

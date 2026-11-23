@@ -1,4 +1,5 @@
-//! **Gate 3** — migrating `06`/lobby commands to `submit` (ТЗ `game-universe-stage-a.md` §5).
+//! **Gate 3** — migrating `06`/lobby commands to `submit` (stage-A task
+//! `game-universe-stage-a.md` §5).
 //!
 //! The gate compares the two command paths on byte-identical scenarios:
 //!
@@ -189,8 +190,8 @@ fn check_06(play_mode: PlayMode, hot_seat: bool) {
     };
     legacy_compensated.equal(&facade_full, "06 with the same simulation ticks");
 
-    // 3. The TЗ's literal "+1 tick" comparison is *not* an equivalence: the
-    //    transition tick of the facade path costs one simulation pass (the tick
+    // 3. The stage-A task's literal "+1 tick" comparison is *not* an equivalence:
+    //    the transition tick of the facade path costs one simulation pass (the tick
     //    process that the immediate transition does not have), and that pass is
     //    not a no-op — it toggles `update_flag` and advances the AI reaction
     //    alternation. The difference is therefore expected and one-tick wide.

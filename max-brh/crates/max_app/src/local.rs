@@ -24,11 +24,15 @@
 //!
 //! Steps 1, 2, 3 and 5 are the **deterministic** team-turn machine and live in
 //! [`max_core::GameState`]: [`max_core::GameState::begin_round`] resets the round
-//! cursor, [`max_core::GameState::next_team`] performs one step and returns a
-//! [`max_core::TurnEvent`], [`max_core::GameState::end_round`] closes the round
-//! (`finish_turn` + the next round). This module only consumes the events: the
-//! hot-seat «Begin turn» window, the autosave, the HUD log, the camera focus, the
-//! turn timer and [`LocalPhase`] — it never writes simulation fields itself.
+//! cursor, `next_team` performs one step, `end_round` closes the round
+//! (`finish_turn` + the next round). The machine is driven **only by the facade**
+//! ([`max_core::universe::GameUniverse::end_local_turn`] /
+//! [`max_core::universe::GameUniverse::begin_local_round`]), which reports every
+//! step as [`max_core::universe::GameEvent::Turn`] with the pre-transition peek
+//! values (`previous_player_team`, `status`). This module only consumes the
+//! notices: the hot-seat «Begin turn» window, the autosave, the HUD log, the camera
+//! focus, the turn timer and [`LocalPhase`] — it never writes simulation fields
+//! itself and never calls `next_team`.
 //!
 //! Turn timer — `settings["timer"]` (`GameManager_UpdateTurnTimer`); `0` —
 //! no limit. Pause (`PauseMenu`) stops both the ticks and the timer.
@@ -38,11 +42,11 @@
 //! [`crate::winloss`].
 
 use max_core::enums::{GameStateType, PlayMode, WinLossState};
-use max_core::events::command_finished_turn;
 use max_core::game::TurnEvent;
 use max_core::geo::Point;
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
+use max_core::universe::GameEvent;
 use max_core::victory::{self, MissionCategory, WinLossStatus};
 
 use crate::hotseat::TurnNotice;
@@ -757,55 +761,56 @@ impl App {
     }
 
     /// `GameManager_TeamTurnTurnBased` round entry: the deterministic round
-    /// cursor is reset in the core ([`max_core::GameState::begin_round`]), the
-    /// application only advances to the first playing team.
+    /// cursor is reset and the machine advances to the first playing team — both
+    /// inside the facade ([`max_core::universe::GameUniverse::begin_local_round`]).
+    /// The application only sets the [`LocalPhase`] and consumes the notices.
     fn local_begin_round(&mut self) {
         {
             let mut local = self.local.take().expect("local game must exist");
             local.phase = LocalPhase::Advancing;
             self.local = Some(local);
         }
-        self.state_mut().begin_round();
+        self.universe.begin_local_round();
         self.local_next_team();
     }
 
-    /// Consumes [`TurnEvent`]s until a team has to act (a human turn or a
-    /// computer turn) or the match is over.
+    /// Consumes [`max_core::universe::GameEvent::Turn`] notices until a team has to
+    /// act (a human turn or a computer turn) or the match is over.
     ///
-    /// All deterministic transitions happen in the core
-    /// ([`max_core::GameState::next_team`] / [`max_core::GameState::end_round`]);
-    /// this layer only reacts to the event: the hot-seat «Begin turn» window, the
-    /// autosave, the HUD log, the camera focus, the turn timer and [`LocalPhase`].
+    /// The deterministic transitions are performed by the facade
+    /// (`GameUniverse::end_local_turn` / `begin_local_round`); this layer only
+    /// reacts to the notices: the hot-seat «Begin turn» window, the autosave, the
+    /// HUD log, the camera focus, the turn timer and [`LocalPhase`].
     ///
-    /// The two values the UI needs *before* the step are read with a peek, as in
-    /// C++: `GameLoop` evaluates `WinLoss_Status` before `GameManager_TeamTurnFinish`,
-    /// and `GameManager_UpdateGui` compares `GameManager_PlayerTeam` before
-    /// switching it to the new human team.
+    /// The two values the UI needs *before* the step (`previous_player_team`,
+    /// `WinLoss_Status`) are peeked by the facade and carried in
+    /// [`max_core::universe::TurnNotice`] — in C++ `GameLoop` evaluates
+    /// `WinLoss_Status` before `GameManager_TeamTurnFinish`, and
+    /// `GameManager_UpdateGui` compares `GameManager_PlayerTeam` before switching
+    /// it to the new human team (`local.rs:790-804` before the move).
+    ///
+    /// The cursor is the dedicated [`App::turn_events`] position in the shared
+    /// event buffer (owner decision 6): draining turn notices does not consume the
+    /// combat sounds of the other cursor.
     fn local_next_team(&mut self) {
         if self.local.is_none() {
             return;
         }
 
-        loop {
-            let upcoming = self.state().upcoming_team();
-            let previous_player_team = self.state().player_team;
-            let closing_status = upcoming
-                .is_none()
-                .then(|| victory::evaluate_status(self.state(), self.state().turn_counter));
+        // Separate field borrows: the cursor and the facade are disjoint fields.
+        let events = self.turn_events.drain(&mut self.universe);
 
-            let event = if closing_status.is_some() {
-                // P4: measurement of `GameManager_TeamTurnFinish` (victory/defeat,
-                // points, production of all teams) — the closing step only.
-                let turn_counter = self.state().turn_counter;
-                let _profile = crate::profile::finish_turn_scope(turn_counter);
-                self.state_mut().next_team()
-            } else {
-                self.state_mut().next_team()
+        for event in events {
+            let GameEvent::Turn(notice) = event else {
+                // Stage A: the local match still reads its UI reports from the
+                // state (`local_finish_round`); other stream events have no
+                // application-side consumer here.
+                continue;
             };
 
-            match event {
+            match notice.event {
                 TurnEvent::Human(team) => {
-                    self.local_start_human_turn(team, previous_player_team);
+                    self.local_start_human_turn(team, notice.previous_player_team);
                     return;
                 }
                 TurnEvent::Computer(team) => {
@@ -816,7 +821,7 @@ impl App {
                 TurnEvent::GameOver => {
                     // `GameOver` is only reported by the closing step, so the
                     // pre-step status is the one C++ passes to the screen.
-                    let status = closing_status.unwrap_or_else(|| {
+                    let status = notice.status.unwrap_or_else(|| {
                         victory::evaluate_status(self.state(), self.state().turn_counter)
                     });
                     self.local_game_over(status);
@@ -824,6 +829,26 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Closes `team`'s turn through the facade and consumes the resulting notices.
+    ///
+    /// The whole transition — `06` (immediately), `enter_end_turn`, the team-turn
+    /// machine and the next-turn entry — is one facade operation
+    /// ([`max_core::universe::GameUniverse::end_local_turn`]); `next_team` is not
+    /// called from the application any more (stage-A task §6 item 3).
+    ///
+    /// P4 profiling: `GameManager_TeamTurnFinish` runs inside the facade, so the
+    /// `finish_turn` scope covers the whole facade transition. The peek that only
+    /// the closing step is measured is exact: `upcoming_team()` does not change
+    /// before the machine runs (the 06 apply does not move the round cursor).
+    fn local_close_turn(&mut self, team: TeamId) {
+        let closing = self.state().upcoming_team().is_none();
+        let turn_counter = self.state().turn_counter;
+        let _profile = closing.then(|| crate::profile::finish_turn_scope(turn_counter));
+
+        self.universe.end_local_turn(team);
+        self.local_next_team();
     }
 
     /// Human team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_PLAYER`): the
@@ -1039,11 +1064,6 @@ impl App {
         }
 
         let team = local.active_team;
-        let _ = self.apply(command_finished_turn(team));
-        // `GameManager_RefreshOrders`: the team's turn is over, the phase is
-        // `GAME_STATE_9_END_TURN` (a core transition; the core already moved the
-        // round cursor past `team` when it started the turn).
-        self.state_mut().enter_end_turn();
 
         self.hud.push_log(format!("{} ended turn", team_name(team)));
 
@@ -1051,7 +1071,12 @@ impl App {
             local.phase = LocalPhase::Advancing;
         }
 
-        self.local_next_team();
+        // `GameManager_RefreshOrders`: the team's turn is over, the phase becomes
+        // `GAME_STATE_9_END_TURN` and the machine advances. Both happen inside the
+        // facade: `06` is applied immediately (not queued — the simultaneous mode
+        // needs a synchronous `finished_turn`), then `enter_end_turn` + the turn
+        // machine (stage-A task §6 item 2/3).
+        self.local_close_turn(team);
     }
 
     /// Confirmation of the M-HS turn-transition window (`DialogMenu`: a click on `OK`,
@@ -1233,18 +1258,16 @@ impl App {
                 }
 
                 if finished || timed_out {
-                    let _ = self.apply(command_finished_turn(team));
-                    // `GameManager_RefreshOrders`: the team's turn is over, the
-                    // phase is `GAME_STATE_9_END_TURN` (a core transition).
-                    self.state_mut().enter_end_turn();
-
                     update.turn_closed = true;
 
                     if let Some(local) = self.local.as_mut() {
                         local.phase = LocalPhase::Advancing;
                     }
 
-                    self.local_next_team();
+                    // `GameManager_RefreshOrders` for the AI turn: `06` immediately,
+                    // `GAME_STATE_9_END_TURN` and the machine — all inside the
+                    // facade (same path as the human End Turn, stage-A task §6 item 3).
+                    self.local_close_turn(team);
 
                     let started_ai = matches!(
                         self.local.as_ref().map(|local| local.phase),
@@ -1257,6 +1280,8 @@ impl App {
                 // The visual route also runs in the transition phase between
                 // teams, until the turn-transition window opens.
                 self.update_visual_units(dt);
+                // A pure consumer in stage A: the machine has already run inside
+                // the facade, so this only applies notices that are still unread.
                 self.local_next_team();
                 update.ai_started = matches!(
                     self.local.as_ref().map(|local| local.phase),

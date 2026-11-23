@@ -1,4 +1,5 @@
-//! Stage A facade tests — `max_core::universe` (ТЗ `game-universe-stage-a.md` §3).
+//! Stage A facade tests — `max_core::universe` (stage-A task
+//! `game-universe-stage-a.md` §3).
 //!
 //! What is proved here:
 //!
@@ -607,8 +608,9 @@ fn single_player_turn_cycle_closes_without_barrier_steppers() {
     );
     assert!(universe.state().teams[0].finished_turn);
 
-    // The core turn close (`finish_turn`) is called by the turn machine; in
-    // stage A next_team is not inside tick yet, so the test drives it explicitly.
+    // The core turn close (`finish_turn`) is called by the turn machine; this gate
+    // drives the core close explicitly (the facade cycle through `end_local_turn`
+    // is covered by `tests/universe_turn.rs`).
     let over = universe.state_mut().finish_turn();
     assert!(!over, "the match is not over");
     universe.tick();

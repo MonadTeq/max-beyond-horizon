@@ -550,6 +550,13 @@ pub struct App {
     /// The application event cursor (stage A: the combat sounds of a tick are read
     /// from the facade event stream, see [`App::tick`]).
     universe_events: max_core::universe::EventStream,
+    /// The turn-machine event cursor (stage A: `local.rs` consumes
+    /// `GameEvent::Turn` notices instead of calling `next_team` itself).
+    ///
+    /// A dedicated cursor is an independent position in the same buffer (owner
+    /// decision 6): consuming turn notices cannot steal the combat sounds from
+    /// [`App::universe_events`].
+    turn_events: max_core::universe::EventStream,
     assets: Option<Assets>,
     viewport: Viewport,
     ticks: u64,
@@ -809,11 +816,13 @@ impl App {
             max_core::universe::LocalDispatcher,
         );
         let universe_events = universe.subscribe();
+        let turn_events = universe.subscribe();
 
         Self {
             config,
             universe,
             universe_events,
+            turn_events,
             assets: None,
             viewport,
             ticks: 0,
@@ -2747,6 +2756,7 @@ impl App {
         // (`GameUniverse::from_save` counts the load as a state version).
         self.universe = max_core::universe::GameUniverse::from_save(&save);
         self.universe_events = self.universe.subscribe();
+        self.turn_events = self.universe.subscribe();
         // `SaveLoad_Load` leaves the player `settings` as is: `enemy_halt`
         // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
         // the timers into the settings).
@@ -3029,6 +3039,7 @@ impl App {
             max_core::universe::LocalDispatcher,
         );
         self.universe_events = self.universe.subscribe();
+        self.turn_events = self.universe.subscribe();
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
