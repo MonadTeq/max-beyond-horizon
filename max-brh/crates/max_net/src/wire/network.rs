@@ -10,11 +10,13 @@
 //!   [`state::decode_state_sync`]/[`state::encode_state_sync`] (`wire/state.rs`),
 //!   bridged through [`StateSync::from_core`].
 //!
-//! The `max_core` import is DTO-only: the facade enum types are re-exported data,
-//! there is no simulation call and no `GameState` access here (the max_net→max_core
-//! boundary lock in `max-brh-cicd/scripts/check_maxnet_boundary.sh` allowlists it).
+//! The DTOs come from the lower layer (`max_types::universe`): they are pure data
+//! (`Command` or a packet-54 DTO), so this module needs no `max_core` import at
+//! all — the `max_net → max_core` boundary lock in
+//! `max-brh-cicd/scripts/check_maxnet_boundary.sh` stays reduced to the five
+//! read-only projections.
 
-use max_core::universe::{NetworkCommand, RemoteCommand};
+use max_types::universe::{NetworkCommand, RemoteCommand};
 
 use super::command::{decode_command, encode_command};
 use super::reader::{Reader, WireResult, Writer};

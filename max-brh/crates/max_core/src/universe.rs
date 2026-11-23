@@ -99,7 +99,10 @@ pub trait Dispatcher {
 pub enum RoutedCommand {
     /// Apply locally only (`00`/`52`/`45`, single-player).
     Local(Command),
-    /// Apply locally and broadcast to peers (`08`/`38`/`41`/`50`/`06`/`11`/`53`/`18`/`43`…).
+    /// Apply locally and broadcast to peers
+    /// (`06`/`08`/`10`/`11`/`12`/`14`/`18`/`20`/`38`/`41`/`43`/`50`; the route
+    /// table is ADR §2, `game-universe-facade.md`). Packet `53` is **not** here:
+    /// it is a `Local` barrier/projection packet like `00`/`01`/`45`/`52`.
     Broadcast(Command),
     /// Drop (a forbidden order of an inactive command and the like).
     Drop,
@@ -174,28 +177,11 @@ impl Dispatcher for LocalDispatcher {
 // Transport DTOs
 // ---------------------------------------------------------------------------
 
-/// A DTO the facade hands to the transport (before encoding).
-// The size difference is dictated by the approved ADR signatures (packet 54 is a
-// full DTO); boxing would change the shape `max_net` will encode in stage B.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NetworkCommand {
-    /// A command packet.
-    Command(Command),
-    /// Packet 54 — the authoritative team state.
-    StateSync(StateSyncPacket),
-}
-
-/// A DTO the transport hands to the facade (after decoding).
-// The size difference is dictated by the approved ADR signatures (see above).
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemoteCommand {
-    /// A command packet.
-    Command(Command),
-    /// Packet 54 — the authoritative team state.
-    StateSync(StateSyncPacket),
-}
+// The DTOs are `max_types` data (stage B refinement): they are pure wrappers over
+// `Command`/`StateSyncPacket`, so the transport layer encodes them without
+// importing this module. The re-export keeps the facade API and every existing
+// `max_core::universe::{NetworkCommand, RemoteCommand}` path unchanged.
+pub use max_types::universe::{NetworkCommand, RemoteCommand};
 
 /// Result of a local submission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

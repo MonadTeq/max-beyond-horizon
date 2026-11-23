@@ -19,6 +19,8 @@
 //!   `UnitListKind`;
 //! * [`input`] — protocol DTOs of incoming packets (`Command` and payloads);
 //! * [`events`] — DTOs of the authoritative team state (packet 54);
+//! * [`universe`] — the facade transport DTOs `NetworkCommand`/`RemoteCommand`
+//!   (stage B), so that `max_net` encodes them without `max_core::universe`;
 //! * [`victory`] — `MissionCategory` (mission category).
 //!
 //! ## What must not be here
@@ -42,6 +44,7 @@ pub mod input;
 pub mod map;
 pub mod team;
 pub mod unit;
+pub mod universe;
 pub mod victory;
 
 /// Number of game unit types (`UNIT_END` from `resourcetable.hpp`, 93).
