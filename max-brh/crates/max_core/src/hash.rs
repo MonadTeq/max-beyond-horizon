@@ -250,8 +250,16 @@ impl MapHash<UnitId> {
         Self::set_map_size(crate::geo::MAP_SIZE.as_point())
     }
 
-    /// `MapHash::AddEx`: inserts a unit into the cell object (creating it if
-    /// needed), `push_front` when `mode == true`, otherwise `push_back`.
+    /// `MapHash::AddEx` (`hash.cpp:153`): inserts a unit into the cell object
+    /// (creating it if needed). C++ pushes to the **front** when `!mode`
+    /// (`if (!mode || unit->GetUnitType() == LRGTAPE || unit->GetUnitType() ==
+    /// SMLTAPE) { PushFront } else { PushBack }`), so `mode == false` puts the
+    /// newest unit first and `mode == true` appends it.
+    ///
+    /// The `LRGTAPE`/`SMLTAPE` exception of the oracle is not representable
+    /// here: the table is keyed by [`UnitId`], not `UnitInfo`, so the unit type
+    /// is unknown. Every port caller passes `mode = false` (the push-front
+    /// branch), which is also the oracle branch for tapes.
     pub fn add_ex(&mut self, id: UnitId, grid_x: u16, grid_y: u16, mode: bool) {
         let bucket = self.bucket_mut(grid_x, grid_y);
         let position = match bucket.iter().position(|object| object.matches(grid_x, grid_y)) {
@@ -263,9 +271,9 @@ impl MapHash<UnitId> {
             }
         };
         if mode {
-            bucket[position].units.insert(0, id);
-        } else {
             bucket[position].units.push(id);
+        } else {
+            bucket[position].units.insert(0, id);
         }
     }
 
@@ -412,18 +420,19 @@ mod tests {
     }
 
     #[test]
-    fn map_hash_keeps_insertion_order() {
+    fn map_hash_keeps_cpp_cell_order() {
         let mut hash = MapHash::<UnitId>::for_standard_map();
         let a = UnitId::new(crate::team::TeamId::RED, 1);
         let b = UnitId::new(crate::team::TeamId::RED, 2);
+        // `mode == false` is C++ `!mode` — `PushFront`: the newest unit first.
         hash.add(a, 5, 5, Footprint::Single, false);
         hash.add(b, 5, 5, Footprint::Single, false);
-        assert_eq!(hash.get(5, 5), Some(&vec![a, b]));
-        // `mode == true` — push_front (C++ for LRGTAPE/SMLTAPE).
+        assert_eq!(hash.get(5, 5), Some(&vec![b, a]));
+        // `mode == true` — `PushBack`.
         let mut hash = MapHash::<UnitId>::for_standard_map();
         hash.add(a, 5, 5, Footprint::Single, true);
         hash.add(b, 5, 5, Footprint::Single, true);
-        assert_eq!(hash.get(5, 5), Some(&vec![b, a]));
+        assert_eq!(hash.get(5, 5), Some(&vec![a, b]));
         assert_eq!(
             hash.bucket_index(5, 5),
             ((5u16 ^ (5 << hash.x_shift())) % hash.size())

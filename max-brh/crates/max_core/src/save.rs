@@ -1400,7 +1400,13 @@ impl<'a> Reader<'a> {
 
     fn read_map_hash(&mut self) -> Result<MapHash<u16>> {
         let size = self.u16()?;
-        let x_shift = self.u16()?;
+        // C++ `MapHash::FileLoad` (`hash.cpp:240`) reads the saved shift into
+        // `saved_x_shift` and ignores it: the objects are rehashed with the
+        // shift derived from the saved size (`Init`), and `GameState` then
+        // rehashes them again into the live map-size table. The field is
+        // informational, so a mismatch must not abort the load (a debug
+        // assertion here used to panic on such saves).
+        let _saved_x_shift = self.u16()?;
         if size == 0 {
             return Err(SaveError::InvalidLength {
                 what: "MapHash::hash_size",
@@ -1408,7 +1414,6 @@ impl<'a> Reader<'a> {
             });
         }
         let mut hash = MapHash::new(size);
-        debug_assert_eq!(hash.x_shift(), x_shift);
         for bucket_index in 0..size {
             let count = usize::from(self.u16()?);
             let buckets = hash.buckets_mut();
@@ -2504,6 +2509,34 @@ mod tests {
         }
         let counts = resources.counts();
         assert!(counts.raw_tiles > 0 || counts.fuel_tiles > 0 || counts.gold_tiles > 0);
+    }
+
+    /// `MapHash::FileLoad` ignores the saved `x_shift` (C++ rehashes with the
+    /// shift derived from the saved size). A foreign value is informational:
+    /// parsing succeeds and the table keeps its size-derived shift.
+    #[test]
+    fn map_hash_saved_x_shift_is_informational() {
+        let size = crate::hash::HASH_MAP_HASH_SIZE_MIN;
+        let mut data = Vec::new();
+        data.extend_from_slice(&size.to_le_bytes());
+        data.extend_from_slice(&7u16.to_le_bytes()); // foreign saved shift
+        for _ in 0..size {
+            data.extend_from_slice(&0u16.to_le_bytes()); // empty buckets
+        }
+
+        let mut reader = Reader::new(&data);
+        let hash = reader
+            .read_map_hash()
+            .expect("a saved x_shift mismatch must not abort the load");
+        assert_eq!(reader.remaining(), 0);
+        assert_eq!(hash.size(), size);
+        assert_eq!(
+            hash.x_shift(),
+            MapHash::<u16>::new(size).x_shift(),
+            "the live shift comes from the saved size, not from the header"
+        );
+        assert_eq!(hash.x_shift(), 2);
+        assert_eq!(hash.iter_objects().count(), 0);
     }
 
     #[test]

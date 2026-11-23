@@ -22,14 +22,14 @@
 
 use max_core::enums::{
     FileType, GameStateType, Opponent, Planet, PlayMode, TeamClan, UnitOrder, UnitOrderState,
-    VictoryType,
+    UnitType, VictoryType,
 };
 use max_core::geo::{PathStep, Point, MAP_TILES};
 use max_core::save::{
     SaveError, SaveFile, SaveFormatHeader, SAVE_TEAM_COUNT, SAVE_VERSION_V70, UNIT_LIST_COUNT,
 };
 use max_core::team::{TeamId, TeamInfoUi, TeamKind};
-use max_core::unit::{UnitListKind, UnitPath};
+use max_core::unit::{UnitId, UnitListKind, UnitPath};
 use max_core::unit_values::{ATTRIB_COUNT, UNIT_COUNT};
 use max_core::GameState;
 
@@ -1134,6 +1134,57 @@ fn unit_and_team_units_lookup_edges() {
             let _ = teams[team].base_values[0].get_attribute(attribute);
         }
     }
+}
+
+/// Regression: a unit spawned after a V70 load must not reuse a loaded id.
+///
+/// C++ `UnitsManager_DeployUnit` (`units_manager.cpp:2365`) increments the flat
+/// `UnitsManager_UnitIdCounter`, which the V70 loader starts at `0xA000`
+/// (`saveload.cpp:834`), so the new id lies above every V70 id
+/// (`(team << 13) | object_index`). The port keeps the team in [`UnitId`]; its
+/// object index must continue after the highest loaded one instead of
+/// restarting at `counter & 0x1FFF` (which collided with V70 id `1`).
+#[test]
+fn spawn_after_v70_load_does_not_collide_with_loaded_ids() {
+    let save = load(SAVE2);
+    let loaded_max = save
+        .units
+        .iter()
+        .map(|unit| unit.info.id.object_index())
+        .max()
+        .expect("SAVE2 has units");
+
+    let mut state = GameState::from_save(&save);
+    let before = state.unit_count();
+    let loaded_first = UnitId::new(TeamId::RED, 1);
+    assert!(state.unit(loaded_first).is_some(), "SAVE2 contains V70 id 1");
+
+    let id = state
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(60, 60), 0)
+        .expect("unit spawns after a load");
+
+    assert_eq!(id.team(), TeamId::RED, "the team stays encoded in UnitId");
+    assert_eq!(
+        id.object_index(),
+        loaded_max + 1,
+        "the object index continues after the highest loaded one"
+    );
+    assert_ne!(id, loaded_first, "the new id must not collide with V70 id 1");
+
+    // The hash and the id addressee agree: `state.unit(id)` is the new unit.
+    let unit = state.unit(id).expect("the new unit is addressable by id");
+    assert_eq!(unit.id, id);
+    assert_eq!(unit.team, TeamId::RED);
+    assert_eq!(unit.unit_type, UnitType::Tank);
+    assert_eq!(state.unit_count(), before + 1);
+
+    let unique: std::collections::BTreeSet<UnitId> =
+        state.unit_ids_in_order().into_iter().collect();
+    assert_eq!(
+        unique.len(),
+        state.unit_count(),
+        "every live unit id is still unique"
+    );
 }
 
 #[test]

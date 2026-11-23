@@ -232,9 +232,10 @@ fn map_hash_cell_objects_keep_insertion_order_and_drop_empty() {
     assert!(bucket[0].matches(1, 21), "newest cell object must be first");
     assert!(bucket[1].matches(0, 5));
 
-    // Units on the same cell keep insertion order (mode = false -> push_back).
+    // Units on the same cell: `mode = false` is the C++ `!mode` branch —
+    // `PushFront`, so the newest unit comes first.
     hash.add(second, 0, 5, Footprint::Single, false);
-    assert_eq!(hash.get(0, 5), Some(&vec![first, second]));
+    assert_eq!(hash.get(0, 5), Some(&vec![second, first]));
 
     // Removing one unit keeps the cell, removing the last deletes the object.
     hash.remove(first, 0, 5, Footprint::Single);
@@ -244,11 +245,11 @@ fn map_hash_cell_objects_keep_insertion_order_and_drop_empty() {
     assert_eq!(hash.iter_objects().count(), 1, "cell (1,21) remains");
     assert_eq!(hash.get(1, 21), Some(&vec![second]));
 
-    // `mode = true` pushes to the front of the cell list.
+    // `mode = true` is the C++ `PushBack` branch: the newest unit goes last.
     let mut hash = MapHash::<UnitId>::for_standard_map();
     hash.add(first, 5, 5, Footprint::Single, true);
     hash.add(second, 5, 5, Footprint::Single, true);
-    assert_eq!(hash.get(5, 5), Some(&vec![second, first]));
+    assert_eq!(hash.get(5, 5), Some(&vec![first, second]));
 
     hash.clear();
     assert_eq!(hash.iter_objects().count(), 0);

@@ -1246,10 +1246,37 @@ impl GameState {
     // Spawn and destruction (the P3 subset needed by orders)
     // -----------------------------------------------------------------------
 
-    /// Allocates the next `UnitId` (`UnitsManager_DeployUnit`, `++UnitIdCounter`).
+    /// Allocates the next `UnitId` (`UnitsManager_DeployUnit`,
+    /// `units_manager.cpp:2365`: `id = ++UnitsManager_UnitIdCounter`).
+    ///
+    /// C++ increments a flat counter that starts at `PLAYER_TEAM_MAX << 13`
+    /// after a V70 load ([`Self::load_state`]), so a new id is above every
+    /// V70 id (`(team << 13) | object_index`, at most `0x9FFF`). The port
+    /// keeps the team encoded in [`UnitId`], so the object index continues
+    /// after the highest index already in use. Deriving the index from
+    /// `counter & 0x1FFF` is wrong: the loaded counter is `0xA000`, so it
+    /// restarts at 1 and collides with the V70 id `(team << 13) | 1`.
     fn allocate_unit_id(&mut self, team: TeamId) -> UnitId {
+        let max_index = self
+            .units
+            .iter()
+            .flatten()
+            .filter(|unit| !unit.id.is_no_id())
+            .map(|unit| unit.id.object_index())
+            .max()
+            .unwrap_or(0);
+
+        let mut index = max_index.wrapping_add(1) & 0x1FFF;
+        // The computed index is free unless the 13-bit space wrapped; then
+        // skip live ids instead of reusing one. C++ has the same guard as
+        // `SDL_assert(UnitsManager_UnitIdCounter < UnitInfo::NO_ID - 1)`.
+        let start = index;
+        while self.unit(UnitId::new(team, index)).is_some() {
+            index = index.wrapping_add(1) & 0x1FFF;
+            assert_ne!(index, start, "unit id object index space is exhausted");
+        }
+
         self.unit_id_counter = self.unit_id_counter.wrapping_add(1);
-        let index = (self.unit_id_counter & 0x1FFF_u32) as u16;
         UnitId::new(team, index)
     }
 
@@ -3124,6 +3151,33 @@ mod tests {
         assert_eq!(state.teams[0].unit_counter(UnitType::Tank as u16), 2);
     }
 
+    /// `MapHash::Add` is called with `mode = false`, which is the C++
+    /// `!mode` branch (`hash.cpp:170`): a new unit is pushed to the **front**
+    /// of its cell list.
+    #[test]
+    fn units_at_keeps_the_newest_unit_first_like_cpp() {
+        let (mut state, first, second) = tank_state();
+        let cell = Point::new(10, 10);
+        assert_eq!(state.units_at(cell), &[first]);
+
+        let flags = unit_flags::MOBILE_LAND_UNIT | unit_flags::SELECTABLE;
+        let third = state
+            .spawn_unit(UnitType::Tank, TeamId::RED, cell, flags)
+            .expect("spawn");
+        assert_eq!(
+            state.units_at(cell),
+            &[third, first],
+            "the newest unit must be first (C++ PushFront)"
+        );
+
+        // A position change removes and re-adds the unit; it also lands at the
+        // front of the destination cell (`write_unit` -> `Hash_MapHash.Add`).
+        let mut moved = state.unit(second).expect("second").clone();
+        moved.grid = cell;
+        state.write_unit(second, moved);
+        assert_eq!(state.units_at(cell), &[second, third, first]);
+    }
+
     #[test]
     fn destroy_removes_unit_from_every_structure() {
         let (mut state, first, _second) = tank_state();
@@ -3838,9 +3892,9 @@ mod tests {
         );
     }
 
-    /// `UnitsManager_UnitIdCounter` ids carry a 13-bit object index
-    /// (`counter & 0x1FFF`); a long run of spawns never leaves that space and
-    /// keeps the counter monotonic (boundary/MAX).
+    /// `UnitId` carries a 13-bit object index; a long run of spawns never
+    /// leaves that space and keeps the C++ `UnitsManager_UnitIdCounter`
+    /// monotonic (boundary/MAX).
     #[test]
     fn unit_ids_stay_inside_the_thirteen_bit_index_space() {
         let (mut state, _red, _green) = tank_state();
