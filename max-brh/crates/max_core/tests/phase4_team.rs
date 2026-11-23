@@ -19,7 +19,7 @@
 
 use max_core::enums::{ResearchTopic, TeamClan, UnitType};
 use max_core::geo::Point;
-use max_core::research::{research_attribute_values, research_new_turn};
+use max_core::research::research_attribute_values;
 use max_core::save::SaveFile;
 use max_core::team::{
     ComplexId, ResearchTopicInfo, TeamId, TeamInfo, TeamKind, TeamUnits, RESEARCH_TOPICS,
@@ -274,20 +274,20 @@ fn real_save_team_sections_are_consistent() {
 #[test]
 fn research_progress_upgrades_current_values_and_round_trips() {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().teams[0].team_clan = TeamClan::Random;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().player_team = TeamId::RED;
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.teams_mut()[0].team_clan = TeamClan::Random;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.set_player_team(TeamId::RED);
 
     // The ATTACK topic with one point per turn.
     let topic = ResearchTopic::Attack;
-    state.state_mut().teams[0].research_topics[topic as usize] = ResearchTopicInfo {
+    state.teams_mut()[0].research_topics[topic as usize] = ResearchTopicInfo {
         research_level: 0,
         turns_to_complete: 0,
         allocation: 1,
     };
     let base_attack =
-        i32::from(state.state().team_units[0].base_values[UnitType::Tank as usize].attack);
+        i32::from(state.snapshot().team_units()[0].base_values[UnitType::Tank as usize].attack);
 
     // `research_new_turn` deducts `allocation`; a completed level applies the
     // upgrade (`ResearchMenu_ApplyUpgrades`). The first call initializes
@@ -297,16 +297,13 @@ fn research_progress_upgrades_current_values_and_round_trips() {
     while events == 0 {
         calls += 1;
         assert!(calls < 10_000, "research never completed");
-        let produced = {
-            let state = state.state_mut();
-            research_new_turn(&mut state.team_units[0], &mut state.teams[0], TeamId::RED)
-        };
+        let produced = state.research_new_turn(TeamId::RED);
         events += produced.len();
         for event in produced {
             assert_eq!(event.topic, topic);
         }
     }
-    let level = state.state().teams[0].research_topics[topic as usize].research_level;
+    let level = state.snapshot().teams()[0].research_topics[topic as usize].research_level;
     assert_eq!(level, events as u32);
     assert_eq!(level, 1);
 
@@ -315,14 +312,14 @@ fn research_progress_upgrades_current_values_and_round_trips() {
     let (_, new_level) = research_attribute_values(topic, base_attack, level);
     let expected = base_attack + new_level - old1;
     assert_eq!(
-        i32::from(state.state().team_units[0].current_values[UnitType::Tank as usize].attack),
+        i32::from(state.snapshot().team_units()[0].current_values[UnitType::Tank as usize].attack),
         expected
     );
 
     // The base table is untouched, and a newly spawned unit uses the upgraded
     // values.
     assert_eq!(
-        i32::from(state.state().team_units[0].base_values[UnitType::Tank as usize].attack),
+        i32::from(state.snapshot().team_units()[0].base_values[UnitType::Tank as usize].attack),
         base_attack
     );
     let tank = state
@@ -338,7 +335,7 @@ fn research_progress_upgrades_current_values_and_round_trips() {
 
     // V70 keeps the research state and both value tables; write -> read -> write
     // is byte-identical.
-    let bytes = state.state().to_save_bytes().expect("writes");
+    let bytes = state.snapshot().to_save_bytes().expect("writes");
     let save = SaveFile::parse(&bytes).expect("parses");
     let saved_topic = save.teams[0].research_topics[topic as usize];
     assert_eq!(saved_topic.research_level, level);
@@ -352,10 +349,10 @@ fn research_progress_upgrades_current_values_and_round_trips() {
     );
     let reloaded = GameUniverse::from_save(&save);
     assert_eq!(
-        reloaded.state().teams[0].research_topics[topic as usize],
-        state.state().teams[0].research_topics[topic as usize]
+        reloaded.snapshot().teams()[0].research_topics[topic as usize],
+        state.snapshot().teams()[0].research_topics[topic as usize]
     );
-    assert_eq!(reloaded.state().to_save_bytes().expect("writes"), bytes);
+    assert_eq!(reloaded.snapshot().to_save_bytes().expect("writes"), bytes);
 }
 
 #[test]
@@ -364,8 +361,8 @@ fn gold_is_a_v70_u16_on_disk() {
     // the runtime value is `uint32_t`. Values above 65535 truncate exactly like
     // the C++ narrowing cast.
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
 
     for (gold, expected) in [
         (0u32, 0u16),
@@ -375,13 +372,13 @@ fn gold_is_a_v70_u16_on_disk() {
         (70_000, 70_000u32 as u16),
         (0xFFFF_FFFF, 0xFFFF),
     ] {
-        state.state_mut().team_units[0].set_gold(gold);
-        let bytes = state.state().to_save_bytes().expect("writes");
+        state.team_units_table_mut()[0].set_gold(gold);
+        let bytes = state.snapshot().to_save_bytes().expect("writes");
         let save = SaveFile::parse(&bytes).expect("parses");
         assert_eq!(save.team_units[0].gold, expected, "gold {gold}");
         let reloaded = GameUniverse::from_save(&save);
         assert_eq!(
-            reloaded.state().team_units[0].gold,
+            reloaded.snapshot().team_units()[0].gold,
             u32::from(expected),
             "gold {gold}"
         );

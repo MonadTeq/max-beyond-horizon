@@ -41,8 +41,6 @@ use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
 use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::command_finished_turn;
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{

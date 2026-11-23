@@ -23,7 +23,6 @@
 
 use std::collections::BTreeSet;
 
-use max_core::crc::replay_digest_crc;
 use max_core::enums::{ResearchTopic, TeamClan, UnitType};
 use max_core::research::{
     apply_research_upgrades, research_attribute_values, upgrade_amount_for_base,
@@ -372,14 +371,14 @@ fn purchased_upgrades_follow_the_offset_step() {
 #[test]
 fn upgrades_change_spawned_units_and_survive_a_save() {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().player_team = TeamId::RED;
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.set_player_team(TeamId::RED);
     let clan = TeamClan::Musashi;
-    state.state_mut().teams[0].team_clan = clan;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(clan);
-    state.state_mut().save_meta.save_name = [0; 30];
+    state.teams_mut()[0].team_clan = clan;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(clan);
+    state.save_meta_mut().save_name = [0; 30];
     max_core::save_write::SaveMeta::set_name(
-        &mut state.state_mut().save_meta.save_name,
+        &mut state.save_meta_mut().save_name,
         "Upgrades",
     );
 
@@ -392,7 +391,7 @@ fn upgrades_change_spawned_units_and_survive_a_save() {
             0,
         )
         .expect("tank");
-    let base_attack = state.state().team_units[0].base_values[UnitType::Tank as usize].attack;
+    let base_attack = state.snapshot().team_units()[0].base_values[UnitType::Tank as usize].attack;
     assert_eq!(
         state
             .snapshot()
@@ -405,17 +404,17 @@ fn upgrades_change_spawned_units_and_survive_a_save() {
     // `apply_research_upgrades` once per completed level, so the deltas add up.
     let topic = ResearchTopic::Attack;
     for level in 1..=2 {
-        apply_research_upgrades(&mut state.state_mut().team_units[0], topic, level);
+        apply_research_upgrades(&mut state.team_units_table_mut()[0], topic, level);
     }
     let (old1, _) = research_attribute_values(topic, i32::from(base_attack), 1);
     let (_, new2) = research_attribute_values(topic, i32::from(base_attack), 2);
     let expected_attack = i32::from(base_attack) + new2 - old1;
-    let current = state.state().team_units[0].current_values[UnitType::Tank as usize];
+    let current = state.snapshot().team_units()[0].current_values[UnitType::Tank as usize];
     assert_eq!(i32::from(current.attack), expected_attack);
     assert!(expected_attack > i32::from(base_attack));
     // The base table is untouched: research only rewrites `current_values`.
     assert_eq!(
-        state.state().team_units[0].base_values[UnitType::Tank as usize].attack,
+        state.snapshot().team_units()[0].base_values[UnitType::Tank as usize].attack,
         base_attack
     );
 
@@ -438,7 +437,7 @@ fn upgrades_change_spawned_units_and_survive_a_save() {
     );
 
     // V70 round-trip keeps both tables and both units.
-    let bytes = state.state().to_save_bytes().expect("writes");
+    let bytes = state.snapshot().to_save_bytes().expect("writes");
     let save = SaveFile::parse(&bytes).expect("parses");
     let upgraded_tank = save.team_units[0].current_values[UnitType::Tank as usize].values;
     assert_eq!(upgraded_tank.attack, current.attack);
@@ -465,22 +464,22 @@ fn upgrades_change_spawned_units_and_survive_a_save() {
 
     let reloaded = GameUniverse::from_save(&save);
     assert_eq!(
-        reloaded.state().team_units[0].current_values,
-        state.state().team_units[0].current_values
+        reloaded.snapshot().team_units()[0].current_values,
+        state.snapshot().team_units()[0].current_values
     );
     assert_eq!(
-        reloaded.state().team_units[0].base_values,
-        state.state().team_units[0].base_values
+        reloaded.snapshot().team_units()[0].base_values,
+        state.snapshot().team_units()[0].base_values
     );
     // D layer: write -> read -> write is byte-identical. (The replay digest is
     // not compared with the live state: `load_state` normalizes
     // `unit_id_counter` and order transitions, as C++ `SaveLoad_LoadFormatV70`
     // does; two loads of the written bytes are identical.)
-    assert_eq!(reloaded.state().to_save_bytes().expect("writes"), bytes);
+    assert_eq!(reloaded.snapshot().to_save_bytes().expect("writes"), bytes);
     let again = GameUniverse::from_save(&SaveFile::parse(&bytes).expect("parses"));
     assert_eq!(
-        replay_digest_crc(again.state()),
-        replay_digest_crc(reloaded.state())
+        again.snapshot().replay_digest_crc(),
+        reloaded.snapshot().replay_digest_crc()
     );
 }
 

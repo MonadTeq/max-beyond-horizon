@@ -159,7 +159,7 @@ impl TurnBarrierFsm {
         // (stage B step 1 keeps the stage-A facade read access; §6/§7 move the
         // projection onto a complete `StateRef`).
         vec![complex_summary_for(
-            universe.state(),
+            universe.snapshot(),
             self.local_team,
             self.complex_turn,
         )]
@@ -202,7 +202,7 @@ impl TurnBarrierFsm {
         self.sync_index = self.sync_index.wrapping_add(1);
         self.phase = BarrierPhase::Sync;
 
-        state_sync_for(universe.state(), self.local_team, self.sync_index)
+        state_sync_for(universe.snapshot(), self.local_team, self.sync_index)
             .into_iter()
             .map(Packet::StateSync)
             .collect()
@@ -223,7 +223,7 @@ impl TurnBarrierFsm {
     /// correct the remote teams on our side. There is no full map/SNAP in the
     /// protocol — see §9 of protocol.md about the limits.
     fn resume_state_sync<D: Dispatcher>(&self, universe: &GameUniverse<D>) -> Vec<Packet> {
-        state_sync_for(universe.state(), self.local_team, self.sync_index)
+        state_sync_for(universe.snapshot(), self.local_team, self.sync_index)
             .into_iter()
             .map(Packet::StateSync)
             .collect()
@@ -236,7 +236,7 @@ impl TurnBarrierFsm {
         self.crc_checksum = universe.snapshot().state_checksum();
         self.phase = BarrierPhase::Crc;
 
-        vec![crc_barrier_for(self.local_team, index, universe.state())]
+        vec![crc_barrier_for(self.local_team, index, universe.snapshot())]
     }
 
     fn crc_reached<D: Dispatcher>(&self, universe: &GameUniverse<D>) -> bool {
@@ -568,9 +568,8 @@ fn is_consent_barrier(command: &Command) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::crc;
+    
     use max_core::enums::{TeamClan, UnitType};
-    use max_core::game::GameState;
     use max_core::geo::Point;
     use max_core::input::{
         Packet01FrameBarrier, Packet06FinishedTurn, Packet10UpgradeUnitType, Packet13Seed,
@@ -582,22 +581,58 @@ mod tests {
 
     /// Synthetic world: the local team is `Player`, `remotes` are `Remote`, the rest
     /// are `None` (`Remote_SetupPlayers` team types).
-    fn synthetic_state(local: TeamId, remotes: &[TeamId]) -> GameState {
-        let mut state = GameState::new();
+    fn synthetic_universe(local: TeamId, remotes: &[TeamId]) -> GameUniverse<LocalDispatcher> {
+        let mut universe = GameUniverse::default();
         for team in 0..PLAYER_TEAM_COUNT {
-            state.teams[team].team_type = TeamKind::None;
-            state.team_units[team] = TeamUnits::with_clan(TeamClan::Random);
+            universe
+                .team_mut(TeamId(team as u8))
+                .expect("team slot")
+                .team_type = TeamKind::None;
         }
-        state.teams[local.0 as usize].team_type = TeamKind::Player;
+        *universe.team_units_table_mut() =
+            std::array::from_fn(|_| TeamUnits::with_clan(TeamClan::Random));
+        universe
+            .team_mut(local)
+            .expect("local slot")
+            .team_type = TeamKind::Player;
         for team in remotes {
-            state.teams[team.0 as usize].team_type = TeamKind::Remote;
+            universe
+                .team_mut(*team)
+                .expect("remote slot")
+                .team_type = TeamKind::Remote;
         }
-        state.player_team = local;
-        state
+        universe.set_player_team(local);
+        universe
     }
 
-    fn synthetic_universe(local: TeamId, remotes: &[TeamId]) -> GameUniverse<LocalDispatcher> {
-        GameUniverse::new(synthetic_state(local, remotes), LocalDispatcher)
+
+    /// The synthetic team setup on top of an empty world with an arbitrary dispatcher.
+    fn synthetic_universe_with<D: Dispatcher>(
+        local: TeamId,
+        remotes: &[TeamId],
+        dispatcher: D,
+    ) -> GameUniverse<D> {
+        let mut universe = GameUniverse::with_dispatcher(dispatcher);
+        for team in 0..PLAYER_TEAM_COUNT {
+            universe
+                .team_mut(TeamId(team as u8))
+                .expect("team slot")
+                .team_type = TeamKind::None;
+        }
+        *universe.team_units_table_mut() =
+            std::array::from_fn(|_| TeamUnits::with_clan(TeamClan::Random));
+        universe
+            .team_mut(local)
+            .expect("local slot")
+            .team_type = TeamKind::Player;
+        for team in remotes {
+            universe
+                .team_mut(*team)
+                .expect("remote slot")
+                .team_type = TeamKind::Remote;
+        }
+        universe.set_player_team(local);
+        universe
     }
 
     fn barrier_counter(packet: &Packet) -> u8 {
@@ -618,7 +653,7 @@ mod tests {
         let begin = fsm.begin(&mut universe);
         assert_eq!(begin.len(), 1);
         assert_eq!(barrier_counter(&begin[0]), 1, "the first 00 is 1");
-        assert_eq!(universe.state().frame_sync_counter[local.0 as usize], 1);
+        assert_eq!(universe.snapshot().frame_sync_counter()[local.0 as usize], 1);
         // The own counter is not yet agreed with the peers.
         assert!(!fsm.begin_reached(&universe));
         universe.set_frame_sync_counter(TeamId::GREEN, 1);
@@ -628,7 +663,7 @@ mod tests {
 
         let end = fsm.end(&mut universe);
         assert_eq!(barrier_counter(&end[0]), 1, "the first 52 is 1");
-        assert_eq!(universe.state().turn_indices[local.0 as usize], 1);
+        assert_eq!(universe.snapshot().turn_indices()[local.0 as usize], 1);
         assert!(!fsm.end_reached(&universe));
         universe.set_turn_index(TeamId::GREEN, 1);
         universe.set_turn_index(TeamId::BLUE, 1);
@@ -651,12 +686,12 @@ mod tests {
 
         let crc = fsm.crc(&mut universe);
         assert_eq!(barrier_counter(&crc[0]), 1, "the first 45 is 1");
-        assert_eq!(universe.state().next_turn_indices[local.0 as usize], 1);
+        assert_eq!(universe.snapshot().next_turn_indices()[local.0 as usize], 1);
         let own_crc = match &crc[0] {
             Packet::Command(Command::CrcBarrier(barrier)) => barrier.crc16,
             other => panic!("expected 45, got {other:?}"),
         };
-        assert_eq!(own_crc, crc::state_checksum(universe.state()));
+        assert_eq!(own_crc, universe.snapshot().state_checksum());
         assert!(!fsm.crc_reached(&universe));
         universe.set_next_turn_index(TeamId::GREEN, 1);
         universe.set_next_turn_index(TeamId::BLUE, 1);
@@ -755,10 +790,10 @@ mod tests {
         assert_eq!(barrier_counter(&crc[0]), 2);
 
         // 52 and 45 are different C++ arrays, not one shared counter.
-        let state = universe.state();
-        assert_eq!(state.turn_indices[local.0 as usize], 2);
-        assert_eq!(state.next_turn_indices[local.0 as usize], 2);
-        assert_eq!(state.frame_sync_counter[local.0 as usize], 2);
+        let state = universe.snapshot();
+        assert_eq!(state.turn_indices()[local.0 as usize], 2);
+        assert_eq!(state.next_turn_indices()[local.0 as usize], 2);
+        assert_eq!(state.frame_sync_counter()[local.0 as usize], 2);
     }
 
     #[test]
@@ -895,13 +930,14 @@ mod tests {
 
     /// The same three-client world as the `net.rs` disconnect scenario: one tank per
     /// team, clients only differ in the team kinds.
-    fn three_team_state() -> (GameState, [UnitId; 3]) {
-        let mut state = GameState::new();
+    fn three_team_state() -> (GameUniverse<LocalDispatcher>, [UnitId; 3]) {
+        let mut state = GameUniverse::default();
         let teams = [TeamId::RED, TeamId::GREEN, TeamId::BLUE];
         let mut ids: [UnitId; 3] = [UnitId::NO_ID; 3];
 
         for (index, team) in teams.iter().copied().enumerate() {
-            state.team_units[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+            *state.team_units_mut(team).expect("team economy") =
+                TeamUnits::with_clan(TeamClan::Random);
             ids[index] = state
                 .spawn_unit(
                     UnitType::Tank,
@@ -911,7 +947,7 @@ mod tests {
                 )
                 .expect("tank spawns");
         }
-        state.play_mode = PlayMode::SimultaneousMoves;
+        state.set_play_mode(PlayMode::SimultaneousMoves);
         (state, ids)
     }
 
@@ -919,8 +955,7 @@ mod tests {
     /// set of team units (including the economy tail in the last chunk).
     #[test]
     fn resume_state_sync_publishes_the_last_completed_index() {
-        let (base, ids) = three_team_state();
-        let universe = GameUniverse::new(base, LocalDispatcher);
+        let (universe, ids) = three_team_state();
         let mut fsm = NetworkDispatcher::new(TeamId::GREEN, PlayMode::SimultaneousMoves);
         fsm.set_sync_index(7);
 
@@ -1083,8 +1118,9 @@ mod tests {
     #[test]
     fn facade_universe_with_network_dispatcher_broadcasts_and_drops() {
         let local = TeamId::RED;
-        let mut universe = GameUniverse::new(
-            synthetic_state(local, &[TeamId::GREEN]),
+        let mut universe = synthetic_universe_with(
+            local,
+            &[TeamId::GREEN],
             NetworkDispatcher::new(local, PlayMode::TurnBased),
         );
 

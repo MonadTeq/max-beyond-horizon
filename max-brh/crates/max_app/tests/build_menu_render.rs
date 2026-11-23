@@ -15,7 +15,6 @@ use max_app::buildmenu::{BuildMenu, LIST_AREA, PORTRAIT};
 use max_app::mobilize::{Mobilization, STATS};
 use max_app::AppConfig;
 use max_core::enums::{TeamClan, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::universe::StateRef;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
@@ -47,12 +46,19 @@ fn assets() -> Option<Assets> {
 }
 
 /// A match with one RED constructor — the owner of `BuildMenu`.
-fn build_state() -> (GameState, max_core::unit::UnitId) {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
+fn build_state() -> (
+    max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    max_core::unit::UnitId,
+) {
+    let mut state = max_core::universe::GameUniverse::default();
+    state
+        .team_mut(max_core::TeamId::RED)
+        .expect("RED slot")
+        .team_type = TeamKind::Player;
     // Attributes from `SC_ATTRI` (as in a real match): without them `ATTRIB_TURNS`
     // = 0, and the characteristics table/turns are empty.
-    state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    *state.team_units_mut(max_core::TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
     let flags = max_core::access::unit_type_flags(UnitType::Constructor);
     let builder = state
         .spawn_unit(

@@ -1998,10 +1998,7 @@ mod tests {
         use max_core::team::TeamId;
 
         let mut app = App::new(AppConfig::default());
-        app.install_universe(max_core::universe::GameUniverse::new(
-            max_core::game::GameState::new(),
-            max_core::universe::LocalDispatcher,
-        ));
+        *app.universe_mut() = max_core::universe::GameUniverse::default();
 
         let own = app.universe_mut().spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
             .expect("свой танк");

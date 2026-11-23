@@ -73,8 +73,6 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::geo::Point;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
@@ -1557,11 +1555,15 @@ mod tests {
     use super::*;
     use max_core::TeamUnits;
 
-    fn state() -> GameState {
-        let mut state = GameState::new();
-        state.teams[0].team_type = max_core::TeamKind::Player;
-        state.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
-        state.team_units[0].set_gold(150);
+    fn state() -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
+        let mut state = max_core::universe::GameUniverse::default();
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .team_type = max_core::TeamKind::Player;
+        let team_units = state.team_units_mut(TeamId::RED).expect("RED economy");
+        *team_units = TeamUnits::with_clan(max_core::TeamClan::Random);
+        team_units.set_gold(150);
         state
     }
 
@@ -1808,7 +1810,8 @@ mod tests {
         assert_eq!(menu.rate_numbers(StateRef::from(&random), 1), (20, 40));
 
         // CrimsonPath: SHIPYARD -5 turns (`CLAN_TRADEOFFS`), price 15 × 2.
-        random.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
+        *random.team_units_mut(TeamId::RED).expect("RED economy") =
+            TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
         random.unit_mut(builder).unwrap().storage = 0;
         let mut menu = BuildMenu::new(StateRef::from(&random), builder).expect("menu");
         menu.select(shipyard);

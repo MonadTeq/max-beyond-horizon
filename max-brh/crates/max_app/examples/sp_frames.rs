@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(local) = app.local() {
-        ctx.status = local.status_line(app.state().turn_counter);
+        ctx.status = local.status_line(app.state_ref().turn_counter());
     }
 
     let screen = Screen::InSession {
@@ -165,23 +165,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}: партия с ИИ (ход {}, юнитов {})",
         path.display(),
-        app.state().turn_counter,
-        app.state().unit_count()
+        app.state_ref().turn_counter(),
+        app.state_ref().unit_count()
     );
 
     // --- 5. Victory -------------------------------------------------------
     let ai_units: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
-                .is_some_and(|unit| unit.team != app.state().player_team)
+                .is_some_and(|unit| unit.team != app.state_ref().player_team())
         })
         .collect();
     for id in ai_units {
-        app.state_mut().destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     app.local_end_turn();
@@ -210,19 +210,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 6. Defeat --------------------------------------------------------
     // New game, the player's units die: status "Lost" → defeat.
     app.start_local_game(&setup)?;
-    let player = app.state().player_team;
+    let player = app.state_ref().player_team();
     let own_units: Vec<_> = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
         .filter(|id| {
-            app.state()
+            app.state_ref()
                 .unit(*id)
                 .is_some_and(|unit| unit.team == player)
         })
         .collect();
     for id in own_units {
-        app.state_mut().destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     app.local_end_turn();
@@ -311,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if let Some(local) = app.local() {
-        ctx.status = local.status_line(app.state().turn_counter);
+        ctx.status = local.status_line(app.state_ref().turn_counter());
     }
     session.render(&mut buffer, ctx.view(Some(&app)));
     let path = out_dir.join("hs-turn.ppm");
@@ -327,7 +327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.local_end_turn();
 
     if let Some(local) = app.local() {
-        ctx.status = local.status_line(app.state().turn_counter);
+        ctx.status = local.status_line(app.state_ref().turn_counter());
     }
     session.render(&mut buffer, ctx.view(Some(&app)));
     let path = out_dir.join("hs-turn2.ppm");
@@ -345,7 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(local) = app.local() {
-        ctx.status = local.status_line(app.state().turn_counter);
+        ctx.status = local.status_line(app.state_ref().turn_counter());
     }
     session.render(&mut buffer, ctx.view(Some(&app)));
     let path = out_dir.join("hs-game.ppm");
@@ -353,8 +353,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}: ход второго человека (team {:?}, turn {})",
         path.display(),
-        app.state().player_team,
-        app.state().turn_counter
+        app.state_ref().player_team(),
+        app.state_ref().turn_counter()
     );
 
     // GREEN ends the turn → the BLUE computer plays on its own → RED again.
@@ -367,7 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(local) = app.local() {
-        ctx.status = local.status_line(app.state().turn_counter);
+        ctx.status = local.status_line(app.state_ref().turn_counter());
     }
     session.render(&mut buffer, ctx.view(Some(&app)));
     let path = out_dir.join("hs-ai.ppm");
@@ -376,7 +376,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{}: переход после хода ИИ ({:?}, turn {})",
         path.display(),
         app.local_notice().map(|notice| notice.team),
-        app.state().turn_counter
+        app.state_ref().turn_counter()
     );
 
     Ok(())

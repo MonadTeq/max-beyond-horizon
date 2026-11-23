@@ -23,7 +23,6 @@ use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::game::UnitSoundKind;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::GameState;
 
 /// Player mock: remembers tags with gain (`play_scaled`), without a device.
 #[derive(Debug, Default)]
@@ -64,12 +63,26 @@ fn clip() -> WavClip {
 }
 
 /// Mini-match: a shooter tank (RED) and a target tank (GREEN) next to each other.
-fn duel_state(fire_on: Point) -> (GameState, max_core::UnitId, max_core::UnitId) {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Computer;
-    state.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.team_units[1] = TeamUnits::with_clan(max_core::TeamClan::Random);
+fn duel_state(
+    fire_on: Point,
+) -> (
+    max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    max_core::UnitId,
+    max_core::UnitId,
+) {
+    let mut state = max_core::universe::GameUniverse::default();
+    state
+        .team_mut(TeamId::RED)
+        .expect("RED slot")
+        .team_type = TeamKind::Player;
+    state
+        .team_mut(TeamId::GREEN)
+        .expect("GREEN slot")
+        .team_type = TeamKind::Computer;
+    *state.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(max_core::TeamClan::Random);
+    *state.team_units_mut(TeamId::GREEN).expect("GREEN economy") =
+        TeamUnits::with_clan(max_core::TeamClan::Random);
 
     let attacker = state
         .spawn_unit(
@@ -88,7 +101,7 @@ fn duel_state(fire_on: Point) -> (GameState, max_core::UnitId, max_core::UnitId)
         )
         .expect("target");
 
-    let mut data = state.order_data(attacker);
+    let mut data = state.snapshot().order_data(attacker);
     data.fire_on = fire_on;
     data.move_to = fire_on;
     state.set_order_data(attacker, data);
@@ -97,23 +110,31 @@ fn duel_state(fire_on: Point) -> (GameState, max_core::UnitId, max_core::UnitId)
     (state, attacker, target)
 }
 
-/// Collects the match combat sounds: `UnitSound` events → `sfx::combat_sound`.
-fn collect(state: &mut GameState) -> Vec<CombatSfx> {
-    state
-        .take_unit_sounds()
+/// Collects the match combat sounds from the facade event stream:
+/// `GameEvent::Sound` → `sfx::combat_sound`.
+fn collect(
+    state: &mut max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    events: &mut max_core::universe::EventStream,
+) -> Vec<CombatSfx> {
+    events
+        .drain(state)
         .into_iter()
-        .filter_map(sfx::combat_sound)
+        .filter_map(|event| match event {
+            max_core::universe::GameEvent::Sound(sound) => sfx::combat_sound(sound),
+            _ => None,
+        })
         .collect()
 }
 
 #[test]
 fn tank_fire_and_explosion_use_the_sc_units_sound_table() {
     let (mut state, _attacker, _target) = duel_state(Point::new(11, 10));
+    let mut events = state.subscribe();
 
     let mut sounds = Vec::new();
     for _ in 0..40 {
         state.tick();
-        sounds.extend(collect(&mut state));
+        sounds.extend(collect(&mut state, &mut events));
         if sounds.iter().any(|sound| sound.tag == "TANK14")
             && sounds
                 .iter()
@@ -144,11 +165,12 @@ fn tank_fire_and_explosion_use_the_sc_units_sound_table() {
 #[test]
 fn sounds_reach_the_player_through_the_mock_audio_backend() {
     let (mut state, _attacker, _target) = duel_state(Point::new(11, 10));
+    let mut events = state.subscribe();
 
     let mut sounds = Vec::new();
     for _ in 0..40 {
         state.tick();
-        sounds.extend(collect(&mut state));
+        sounds.extend(collect(&mut state, &mut events));
         if !sounds.is_empty() {
             break;
         }
@@ -186,11 +208,12 @@ fn sounds_reach_the_player_through_the_mock_audio_backend() {
 #[test]
 fn disabled_sound_does_not_reach_the_backend() {
     let (mut state, _attacker, _target) = duel_state(Point::new(11, 10));
+    let mut events = state.subscribe();
 
     let mut sounds = Vec::new();
     for _ in 0..40 {
         state.tick();
-        sounds.extend(collect(&mut state));
+        sounds.extend(collect(&mut state, &mut events));
         if !sounds.is_empty() {
             break;
         }

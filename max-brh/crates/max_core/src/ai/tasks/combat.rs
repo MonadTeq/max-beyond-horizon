@@ -3708,7 +3708,7 @@ mod tests {
     use crate::geo::Point;
     use crate::team::{TeamId, TeamKind, TeamUnits};
     use crate::unit_values::{ATTRIB_ATTACK, ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED};
-    use crate::GameState;
+    use crate::game::GameState;
 
     fn state() -> GameState {
         let mut state = GameState::new();

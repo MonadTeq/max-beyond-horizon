@@ -15,7 +15,6 @@
 //! `ORDER_EXPLODE`/`ORDER_STATE_DESTROY`, so the explosion stayed on the map
 //! forever.
 
-use max_core::combat;
 use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
 use max_core::enums::{PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -24,14 +23,14 @@ use max_core::universe::GameUniverse;
 
 fn combat_state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().play_mode = PlayMode::TurnBased;
-    state.state_mut().game_state = max_core::enums::GameStateType::InGame;
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().teams[1].team_type = TeamKind::Computer;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
+    state.set_play_mode(PlayMode::TurnBased);
+    state.set_game_state(max_core::enums::GameStateType::InGame);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.teams_mut()[1].team_type = TeamKind::Computer;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
     // The target is visible to the shooter: in game this comes from reconnaissance, here — determinism.
-    state.state_mut().ai.all_visible = true;
+    state.ai_mut().all_visible = true;
     state
 }
 
@@ -68,7 +67,7 @@ fn is_combat_effect(unit_type: UnitType) -> bool {
 #[test]
 fn turn_based_ai_turn_ends_after_its_missile_impact() {
     let mut state = combat_state();
-    state.state_mut().active_turn_team = TeamId::GREEN;
+    state.set_active_turn_team(TeamId::GREEN);
     let launcher = spawn(
         &mut state,
         UnitType::MissileCrawler,
@@ -78,7 +77,7 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
     let target = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(13, 5));
     state.update_visibility_status(false);
 
-    state.state_mut().ai_begin_turn(TeamId::GREEN);
+    state.ai_begin_turn(TeamId::GREEN);
     let mut data = state.snapshot().order_data(launcher);
     data.fire_on = Point::new(13, 5);
     state.set_order_data(launcher, data);
@@ -98,7 +97,7 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
             }
         }
 
-        if state.state().ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter > 120 {
+        if state.snapshot().ai().players[TeamId::GREEN.0 as usize].end_turn_retry_counter > 120 {
             assert!(tick < 300, "ход ИИ закрылся только на тике {tick}");
 
             let leftovers: Vec<_> = state
@@ -128,7 +127,7 @@ fn turn_based_ai_turn_ends_after_its_missile_impact() {
 
     panic!(
         "ход ИИ не закрылся за 400 тиков: counter={}, units={:?}",
-        state.state().ai.players[TeamId::GREEN.0 as usize].end_turn_retry_counter,
+        state.snapshot().ai().players[TeamId::GREEN.0 as usize].end_turn_retry_counter,
         state
             .snapshot()
             .unit_ids_in_order()
@@ -148,7 +147,7 @@ fn a_miss_spawns_a_hit_explosion_that_animates_and_despawns() {
     state.update_visibility_status(false);
 
     // Shoot at an empty cell within range: `Fire` without a target.
-    combat::attack(state.state_mut(), shooter, Point::new(6, 5));
+    state.attack(shooter, Point::new(6, 5));
 
     let mut explosion = None;
     for _ in 0..30 {
@@ -283,7 +282,7 @@ fn missiles_leave_three_particle_trails_behind_them() {
             }
 
             if fresh.len() == 3 {
-                spawn_ticks.push(state.state().turn_counter);
+                spawn_ticks.push(state.snapshot().turn_counter());
 
                 // All three — in the cell the projectile left, and the pixel
                 // `x/y` are spread by 0/⅓/⅔ of the segment toward the new cell.
@@ -354,7 +353,7 @@ fn missile_trails_are_deterministic() {
             state.tick();
         }
 
-        max_core::crc::state_digest(state.state())
+        state.snapshot().state_digest()
     }
 
     assert_eq!(run(), run(), "следы ракеты должны быть детерминированы");

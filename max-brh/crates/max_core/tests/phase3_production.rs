@@ -16,22 +16,20 @@
 //! `Turns`/`Cost` columns; the cycle tests run `HeavyVehiclePlant → Tank` and
 //! `Shipyard → Escort` from queue to spawn on a live `GameUniverse`.
 
-use max_core::crc;
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::production::{
-    self, cost_per_turn, total_cost, BuildError, ProductionEventKind, ProductionManager, BUILDABLE,
+    cost_per_turn, total_cost, BuildError, ProductionEventKind, BUILDABLE,
     FACTORIES,
 };
-use max_core::production_turns_to_build;
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
 use max_core::unit::{UnitId, UnitListKind};
 use max_core::universe::GameUniverse;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -81,7 +79,7 @@ fn factory_state(factory_type: UnitType) -> (GameUniverse, UnitId) {
 
 fn production_turn(state: &mut GameUniverse) -> Vec<max_core::ProductionEvent> {
     state.manage_economy(TeamId::RED);
-    production::progress_build_state(state.state_mut(), TeamId::RED)
+    state.progress_build_state(TeamId::RED)
 }
 
 fn count_type(state: &GameUniverse, unit_type: UnitType) -> usize {
@@ -99,7 +97,7 @@ fn count_type(state: &GameUniverse, unit_type: UnitType) -> usize {
 }
 
 fn raw_storage(state: &GameUniverse, complex: ComplexId) -> i32 {
-    max_core::alloc::get_cargo_info(state.state(), TeamId::RED, complex)
+    state.snapshot().get_cargo_info(TeamId::RED, complex)
         .0
         .raw
 }
@@ -120,7 +118,7 @@ fn every_factory_can_start_each_buildable_type_with_the_cpp_cost_and_time() {
         for &unit_type in units {
             let (mut state, factory) = factory_state(factory_type);
 
-            let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+            let mut manager = state.production_manager(TeamId::RED);
             manager.enqueue(factory, unit_type).expect("queue");
             let report = manager
                 .commit(factory)
@@ -129,7 +127,7 @@ fn every_factory_can_start_each_buildable_type_with_the_cpp_cost_and_time() {
 
             assert_eq!(
                 report.turns,
-                production_turns_to_build(state.state(), TeamId::RED, unit_type),
+                state.snapshot().turns_to_build(TeamId::RED, unit_type),
                 "{factory_type:?} → {unit_type:?} turns"
             );
             assert!(report.turns > 0);
@@ -168,21 +166,21 @@ fn committing_a_non_builder_or_a_foreign_type_is_refused() {
     let tank = spawn(&mut state, UnitType::Tank, Point::new(30, 30));
 
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).enqueue(tank, UnitType::Scout),
+        state.production_manager(TeamId::RED).enqueue(tank, UnitType::Scout),
         Err(BuildError::NotABuilder)
     );
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).enqueue(tank, UnitType::Tank),
+        state.production_manager(TeamId::RED).enqueue(tank, UnitType::Tank),
         Err(BuildError::NotABuilder),
         "a tank has no build queue"
     );
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).enqueue(factory, UnitType::Tank),
+        state.production_manager(TeamId::RED).enqueue(factory, UnitType::Tank),
         Err(BuildError::NotBuildable),
         "the Training Hall only builds infantry types"
     );
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).commit(factory),
+        state.production_manager(TeamId::RED).commit(factory),
         Err(BuildError::EmptyQueue)
     );
 }
@@ -204,7 +202,7 @@ fn run_cycle(
         .expect("complex");
     let rate = cost_per_turn(factory_type, 1);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, unit_type).expect("queue");
     let turns = manager.commit(factory).expect("commit").turns;
     drop(manager);
@@ -285,9 +283,9 @@ fn shipyard_builds_an_escort_through_the_full_cycle() {
 fn cycle_digests(unit_type: UnitType) -> (u16, u16, u16) {
     let (state, _, _) = run_cycle(UnitType::HeavyVehiclePlant, unit_type);
     (
-        crc::state_checksum(state.state()),
-        crc::state_digest(state.state()),
-        crc::replay_digest_crc(state.state()),
+        state.snapshot().state_checksum(),
+        state.snapshot().state_digest(),
+        state.snapshot().replay_digest_crc(),
     )
 }
 

@@ -16,13 +16,13 @@ use max_core::universe::GameUniverse;
 /// One team turn: economy → `Ai_BeginTurn` → ticks → end of turn.
 fn play_turn(state: &mut GameUniverse, team: TeamId, ticks: usize) {
     state.manage_economy(team);
-    state.state_mut().ai_begin_turn(team);
+    state.ai_begin_turn(team);
 
     for _ in 0..ticks {
         state.tick();
     }
 
-    state.state_mut().game_state = GameStateType::EndTurn;
+    state.set_game_state(GameStateType::EndTurn);
     let _ = state.finish_turn();
 }
 
@@ -55,14 +55,14 @@ fn computer_state(map: Map) -> GameUniverse {
         ],
     );
 
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Computer;
-    state.state_mut().teams[TeamId::RED.0 as usize].team_clan = TeamClan::CrimsonPath;
-    state.state_mut().team_units[TeamId::RED.0 as usize] =
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Computer;
+    state.teams_mut()[TeamId::RED.0 as usize].team_clan = TeamClan::CrimsonPath;
+    state.team_units_table_mut()[TeamId::RED.0 as usize] =
         TeamUnits::with_clan(TeamClan::CrimsonPath);
-    state.state_mut().ai.settings.opponent = Opponent::Average as u8;
-    max_core::ai_init(state.state_mut());
+    state.ai_mut().settings.opponent = Opponent::Average as u8;
+    state.ai_init();
 
-    state.state_mut().ai.players[TeamId::RED.0 as usize].strategy = AiStrategy::Sea;
+    state.ai_mut().players[TeamId::RED.0 as usize].strategy = AiStrategy::Sea;
 
     state
 }
@@ -77,11 +77,11 @@ fn explore_requests_reconnaissance_and_moves_the_scout() {
         .expect("scout");
 
     // The exploration task is created by `AiPlayer::init_tasks`.
-    max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
 
     let explore = state
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -90,8 +90,8 @@ fn explore_requests_reconnaissance_and_moves_the_scout() {
         .expect("TaskExplore created by init_tasks");
 
     let requests = state
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .task(explore)
         .and_then(|task| match &task.kind {
@@ -114,14 +114,11 @@ fn explore_requests_reconnaissance_and_moves_the_scout() {
     // `IsUnitUsable` takes the scout (SCOUT is the first requested type).
     assert!(
         state
-            .state()
-            .ai
-            .task_manager
-            .task_is_unit_usable(state.state(), explore, scout),
+            .snapshot().task_is_unit_usable(explore, scout),
         "TaskExplore must accept the idle scout"
     );
 
-    state.state_mut().game_state = GameStateType::EndTurn;
+    state.set_game_state(GameStateType::EndTurn);
     let _ = state.finish_turn();
 
     let start = state.snapshot().unit(scout).expect("scout alive").grid;
@@ -132,8 +129,8 @@ fn explore_requests_reconnaissance_and_moves_the_scout() {
         play_turn(&mut state, TeamId::RED, 16);
 
         if state
-            .state()
-            .ai
+            .snapshot()
+            .ai()
             .task_manager
             .tasks()
             .iter()
@@ -172,8 +169,8 @@ fn ai_ferries_a_tank_across_the_channel() {
 
     // No `AiPlayer::BeginTurn`: the planner would own the tank. Only the task
     // manager runs, which is exactly the `TaskMove`/`TaskTransport` subsystem.
-    state.state_mut().ai.players[TeamId::RED.0 as usize].need_init = false;
-    state.state_mut().ai.players[TeamId::RED.0 as usize].tasks_pending = false;
+    state.ai_mut().players[TeamId::RED.0 as usize].need_init = false;
+    state.ai_mut().players[TeamId::RED.0 as usize].tasks_pending = false;
 
     let tank = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
@@ -184,7 +181,7 @@ fn ai_ferries_a_tank_across_the_channel() {
 
     // A plain move across the water: `TaskMove` has to call `AttemptTransport`.
     let destination = Point::new(32, 10);
-    state.state_mut().ai_append_task(
+    state.ai_append_task(
         TeamId::RED,
         None,
         TASK_PRIORITY_MOVE,
@@ -197,26 +194,24 @@ fn ai_ferries_a_tank_across_the_channel() {
     for _ in 0..16 {
         state.manage_economy(TeamId::RED);
         state
-            .state_mut()
-            .with_task_manager(|tm, world| tm.begin_turn(world, TeamId::RED));
-        state.state_mut().ai_remind_move_finished(tank, true);
-        state.state_mut().ai_remind_move_finished(ferry, true);
-        state.state_mut().execute_reminders();
+            .ai_task_begin_turn(TeamId::RED);
+        state.ai_remind_move_finished(tank, true);
+        state.ai_remind_move_finished(ferry, true);
+        state.execute_reminders();
 
         for _ in 0..16 {
             state.tick();
-            state.state_mut().execute_reminders();
+            state.execute_reminders();
         }
 
         state
-            .state_mut()
-            .with_task_manager(|tm, world| tm.end_turn(world, TeamId::RED));
-        state.state_mut().execute_reminders();
+            .ai_task_end_turn(TeamId::RED);
+        state.execute_reminders();
 
-        state.state_mut().game_state = GameStateType::EndTurn;
+        state.set_game_state(GameStateType::EndTurn);
         let _ = state.finish_turn();
 
-        let tasks = state.state().ai.task_manager.tasks();
+        let tasks = state.snapshot().ai().task_manager.tasks();
         let transport_exists = tasks.iter().any(|task| {
             task.get_type() == TASK_TYPE_TRANSPORT
                 && matches!(task.kind, TaskKind::Transport { .. })

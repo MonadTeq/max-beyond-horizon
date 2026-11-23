@@ -13,13 +13,13 @@ use max_core::universe::GameUniverse;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().team_units[TeamId::RED.0 as usize] =
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
+    state.team_units_table_mut()[TeamId::RED.0 as usize] =
         max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[TeamId::GREEN.0 as usize] =
+    state.team_units_table_mut()[TeamId::GREEN.0 as usize] =
         max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().player_team = TeamId::RED;
+    state.set_player_team(TeamId::RED);
     state
 }
 
@@ -103,11 +103,11 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
         "враг вне FOV остаётся скрытым"
     );
     assert!(
-        state.state().ai_heat_map_complete(TeamId::RED, 20, 20) > 0,
+        state.snapshot().ai_heat_map_complete(TeamId::RED, 20, 20) > 0,
         "клетка своего юнита разведана"
     );
     assert_eq!(
-        state.state().ai_heat_map_complete(TeamId::RED, 80, 80),
+        state.snapshot().ai_heat_map_complete(TeamId::RED, 80, 80),
         0,
         "дальняя клетка не разведана"
     );
@@ -118,7 +118,7 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
 #[test]
 fn all_visible_marks_every_spawned_unit_visible() {
     let mut state = state();
-    state.state_mut().ai.all_visible = true;
+    state.ai_mut().all_visible = true;
 
     let own = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 20), 0)

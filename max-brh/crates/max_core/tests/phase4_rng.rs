@@ -16,7 +16,6 @@
 //! Oracles: `randomizer.cpp` (`Randomizer_SetSeed`, `Randomizer_Generate`),
 //! `saveload.cpp:776` (C++ does **not** touch the RNG on load).
 
-use max_core::crc::{replay_digest_bytes, state_digest};
 use max_core::rng::{Randomizer, DEFAULT_SEED};
 use max_core::save::SaveFile;
 use max_core::universe::GameUniverse;
@@ -35,28 +34,28 @@ fn load_reseeds_the_generator_from_the_header() {
     // `GameUniverse::load_state`: `self.rng = Randomizer::new(save.header.rng_seed)`.
     let state1 = loaded_state(SAVE1);
     assert_eq!(
-        state1.state().rng.state(),
+        state1.snapshot().rng().state(),
         Randomizer::new(0x32A6_1291).state()
     );
 
     let state2 = loaded_state(SAVE2);
     assert_eq!(
-        state2.state().rng.state(),
+        state2.snapshot().rng().state(),
         Randomizer::new(0x329B_8D8E).state()
     );
-    assert_ne!(state1.state().rng.state(), state2.state().rng.state());
+    assert_ne!(state1.snapshot().rng().state(), state2.snapshot().rng().state());
 }
 
 #[test]
 fn save_metadata_keeps_the_header_seed() {
     let state = loaded_state(SAVE1);
-    assert_eq!(state.state().save_meta.rng_seed, 0x32A6_1291);
+    assert_eq!(state.snapshot().save_meta().rng_seed, 0x32A6_1291);
 
     // The seed survives the "state -> file -> state" cycle.
-    let bytes = state.state().to_save_bytes().expect("writes");
+    let bytes = state.snapshot().to_save_bytes().expect("writes");
     let reloaded = GameUniverse::from_save(&SaveFile::parse(&bytes).expect("parses"));
-    assert_eq!(reloaded.state().save_meta.rng_seed, 0x32A6_1291);
-    assert_eq!(reloaded.state().rng.state(), state.state().rng.state());
+    assert_eq!(reloaded.snapshot().save_meta().rng_seed, 0x32A6_1291);
+    assert_eq!(reloaded.snapshot().rng().state(), state.snapshot().rng().state());
 }
 
 #[test]
@@ -66,8 +65,8 @@ fn two_loads_produce_the_same_stream() {
 
     for index in 0..1000 {
         assert_eq!(
-            first.state_mut().rng.next_u32(),
-            second.state_mut().rng.next_u32(),
+            first.rng_mut().next_u32(),
+            second.rng_mut().next_u32(),
             "value {index} of the stream diverged"
         );
     }
@@ -80,15 +79,15 @@ fn v70_does_not_store_the_generator_state() {
     // stream from the seed again — this is the documented port behavior.
     let mut state = loaded_state(SAVE1);
     for _ in 0..17 {
-        let _ = state.state_mut().rng.next_u32();
+        let _ = state.rng_mut().next_u32();
     }
-    let advanced = state.state().rng.state();
+    let advanced = state.snapshot().rng().state();
     assert_ne!(advanced, Randomizer::new(0x32A6_1291).state());
 
-    let bytes = state.state().to_save_bytes().expect("writes");
+    let bytes = state.snapshot().to_save_bytes().expect("writes");
     let reloaded = GameUniverse::from_save(&SaveFile::parse(&bytes).expect("parses"));
     assert_eq!(
-        reloaded.state().rng.state(),
+        reloaded.snapshot().rng().state(),
         Randomizer::new(0x32A6_1291).state(),
         "the stream must restart from the header seed"
     );
@@ -97,12 +96,12 @@ fn v70_does_not_store_the_generator_state() {
 #[test]
 fn seed_drives_the_replay_digest() {
     let mut state = loaded_state(SAVE1);
-    let reference = replay_digest_bytes(state.state());
+    let reference = state.snapshot().replay_digest_bytes();
 
     // The RNG state is 4 little-endian words after the unit-id counter.
     let mut reseeded = state.clone();
-    reseeded.state_mut().rng.set_seed(0x32A6_1292);
-    let digest = replay_digest_bytes(reseeded.state());
+    reseeded.rng_mut().set_seed(0x32A6_1292);
+    let digest = reseeded.snapshot().replay_digest_bytes();
     assert_ne!(digest, reference, "a different seed must change the digest");
     assert_ne!(
         &digest[24..40],
@@ -112,12 +111,12 @@ fn seed_drives_the_replay_digest() {
 
     // Restoring the exact state restores the digest.
     state
-        .state_mut()
-        .rng
-        .set_state(reseeded.state().rng.state());
-    assert_ne!(replay_digest_bytes(state.state()), reference);
-    state.state_mut().rng.set_seed(0x32A6_1291);
-    assert_eq!(replay_digest_bytes(state.state()), reference);
+        .rng_mut()
+        
+        .set_state(reseeded.snapshot().rng().state());
+    assert_ne!(state.snapshot().replay_digest_bytes(), reference);
+    state.rng_mut().set_seed(0x32A6_1291);
+    assert_eq!(state.snapshot().replay_digest_bytes(), reference);
 }
 
 #[test]
@@ -128,7 +127,7 @@ fn ticks_are_deterministic_with_the_loaded_seed() {
     for _ in 0..20 {
         first.tick();
         second.tick();
-        assert_eq!(first.state().rng.state(), second.state().rng.state());
+        assert_eq!(first.snapshot().rng().state(), second.snapshot().rng().state());
     }
 
     assert_eq!(
@@ -136,10 +135,10 @@ fn ticks_are_deterministic_with_the_loaded_seed() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        replay_digest_bytes(first.state()),
-        replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
-    assert_eq!(state_digest(first.state()), state_digest(second.state()));
+    assert_eq!(first.snapshot().state_digest(), second.snapshot().state_digest());
 }
 
 #[test]
@@ -152,7 +151,7 @@ fn a_new_game_uses_the_cpp_default_seed() {
     );
 
     let state = GameUniverse::default();
-    assert_eq!(state.state().rng.state(), Randomizer::new(0).state());
+    assert_eq!(state.snapshot().rng().state(), Randomizer::new(0).state());
 }
 
 #[test]
@@ -180,10 +179,10 @@ fn generator_state_round_trip_in_a_loaded_game() {
     // `Randomizer::from_state` is the save/restore route; the sequence after a
     // restore must continue, not restart.
     let state = loaded_state(SAVE1);
-    let snapshot = state.state().rng.state();
+    let snapshot = state.snapshot().rng().state();
 
     let mut restored = Randomizer::from_state(snapshot);
-    let mut original = state.state().rng;
+    let mut original = *state.snapshot().rng();
     for index in 0..64 {
         assert_eq!(
             restored.next_u32(),

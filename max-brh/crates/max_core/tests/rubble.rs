@@ -11,10 +11,8 @@
 //! * called from `UnitsManager_ProgressExplosion` (`units_manager.cpp:4021`) at
 //!   the middle of the explosion animation.
 
-use max_core::access;
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_WIDTH};
-use max_core::production;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::universe::GameUniverse;
 use max_core::TeamClan;
@@ -22,16 +20,16 @@ use std::collections::BTreeMap;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().play_mode = max_core::enums::PlayMode::TurnBased;
-    state.state_mut().game_state = max_core::enums::GameStateType::InGame;
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().teams[1].team_type = TeamKind::Computer;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().ai.all_visible = true;
+    state.set_play_mode(max_core::enums::PlayMode::TurnBased);
+    state.set_game_state(max_core::enums::GameStateType::InGame);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.teams_mut()[1].team_type = TeamKind::Computer;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
+    state.ai_mut().all_visible = true;
 
     // The whole map is land: `Access_IsFullyLandCovered` requires `SURFACE_TYPE_LAND`.
-    for tile in state.state_mut().map.surface.tiles_mut().iter_mut() {
+    for tile in state.map_mut().surface.tiles_mut().iter_mut() {
         *tile = Surface::LAND;
     }
 
@@ -190,7 +188,7 @@ fn sea_unit_on_water_leaves_no_rubble() {
     for y in 29..=31 {
         for x in 29..=31 {
             let index = y * MAP_WIDTH as i16 + x;
-            state.state_mut().map.surface.tiles_mut()[index as usize] = Surface::WATER;
+            state.map_mut().surface.tiles_mut()[index as usize] = Surface::WATER;
         }
     }
 
@@ -213,7 +211,7 @@ fn quick_build_removal_does_not_leave_rubble() {
     let mut state = state();
     let tank = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(14, 14));
 
-    let rubble = access::build_clearing(state.state_mut(), tank, false);
+    let rubble = state.build_clearing(tank, false);
 
     assert!(rubble.is_none(), "mode = false — обломка нет");
     assert!(
@@ -253,7 +251,7 @@ fn rubble_is_deterministic_between_runs() {
             );
         }
 
-        let digest = max_core::crc::replay_digest_bytes(state.state());
+        let digest = state.snapshot().replay_digest_bytes();
 
         (rubble, digest)
     }
@@ -303,7 +301,7 @@ fn bulldozer_clears_rubble_and_takes_its_cargo() {
     }
 
     // `GameManager_SpawnNewUnits` → `UnitInfo::SpawnNewUnit` (BULLDOZR branch).
-    production::progress_build_state(state.state_mut(), TeamId::RED);
+    state.progress_build_state(TeamId::RED);
 
     assert!(state.snapshot().unit(rubble).is_none(), "обломок снесён");
     let unit = state.snapshot().unit(bulldozer).expect("bulldozer");

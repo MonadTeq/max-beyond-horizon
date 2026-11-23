@@ -9,9 +9,9 @@
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::production::{
-    self, buildable_units, builder_type, can_build, construction_slab_type, construction_utility,
+    self, buildable_units, builder_type, can_build, construction_slab_type,
     construction_utility_types, cost_per_turn, is_builder, is_factory, max_possible_build_rate,
-    total_cost, turns_and_consumption, BuildError, ProductionEventKind, ProductionManager,
+    total_cost, BuildError, ProductionEventKind,
 };
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::GameUniverse;
@@ -19,12 +19,12 @@ use max_core::universe::GameUniverse;
 /// A game with one player team and gold.
 fn state_with_gold(gold: u32) -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
+    state.teams_mut()[0].team_type = TeamKind::Player;
     // `TeamUnits::with_clan` fills `current_values` from `SC_ATTRI`: otherwise
     // `ATTRIB_TURNS` = 0 and production is "instant" (in a real game the table
     // is filled by `ResourceManager_InitTeamUnits`).
-    state.state_mut().team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.state_mut().team_units[0].set_gold(gold);
+    state.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.team_units_table_mut()[0].set_gold(gold);
     state
 }
 
@@ -103,7 +103,7 @@ fn production_turn(state: &mut GameUniverse) -> Vec<max_core::ProductionEvent> {
     // Start of the team turn: `GameManager_ManageEconomy` → `UpdateProduction`
     // (charging raw material from the builder's storage), then `ProgressBuildState`.
     state.manage_economy(TeamId::RED);
-    max_core::production::progress_build_state(state.state_mut(), TeamId::RED)
+    state.progress_build_state(TeamId::RED)
 }
 
 fn count_type(state: &GameUniverse, unit_type: UnitType) -> usize {
@@ -246,15 +246,15 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     // `UnitInfo::GetTurnsToBuild`: TANK = 4 turns, factory — 3/turn at 1×, 12 at 2×,
     // 36 at 4×. 4×: 4 turns divided by 4 → (1,36); 2×: (2,24).
     assert_eq!(
-        turns_and_consumption(state.state(), &heavy, UnitType::Tank, 1),
+        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 1),
         (4, 12)
     );
     assert_eq!(
-        turns_and_consumption(state.state(), &heavy, UnitType::Tank, 2),
+        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 2),
         (2, 24)
     );
     assert_eq!(
-        turns_and_consumption(state.state(), &heavy, UnitType::Tank, 4),
+        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 4),
         (1, 36)
     );
 
@@ -264,7 +264,7 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     active.build_time = 3;
     active.build_list = vec![UnitType::Tank];
     assert_eq!(
-        turns_and_consumption(state.state(), &active, UnitType::Tank, 2),
+        state.snapshot().turns_and_consumption(&active, UnitType::Tank, 2),
         (2, 15)
     );
 
@@ -275,11 +275,11 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         .expect("training hall");
     let hall = state.snapshot().unit(hall).expect("factory").clone();
     assert_eq!(
-        turns_and_consumption(state.state(), &hall, UnitType::Infantry, 1),
+        state.snapshot().turns_and_consumption(&hall, UnitType::Infantry, 1),
         (2, 2)
     );
     assert_eq!(
-        turns_and_consumption(state.state(), &hall, UnitType::Infantry, 2),
+        state.snapshot().turns_and_consumption(&hall, UnitType::Infantry, 2),
         (1, 4)
     );
 
@@ -292,7 +292,7 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     constructor.storage = 0;
     for rate in [1, 2, 4] {
         assert_eq!(
-            turns_and_consumption(state.state(), &constructor, UnitType::MiningStation, rate),
+            state.snapshot().turns_and_consumption(&constructor, UnitType::MiningStation, rate),
             (12, 24),
             "ставка {rate}× ограничена пустым складом"
         );
@@ -311,13 +311,13 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
     let mut builder = random.snapshot().unit(builder).expect("builder").clone();
     builder.storage = 0;
     assert_eq!(
-        turns_and_consumption(random.state(), &builder, UnitType::Shipyard, 1),
+        random.snapshot().turns_and_consumption(&builder, UnitType::Shipyard, 1),
         (20, 40)
     );
 
     let mut crimson = GameUniverse::default();
-    crimson.state_mut().teams[0].team_type = TeamKind::Player;
-    crimson.state_mut().team_units[0] =
+    crimson.teams_mut()[0].team_type = TeamKind::Player;
+    crimson.team_units_table_mut()[0] =
         max_core::TeamUnits::with_clan(max_core::TeamClan::CrimsonPath);
     let builder = crimson
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
@@ -325,7 +325,7 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
     let mut builder = crimson.snapshot().unit(builder).expect("builder").clone();
     builder.storage = 0;
     assert_eq!(
-        turns_and_consumption(crimson.state(), &builder, UnitType::Shipyard, 1),
+        crimson.snapshot().turns_and_consumption(&builder, UnitType::Shipyard, 1),
         (15, 30),
         "клан сокращает SHIPYARD на 5 ходов"
     );
@@ -344,7 +344,7 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
         .expect("training hall");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(factory, UnitType::Infantry)
         .expect("infantry is buildable at the training hall");
@@ -374,7 +374,7 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
 
     // Team gold is not spent by production (C++: only `CargoMenu`/
     // upgrades) — previously the factory "paid with gold" and stopped at zero credits.
-    assert_eq!(state.state().team_units[0].gold(), 0, "золото не тратится");
+    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
 
     let factory_unit = state.snapshot().unit(factory).expect("factory alive");
     assert_eq!(factory_unit.state, UnitOrderState::UnitReady);
@@ -396,12 +396,12 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
         .expect("air plant");
     power_the_complex(&mut state, plant);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
     manager.commit(plant).expect("build");
 
     // FIGHTER: `ATTRIB_TURNS` from SC_ATTRI; build until `UNIT_READY`.
-    let turns = max_core::production::turns_to_build(state.state(), TeamId::RED, UnitType::Fighter);
+    let turns = state.snapshot().turns_to_build(TeamId::RED, UnitType::Fighter);
     for _ in 0..turns {
         production_turn(&mut state);
     }
@@ -441,7 +441,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
 
     // A player click on an adjacent cell → `ORDER_ACTIVATE` to the factory.
     assert!(
-        max_core::unit_order::issue_factory_exit(state.state_mut(), plant),
+        state.issue_factory_exit(plant),
         "приказ вывода отдан"
     );
     for _ in 0..64 {
@@ -483,11 +483,11 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
         .expect("air plant");
     power_the_complex(&mut state, plant);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
     manager.commit(plant).expect("build");
 
-    let turns = max_core::production::turns_to_build(state.state(), TeamId::RED, UnitType::Fighter);
+    let turns = state.snapshot().turns_to_build(TeamId::RED, UnitType::Fighter);
     for _ in 0..turns {
         production_turn(&mut state);
     }
@@ -515,9 +515,7 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
 
     // A click on the factory cell selects the factory itself, not the unit in it.
     assert_eq!(
-        max_core::access::get_team_unit(
-            state.state(),
-            Point::new(10, 10),
+        state.snapshot().get_team_unit(Point::new(10, 10),
             TeamId::RED,
             unit_flags::SELECTABLE
         ),
@@ -527,7 +525,7 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
 }
 
 fn launch_ready_unit(state: &mut GameUniverse, factory: max_core::UnitId) -> bool {
-    if !max_core::unit_order::issue_factory_exit(state.state_mut(), factory) {
+    if !state.issue_factory_exit(factory) {
         return false;
     }
 
@@ -556,7 +554,7 @@ fn repeated_build_keeps_producing_after_the_unit_is_launched() {
         .expect("training hall");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.set_repeat(factory, true);
     manager.commit(factory).expect("build");
@@ -633,7 +631,7 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
         .expect("training hall");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
     drop(manager);
@@ -659,7 +657,7 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
         Some(1)
     );
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
-    assert_eq!(state.state().team_units[0].gold(), 0, "золото не тратится");
+    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
 
     // Material delivery (mine/storage): the construction reaches the end from the same place.
     state.unit_mut(dump).expect("dump").storage = 5;
@@ -685,7 +683,7 @@ fn constructor_builds_a_building_on_a_site() {
     // (`buildmenu.cpp:903-906`: 2 × 10 turns = 20).
     state.unit_mut(constructor).expect("builder").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("constructor builds training halls");
@@ -708,7 +706,7 @@ fn constructor_builds_a_building_on_a_site() {
         "здание должно появиться через 10 ходов"
     );
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         100,
         "стройка платится сырьём со склада, золото команды не тратится"
     );
@@ -743,7 +741,7 @@ fn cancel_stops_the_construction() {
         .expect("training hall");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
     manager.progress();
@@ -779,7 +777,7 @@ fn empty_queue_is_rejected() {
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(12, 12), 0)
         .expect("tank");
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     assert_eq!(manager.commit(factory), Err(BuildError::EmptyQueue));
     assert_eq!(
         manager.enqueue(tank, UnitType::Infantry),
@@ -801,7 +799,7 @@ fn missing_materials_pause_the_build_without_losing_the_queue() {
         .expect("training hall");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
     drop(manager);
@@ -810,7 +808,7 @@ fn missing_materials_pause_the_build_without_losing_the_queue() {
     // pauses, but the order remains (C++ `ValidateIndustry`; the port does not lose the queue).
     state.unit_mut(dump).expect("dump").storage = 0;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     let events = manager.progress();
 
     assert!(
@@ -833,7 +831,7 @@ fn missing_materials_pause_the_build_without_losing_the_queue() {
         "build_time не двигается на паузе"
     );
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         100,
         "золото не тратится на производство"
     );
@@ -855,7 +853,7 @@ fn two_speed_build_costs_the_cpp_rate() {
         .expect("heavy vehicle plant");
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Tank).expect("queue");
     manager.set_build_rate(factory, 2);
     let report = manager.commit(factory).expect("build");
@@ -889,10 +887,10 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
     state.unit_mut(constructor).expect("builder").storage = 40;
 
     let before = state.snapshot().unit(constructor).expect("builder").clone();
-    let expected = turns_and_consumption(state.state(), &before, UnitType::MiningStation, 2);
+    let expected = state.snapshot().turns_and_consumption(&before, UnitType::MiningStation, 2);
     assert_eq!(expected, (8, 40));
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::MiningStation)
         .expect("constructor builds mining stations");
@@ -908,7 +906,7 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
 
     assert_eq!(turns, 8, "2× держится 4 хода, затем 1× ещё 4");
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         1000,
         "мобильный строитель платит сырьём со склада (C++ \
          `Cargo_GetRawConsumptionRate` → `UpdateProduction`), не золотом"
@@ -961,7 +959,7 @@ fn constructor_order_deploys_the_large_construction_site() {
     // `UnitsManager_DeployUnit` zeroes the storage; landing gives 40.
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("queue");
@@ -978,7 +976,7 @@ fn constructor_order_deploys_the_large_construction_site() {
         UnitType::LargeSlab
     );
     assert_eq!(
-        construction_utility(state.state(), TeamId::RED, site),
+        state.snapshot().construction_utility(TeamId::RED, site),
         state
             .snapshot()
             .units_at(site)
@@ -1024,10 +1022,8 @@ fn constructor_order_deploys_the_large_construction_site() {
     // Exactly one set: a repeated call (as from start_building/the order
     // machine) does not spawn a second site and does not burn RNG.
     let mut duplicate_state = state.clone();
-    let rng_before = duplicate_state.state().rng;
-    let duplicate = max_core::production::deploy_construction_site(
-        duplicate_state.state_mut(),
-        constructor,
+    let rng_before = duplicate_state.snapshot().rng().clone();
+    let duplicate = duplicate_state.deploy_construction_site(constructor,
         UnitType::TrainingHall,
         site,
     );
@@ -1035,7 +1031,7 @@ fn constructor_order_deploys_the_large_construction_site() {
         duplicate.is_none(),
         "площадка уже стоит — повторный спавн запрещён"
     );
-    assert_eq!(duplicate_state.state().rng, rng_before, "RNG не сдвинут");
+    assert_eq!(*duplicate_state.snapshot().rng(), rng_before, "RNG не сдвинут");
 }
 
 /// The engineer builds a small object (`ROAD`): `SMLTAPE`/`SMLCONES`, no slab
@@ -1048,7 +1044,7 @@ fn engineer_order_deploys_the_small_construction_site_without_a_slab() {
         .expect("engineer");
     state.unit_mut(engineer).expect("engineer").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(engineer, UnitType::Road).expect("queue");
     let report = manager.commit(engineer).expect("build order");
     let site = report.site;
@@ -1085,14 +1081,12 @@ fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
         .expect("constructor");
     let site = Point::new(30, 30);
     assert!(state
-        .state_mut()
-        .map
+        .map_mut()
+        
         .surface
         .set(site.x, site.y, max_core::enums::Surface::WATER));
 
-    let deployed = max_core::production::deploy_construction_site(
-        state.state_mut(),
-        constructor,
+    let deployed = state.deploy_construction_site(constructor,
         UnitType::LightVehiclePlant,
         site,
     )
@@ -1115,8 +1109,8 @@ fn state_with_finished_building(turns: usize) -> (GameUniverse, max_core::UnitId
     for y in 0..max_core::geo::MAP_HEIGHT {
         for x in 0..max_core::geo::MAP_WIDTH {
             let _ = state
-                .state_mut()
-                .map
+                .map_mut()
+                
                 .surface
                 .set(x, y, max_core::enums::Surface::LAND);
         }
@@ -1126,7 +1120,7 @@ fn state_with_finished_building(turns: usize) -> (GameUniverse, max_core::UnitId
         .expect("constructor");
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("queue");
@@ -1206,7 +1200,7 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     // While the builder stands on the site, the tape and cones are in place, and the building is not
     // unfolded (no `ORDER_AWAIT_SCALING`).
     assert!(
-        construction_utility(state.state(), TeamId::RED, site).is_some(),
+        state.snapshot().construction_utility(TeamId::RED, site).is_some(),
         "лента ещё на площадке: здание не раскрыто"
     );
     assert!(
@@ -1225,7 +1219,7 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
         );
     }
     assert_eq!(
-        production::builder_awaiting_exit(state.state(), constructor),
+        state.snapshot().builder_awaiting_exit(constructor),
         Some(building_id),
         "C++: строитель в ORDER_BUILD/UNIT_READY у достроенного здания"
     );
@@ -1254,14 +1248,14 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
             .is_some_and(|unit| unit.orders == UnitOrder::Idle),
         "здание не раскрывается без ухода строителя"
     );
-    assert!(construction_utility(state.state(), TeamId::RED, site).is_some());
+    assert!(state.snapshot().construction_utility(TeamId::RED, site).is_some());
 
     // Player order (`game_manager.cpp:6879-6890`): `ORDER_ACTIVATE`/
     // `ORDER_STATE_IN_TRANSITION` with `move_to` = the click cell. In the port this is
     // `unit_order::issue_builder_exit` (the AI path) or packet 08/P3 from the UI; the target is
     // the first passable cell around the building.
     assert!(
-        max_core::unit_order::issue_builder_exit(state.state_mut(), constructor),
+        state.issue_builder_exit(constructor),
         "приказ на уход выставлен"
     );
     {
@@ -1326,7 +1320,7 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     assert!(expanded, "C++ BuildingReady: ScaleUnit(building, EXPAND)");
 
     assert!(
-        construction_utility(state.state(), TeamId::RED, site).is_none(),
+        state.snapshot().construction_utility(TeamId::RED, site).is_none(),
         "лента снимается после ухода строителя"
     );
     assert!(
@@ -1397,7 +1391,7 @@ fn a_built_radar_restores_its_sentry_order() {
 
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let _ = state.state_mut().map.surface.set(x, y, Surface::LAND);
+            let _ = state.map_mut().surface.set(x, y, Surface::LAND);
         }
     }
 
@@ -1408,7 +1402,7 @@ fn a_built_radar_restores_its_sentry_order() {
         .expect("engineer");
     state.unit_mut(constructor).expect("engineer").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::Radar)
         .expect("queue");
@@ -1460,9 +1454,7 @@ fn a_built_radar_restores_its_sentry_order() {
     }
 
     // The exit order is given by the player/AI (`issue_builder_exit`) — see A1.
-    assert!(max_core::unit_order::issue_builder_exit(
-        state.state_mut(),
-        constructor
+    assert!(state.issue_builder_exit(constructor
     ));
 
     let mut restored = false;
@@ -1505,9 +1497,7 @@ fn completion_sequence_is_deterministic() {
         let mut frames = vec![state.snapshot().snapshot_bytes()];
 
         // Player exit order (`ORDER_ACTIVATE`), then ticks until unfolding.
-        assert!(max_core::unit_order::issue_builder_exit(
-            state.state_mut(),
-            constructor
+        assert!(state.issue_builder_exit(constructor
         ));
 
         for _ in 0..30 {
@@ -1531,21 +1521,21 @@ fn cancelling_the_build_removes_the_site() {
         .expect("constructor");
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("queue");
     let report = manager.commit(constructor).expect("site");
     let site = report.site;
     drop(manager);
-    assert!(construction_utility(state.state(), TeamId::RED, site).is_some());
+    assert!(state.snapshot().construction_utility(TeamId::RED, site).is_some());
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     assert!(manager.cancel(constructor));
     drop(manager);
 
     // `CancelBuilding` is executed by the order processor on the next tick.
-    state.state_mut().process_orders();
+    state.process_orders();
 
     assert_eq!(count_type(&state, UnitType::LargeTape), 0);
     assert_eq!(count_type(&state, UnitType::LargeCones), 0);
@@ -1568,7 +1558,7 @@ fn construction_site_layout_is_deterministic() {
             .expect("constructor");
         state.unit_mut(constructor).expect("constructor").storage = 40;
 
-        let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+        let mut manager = state.production_manager(TeamId::RED);
         manager
             .enqueue(constructor, UnitType::TrainingHall)
             .expect("queue");
@@ -1630,7 +1620,7 @@ fn two_identical_production_runs_have_identical_state() {
             .expect("constructor");
         state.unit_mut(constructor).expect("constructor").storage = 40;
 
-        let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+        let mut manager = state.production_manager(TeamId::RED);
         manager.enqueue(factory, UnitType::Infantry).expect("queue");
         manager
             .enqueue(factory, UnitType::Infiltrator)
@@ -1712,7 +1702,7 @@ fn awac_completes_from_the_merged_complex_pot() {
         Some(complex)
     );
     assert_eq!(
-        state.state().team_units[0]
+        state.snapshot().team_units()[0]
             .get_complex(complex)
             .expect("complex")
             .buildings,
@@ -1720,13 +1710,13 @@ fn awac_completes_from_the_merged_complex_pot() {
         "завод и два склада — один комплекс"
     );
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::RED, complex),
+        state.snapshot().complex_raw_materials(TeamId::RED, complex),
         80,
         "общий котёл комплекса"
     );
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Awac).expect("queue");
     manager.set_build_rate(factory, 4);
     let report = manager.commit(factory).expect("build");
@@ -1748,7 +1738,7 @@ fn awac_completes_from_the_merged_complex_pot() {
         2
     );
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::RED, complex),
+        state.snapshot().complex_raw_materials(TeamId::RED, complex),
         44
     );
 
@@ -1763,11 +1753,11 @@ fn awac_completes_from_the_merged_complex_pot() {
     );
     assert_eq!(count_type(&state, UnitType::Awac), 1, "AWAC достроен");
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::RED, complex),
+        state.snapshot().complex_raw_materials(TeamId::RED, complex),
         32,
         "80 − 36 (4×) − 12 (2× на последнем ходу)"
     );
-    assert_eq!(state.state().team_units[0].gold(), 0, "золото не тратится");
+    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
 }
 
 // ---------------------------------------------------------------------------
@@ -1779,10 +1769,10 @@ fn finish_turn_runs_the_production_phase() {
     let mut state = state_with_gold(100);
     // A duel as in a game: RED is a human, GREEN is a computer, the network branch
     // is disabled (local semantics of `menu_check_end_game_conditions`).
-    state.state_mut().teams[1].team_type = TeamKind::Computer;
-    state.state_mut().team_units[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.state_mut().team_units[1].set_gold(100);
-    state.state_mut().network_game = false;
+    state.teams_mut()[1].team_type = TeamKind::Computer;
+    state.team_units_table_mut()[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.team_units_table_mut()[1].set_gold(100);
+    state.set_network_game(false);
     add_materials(&mut state, 20);
     let factory = state
         .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(10, 10), 0)
@@ -1800,14 +1790,14 @@ fn finish_turn_runs_the_production_phase() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(40, 40), 0)
         .expect("green tank");
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
     drop(manager);
 
-    state.state_mut().game_state = max_core::enums::GameStateType::EndTurn;
+    state.set_game_state(max_core::enums::GameStateType::EndTurn);
 
-    let status = max_core::victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     let over = state.finish_turn();
 
     assert!(
@@ -1821,9 +1811,9 @@ fn finish_turn_runs_the_production_phase() {
         status.team_status[0],
         status.team_status[1]
     );
-    assert_eq!(state.state().turn_counter, 1);
+    assert_eq!(state.snapshot().turn_counter(), 1);
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         100,
         "золото команды производством не тратится"
     );
@@ -1894,17 +1884,17 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
     assert_ne!(dump_complex, mine_complex, "склады не связаны коннекторами");
 
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::RED, dump_complex),
+        state.snapshot().complex_raw_materials(TeamId::RED, dump_complex),
         30,
         "ADUMP — свой котёл"
     );
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::RED, mine_complex),
+        state.snapshot().complex_raw_materials(TeamId::RED, mine_complex),
         7,
         "шахта — свой котёл"
     );
     assert_eq!(
-        max_core::production::complex_raw_materials(state.state(), TeamId::GREEN, dump_complex),
+        state.snapshot().complex_raw_materials(TeamId::GREEN, dump_complex),
         0,
         "чужая команда"
     );

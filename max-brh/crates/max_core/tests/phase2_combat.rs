@@ -11,7 +11,6 @@
 mod support;
 
 use max_core::combat;
-use max_core::crc;
 use max_core::enums::{Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
@@ -42,7 +41,7 @@ fn expected_damage(
 }
 
 fn water(state: &mut GameUniverse, x: i16) {
-    state.state_mut().map.surface.set(x, 5, Surface::WATER);
+    state.map_mut().surface.set(x, 5, Surface::WATER);
 }
 
 /// Direct-fire weapon classes: each `FIRE` order over ticks deals exactly
@@ -244,9 +243,7 @@ fn sentry_reaction_fires_at_a_visible_target() {
         unit.state = UnitOrderState::ExecutingOrder;
     }
 
-    assert!(combat::check_reaction(
-        state.state_mut(),
-        defender,
+    assert!(state.check_reaction(defender,
         attacker
     ));
     assert_eq!(
@@ -307,14 +304,14 @@ fn fog_blocks_reaction_fire() {
         .unit(hidden)
         .unwrap()
         .is_visible_to_team(TeamId::RED));
-    assert!(!combat::check_reaction(state.state_mut(), defender, hidden));
+    assert!(!state.check_reaction(defender, hidden));
     assert_eq!(
         state.snapshot().unit(defender).unwrap().orders,
         UnitOrder::Sentry
     );
 
-    combat::spot_unit(state.state_mut(), hidden, TeamId::RED);
-    assert!(combat::check_reaction(state.state_mut(), defender, hidden));
+    state.spot_unit(hidden, TeamId::RED);
+    assert!(state.check_reaction(defender, hidden));
     assert_eq!(
         state.snapshot().unit(defender).unwrap().orders,
         UnitOrder::Fire
@@ -367,15 +364,15 @@ fn combat_round_is_deterministic() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
     assert_ne!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(game().state())
+        first.snapshot().state_checksum(),
+        game().snapshot().state_checksum()
     );
 }

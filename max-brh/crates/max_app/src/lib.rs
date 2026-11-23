@@ -86,7 +86,7 @@ use max_core::crc;
 use max_core::deploy::TeamDeployment;
 use max_core::enums::{GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState};
 use max_core::events::ApplyOutcome;
-use max_core::game::{GameState, PLAYER_TEAM_COUNT};
+use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
 use max_core::input::Command;
 use max_core::rng::Randomizer;
@@ -813,10 +813,7 @@ impl App {
     /// Empty application (no assets; the state — an empty `GameState::new` match).
     pub fn new(config: AppConfig) -> Self {
         let viewport = Viewport::new(config.screen_width, config.screen_height);
-        let universe = max_core::universe::GameUniverse::new(
-            GameState::new(),
-            max_core::universe::LocalDispatcher,
-        );
+        let universe = GameUniverse::default();
         let universe_events = universe.subscribe();
         let turn_events = universe.subscribe();
 
@@ -874,21 +871,6 @@ impl App {
         &mut self.config
     }
 
-    /// Match state.
-    ///
-    /// Stage A only: a temporary delegate to the facade (guardrail 2); the
-    /// renderer migrates to [`App::state_ref`] and stage B removes this accessor.
-    pub fn state(&self) -> &GameState {
-        self.universe.state()
-    }
-
-    /// Editable match state.
-    ///
-    /// Stage A only: a temporary delegate to the facade (guardrail 2).
-    pub fn state_mut(&mut self) -> &mut GameState {
-        self.universe.state_mut()
-    }
-
     /// The facade view of the match state (pull model, stage A).
     ///
     /// This is the renderer-facing read path: a borrowed snapshot without a clone.
@@ -905,31 +887,6 @@ impl App {
     /// [`App::tick`] and broadcasts them through the session.
     pub fn drain_outgoing(&mut self) -> Vec<max_core::universe::NetworkCommand> {
         self.universe.drain_outgoing()
-    }
-
-    /// Replaces the whole facade with a hand-built world (test/QA harness).
-    ///
-    /// Stage-B bridge for the network-FSM/render tests that assemble a synthetic
-    /// `GameState` and then drive the real `App` code over it. The production load
-    /// paths use [`App::load_save_bytes`]/[`App::new_game`].
-    #[doc(hidden)]
-    pub fn install_universe(
-        &mut self,
-        universe: max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
-    ) {
-        self.universe = universe;
-        self.universe_events = self.universe.subscribe();
-        self.turn_events = self.universe.subscribe();
-    }
-
-    /// An owned copy of the match state (test/QA harness).
-    ///
-    /// Some tests need to mutate a detached world (a "what if" copy) while the
-    /// real [`App`] stays untouched. Stage-B bridge, removed with the final
-    /// encapsulation cut.
-    #[doc(hidden)]
-    pub fn state_copy(&self) -> GameState {
-        self.universe.state().clone()
     }
 
     /// Submits a command through the facade (the single point of change).
@@ -3005,10 +2962,12 @@ impl App {
             }
         }
 
-        let mut state = GameState::with_setup(output.map, team_kinds);
-        state.player_team = config.player_team;
+        // Stage B §7: the generated world enters the facade through its config
+        // layer — `GameState` fields are crate-private now.
+        let mut state = max_core::universe::GameUniverse::with_setup(output.map, team_kinds);
+        state.set_player_team(config.player_team);
         // Live settings the simulation reads (`settings["enemy_halt"]`).
-        state.enemy_halt = self.preferences.enemy_halt;
+        state.set_enemy_halt(self.preferences.enemy_halt);
         // Clans from the settings — before deploying units: `deploy_starting_units`
         // takes the attributes from `team_units` (`ResourceManager_InitClanUnitValues`).
         // The call rebuilds base and current values from `SC_ATTRI` and clears the
@@ -3016,8 +2975,12 @@ impl App {
         // (`PLAYER_TEAM_ALIEN`) was already set by `GameState::with_setup`.
         for index in 0..PLAYER_TEAM_COUNT {
             let clan = config.clans.get(index).copied().unwrap_or(TeamClan::Random);
-            state.teams[index].team_clan = clan;
-            state.team_units[index].init_clan_unit_values(clan);
+            let team = TeamId(index as u8);
+            state.team_mut(team).expect("team slot").team_clan = clan;
+            state
+                .team_units_mut(team)
+                .expect("team economy")
+                .init_clan_unit_values(clan);
         }
 
         // `CargoMenu::CommitUpgradeChanges`: upgrades bought before landing
@@ -3033,14 +2996,20 @@ impl App {
 
             for (unit_type, values) in &deployment.upgrades {
                 let slot = *unit_type as usize;
-                if slot < state.team_units[index].current_values.len() {
-                    state.team_units[index].current_values[slot] = *values;
+                if slot < state.snapshot().team_units()[index].current_values.len() {
+                    state
+                        .team_units_mut(deployment.team)
+                        .expect("team economy")
+                        .current_values[slot] = *values;
                 }
             }
-            state.teams[index].stats_gold_spent_on_upgrades = deployment.gold_spent_on_upgrades;
+            state
+                .team_mut(deployment.team)
+                .expect("team slot")
+                .stats_gold_spent_on_upgrades = deployment.gold_spent_on_upgrades;
         }
         // The RNG stream continues after generation — as in the original.
-        state.rng = rng;
+        *state.rng_mut() = rng;
 
         // `GameManager_SpawnAlienDerelicts`: all placements — `DeployUnit` with
         // `team = PLAYER_TEAM_ALIEN`, in generation order. C++ passes
@@ -3061,18 +3030,13 @@ impl App {
         // team has its own landing point, credits and loadout
         // (`TeamMissionSupplies` in C++).
         let start_units = if deployments.is_empty() {
-            max_core::deploy::deploy_starting_units(
-                &mut state,
+            state.deploy_starting_units(
                 config.start_gold,
                 setup.settings.max_resources,
                 &setup.teams,
             )
         } else {
-            max_core::deploy::deploy_starting_units_with(
-                &mut state,
-                setup.settings.max_resources,
-                &deployments,
-            )
+            state.deploy_starting_units_with(setup.settings.max_resources, &deployments)
         };
 
         // `Access_UpdateVisibilityStatus` after landing (`game_manager.cpp:1965`):
@@ -3089,8 +3053,8 @@ impl App {
             teams: setup.teams.len(),
             aliens: output.aliens.len(),
             start_units,
-            units: state.unit_count(),
-            surface_crc: crc::crc16(&state.map.surface.to_bytes()),
+            units: state.snapshot().unit_count(),
+            surface_crc: crc::crc16(&state.snapshot().map().surface.to_bytes()),
             resources_crc: generated_resources_crc,
         };
 
@@ -3107,10 +3071,7 @@ impl App {
 
         // Stage A: the generated state becomes the new facade-owned state; the
         // event cursor is re-subscribed because the buffer starts empty.
-        self.universe = max_core::universe::GameUniverse::new(
-            state,
-            max_core::universe::LocalDispatcher,
-        );
+        self.universe = state;
         self.universe_events = self.universe.subscribe();
         self.turn_events = self.universe.subscribe();
         self.ticks = 0;
@@ -3732,13 +3693,13 @@ mod tests {
 
     #[test]
     fn digest_line_has_the_documented_fields() {
-        let digest = AppDigest::capture((&GameState::new()).into(), 0);
+        let digest = AppDigest::capture(GameUniverse::default().snapshot(), 0);
         let line = digest.to_line();
 
         assert!(line.contains("ticks=0"));
         assert!(line.contains("state_digest=0x"));
         assert!(line.contains("replay_crc=0x"));
-        assert_eq!(digest, AppDigest::capture((&GameState::new()).into(), 0));
+        assert_eq!(digest, AppDigest::capture(GameUniverse::default().snapshot(), 0));
     }
 
     /// Unique temporary test directory (without external crates).

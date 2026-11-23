@@ -28,13 +28,13 @@ const TANK_FLAGS: u32 = MOBILE_LAND_UNIT | SELECTABLE;
 /// A two-human duel with one tank per side (turn-based, local semantics).
 fn duel() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().network_game = false;
-    state.state_mut().play_mode = PlayMode::TurnBased;
+    state.set_network_game(false);
+    state.set_play_mode(PlayMode::TurnBased);
 
     for team in [TeamId::RED, TeamId::GREEN] {
         let index = team.0 as usize;
-        state.state_mut().teams[index].team_type = TeamKind::Player;
-        state.state_mut().team_units[index] = TeamUnits::with_clan(TeamClan::Random);
+        state.teams_mut()[index].team_type = TeamKind::Player;
+        state.team_units_table_mut()[index] = TeamUnits::with_clan(TeamClan::Random);
     }
 
     state
@@ -58,12 +58,12 @@ fn start_team_turn(state: &mut GameUniverse) -> TeamId {
     match state.next_team() {
         TurnEvent::Human(team) | TurnEvent::Computer(team) => {
             assert_eq!(
-                state.state().active_turn_team,
+                state.snapshot().active_turn_team(),
                 team,
                 "active team of {team:?}"
             );
             assert!(
-                !state.state().teams[team.0 as usize].finished_turn,
+                !state.snapshot().teams()[team.0 as usize].finished_turn,
                 "the turn start resets finished_turn of {team:?}"
             );
             team
@@ -78,14 +78,14 @@ fn close_team_turn(state: &mut GameUniverse, team: TeamId) {
     state.submit(events::command_finished_turn(team));
     state.tick();
     assert!(
-        state.state().teams[team.0 as usize].finished_turn,
+        state.snapshot().teams()[team.0 as usize].finished_turn,
         "packet 06 marks {team:?} finished"
     );
 
-    if state.state().play_mode == PlayMode::TurnBased {
+    if state.snapshot().play_mode() == PlayMode::TurnBased {
         // `apply_packet_06`: in `TurnBased` packet 06 closes the team turn.
         assert_eq!(
-            state.state().game_state,
+            state.snapshot().game_state(),
             GameStateType::EndTurn,
             "packet 06 must close a turn-based team turn"
         );
@@ -136,16 +136,16 @@ fn hot_seat_round_closes_after_both_humans_finish() {
 
     let red = play_team_turn(&mut state, 2);
     assert_eq!(red, TeamId::RED, "the round starts at PLAYER_TEAM_RED");
-    assert!(state.state().teams[TeamId::RED.0 as usize].finished_turn);
-    assert!(!state.state().teams[TeamId::GREEN.0 as usize].finished_turn);
+    assert!(state.snapshot().teams()[TeamId::RED.0 as usize].finished_turn);
+    assert!(!state.snapshot().teams()[TeamId::GREEN.0 as usize].finished_turn);
     assert!(
         !state.snapshot().are_teams_finished_turn(),
         "the green human has not finished yet"
     );
-    assert_eq!(state.state().turn_counter, 0, "the round is still open");
-    assert_eq!(state.state().active_turn_team, TeamId::RED);
+    assert_eq!(state.snapshot().turn_counter(), 0, "the round is still open");
+    assert_eq!(state.snapshot().active_turn_team(), TeamId::RED);
     assert_eq!(
-        state.state().round_team,
+        state.snapshot().round_team(),
         TeamId::GREEN.0 as usize,
         "cursor after RED"
     );
@@ -155,23 +155,23 @@ fn hot_seat_round_closes_after_both_humans_finish() {
     assert_eq!(green, TeamId::GREEN);
     assert!(state.snapshot().are_teams_finished_turn());
     assert_eq!(
-        state.state().turn_counter,
+        state.snapshot().turn_counter(),
         0,
         "the turn advances only on close"
     );
     assert_eq!(
-        state.state().round_team,
+        state.snapshot().round_team(),
         TeamId::GREEN.0 as usize + 1,
         "the cursor follows the last started team"
     );
 
     // `GameManager_TeamTurnFinish` through the machine: the game is not over.
     assert!(!state.end_round(), "the game is not over");
-    assert_eq!(state.state().turn_counter, 1);
-    assert_eq!(state.state().game_state, GameStateType::InGame);
-    assert_eq!(state.state().round_team, 0, "the next round starts at RED");
+    assert_eq!(state.snapshot().turn_counter(), 1);
+    assert_eq!(state.snapshot().game_state(), GameStateType::InGame);
+    assert_eq!(state.snapshot().round_team(), 0, "the next round starts at RED");
     for team in 0..PLAYER_TEAM_COUNT {
-        assert!(!state.state().teams[team].finished_turn, "team {team}");
+        assert!(!state.snapshot().teams()[team].finished_turn, "team {team}");
     }
 }
 
@@ -180,13 +180,13 @@ fn hot_seat_round_closes_after_both_humans_finish() {
 #[test]
 fn turn_machine_visits_only_playing_teams() {
     let mut state = GameUniverse::default();
-    state.state_mut().play_mode = PlayMode::TurnBased;
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::None;
-    state.state_mut().teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Computer;
-    state.state_mut().teams[TeamId::GRAY.0 as usize].team_type = TeamKind::Eliminated;
+    state.set_play_mode(PlayMode::TurnBased);
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::None;
+    state.teams_mut()[TeamId::BLUE.0 as usize].team_type = TeamKind::Computer;
+    state.teams_mut()[TeamId::GRAY.0 as usize].team_type = TeamKind::Eliminated;
     for team in [TeamId::RED, TeamId::BLUE] {
-        state.state_mut().team_units[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+        state.team_units_table_mut()[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
     }
     state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), TANK_FLAGS)
@@ -199,23 +199,23 @@ fn turn_machine_visits_only_playing_teams() {
     assert_eq!(state.snapshot().upcoming_team(), Some(TeamId::RED));
 
     assert_eq!(state.next_team(), TurnEvent::Human(TeamId::RED));
-    assert_eq!(state.state().active_turn_team, TeamId::RED);
-    assert_eq!(state.state().game_state, GameStateType::InGame);
-    assert_eq!(state.state().round_team, TeamId::GREEN.0 as usize);
+    assert_eq!(state.snapshot().active_turn_team(), TeamId::RED);
+    assert_eq!(state.snapshot().game_state(), GameStateType::InGame);
+    assert_eq!(state.snapshot().round_team(), TeamId::GREEN.0 as usize);
     close_team_turn(&mut state, TeamId::RED);
 
     // GREEN is `None`: the cursor moves to the computer BLUE.
     assert_eq!(state.snapshot().upcoming_team(), Some(TeamId::BLUE));
     assert_eq!(state.next_team(), TurnEvent::Computer(TeamId::BLUE));
-    assert_eq!(state.state().active_turn_team, TeamId::BLUE);
-    assert_eq!(state.state().round_team, TeamId::GRAY.0 as usize);
+    assert_eq!(state.snapshot().active_turn_team(), TeamId::BLUE);
+    assert_eq!(state.snapshot().round_team(), TeamId::GRAY.0 as usize);
     close_team_turn(&mut state, TeamId::BLUE);
 
     // GRAY is eliminated: there is nothing left to play in this round.
     assert_eq!(state.snapshot().upcoming_team(), None);
     assert_eq!(state.next_team(), TurnEvent::RoundClosed);
-    assert_eq!(state.state().turn_counter, 1);
-    assert_eq!(state.state().round_team, 0, "the next round starts at RED");
+    assert_eq!(state.snapshot().turn_counter(), 1);
+    assert_eq!(state.snapshot().round_team(), 0, "the next round starts at RED");
 }
 
 /// Two identical hot-seat rounds are bit-identical: snapshot, packet-45 CRC,
@@ -237,19 +237,19 @@ fn full_round_is_bit_identical_across_runs() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
-    assert_eq!(first.state().turn_counter, 2);
-    assert_ne!(crc::state_digest(first.state()), crc::CRC16_INITIAL);
+    assert_eq!(first.snapshot().turn_counter(), 2);
+    assert_ne!(first.snapshot().state_digest(), crc::CRC16_INITIAL);
 }
 
 /// A peaceful round changes the turn/phase fields (digest) but no unit field,
@@ -258,20 +258,20 @@ fn full_round_is_bit_identical_across_runs() {
 #[test]
 fn peaceful_round_keeps_the_unit_list_checksum() {
     let mut state = duel();
-    state.state_mut().network_game = true;
+    state.set_network_game(true);
 
-    let checksum_before = crc::state_checksum(state.state());
-    let digest_before = crc::state_digest(state.state());
+    let checksum_before = state.snapshot().state_checksum();
+    let digest_before = state.snapshot().state_digest();
 
     assert!(!play_round(&mut state, 2));
 
     assert_eq!(
-        crc::state_checksum(state.state()),
+        state.snapshot().state_checksum(),
         checksum_before,
         "no unit was moved, damaged or produced"
     );
     assert_ne!(
-        crc::state_digest(state.state()),
+        state.snapshot().state_digest(),
         digest_before,
         "the turn counter is part of the canonical digest"
     );
@@ -289,7 +289,7 @@ fn peaceful_round_keeps_the_unit_list_checksum() {
     assert_eq!(state.snapshot().crc_barrier(), Some(1));
     for team in [TeamId::RED, TeamId::GREEN] {
         assert_eq!(
-            state.state().team_data_crc16[team.0 as usize],
+            state.snapshot().team_data_crc16()[team.0 as usize],
             checksum_before,
             "team {team:?} reports a diverged CRC"
         );
@@ -302,7 +302,7 @@ fn peaceful_round_keeps_the_unit_list_checksum() {
 #[test]
 fn simultaneous_round_waits_for_every_team() {
     let mut state = duel();
-    state.state_mut().play_mode = PlayMode::SimultaneousMoves;
+    state.set_play_mode(PlayMode::SimultaneousMoves);
 
     state.begin_round();
     let team = start_team_turn(&mut state);
@@ -311,15 +311,15 @@ fn simultaneous_round_waits_for_every_team() {
 
     // GREEN is still playing, but the cursor already ran past the last slot
     // (e.g. the round was interrupted): the barrier, not the cursor, decides.
-    state.state_mut().round_team = PLAYER_TEAM_COUNT;
+    state.set_round_team(PLAYER_TEAM_COUNT);
     assert!(!state.snapshot().are_teams_finished_turn());
     assert_eq!(state.next_team(), TurnEvent::Human(TeamId::GREEN));
-    assert_eq!(state.state().round_team, TeamId::GREEN.0 as usize + 1);
+    assert_eq!(state.snapshot().round_team(), TeamId::GREEN.0 as usize + 1);
     close_team_turn(&mut state, TeamId::GREEN);
 
     assert!(state.snapshot().are_teams_finished_turn());
     assert_eq!(state.next_team(), TurnEvent::RoundClosed);
-    assert_eq!(state.state().turn_counter, 1);
+    assert_eq!(state.snapshot().turn_counter(), 1);
 }
 
 /// A network round is gated by packet 00 (begin turn) and 52 (end turn): the
@@ -327,13 +327,13 @@ fn simultaneous_round_waits_for_every_team() {
 #[test]
 fn network_round_gates_on_begin_and_end_barriers() {
     let mut state = GameUniverse::default();
-    state.state_mut().network_game = true;
-    state.state_mut().play_mode = PlayMode::TurnBased;
+    state.set_network_game(true);
+    state.set_play_mode(PlayMode::TurnBased);
 
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
-    state.state_mut().teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
-    state.state_mut().team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
+    state.teams_mut()[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
+    state.team_units_table_mut()[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
 
     // Only two of the three teams acknowledged the round.
     state.submit(Command::TurnBarrier(Packet00TurnBarrier {
@@ -388,27 +388,27 @@ fn network_round_gates_on_begin_and_end_barriers() {
 #[test]
 fn barrier_steppers_advance_the_own_team_counters() {
     let mut state = GameUniverse::default();
-    state.state_mut().network_game = true;
-    state.state_mut().play_mode = PlayMode::TurnBased;
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
-    state.state_mut().teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
-    state.state_mut().teams[TeamId::GRAY.0 as usize].team_type = TeamKind::None;
+    state.set_network_game(true);
+    state.set_play_mode(PlayMode::TurnBased);
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
+    state.teams_mut()[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
+    state.teams_mut()[TeamId::GRAY.0 as usize].team_type = TeamKind::None;
 
     // 00 — `Remote_WaitBeginTurnAcknowledge`.
     assert_eq!(state.step_begin_turn_barrier(TeamId::RED), 1);
     assert_eq!(state.step_begin_turn_barrier(TeamId::RED), 2);
-    assert_eq!(state.state().frame_sync_counter[TeamId::RED.0 as usize], 2);
+    assert_eq!(state.snapshot().frame_sync_counter()[TeamId::RED.0 as usize], 2);
     assert!(
         !state.snapshot().begin_turn_barrier_reached(2),
         "green and blue have not reported the 00 counter yet"
     );
-    state.state_mut().frame_sync_counter[TeamId::GREEN.0 as usize] = 2;
+    state.frame_sync_counters_mut()[TeamId::GREEN.0 as usize] = 2;
     assert!(
         !state.snapshot().begin_turn_barrier_reached(2),
         "blue is still missing"
     );
-    state.state_mut().frame_sync_counter[TeamId::BLUE.0 as usize] = 2;
+    state.frame_sync_counters_mut()[TeamId::BLUE.0 as usize] = 2;
     assert!(
         state.snapshot().begin_turn_barrier_reached(2),
         "a `None` team does not take part in the barrier"
@@ -416,25 +416,25 @@ fn barrier_steppers_advance_the_own_team_counters() {
 
     // 52 — `Remote_WaitEndTurnAcknowledge`.
     assert_eq!(state.step_end_turn_barrier(TeamId::RED), 1);
-    assert_eq!(state.state().turn_indices[TeamId::RED.0 as usize], 1);
+    assert_eq!(state.snapshot().turn_indices()[TeamId::RED.0 as usize], 1);
     assert!(!state.snapshot().end_turn_barrier_reached(1));
-    state.state_mut().turn_indices[TeamId::GREEN.0 as usize] = 1;
-    state.state_mut().turn_indices[TeamId::BLUE.0 as usize] = 1;
+    state.turn_indices_mut()[TeamId::GREEN.0 as usize] = 1;
+    state.turn_indices_mut()[TeamId::BLUE.0 as usize] = 1;
     assert!(state.snapshot().end_turn_barrier_reached(1));
 
     // 45 — `Remote_CheckDesync`.
     assert_eq!(state.step_crc_barrier(TeamId::RED), 1);
-    assert_eq!(state.state().next_turn_indices[TeamId::RED.0 as usize], 1);
+    assert_eq!(state.snapshot().next_turn_indices()[TeamId::RED.0 as usize], 1);
     assert!(!state.snapshot().crc_barrier_reached(1));
-    state.state_mut().next_turn_indices[TeamId::GREEN.0 as usize] = 1;
-    state.state_mut().next_turn_indices[TeamId::BLUE.0 as usize] = 1;
+    state.next_turn_indices_mut()[TeamId::GREEN.0 as usize] = 1;
+    state.next_turn_indices_mut()[TeamId::BLUE.0 as usize] = 1;
     assert!(state.snapshot().crc_barrier_reached(1));
 
     // The counters wrap like the C++ `uint8_t` and stay in the digest.
-    state.state_mut().turn_indices[TeamId::RED.0 as usize] = u8::MAX;
+    state.turn_indices_mut()[TeamId::RED.0 as usize] = u8::MAX;
     assert_eq!(state.step_end_turn_barrier(TeamId::RED), 0);
     assert_eq!(
-        state.state().next_turn_indices[TeamId::RED.0 as usize],
+        state.snapshot().next_turn_indices()[TeamId::RED.0 as usize],
         1,
         "the steppers touch their own counter only"
     );
@@ -446,7 +446,7 @@ fn barrier_steppers_advance_the_own_team_counters() {
 fn end_round_reports_the_end_of_the_match() {
     let mut state = duel();
     // `VICTORY_TYPE_DURATION`: the limit is reached already at turn 0.
-    state.state_mut().victory_limit = 0;
+    state.set_victory_limit(0);
 
     state.begin_round();
     for _ in 0..2 {
@@ -460,11 +460,11 @@ fn end_round_reports_the_end_of_the_match() {
         "the closing step reports the end of the match"
     );
     assert_eq!(
-        state.state().turn_counter,
+        state.snapshot().turn_counter(),
         0,
         "the counter is not advanced when the match is over"
     );
-    assert_ne!(state.state().round_team, 0, "the next round is not entered");
+    assert_ne!(state.snapshot().round_team(), 0, "the next round is not entered");
 }
 
 /// `finish_turn` is guarded by the phase: a live duel in `InGame` (or any other
@@ -474,16 +474,16 @@ fn finish_turn_is_phase_guarded_in_a_live_duel() {
     let mut state = duel();
     let units_before = state.snapshot().unit_ids_in_order();
 
-    state.state_mut().game_state = GameStateType::InGame;
+    state.set_game_state(GameStateType::InGame);
     assert!(!state.finish_turn());
-    state.state_mut().game_state = GameStateType::TurnActive;
+    state.set_game_state(GameStateType::TurnActive);
     assert!(!state.finish_turn());
 
-    assert_eq!(state.state().turn_counter, 0);
+    assert_eq!(state.snapshot().turn_counter(), 0);
     assert_eq!(state.snapshot().unit_ids_in_order(), units_before);
 
-    state.state_mut().game_state = GameStateType::EndTurn;
+    state.set_game_state(GameStateType::EndTurn);
     assert!(!state.finish_turn());
-    assert_eq!(state.state().turn_counter, 1);
+    assert_eq!(state.snapshot().turn_counter(), 1);
     assert_eq!(state.snapshot().unit_ids_in_order(), units_before);
 }

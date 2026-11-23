@@ -730,12 +730,12 @@ fn records_barrier(tracked: bool, packet: &Packet) -> bool {
 pub fn crc_barrier_for(
     team: max_types::team::TeamId,
     next_turn_index: u8,
-    state: &max_core::game::GameState,
+    state: max_core::universe::StateRef<'_>,
 ) -> Packet {
     Packet::Command(Command::CrcBarrier(max_types::input::Packet45CrcBarrier {
         team,
         next_turn_index,
-        crc16: max_core::crc::state_checksum(state),
+        crc16: state.state_checksum(),
     }))
 }
 
@@ -749,11 +749,11 @@ pub fn crc_barrier_for(
 /// `TeamUnits::complexes()` order (ascending id), values in `Complex::WritePacket`
 /// order.
 pub fn complex_summary_for(
-    state: &max_core::game::GameState,
+    state: max_core::universe::StateRef<'_>,
     team: max_types::team::TeamId,
     turn: i32,
 ) -> Packet {
-    let complexes = state.team_units[team.0 as usize]
+    let complexes = state.team_units()[team.0 as usize]
         .complexes()
         .iter()
         .map(|complex| max_types::input::ComplexSummaryEntry {
@@ -1016,11 +1016,20 @@ mod tests {
         use max_core::team::TeamUnits;
         use max_types::enums::TeamClan;
 
-        let mut state = max_core::game::GameState::new();
-        state.teams[TeamId::RED.0 as usize].team_type = max_types::team::TeamKind::Player;
-        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
-        let id = state.team_units[TeamId::RED.0 as usize].create_complex();
-        let complex = state.team_units[TeamId::RED.0 as usize]
+        let mut state = max_core::universe::GameUniverse::default();
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .team_type = max_types::team::TeamKind::Player;
+        *state.team_units_mut(TeamId::RED).expect("RED economy") =
+            TeamUnits::with_clan(TeamClan::Random);
+        let id = state
+            .team_units_mut(TeamId::RED)
+            .expect("RED economy")
+            .create_complex();
+        let complex = state
+            .team_units_mut(TeamId::RED)
+            .expect("RED economy")
             .get_complex_mut(id)
             .expect("complex created");
         complex.raw = 10;
@@ -1030,7 +1039,7 @@ mod tests {
         complex.workers = 50;
         complex.buildings = 60;
 
-        match complex_summary_for(&state, TeamId::RED, 1) {
+        match complex_summary_for(state.snapshot(), TeamId::RED, 1) {
             Packet::Command(Command::ComplexSummary(summary)) => {
                 assert_eq!(summary.team, TeamId::RED);
                 assert_eq!(
@@ -1047,15 +1056,13 @@ mod tests {
 
     #[test]
     fn crc_barrier_uses_max_core_checksum() {
-        use max_core::game::GameState;
-
-        let state = GameState::new();
-        let packet = crc_barrier_for(TeamId::RED, 3, &state);
+        let state = max_core::universe::GameUniverse::default();
+        let packet = crc_barrier_for(TeamId::RED, 3, state.snapshot());
         match packet {
             Packet::Command(Command::CrcBarrier(barrier)) => {
                 assert_eq!(barrier.team, TeamId::RED);
                 assert_eq!(barrier.next_turn_index, 3);
-                assert_eq!(barrier.crc16, max_core::crc::state_checksum(&state));
+                assert_eq!(barrier.crc16, state.snapshot().state_checksum());
             }
             other => panic!("expected CRC barrier, got {other:?}"),
         }

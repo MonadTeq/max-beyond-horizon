@@ -13,7 +13,6 @@
 
 mod support;
 
-use max_core::crc;
 use max_core::enums::UnitType;
 use max_core::geo::Point;
 use max_core::order::{Order, OrderResult, Target};
@@ -132,7 +131,7 @@ fn client_proposals_do_not_mutate_the_game_state() {
         Order::EndTurn,
     ];
 
-    let before = crc::state_checksum(state.state());
+    let before = state.snapshot().state_checksum();
     let before_snapshot = state.snapshot().snapshot_bytes();
 
     for order in orders {
@@ -141,7 +140,7 @@ fn client_proposals_do_not_mutate_the_game_state() {
         assert_eq!(decoded, order);
     }
 
-    assert_eq!(before, crc::state_checksum(state.state()));
+    assert_eq!(before, state.snapshot().state_checksum());
     assert_eq!(before_snapshot, state.snapshot().snapshot_bytes());
 }
 

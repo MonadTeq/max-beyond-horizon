@@ -56,8 +56,6 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitType, RESEARCH_TOPIC_COUNT};
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::research::{update_research_progress, RESEARCH_TOPIC_FACTORS};
 use max_core::team::TeamId;
@@ -733,17 +731,16 @@ impl ResearchMenuAssets {
 
 #[cfg(test)]
 mod tests {
-    /// Applies the menu allocation through the facade and returns the raw state.
+    /// Applies the menu allocation through the facade.
     fn commit(
         menu: &mut ResearchMenu,
-        state: GameState,
-    ) -> (GameState, [u32; RESEARCH_TOPIC_COUNT]) {
-        let mut universe = max_core::universe::GameUniverse::new(
-            state,
-            max_core::universe::LocalDispatcher,
-        );
+        mut universe: max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+    ) -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        [u32; RESEARCH_TOPIC_COUNT],
+    ) {
         let actual = menu.commit(&mut universe);
-        (universe.into_state(), actual)
+        (universe, actual)
     }
 
     use super::*;
@@ -752,13 +749,23 @@ mod tests {
     use max_core::research::research_turns_to_complete;
     use max_core::team::TeamId;
 
-    fn state_with_center(topic: ResearchTopic, level: u32) -> (GameState, TeamId) {
-        let mut state = GameState::new();
-        state.teams[0].research_topics[topic as usize].research_level = level;
+    fn state_with_center(
+        topic: ResearchTopic,
+        level: u32,
+    ) -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        TeamId,
+    ) {
+        let mut state = max_core::universe::GameUniverse::default();
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .research_topics[topic as usize]
+            .research_level = level;
         let id = state
             .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(20, 20), 0)
             .expect("research center");
-        let mut unit = state.unit(id).cloned().expect("unit");
+        let mut unit = state.snapshot().unit(id).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
         unit.research_topic = topic;
         state.write_unit(id, unit);
@@ -855,23 +862,24 @@ mod tests {
 
     #[test]
     fn done_reassigns_the_unit_and_keeps_allocation_consistent() {
-        let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
+        let (state, team) = state_with_center(ResearchTopic::Attack, 0);
         let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
         menu.adjust(ResearchTopic::Shots as usize, true);
-        let (mut state, actual) = commit(&mut menu, state);
+        let (state, actual) = commit(&mut menu, state);
 
         assert_eq!(actual[ResearchTopic::Attack as usize], 0);
         assert_eq!(actual[ResearchTopic::Shots as usize], 1);
 
-        let allocation = state.research_allocation(team);
+        let allocation = state.snapshot().research_allocation(team);
         assert_eq!(allocation[ResearchTopic::Attack as usize], 0);
         assert_eq!(allocation[ResearchTopic::Shots as usize], 1);
 
         let unit = state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| state.unit(id))
+            .filter_map(|id| state.snapshot().unit(id))
             .find(|unit| unit.unit_type == UnitType::ResearchCentre)
             .expect("center");
         assert_eq!(unit.research_topic, ResearchTopic::Shots);
@@ -879,7 +887,7 @@ mod tests {
 
     #[test]
     fn done_with_released_centers_powers_them_off() {
-        let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
+        let (state, team) = state_with_center(ResearchTopic::Attack, 0);
         let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
         let (mut state, actual) = commit(&mut menu, state);
@@ -890,9 +898,10 @@ mod tests {
             "центр ещё числится до Power Off"
         );
         let unit = state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
-            .filter_map(|id| state.unit(id))
+            .filter_map(|id| state.snapshot().unit(id))
             .find(|unit| unit.unit_type == UnitType::ResearchCentre)
             .expect("center");
         assert_eq!(unit.orders, UnitOrder::PowerOff);
@@ -900,7 +909,7 @@ mod tests {
         // On the next tick `process_order_power_off` writes off the allocation
         // (`ResearchMenu_UpdateResearchProgress(-1)`), as in C++.
         state.tick();
-        assert_eq!(state.research_allocation(team).iter().sum::<u32>(), 0);
+        assert_eq!(state.snapshot().research_allocation(team).iter().sum::<u32>(), 0);
     }
 
     #[test]
@@ -920,7 +929,7 @@ mod tests {
         let second = state
             .spawn_unit(UnitType::ResearchCentre, TeamId::RED, Point::new(21, 20), 0)
             .expect("second center");
-        let mut unit = state.unit(second).cloned().expect("unit");
+        let mut unit = state.snapshot().unit(second).cloned().expect("unit");
         unit.orders = UnitOrder::PowerOn;
         unit.research_topic = ResearchTopic::Attack;
         state.write_unit(second, unit);
@@ -936,7 +945,7 @@ mod tests {
 
     #[test]
     fn research_new_turn_uses_the_same_distribution() {
-        let (mut state, team) = state_with_center(ResearchTopic::Attack, 0);
+        let (state, team) = state_with_center(ResearchTopic::Attack, 0);
         let mut menu = ResearchMenu::new(StateRef::from(&state), team).expect("menu");
         menu.adjust(ResearchTopic::Attack as usize, false);
         menu.adjust(ResearchTopic::Shots as usize, true);
@@ -948,12 +957,12 @@ mod tests {
             state.advance_research(team);
         }
         assert_eq!(
-            state.teams[team.0 as usize].research_topics[ResearchTopic::Attack as usize]
+            state.snapshot().teams()[team.0 as usize].research_topics[ResearchTopic::Attack as usize]
                 .research_level,
             0
         );
         assert!(
-            state.teams[team.0 as usize].research_topics[ResearchTopic::Shots as usize]
+            state.snapshot().teams()[team.0 as usize].research_topics[ResearchTopic::Shots as usize]
                 .research_level
                 >= 1
         );
@@ -1010,8 +1019,8 @@ mod tests {
 
     #[test]
     fn determinism_of_two_identical_menus() {
-        let (mut a, team) = state_with_center(ResearchTopic::Attack, 0);
-        let (mut b, _) = state_with_center(ResearchTopic::Attack, 0);
+        let (a, team) = state_with_center(ResearchTopic::Attack, 0);
+        let (b, _) = state_with_center(ResearchTopic::Attack, 0);
 
         let mut menu_a = ResearchMenu::new(StateRef::from(&a), team).unwrap();
         let mut menu_b = ResearchMenu::new(StateRef::from(&b), team).unwrap();
@@ -1026,6 +1035,6 @@ mod tests {
         let (a, actual_a) = commit(&mut menu_a, a);
         let (b, actual_b) = commit(&mut menu_b, b);
         assert_eq!(actual_a, actual_b);
-        assert_eq!(a.research_allocation(team), b.research_allocation(team));
+        assert_eq!(a.snapshot().research_allocation(team), b.snapshot().research_allocation(team));
     }
 }

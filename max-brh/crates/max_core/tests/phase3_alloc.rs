@@ -14,10 +14,9 @@
 //! gold 16 — every resource reaches the cell maximum.
 
 use max_core::alloc::{
-    get_cargo_info, get_cargo_mining, optimize, reduce_production, total_mining, MiningKind,
+    MiningKind,
     MINING_CAPACITY, MINING_SURVEY_LIMIT,
 };
-use max_core::crc;
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::map::{ResourceKind, ResourceMapEntry};
@@ -27,8 +26,8 @@ use max_core::universe::GameUniverse;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -40,8 +39,8 @@ fn spawn(state: &mut GameUniverse, unit_type: UnitType, grid: Point) -> UnitId {
 
 fn set_resource(state: &mut GameUniverse, x: i16, y: i16, amount: u8, kind: ResourceKind) {
     state
-        .state_mut()
-        .map
+        .map_mut()
+        
         .resources
         .set(x, y, ResourceMapEntry::new(amount, Some(kind), 0));
 }
@@ -104,7 +103,7 @@ fn mining_state() -> (GameUniverse, UnitId, ComplexId) {
 }
 
 fn stored(state: &GameUniverse, complex: ComplexId) -> (i32, i32, i32) {
-    let (materials, _) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (materials, _) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     (materials.raw, materials.fuel, materials.gold)
 }
 
@@ -116,14 +115,14 @@ fn stored(state: &GameUniverse, complex: ComplexId) -> (i32, i32, i32) {
 fn survey_limits_each_resource_to_the_allocmenu_maximum() {
     let (state, mine, complex) = mining_state();
     let unit = state.snapshot().unit(mine).expect("mine");
-    let (raw, gold, fuel) = max_core::alloc::mining_survey(state.state(), unit.grid);
+    let (raw, gold, fuel) = state.snapshot().mining_survey(unit.grid);
 
     assert_eq!(MINING_SURVEY_LIMIT, 16);
     assert_eq!(raw, 16, "16 + 8 = 24 clamped to 16 (allocmenu.cpp:457)");
     assert_eq!(gold, 16);
     assert_eq!(fuel, 16);
 
-    let (_, capacity) = get_cargo_mining(state.state(), TeamId::RED, complex);
+    let (_, capacity) = state.snapshot().get_cargo_mining(TeamId::RED, complex);
     assert_eq!(capacity.raw, 16);
     assert_eq!(capacity.fuel, 16);
     assert_eq!(capacity.gold, 16);
@@ -135,35 +134,35 @@ fn optimize_stops_at_the_sixteen_unit_cap_across_resources() {
 
     // 20 requested, only 16 units exist on the mine.
     assert_eq!(
-        optimize(state.state_mut(), TeamId::RED, complex, MiningKind::Raw, 20),
+        state.optimize_allocation(TeamId::RED, complex, MiningKind::Raw, 20),
         MINING_CAPACITY
     );
     let unit = state.snapshot().unit(mine).expect("mine");
     assert_eq!(unit.raw_mining, 16);
     assert_eq!(unit.total_mining, 16);
     assert_eq!(
-        optimize(state.state_mut(), TeamId::RED, complex, MiningKind::Fuel, 4),
+        state.optimize_allocation(TeamId::RED, complex, MiningKind::Fuel, 4),
         0,
         "no free mining units left"
     );
     assert_eq!(
-        optimize(state.state_mut(), TeamId::RED, complex, MiningKind::Gold, 4),
+        state.optimize_allocation(TeamId::RED, complex, MiningKind::Gold, 4),
         0
     );
     // The cell still holds fuel/gold, but the mine is saturated.
     assert_eq!(
-        total_mining(state.state(), TeamId::RED, complex, MiningKind::Fuel),
+        state.snapshot().total_mining(TeamId::RED, complex, MiningKind::Fuel),
         0
     );
     assert_eq!(
-        total_mining(state.state(), TeamId::RED, complex, MiningKind::Gold),
+        state.snapshot().total_mining(TeamId::RED, complex, MiningKind::Gold),
         0
     );
 
     // `AllocMenu_ReduceProduction` frees the units again.
-    reduce_production(state.state_mut(), TeamId::RED, complex, MiningKind::Raw, 16);
+    state.reduce_production_allocation(TeamId::RED, complex, MiningKind::Raw, 16);
     assert_eq!(
-        optimize(state.state_mut(), TeamId::RED, complex, MiningKind::Gold, 6),
+        state.optimize_allocation(TeamId::RED, complex, MiningKind::Gold, 6),
         6
     );
     assert_eq!(
@@ -251,7 +250,7 @@ fn mining_income_obeys_the_complex_storage_capacity() {
 
     let (raw, _, _) = stored(&state, complex);
     assert_eq!(raw, 75, "capacity limit");
-    let (_, capacity) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (_, capacity) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     assert_eq!(capacity.raw, 75);
 }
 
@@ -280,16 +279,16 @@ fn allocation_digests_are_reproducible() {
     let second = run_economy();
 
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state()),
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes(),
         "the whole replay digest (including the mining fields) is stable"
     );
 
@@ -315,11 +314,11 @@ fn allocation_digests_are_reproducible() {
         unit.total_mining = 16;
     }
     assert_ne!(
-        crc::state_digest(changed.state()),
-        crc::state_digest(first.state())
+        changed.snapshot().state_digest(),
+        first.snapshot().state_digest()
     );
     assert_ne!(
-        crc::replay_digest_crc(changed.state()),
-        crc::replay_digest_crc(first.state())
+        changed.snapshot().replay_digest_crc(),
+        first.snapshot().replay_digest_crc()
     );
 }

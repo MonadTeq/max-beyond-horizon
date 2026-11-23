@@ -988,7 +988,6 @@ pub fn is_mining_station(unit: &UnitInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use max_core::game::GameState;
     use super::*;
     use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
     use max_core::geo::Point;
@@ -1002,13 +1001,13 @@ mod tests {
         UnitId,
         ComplexId,
     ) {
-        let mut state =
-            max_core::universe::GameUniverse::new(GameState::new(), max_core::universe::LocalDispatcher);
-        let mut raw = GameState::new();
-        raw.teams[0].team_type = max_core::team::TeamKind::Player;
-        raw.team_units[0] = TeamUnits::with_clan(max_core::enums::TeamClan::Random);
-        state.set_teams(raw.teams);
-        state.set_team_units(raw.team_units);
+        let mut state = max_core::universe::GameUniverse::default();
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .team_type = max_core::team::TeamKind::Player;
+        *state.team_units_mut(TeamId::RED).expect("RED economy") =
+            TeamUnits::with_clan(max_core::enums::TeamClan::Random);
 
         // A 2×2 square around the mine: raw 8+8 (measurement limit 16), fuel 8,
         // gold 8 — like `Survey_GetResourcesInArea(..., 1, 16, ...)`.

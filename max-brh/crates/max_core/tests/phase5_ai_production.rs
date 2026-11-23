@@ -12,7 +12,6 @@
 
 mod support;
 
-use max_core::ai::build_orders;
 use max_core::enums::{AiStrategy, Opponent, UnitOrder, UnitType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
@@ -112,7 +111,7 @@ fn ai_orders_a_tank_from_the_heavy_plant_when_an_enemy_tank_is_spotted() {
     sentry(&mut state, red.tank);
     support::phase5::refresh_visibility(&mut state);
     assert_eq!(
-        state.state().ai.players[TeamId::RED.0 as usize]
+        state.snapshot().ai().players[TeamId::RED.0 as usize]
             .spotted_units
             .len(),
         1,
@@ -129,9 +128,9 @@ fn ai_orders_a_tank_from_the_heavy_plant_when_an_enemy_tank_is_spotted() {
     );
 
     // The roll came from the TankHorde weight table (base TANK weight 2 × 10).
-    let player = &state.state().ai.players[TeamId::RED.0 as usize];
+    let player = &state.snapshot().ai().players[TeamId::RED.0 as usize];
     assert_eq!(player.weight_table_tanks.get_weight(UnitType::Tank), 20);
-    let filtered = build_orders::get_filtered_weight_table(player, state.state(), None, 0x03);
+    let filtered = state.snapshot().get_filtered_weight_table(player, None, 0x03);
     assert!(
         filtered.get_weight(UnitType::Tank) > 0,
         "the spotted tank keeps TANK in the composed table"

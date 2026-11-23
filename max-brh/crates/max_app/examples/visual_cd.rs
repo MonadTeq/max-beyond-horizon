@@ -72,21 +72,21 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let team_index = usize::from(app.player_team().0);
-    app.state_mut().ai.heat_maps[team_index].load_v70(&complete, &[0; MAP_TILES], &[0; MAP_TILES]);
+    app.universe_mut().ai_mut().heat_maps[team_index].load_v70(&complete, &[0; MAP_TILES], &[0; MAP_TILES]);
 
     // Select a unit and center the camera on the resource cell: this way both the
     // markers and the unit dots on the minimap get into the frame.
     let selected = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .find(|unit| unit.team == TeamId::RED && unit.hits > 0)
         .map(|unit| (unit.id, unit.grid));
     let target = (0..112)
         .flat_map(|y| (0..112).map(move |x| (x, y)))
         .find(|&(x, y)| {
-            let entry = app.state().map.resource_at(x, y);
+            let entry = app.state_ref().map().resource_at(x, y);
             entry.amount() > 0 && entry.is_visible_to(0)
         })
         .unwrap_or((56, 56));

@@ -45,23 +45,23 @@
 //! diverge. `queueable_commands_do_not_need_an_extra_tick` pins this down, so the
 //! equal-count comparisons below are not a bookkeeping accident.
 
-use max_core::crc;
-use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
-use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
-use max_core::events::{apply_command, command_finished_turn, command_move_linear, payload_p1_for};
-use max_core::game::OrderData;
-use max_core::geo::{PathStep, Point};
-use max_core::input::{
+use crate::crc;
+use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+use crate::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
+use crate::events::{apply_command, command_finished_turn, command_move_linear, payload_p1_for};
+use crate::game::OrderData;
+use crate::geo::{PathStep, Point};
+use crate::input::{
     Command, OrderPayload, Packet08Order, Packet10UpgradeUnitType, Packet11ComplexOrder,
     Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit,
     Packet38Move, Packet41MoveFinished, Packet43Rename, Packet50StopUnit, PayloadP2, PayloadP3,
     UPGRADE_VALUE_COUNT,
 };
-use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::unit::{GroundPath, UnitId, UnitPath};
-use max_core::unit_values::ATTRIB_TURNS;
-use max_core::universe::{GameUniverse, LocalDispatcher, SubmitOutcome};
-use max_core::GameState;
+use crate::team::{TeamId, TeamKind, TeamUnits};
+use crate::unit::{GroundPath, UnitId, UnitPath};
+use crate::unit_values::ATTRIB_TURNS;
+use crate::universe::{GameUniverse, LocalDispatcher, SubmitOutcome};
+use crate::game::GameState;
 
 /// A compact description of a snapshot for readable failure messages.
 struct Snap(Vec<u8>);
@@ -159,8 +159,8 @@ fn facade_close(universe: &mut GameUniverse<LocalDispatcher>, team: TeamId) {
         SubmitOutcome::Accepted
     );
     universe.tick();
-    universe.state_mut().enter_end_turn();
-    let _ = universe.state_mut().next_team();
+    (&mut universe.state).enter_end_turn();
+    let _ = (&mut universe.state).next_team();
 }
 
 /// Compares one `06` turn close in the requested play mode.
@@ -182,8 +182,8 @@ fn check_06(play_mode: PlayMode, hot_seat: bool) {
             universe.tick();
         }
         (
-            Snap::capture(universe.state()),
-            universe.state().turn_counter,
+            Snap::capture(&universe.state),
+            (&universe.state).turn_counter,
         )
     };
     legacy_same
@@ -214,7 +214,7 @@ fn check_06(play_mode: PlayMode, hot_seat: bool) {
         for _ in 0..3 {
             universe.tick();
         }
-        Snap::capture(universe.state())
+        Snap::capture(&universe.state)
     };
     legacy_compensated.equal(&facade_full, "06 with the same simulation ticks");
 
@@ -277,8 +277,8 @@ fn packet_06_hot_seat_full_round_after_compensation() {
         universe.tick();
         universe.tick();
         (
-            Snap::capture(universe.state()),
-            universe.state().turn_counter,
+            Snap::capture(&universe.state),
+            (&universe.state).turn_counter,
         )
     };
 
@@ -329,11 +329,11 @@ fn lobby_packets_13_12_are_equivalent_after_the_queue_flush() {
         for command in lobby_commands() {
             assert_eq!(universe.submit(command), SubmitOutcome::Accepted);
         }
-        let applied = universe.state_mut().apply_pending_commands();
+        let applied = (&mut universe.state).apply_pending_commands();
         assert_eq!(applied, 2, "both lobby packets are applied by the flush");
         (
-            Snap::capture(universe.state()),
-            universe.state().mission_supplies[0].is_some(),
+            Snap::capture(&universe.state),
+            (&universe.state).mission_supplies[0].is_some(),
         )
     };
 
@@ -354,11 +354,11 @@ fn lobby_packets_13_12_are_equivalent_after_the_queue_flush() {
         let _ = unflushed.submit(command);
     }
     assert!(
-        unflushed.state().mission_supplies[0].is_none(),
+        (&unflushed.state).mission_supplies[0].is_none(),
         "a queued packet 12 is applied only at the next tick / flush"
     );
     assert_eq!(
-        unflushed.state().game_state,
+        (&unflushed.state).game_state,
         GameStateType::InGame,
         "the lobby queue does not change the phase"
     );
@@ -718,9 +718,9 @@ fn run_gate3_scenario(
 
     match path {
         CommandPath::Control => {}
-        CommandPath::LegacyEnqueue => universe.state_mut().enqueue((scenario.build)(&ids)),
+        CommandPath::LegacyEnqueue => (&mut universe.state).enqueue((scenario.build)(&ids)),
         CommandPath::LegacyApply => {
-            let _ = apply_command(universe.state_mut(), &(scenario.build)(&ids));
+            let _ = apply_command(&mut universe.state, &(scenario.build)(&ids));
         }
         CommandPath::Facade => {
             assert_eq!(
@@ -737,8 +737,8 @@ fn run_gate3_scenario(
     }
 
     (
-        universe.state().snapshot_bytes(),
-        (scenario.observe)(universe.state(), &ids),
+        (&universe.state).snapshot_bytes(),
+        (scenario.observe)(&universe.state, &ids),
     )
 }
 
@@ -810,8 +810,8 @@ fn check_queueable_scenario(scenario: &Gate3Scenario) {
     // 2. The facade deferral itself: `submit` only queues, the next tick commits.
     let (state, ids) = hot_seat_fixture(scenario.complex);
     let mut universe = GameUniverse::new(state, LocalDispatcher);
-    let before = universe.state().snapshot_bytes();
-    let before_effect = (scenario.observe)(universe.state(), &ids);
+    let before = (&universe.state).snapshot_bytes();
+    let before_effect = (scenario.observe)(&universe.state, &ids);
 
     assert_eq!(
         universe.submit((scenario.build)(&ids)),
@@ -820,19 +820,19 @@ fn check_queueable_scenario(scenario: &Gate3Scenario) {
         scenario.name
     );
     assert_eq!(
-        universe.state().snapshot_bytes(),
+        (&universe.state).snapshot_bytes(),
         before,
         "{}: submit must not mutate the state",
         scenario.name
     );
     assert_eq!(
-        (scenario.observe)(universe.state(), &ids),
+        (scenario.observe)(&universe.state, &ids),
         before_effect,
         "{}: submit must not change the auxiliary observable",
         scenario.name
     );
     assert_eq!(
-        universe.state().commands.len(),
+        (&universe.state).commands.len(),
         1,
         "{}: the command is queued",
         scenario.name
@@ -840,7 +840,7 @@ fn check_queueable_scenario(scenario: &Gate3Scenario) {
 
     universe.tick();
     assert!(
-        universe.state().commands.is_empty(),
+        (&universe.state).commands.is_empty(),
         "{}: the next tick drains the queue",
         scenario.name
     );
@@ -926,15 +926,15 @@ fn lobby_packets_13_12_match_through_the_tick() {
         }
 
         Snap::capture(&legacy).equal(
-            &Snap::capture(universe.state()),
+            &Snap::capture(&universe.state),
             &format!("lobby 13/12 through the tick ({ticks} ticks)"),
         );
         assert_eq!(
             legacy.mission_supplies,
-            universe.state().mission_supplies,
+            (&universe.state).mission_supplies,
             "the lobby supplies must land in the same state"
         );
-        assert!(universe.state().mission_supplies[0].is_some());
+        assert!((&universe.state).mission_supplies[0].is_some());
     }
 }
 
@@ -991,12 +991,12 @@ fn run_order_batch(path: CommandPath, ticks: usize) -> (Vec<u8>, String) {
         CommandPath::Control => {}
         CommandPath::LegacyEnqueue => {
             for command in commands {
-                universe.state_mut().enqueue(command);
+                (&mut universe.state).enqueue(command);
             }
         }
         CommandPath::LegacyApply => {
             for command in &commands {
-                let _ = apply_command(universe.state_mut(), command);
+                let _ = apply_command(&mut universe.state, command);
             }
         }
         CommandPath::Facade => {
@@ -1010,7 +1010,7 @@ fn run_order_batch(path: CommandPath, ticks: usize) -> (Vec<u8>, String) {
         universe.tick();
     }
 
-    let state = universe.state();
+    let state = &universe.state;
     let observed = format!(
         "{:?}|{:?}|{:?}",
         state.chat_log,
@@ -1072,22 +1072,22 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
         SubmitOutcome::Accepted
     );
     assert_eq!(
-        queued.state().commands.len(),
+        (&queued.state).commands.len(),
         1,
         "submit(06) only queues the packet"
     );
-    Snap::capture(queued.state()).equal(&before, "submit(06) must not mutate the state");
-    assert!(!queued.state().teams[0].finished_turn);
-    assert_eq!(queued.state().active_turn_team, TeamId::RED);
+    Snap::capture(&queued.state).equal(&before, "submit(06) must not mutate the state");
+    assert!(!(&queued.state).teams[0].finished_turn);
+    assert_eq!((&queued.state).active_turn_team, TeamId::RED);
 
     let mut immediate = GameUniverse::new(state, LocalDispatcher);
     immediate.end_local_turn(TeamId::RED);
     assert!(
-        immediate.state().teams[0].finished_turn,
+        (&immediate.state).teams[0].finished_turn,
         "end_local_turn applies 06 immediately"
     );
     assert_eq!(
-        immediate.state().active_turn_team,
+        (&immediate.state).active_turn_team,
         TeamId::GREEN,
         "end_local_turn starts the next team right away"
     );
@@ -1095,15 +1095,15 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
     // A queued 06 is applied by the next tick, but even then it does not start the
     // next team: the turn machine is a facade operation, not a tick phase.
     queued.tick();
-    assert!(queued.state().teams[0].finished_turn);
+    assert!((&queued.state).teams[0].finished_turn);
     assert_eq!(
-        queued.state().active_turn_team,
+        (&queued.state).active_turn_team,
         TeamId::RED,
         "a queued 06 does not run the turn machine"
     );
     assert_ne!(
-        immediate.state().snapshot_bytes(),
-        queued.state().snapshot_bytes(),
+        (&immediate.state).snapshot_bytes(),
+        (&queued.state).snapshot_bytes(),
         "the immediate and queued 06 paths must remain distinguishable"
     );
 }

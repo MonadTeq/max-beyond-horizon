@@ -7,7 +7,6 @@
 
 mod support;
 
-use max_core::crc;
 use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SPINNING_TURRET, TURRET_SPRITE};
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::frames;
@@ -90,7 +89,7 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
 #[test]
 fn sentry_animation_cycles_and_wraps() {
     let mut state = game();
-    state.state_mut().settings_effects = true;
+    state.set_settings_effects(true);
     let radar = spawn(&mut state, UnitType::Radar, TeamId::RED, Point::new(10, 10));
     {
         let unit = state.snapshot().unit(radar).unwrap();
@@ -119,7 +118,7 @@ fn sentry_animation_cycles_and_wraps() {
 
     // Effects off — the frame stays at the base.
     let mut quiet = game();
-    quiet.state_mut().settings_effects = false;
+    quiet.set_settings_effects(false);
     let radar = spawn(&mut quiet, UnitType::Radar, TeamId::RED, Point::new(10, 10));
     ticks(&mut quiet, 6);
     assert_eq!(quiet.snapshot().unit(radar).unwrap().image_index, 0);
@@ -178,7 +177,7 @@ fn deployed_frames_match_the_resource_table() {
     // Frame counters are presentation fields: the canonical simulation digest
     // (`snapshot_bytes`) deliberately does not carry them; animation determinism
     // is checked by the frame sequences above instead.
-    let before = crc::state_checksum(state.state());
+    let before = state.snapshot().state_checksum();
     state.unit_mut(tank).unwrap().image_index = 3;
-    assert_eq!(before, crc::state_checksum(state.state()));
+    assert_eq!(before, state.snapshot().state_checksum());
 }

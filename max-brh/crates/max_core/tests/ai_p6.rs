@@ -30,7 +30,6 @@ use max_core::geo::Point;
 use max_core::map::{Map, ResourceKind, ResourceMapEntry};
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::GameUniverse;
-use max_core::victory;
 
 /// A small map: land 24×24 in the top-left corner, the rest — water.
 fn small_land_map() -> Map {
@@ -64,15 +63,15 @@ fn computer_state() -> GameUniverse {
         ],
     );
 
-    state.state_mut().teams[0].team_type = TeamKind::Computer;
-    state.state_mut().teams[0].team_clan = TeamClan::Musashi;
-    state.state_mut().ai.settings.opponent = Opponent::Average as u8;
+    state.teams_mut()[0].team_type = TeamKind::Computer;
+    state.teams_mut()[0].team_clan = TeamClan::Musashi;
+    state.ai_mut().settings.opponent = Opponent::Average as u8;
     state
 }
 
 /// Places a materials deposit on a cell.
 fn put_ore(state: &mut GameUniverse, site: Point, amount: u8) {
-    state.state_mut().map.resources.set(
+    state.map_mut().resources.set(
         site.x,
         site.y,
         ResourceMapEntry::new(amount, Some(ResourceKind::Raw), 0x0F),
@@ -82,8 +81,8 @@ fn put_ore(state: &mut GameUniverse, site: Point, amount: u8) {
 /// Team tasks by type.
 fn tasks_of_type(state: &GameUniverse, team: TeamId, task_type: u8) -> Vec<u32> {
     state
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -97,13 +96,13 @@ fn play_turn(state: &mut GameUniverse, ticks: usize) {
     let team = TeamId::RED;
 
     state.manage_economy(team);
-    state.state_mut().ai_begin_turn(team);
+    state.ai_begin_turn(team);
 
     for _ in 0..ticks {
         state.tick();
     }
 
-    state.state_mut().game_state = GameStateType::EndTurn;
+    state.set_game_state(GameStateType::EndTurn);
     let _ = state.finish_turn();
 }
 
@@ -119,7 +118,7 @@ fn ai_constructor_builds_mining_station() {
 
     // `Ai_SetupStrategy` — strategy only (without map regeneration).
     assert!(
-        max_core::ai_setup_strategy(state.state_mut(), TeamId::RED),
+        state.ai_setup_strategy(TeamId::RED),
         "strategy must be selected for a viable map"
     );
 
@@ -132,7 +131,7 @@ fn ai_constructor_builds_mining_station() {
     // at the turn boundary missed it.
     for _ in 0..12 {
         state.manage_economy(TeamId::RED);
-        state.state_mut().ai_begin_turn(TeamId::RED);
+        state.ai_begin_turn(TeamId::RED);
 
         for _ in 0..24 {
             state.tick();
@@ -145,14 +144,14 @@ fn ai_constructor_builds_mining_station() {
                 saw_move = true;
             }
 
-            for task in state.state().ai.task_manager.tasks() {
+            for task in state.snapshot().ai().task_manager.tasks() {
                 if let TaskKind::CreateBuilding { op_state, .. } = &task.kind {
                     max_op_state = max_op_state.max(*op_state);
                 }
             }
         }
 
-        state.state_mut().game_state = GameStateType::EndTurn;
+        state.set_game_state(GameStateType::EndTurn);
         let _ = state.finish_turn();
 
         let building = state
@@ -222,7 +221,7 @@ fn ai_army_attacks_enemy() {
         .clone();
     enemy.set_visible_to_team(TeamId::RED, true);
     state.write_unit(defender, enemy);
-    max_core::ai_unit_spotted(state.state_mut(), defender, TeamId::RED);
+    state.ai_unit_spotted(defender, TeamId::RED);
 
     let hits_before = state.snapshot().unit(defender).expect("green tank").hits;
 
@@ -286,12 +285,7 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         .expect("training hall");
 
     // The site: tape/cones/slab — as after `StartBuilding`.
-    max_core::production::deploy_construction_site(
-        state.state_mut(),
-        builder,
-        UnitType::TrainingHall,
-        site,
-    )
+    state.deploy_construction_site(builder, UnitType::TrainingHall, site)
     .expect("construction site");
 
     // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3520-3592`): mutual parents,
@@ -311,12 +305,12 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
     state.write_unit(building, building_unit);
 
     assert_eq!(
-        max_core::production::builder_awaiting_exit(state.state(), builder),
+        state.snapshot().builder_awaiting_exit(builder),
         Some(building)
     );
 
     // The AI task in state `BUILDING` (as after `BeginBuilding`).
-    let task = state.state_mut().ai_append_task(
+    let task = state.ai_append_task(
         TeamId::RED,
         None,
         0,
@@ -332,12 +326,11 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         },
     );
     state
-        .state_mut()
-        .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(builder, task));
+        .ai_attach_task_to_unit(builder, task);
 
     // `TaskCreateBuilding::EndTurn` on the team turn: `Activate()` → `TaskActivate`.
     state.manage_economy(TeamId::RED);
-    state.state_mut().ai_begin_turn(TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
 
     let activated = state
         .snapshot()
@@ -380,7 +373,7 @@ fn ai_builder_leaves_the_finished_site_and_the_building_appears() {
         "здание обязано раскрыться после ухода строителя (соло-ИИ не зависает)"
     );
     assert!(
-        max_core::production::construction_utility(state.state(), TeamId::RED, site).is_none(),
+        state.snapshot().construction_utility(TeamId::RED, site).is_none(),
         "лента и конусы снимаются `UnitsManager_BuildingReady`"
     );
     assert!(
@@ -410,9 +403,9 @@ fn ai_two_runs_have_identical_digest() {
         let mut enemy_unit = state.snapshot().unit(enemy).expect("enemy").clone();
         enemy_unit.set_visible_to_team(TeamId::RED, true);
         state.write_unit(enemy, enemy_unit);
-        max_core::ai_unit_spotted(state.state_mut(), enemy, TeamId::RED);
+        state.ai_unit_spotted(enemy, TeamId::RED);
 
-        max_core::ai_setup_strategy(state.state_mut(), TeamId::RED);
+        state.ai_setup_strategy(TeamId::RED);
 
         for _ in 0..8 {
             play_turn(&mut state, 16);
@@ -443,18 +436,18 @@ fn ai_turns_advance_and_reminders_are_processed() {
     // The reminder queue is processed deterministically: the `deferred` tail
     // (carried to the next `ExecuteReminders` call) is limited by the number of tasks.
     assert!(
-        state.state().ai.task_manager.reminders_count()
-            <= state.state().ai.task_manager.task_count() * 2 + 1,
+        state.snapshot().ai().task_manager.reminders_count()
+            <= state.snapshot().ai().task_manager.task_count() * 2 + 1,
         "reminder queues must stay bounded ({} reminders, {} tasks)",
-        state.state().ai.task_manager.reminders_count(),
-        state.state().ai.task_manager.task_count()
+        state.snapshot().ai().task_manager.reminders_count(),
+        state.snapshot().ai().task_manager.task_count()
     );
 
     // The construction manager and starting tasks are alive.
     assert!(
         state
-            .state()
-            .ai
+            .snapshot()
+            .ai()
             .task_manager
             .tasks()
             .iter()
@@ -550,19 +543,19 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
             let team = TeamId(team as u8);
             assert_eq!(
                 state
-                    .state()
+                    .snapshot()
                     .ai_heat_map_complete(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
             assert_eq!(
                 state
-                    .state()
+                    .snapshot()
                     .ai_heat_map_stealth_sea(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
             assert_eq!(
                 state
-                    .state()
+                    .snapshot()
                     .ai_heat_map_stealth_land(team, i32::from(cell.x), i32::from(cell.y)),
                 0
             );
@@ -570,23 +563,23 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     }
 
     // There is no map for `ALIEN`: the C++ checks `heat_map && …` give 0/false.
-    assert_eq!(state.state().ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
+    assert_eq!(state.snapshot().ai_heat_map_complete(TeamId::ALIEN, 12, 12), 0);
     assert_eq!(
-        state.state().ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12),
+        state.snapshot().ai_heat_map_stealth_sea(TeamId::ALIEN, 12, 12),
         0
     );
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .ai_heat_map_stealth_land(TeamId::ALIEN, 12, 12),
         0
     );
     let unit = state.snapshot().unit(alien_tank).expect("alien tank alive");
-    assert!(!state.state().is_visible_on_heat_map(unit, TeamId::ALIEN));
+    assert!(!state.snapshot().is_visible_on_heat_map(unit, TeamId::ALIEN));
 
     // The service team does not participate in victory conditions: previously `ALIEN` with
     // `team_type = Computer` got into `teams_total`.
-    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     assert_eq!(status.teams_total, 1, "в партии только красные");
     assert_eq!(
         status.teams_in_play, 0,
@@ -609,7 +602,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
     let commando = state
         .spawn_unit(UnitType::Infiltrator, TeamId::RED, Point::new(11, 12), 0)
         .expect("commando deploys");
-    max_core::combat::attack_unit(state.state_mut(), alien_tank, commando, 0, 0);
+    state.attack_unit(alien_tank, commando, 0, 0);
     state.tick();
 
     state.destroy_unit(alien_building);
@@ -640,7 +633,7 @@ fn alien_units_stay_outside_team_heat_maps_and_victory() {
 fn ai_completes_a_build_queue_through_production() {
     let mut state = computer_state();
     // Team gold: production charges the C++ rate per turn.
-    state.state_mut().team_units[TeamId::RED.0 as usize].set_gold(500);
+    state.team_units_table_mut()[TeamId::RED.0 as usize].set_gold(500);
     put_ore(&mut state, Point::new(12, 11), 20);
     put_ore(&mut state, Point::new(13, 11), 20);
 
@@ -651,21 +644,21 @@ fn ai_completes_a_build_queue_through_production() {
     // `UnitsManager_DeployUnit` zeroes the new unit's storage, so the test
     // sets the cargo explicitly — otherwise `BuildMenu::Build` would refuse (no 24 units).
     state.unit_mut(constructor).expect("constructor").storage = 60;
-    assert!(max_core::ai_setup_strategy(state.state_mut(), TeamId::RED));
+    assert!(state.ai_setup_strategy(TeamId::RED));
 
     let mut built = None;
     let mut saw_queue = false;
 
     for _ in 0..26 {
         state.manage_economy(TeamId::RED);
-        state.state_mut().ai_begin_turn(TeamId::RED);
+        state.ai_begin_turn(TeamId::RED);
 
         for _ in 0..24 {
             state.tick();
         }
 
         // Team production turn (C++ `GameManager_ProgressBuildState`).
-        max_core::production::progress_build_state(state.state_mut(), TeamId::RED);
+        state.progress_build_state(TeamId::RED);
 
         if let Some(unit) = state.snapshot().unit(constructor) {
             if !unit.build_list.is_empty() {

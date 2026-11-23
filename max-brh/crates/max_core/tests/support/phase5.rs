@@ -43,7 +43,6 @@
 #![allow(dead_code)]
 
 use max_core::ai::TaskKind;
-use max_core::crc;
 use max_core::enums::{Opponent, PlayMode, Surface, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events;
 use max_core::game::TurnEvent;
@@ -101,7 +100,7 @@ pub fn ai_state(map: Map, clan: TeamClan, opponent: Opponent) -> GameUniverse {
 
     universe.set_network_game(false);
     universe.set_play_mode(PlayMode::TurnBased);
-    universe.state_mut().player_team = TeamId::GREEN;
+    universe.set_player_team(TeamId::GREEN);
 
     {
         let red = universe.team_mut(TeamId::RED).expect("RED slot");
@@ -118,8 +117,8 @@ pub fn ai_state(map: Map, clan: TeamClan, opponent: Opponent) -> GameUniverse {
         .team_units_mut(TeamId::GREEN)
         .expect("GREEN economy") = TeamUnits::with_clan(TeamClan::Random);
 
-    universe.state_mut().ai.settings.opponent = opponent as u8;
-    max_core::ai_init(universe.state_mut());
+    universe.ai_mut().settings.opponent = opponent as u8;
+    universe.ai_init();
 
     universe
 }
@@ -132,8 +131,8 @@ pub fn ai_state(map: Map, clan: TeamClan, opponent: Opponent) -> GameUniverse {
 /// non-`Random` strategy survives the clan mapping of `AiPlayer::init_tasks`.
 pub fn strategy_state(strategy: max_core::enums::AiStrategy, opponent: Opponent) -> GameUniverse {
     let mut universe = ai_state(land_map(40), TeamClan::Musashi, opponent);
-    universe.state_mut().ai.settings.team_strategy[0] = Some(strategy);
-    universe.state_mut().ai.players[TeamId::RED.0 as usize].strategy = strategy;
+    universe.ai_mut().settings.team_strategy[0] = Some(strategy);
+    universe.ai_mut().players[TeamId::RED.0 as usize].strategy = strategy;
     universe
 }
 
@@ -149,7 +148,7 @@ pub fn put_fuel(universe: &mut GameUniverse, site: Point, amount: u8) {
 
 /// Places a deposit of one resource kind on a cell.
 pub fn put_resource(universe: &mut GameUniverse, site: Point, amount: u8, kind: ResourceKind) {
-    universe.state_mut().map.resources.set(
+    universe.map_mut().resources.set(
         site.x,
         site.y,
         ResourceMapEntry::new(amount, Some(kind), 0x0F),
@@ -236,7 +235,7 @@ pub fn spot(universe: &mut GameUniverse, unit: UnitId, team: TeamId) {
 
 /// Number of cells the team has explored (`AiPlayer::info_map`).
 pub fn explored_count(universe: &GameUniverse, team: TeamId) -> usize {
-    universe.state().ai.players[team.0 as usize]
+    universe.snapshot().ai().players[team.0 as usize]
         .info_map
         .iter()
         .filter(|value| **value & max_core::enums::INFO_MAP_EXPLORED != 0)
@@ -471,9 +470,9 @@ pub struct AiObservation {
 impl AiObservation {
     /// Samples the AI tasks of `team` and the persistent counters.
     pub fn sample(&mut self, universe: &GameUniverse, team: TeamId) {
-        let state = universe.state();
+        let state = universe.snapshot();
         for task in state
-            .ai
+            .ai()
             .task_manager
             .tasks()
             .iter()
@@ -503,11 +502,11 @@ impl AiObservation {
 
         self.max_spotted = self
             .max_spotted
-            .max(state.ai.players[team.0 as usize].spotted_units.len());
+            .max(state.ai().players[team.0 as usize].spotted_units.len());
         self.max_explored = self.max_explored.max(explored_count(universe, team));
         self.max_gold_spent = self
             .max_gold_spent
-            .max(state.teams[team.0 as usize].stats_gold_spent_on_upgrades);
+            .max(state.teams()[team.0 as usize].stats_gold_spent_on_upgrades);
 
         if state.unit_ids_in_order().into_iter().any(|id| {
             state.unit(id).is_some_and(|unit| {
@@ -528,8 +527,8 @@ impl AiObservation {
 /// Team task ids of one task type (`TASK_TYPE_*`).
 pub fn tasks_of_type(universe: &GameUniverse, team: TeamId, task_type: u8) -> Vec<u32> {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -541,8 +540,8 @@ pub fn tasks_of_type(universe: &GameUniverse, team: TeamId, task_type: u8) -> Ve
 /// Unit types ordered by `TaskCreateBuilding` tasks of a team (in task order).
 pub fn create_building_types(universe: &GameUniverse, team: TeamId) -> Vec<UnitType> {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -559,8 +558,8 @@ pub fn create_building_types(universe: &GameUniverse, team: TeamId) -> Vec<UnitT
 /// requests exactly one type.
 pub fn obtain_unit_requests(universe: &GameUniverse, team: TeamId) -> Vec<Vec<UnitType>> {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -601,8 +600,8 @@ pub fn factory_unit_requests(
 /// Units accumulated by the team's `TaskAttackReserve`.
 pub fn attack_reserve_units(universe: &GameUniverse, team: TeamId) -> Vec<UnitId> {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -617,8 +616,8 @@ pub fn attack_reserve_units(universe: &GameUniverse, team: TeamId) -> Vec<UnitId
 /// Units accumulated by the team's `TaskDefenseReserve`.
 pub fn defense_reserve_units(universe: &GameUniverse, team: TeamId) -> Vec<UnitId> {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -633,8 +632,8 @@ pub fn defense_reserve_units(universe: &GameUniverse, team: TeamId) -> Vec<UnitI
 /// Whether the team holds an active `TaskAttack`.
 pub fn has_attack_task(universe: &GameUniverse, team: TeamId) -> bool {
     universe
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -643,7 +642,7 @@ pub fn has_attack_task(universe: &GameUniverse, team: TeamId) -> bool {
 
 /// Units of a team with a given type currently alive.
 pub fn count_units(universe: &GameUniverse, team: TeamId, unit_type: UnitType) -> usize {
-    let state = universe.state();
+    let state = universe.snapshot();
     state
         .unit_ids_in_order()
         .into_iter()
@@ -660,8 +659,8 @@ pub fn count_units(universe: &GameUniverse, team: TeamId, unit_type: UnitType) -
 /// values pinned for every phase 5 scenario).
 pub fn crcs(universe: &GameUniverse) -> (u16, u16, u16) {
     (
-        crc::state_checksum(universe.state()),
-        crc::replay_digest_crc(universe.state()),
-        crc::state_digest(universe.state()),
+        universe.snapshot().state_checksum(),
+        universe.snapshot().replay_digest_crc(),
+        universe.snapshot().state_digest(),
     )
 }

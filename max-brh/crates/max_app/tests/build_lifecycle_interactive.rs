@@ -630,14 +630,19 @@ fn clicking_the_site_decal_returns_the_builder() {
 fn builder_exit_click_zone_is_a_four_by_four_block_around_the_site() {
     use max_core::enums::unit_flags;
 
-    let mut state = max_core::GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    let mut state = max_core::universe::GameUniverse::default();
+    state
+        .team_mut(max_core::TeamId::RED)
+        .expect("RED slot")
+        .team_type = TeamKind::Player;
+    *state
+        .team_units_mut(max_core::TeamId::RED)
+        .expect("RED economy") = max_core::TeamUnits::with_clan(TeamClan::Random);
     let team = max_core::TeamId::RED;
     let building = state
         .spawn_unit(UnitType::TrainingHall, team, Point::new(40, 40), 0)
         .expect("building");
-    let building_unit = state.unit(building).expect("building").clone();
+    let building_unit = state.snapshot().unit(building).expect("building").clone();
 
     assert_ne!(building_unit.flags & unit_flags::BUILDING, 0);
 

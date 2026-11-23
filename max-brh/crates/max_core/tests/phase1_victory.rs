@@ -9,8 +9,7 @@
 //! `Duration`/`Score`/elimination condition → expected result and unaffected
 //! phase/counter. Determinism (D) is asserted with the canonical digests.
 
-use max_core::crc;
-use max_core::deploy::{deploy_starting_units, DEFAULT_START_GOLD};
+use max_core::deploy::DEFAULT_START_GOLD;
 use max_core::enums::{GameStateType, Surface, VictoryType, WinLossState};
 use max_core::events;
 use max_core::game::PLAYER_TEAM_COUNT;
@@ -61,18 +60,16 @@ fn new_game() -> GameUniverse {
             TeamKind::None,
         ],
     );
-    state.state_mut().network_game = false;
-    state.state_mut().rng = Randomizer::new(SEED);
+    state.set_network_game(false);
+    *state.rng_mut() = Randomizer::new(SEED);
     // `GameManager_InitUnitsAndGameState` (`game_manager.cpp:3035`): the first
     // turn is number 1 (called from `GameManager_GameSetup` before
     // `GameManager_InitGame`, which does not touch the counter).
-    state.state_mut().turn_counter = 1;
-    state.state_mut().mission_category = victory::MissionCategory::Custom;
-    state.state_mut().mission_index = 0;
+    state.set_turn_counter(1);
+    state.set_mission_category(victory::MissionCategory::Custom);
+    state.set_mission_index(0);
 
-    deploy_starting_units(
-        state.state_mut(),
-        DEFAULT_START_GOLD,
+    state.deploy_starting_units(DEFAULT_START_GOLD,
         setup.settings.max_resources,
         &setup.teams,
     );
@@ -84,16 +81,16 @@ fn new_game() -> GameUniverse {
 /// round is closed by `finish_turn` (`GameManager_TeamTurnFinish`).
 fn play_round(state: &mut GameUniverse, ticks_per_team: usize) -> bool {
     for team_index in 0..PLAYER_TEAM_COUNT {
-        let kind = state.state().teams[team_index].team_type;
+        let kind = state.snapshot().teams()[team_index].team_type;
         if kind == TeamKind::None || kind == TeamKind::Eliminated {
             continue;
         }
 
         let team = TeamId(team_index as u8);
-        state.state_mut().teams[team_index].finished_turn = false;
+        state.teams_mut()[team_index].finished_turn = false;
         state.manage_economy(team);
-        state.state_mut().active_turn_team = team;
-        state.state_mut().game_state = GameStateType::InGame;
+        state.set_active_turn_team(team);
+        state.set_game_state(GameStateType::InGame);
 
         for _ in 0..ticks_per_team {
             state.tick();
@@ -112,37 +109,37 @@ fn play_round(state: &mut GameUniverse, ticks_per_team: usize) -> bool {
 fn duration_limit_ends_the_game_on_the_limit_turn() {
     fn run() -> GameUniverse {
         let mut state = new_game();
-        state.state_mut().victory_type = VictoryType::Duration;
-        state.state_mut().victory_limit = 2;
+        state.set_victory_type(VictoryType::Duration);
+        state.set_victory_limit(2);
 
-        assert_eq!(state.state().turn_counter, 1);
+        assert_eq!(state.snapshot().turn_counter(), 1);
         assert!(!play_round(&mut state, 1), "turn 1 is below the limit");
-        assert_eq!(state.state().turn_counter, 2);
+        assert_eq!(state.snapshot().turn_counter(), 2);
         assert!(play_round(&mut state, 1), "turn 2 reaches the limit");
         assert_eq!(
-            state.state().turn_counter,
+            state.snapshot().turn_counter(),
             2,
             "a finished game keeps the limit turn"
         );
-        assert_eq!(state.state().game_state, GameStateType::InGame);
+        assert_eq!(state.snapshot().game_state(), GameStateType::InGame);
 
         state
     }
 
     let first = run();
     let second = run();
-    assert_eq!(first.state().turn_counter, 2);
+    assert_eq!(first.snapshot().turn_counter(), 2);
     assert_eq!(
         first.snapshot().snapshot_bytes(),
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 }
 
@@ -151,19 +148,19 @@ fn duration_limit_ends_the_game_on_the_limit_turn() {
 #[test]
 fn score_limit_is_inclusive_per_team() {
     let mut state = new_game();
-    state.state_mut().victory_type = VictoryType::Score;
-    state.state_mut().victory_limit = 10;
+    state.set_victory_type(VictoryType::Score);
+    state.set_victory_limit(10);
 
     assert!(!play_round(&mut state, 1), "no points yet");
 
-    state.state_mut().teams[TeamId::RED.0 as usize].team_points = 9;
+    state.teams_mut()[TeamId::RED.0 as usize].team_points = 9;
     assert!(!play_round(&mut state, 1), "9 points are below the limit");
 
     // The condition is evaluated for every team, not only for the local player.
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_points = 10;
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_points = 10;
     assert!(play_round(&mut state, 1), "10 points reach the limit");
 
-    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Generic
@@ -180,32 +177,32 @@ fn score_limit_is_inclusive_per_team() {
 #[test]
 fn score_limit_ends_the_game_for_a_non_local_ai_team() {
     let mut state = new_game();
-    state.state_mut().player_team = TeamId::RED;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Computer;
-    state.state_mut().victory_type = VictoryType::Score;
-    state.state_mut().victory_limit = 10;
+    state.set_player_team(TeamId::RED);
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::Computer;
+    state.set_victory_type(VictoryType::Score);
+    state.set_victory_limit(10);
 
     assert!(!play_round(&mut state, 1), "no points yet");
 
-    state.state_mut().teams[TeamId::RED.0 as usize].team_points = 3;
+    state.teams_mut()[TeamId::RED.0 as usize].team_points = 3;
     assert!(
         !play_round(&mut state, 1),
         "3 points of the local player are below the limit"
     );
 
-    let turn = state.state().turn_counter;
-    state.state_mut().teams[TeamId::GREEN.0 as usize].team_points = 10;
+    let turn = state.snapshot().turn_counter();
+    state.teams_mut()[TeamId::GREEN.0 as usize].team_points = 10;
     assert!(
         play_round(&mut state, 1),
         "an AI team at the limit ends the match"
     );
     assert_eq!(
-        state.state().turn_counter,
+        state.snapshot().turn_counter(),
         turn,
         "a finished game keeps the last turn"
     );
 
-    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     assert_eq!(
         status.team_status[TeamId::RED.0 as usize],
         WinLossState::Generic,
@@ -228,15 +225,15 @@ fn score_limit_ends_the_game_for_a_non_local_ai_team() {
 fn finish_turn_without_playing_teams_advances_the_counter() {
     let mut state = new_game();
     for team in 0..PLAYER_TEAM_COUNT {
-        state.state_mut().teams[team].team_type = TeamKind::None;
+        state.teams_mut()[team].team_type = TeamKind::None;
     }
-    state.state_mut().game_state = GameStateType::EndTurn;
-    let turn = state.state().turn_counter;
+    state.set_game_state(GameStateType::EndTurn);
+    let turn = state.snapshot().turn_counter();
 
     assert!(!state.finish_turn(), "no playing team can end the match");
-    assert_eq!(state.state().turn_counter, turn + 1);
-    assert_eq!(state.state().game_state, GameStateType::InGame);
-    assert!(!victory::check_end_game_conditions(state.state_mut()));
+    assert_eq!(state.snapshot().turn_counter(), turn + 1);
+    assert_eq!(state.snapshot().game_state(), GameStateType::InGame);
+    assert!(!state.check_end_game_conditions());
 }
 
 /// Destroying every opponent unit ends the match through the generic script
@@ -261,7 +258,7 @@ fn losing_all_units_loses_the_generic_match() {
         state.destroy_unit(id);
     }
 
-    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     assert_eq!(status.teams_in_play, 1);
     assert_eq!(
         status.team_status[TeamId::GREEN.0 as usize],
@@ -273,12 +270,12 @@ fn losing_all_units_loses_the_generic_match() {
     );
     assert_eq!(status.team_rank[TeamId::RED.0 as usize], 1);
 
-    assert!(victory::check_end_game_conditions(state.state_mut()));
+    assert!(state.check_end_game_conditions());
     // `finish_turn` also reports the end and does not advance the turn counter.
-    state.state_mut().game_state = GameStateType::EndTurn;
-    let turn = state.state().turn_counter;
+    state.set_game_state(GameStateType::EndTurn);
+    let turn = state.snapshot().turn_counter();
     assert!(state.finish_turn());
-    assert_eq!(state.state().turn_counter, turn);
+    assert_eq!(state.snapshot().turn_counter(), turn);
 }
 
 /// Both teams without units: `teams_in_play == 0` ends the game even though
@@ -292,10 +289,10 @@ fn no_team_in_play_ends_the_match() {
     }
     assert_eq!(state.snapshot().unit_count(), 0);
 
-    let status = victory::evaluate_status(state.state(), state.state().turn_counter);
+    let status = state.snapshot().evaluate_status();
     assert_eq!(status.teams_total, 2);
     assert_eq!(status.teams_in_play, 0);
-    assert!(victory::check_end_game_conditions(state.state_mut()));
+    assert!(state.check_end_game_conditions());
 }
 
 /// While the game continues, `check_end_game_conditions` is a pure observation:
@@ -303,16 +300,16 @@ fn no_team_in_play_ends_the_match() {
 #[test]
 fn victory_check_does_not_change_a_running_game() {
     let mut state = new_game();
-    state.state_mut().victory_type = VictoryType::Duration;
-    state.state_mut().victory_limit = 50;
+    state.set_victory_type(VictoryType::Duration);
+    state.set_victory_limit(50);
     play_round(&mut state, 1);
 
     let snapshot = state.snapshot().snapshot_bytes();
-    let checksum = crc::state_checksum(state.state());
+    let checksum = state.snapshot().state_checksum();
 
     for _ in 0..3 {
-        assert!(!victory::check_end_game_conditions(state.state_mut()));
+        assert!(!state.check_end_game_conditions());
         assert_eq!(state.snapshot().snapshot_bytes(), snapshot);
-        assert_eq!(crc::state_checksum(state.state()), checksum);
+        assert_eq!(state.snapshot().state_checksum(), checksum);
     }
 }

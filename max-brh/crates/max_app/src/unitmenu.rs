@@ -92,8 +92,6 @@
 
 use max_assets::image::SimpleImage;
 use max_core::enums::{unit_flags, PlayMode, UnitOrder, UnitOrderState, UnitType};
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::geo::Point;
 use max_core::unit::{UnitId, UnitInfo};
@@ -1560,14 +1558,19 @@ pub fn item_enabled(menu: &UnitMenu, text: &str) -> Option<bool> {
 mod tests {
     use super::*;
     use max_core::enums::TeamClan;
+    use max_core::team::TeamId;
 
-    fn test_state() -> GameState {
-        let mut state = GameState::new();
-        state.team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    fn test_state() -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
+        let mut state = max_core::universe::GameUniverse::default();
+        *state.team_units_mut(TeamId::RED).expect("RED economy") =
+            max_core::team::TeamUnits::with_clan(TeamClan::Random);
         state
     }
 
-    fn spawn(state: &mut GameState, unit_type: UnitType) -> UnitId {
+    fn spawn(
+        state: &mut max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        unit_type: UnitType,
+    ) -> UnitId {
         let flags = max_core::access::unit_type_flags(unit_type);
         let id = state
             .spawn_unit(unit_type, max_core::team::TeamId::RED, Point::new(22, 22), flags)
@@ -1579,7 +1582,7 @@ mod tests {
     fn tank_menu_matches_cpp_order_and_contents() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let unit = state.unit(id).expect("танк").clone();
+        let unit = state.snapshot().unit(id).expect("танк").clone();
         let items = items_for(StateRef::from(&state), &unit);
         let names: Vec<&str> = items.iter().map(|item| item.id.name()).collect();
 
@@ -1604,7 +1607,7 @@ mod tests {
     fn constructor_menu_has_build_first() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Constructor);
-        let unit = state.unit(id).expect("строитель").clone();
+        let unit = state.snapshot().unit(id).expect("строитель").clone();
         let items = items_for(StateRef::from(&state), &unit);
 
         assert_eq!(items[0].id, ItemId::Build);
@@ -1623,7 +1626,7 @@ mod tests {
     fn stop_appears_only_with_path() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let mut unit = state.unit(id).expect("танк").clone();
+        let mut unit = state.snapshot().unit(id).expect("танк").clone();
         assert!(!items_for(StateRef::from(&state), &unit)
             .iter()
             .any(|item| item.id == ItemId::Stop));
@@ -1644,7 +1647,7 @@ mod tests {
     fn builder_mid_build_offers_enabled_stop_instead_of_build() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Constructor);
-        let mut unit = state.unit(id).expect("строитель").clone();
+        let mut unit = state.snapshot().unit(id).expect("строитель").clone();
 
         // C++ `UnitsManager_Popup_InitBuilders`: during `ORDER_BUILD` the item
         // `Build` is replaced with `stop` (`GameManager_SelectBuildSite`).
@@ -1675,7 +1678,7 @@ mod tests {
     fn halted_factory_offers_enabled_start() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::TrainingHall);
-        let mut unit = state.unit(id).expect("завод").clone();
+        let mut unit = state.snapshot().unit(id).expect("завод").clone();
         unit.orders = UnitOrder::HaltBuilding2;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.build_list = vec![UnitType::Infantry];
@@ -1697,7 +1700,7 @@ mod tests {
     fn transport_lists_load_and_activate() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::ArmouredPersonnelCarrier);
-        let unit = state.unit(id).expect("транспорт").clone();
+        let unit = state.snapshot().unit(id).expect("транспорт").clone();
         let items = items_for(StateRef::from(&state), &unit);
 
         let load = items
@@ -1724,7 +1727,7 @@ mod tests {
     fn infiltrator_has_stealth_and_targeting_items_enabled() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Infiltrator);
-        let unit = state.unit(id).expect("диверсант").clone();
+        let unit = state.snapshot().unit(id).expect("диверсант").clone();
         let items = items_for(StateRef::from(&state), &unit);
 
         for id in [ItemId::Disable, ItemId::Steal, ItemId::Attack] {
@@ -1744,13 +1747,13 @@ mod tests {
         let id = spawn(&mut state, UnitType::PowerStation);
 
         // The upgrade has something to improve: the team's current values are above the base.
-        if let Some(team_units) = state.team_units.get_mut(0) {
+        if let Some(team_units) = state.team_units_mut(TeamId::RED) {
             let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
             let hits = values.get_attribute(ATTRIB_HITS);
             values.set_attribute(ATTRIB_HITS, hits + 10);
         }
 
-        let unit = state.unit(id).expect("здание").clone();
+        let unit = state.snapshot().unit(id).expect("здание").clone();
         let items = items_for(StateRef::from(&state), &unit);
 
         let remove = items
@@ -1770,7 +1773,7 @@ mod tests {
     fn bulldozer_has_enabled_remove_rubble() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Bulldozer);
-        let unit = state.unit(id).expect("бульдозер").clone();
+        let unit = state.snapshot().unit(id).expect("бульдозер").clone();
         let items = items_for(StateRef::from(&state), &unit);
 
         let remove = items
@@ -1785,7 +1788,7 @@ mod tests {
     fn sentry_pressed_when_order_is_sentry() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let mut unit = state.unit(id).expect("танк").clone();
+        let mut unit = state.snapshot().unit(id).expect("танк").clone();
 
         assert!(!items_for(StateRef::from(&state), &unit)
             .iter()
@@ -1825,7 +1828,7 @@ mod tests {
     fn buttons_are_stacked_with_three_pixel_gap() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let unit = state.unit(id).expect("танк").clone();
+        let unit = state.snapshot().unit(id).expect("танк").clone();
         let menu = UnitMenu::new(
             StateRef::from(&state),
             &unit,
@@ -1850,7 +1853,7 @@ mod tests {
     fn hotkey_uses_position_then_first_letter() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::Tank);
-        let unit = state.unit(id).expect("танк").clone();
+        let unit = state.snapshot().unit(id).expect("танк").clone();
         let menu = UnitMenu::new(
             StateRef::from(&state),
             &unit,
@@ -1938,10 +1941,10 @@ mod tests {
         let id = spawn(&mut state, UnitType::Tank);
         let command = p1_order(StateRef::from(&state), id, UnitOrder::Sentry, UnitOrderState::ExecutingOrder)
             .expect("приказ");
-        max_core::events::apply_command(&mut state, &command);
-        assert_eq!(state.unit(id).expect("танк").orders, UnitOrder::Sentry);
+        state.apply_now(command.clone());
+        assert_eq!(state.snapshot().unit(id).expect("танк").orders, UnitOrder::Sentry);
         assert_eq!(
-            state.unit(id).expect("танк").state,
+            state.snapshot().unit(id).expect("танк").state,
             UnitOrderState::ExecutingOrder
         );
     }
@@ -1963,8 +1966,8 @@ mod tests {
             .expect("приказ")
             .expect("не пусто");
 
-        max_core::events::apply_command(&mut state, &command);
-        let unit = state.unit(repair).expect("repair");
+        state.apply_now(command.clone());
+        let unit = state.snapshot().unit(repair).expect("repair");
         assert_eq!(unit.orders, UnitOrder::Repair);
         assert_eq!(unit.parent_unit, Some(tank));
     }
@@ -1987,11 +1990,11 @@ mod tests {
             other => panic!("ожидался Order, получен {other:?}"),
         }
 
-        max_core::events::apply_command(&mut state, &command);
-        let unit = state.unit(tank).expect("танк");
+        state.apply_now(command.clone());
+        let unit = state.snapshot().unit(tank).expect("танк");
         assert_eq!(unit.orders, UnitOrder::MoveToUnit);
         assert_eq!(
-            state.order_data(tank).move_to,
+            state.snapshot().order_data(tank).move_to,
             Point::new(25, 22),
             "цель — клетка транспорта"
         );
@@ -2001,7 +2004,7 @@ mod tests {
     fn factory_with_ready_unit_has_no_menu() {
         let mut state = test_state();
         let id = spawn(&mut state, UnitType::LightVehiclePlant);
-        let mut unit = state.unit(id).expect("завод").clone();
+        let mut unit = state.snapshot().unit(id).expect("завод").clone();
         unit.state = UnitOrderState::UnitReady;
 
         assert!(items_for(StateRef::from(&state), &unit).is_empty());

@@ -839,7 +839,7 @@ mod tests {
     use crate::enums::{Surface, TeamClan};
     use crate::map::Map;
     use crate::team::TeamKind;
-    use crate::GameState;
+    use crate::game::GameState;
 
     fn land_map() -> Map {
         let mut map = Map::new();

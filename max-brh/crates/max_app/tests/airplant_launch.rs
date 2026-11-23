@@ -20,19 +20,26 @@ use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::universe::{GameUniverse, LocalDispatcher, StateRef};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::GameState;
 
 use max_app::hud;
 use max_app::{App, AppConfig};
 
-fn state() -> GameState {
-    let mut state = GameState::new();
-    state.teams[0].team_type = TeamKind::Player;
-    state.teams[1].team_type = TeamKind::Computer;
-    state.team_units[0] = TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.team_units[1] = TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.active_turn_team = TeamId::RED;
-    state.player_team = TeamId::RED;
+fn state() -> GameUniverse<LocalDispatcher> {
+    let mut state = GameUniverse::default();
+    state
+        .team_mut(TeamId::RED)
+        .expect("RED slot")
+        .team_type = TeamKind::Player;
+    state
+        .team_mut(TeamId::GREEN)
+        .expect("GREEN slot")
+        .team_type = TeamKind::Computer;
+    *state.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(max_core::TeamClan::Random);
+    *state.team_units_mut(TeamId::GREEN).expect("GREEN economy") =
+        TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.set_active_turn_team(TeamId::RED);
+    state.set_player_team(TeamId::RED);
     state
 }
 
@@ -69,7 +76,7 @@ fn plant_with_fighter(state: &mut GameUniverse<LocalDispatcher>) -> (max_core::U
 
 #[test]
 fn activate_order_targets_the_plant_and_carries_the_fighter_as_parent() {
-    let mut universe = GameUniverse::new(state(), LocalDispatcher);
+    let mut universe = state();
     let (plant, fighter) = plant_with_fighter(&mut universe);
 
     // A cell next to the factory (2×2 at (10,10)-(11,11)) — `9,10`.
@@ -95,7 +102,7 @@ fn activate_order_targets_the_plant_and_carries_the_fighter_as_parent() {
 
 #[test]
 fn clicking_the_plant_footprint_does_not_launch() {
-    let mut universe = GameUniverse::new(state(), LocalDispatcher);
+    let mut universe = state();
     let (_plant, fighter) = plant_with_fighter(&mut universe);
 
     // Inside the factory 2×2 C++ gives `CURSOR_FRIEND` — no order.
@@ -165,7 +172,7 @@ fn air_move_order_is_a_packet_08_move_with_init_state() {
 #[test]
 fn app_launches_the_fighter_out_of_the_air_plant() {
     let mut app = App::new(AppConfig::default());
-    app.install_universe(GameUniverse::new(state(), LocalDispatcher));
+    *app.universe_mut() = state();
     let (_plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // Player: the ready unit is selected (after `PlaceNewUnit`), a click next to the factory.
@@ -201,7 +208,7 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
 #[test]
 fn unit_menu_on_a_ready_plant_selects_the_stored_fighter() {
     let mut app = App::new(AppConfig::default());
-    app.install_universe(GameUniverse::new(state(), LocalDispatcher));
+    *app.universe_mut() = state();
     let (plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // The first click on the factory — selection.

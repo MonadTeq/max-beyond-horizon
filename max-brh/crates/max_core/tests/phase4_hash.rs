@@ -362,10 +362,10 @@ fn standard_map_hash_places_every_unit_in_its_cell_object() {
     // (`hash.cpp:FileLoad`).
     let state =
         max_core::universe::GameUniverse::from_save(&SaveFile::parse(SAVE1).expect("parses"));
-    assert_eq!(state.state().map_hash.size(), 2048);
+    assert_eq!(state.snapshot().map_hash().size(), 2048);
 
     let mut placed = 0usize;
-    for object in state.state().map_hash.iter_objects() {
+    for object in state.snapshot().map_hash().iter_objects() {
         assert!(
             !object.units.is_empty(),
             "empty cell object in the live table"

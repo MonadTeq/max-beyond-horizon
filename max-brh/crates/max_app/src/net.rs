@@ -1945,22 +1945,34 @@ impl TicketKindShort for max_net::Ticket {
 mod tests {
     use super::*;
     use max_core::enums::{TeamClan, UnitType};
-    use max_core::game::GameState;
     use max_core::input::{Packet00TurnBarrier, Packet18Chat};
     use max_core::team::TeamUnits;
 
     /// Synthetic world: local RED (Player), peers GREEN/BLUE (Remote).
-    fn synthetic_state(local: TeamId, remotes: &[TeamId]) -> GameState {
-        let mut state = GameState::new();
+    fn synthetic_universe(
+        local: TeamId,
+        remotes: &[TeamId],
+    ) -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
+        let mut state = max_core::universe::GameUniverse::default();
         for team in 0..PLAYER_TEAM_COUNT {
-            state.teams[team].team_type = TeamKind::None;
-            state.team_units[team] = TeamUnits::with_clan(TeamClan::Random);
+            state
+                .team_mut(TeamId(team as u8))
+                .expect("team slot")
+                .team_type = TeamKind::None;
         }
-        state.teams[local.0 as usize].team_type = TeamKind::Player;
+        *state.team_units_table_mut() =
+            std::array::from_fn(|_| TeamUnits::with_clan(TeamClan::Random));
+        state
+            .team_mut(local)
+            .expect("local slot")
+            .team_type = TeamKind::Player;
         for team in remotes {
-            state.teams[team.0 as usize].team_type = TeamKind::Remote;
+            state
+                .team_mut(*team)
+                .expect("remote slot")
+                .team_type = TeamKind::Remote;
         }
-        state.player_team = local;
+        state.set_player_team(local);
         state
     }
 
@@ -2021,7 +2033,7 @@ mod tests {
     fn relayed_00_from_the_server_counts_for_the_payload_team() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
+        *app.universe_mut() = synthetic_universe(local, &[TeamId::GREEN]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::SimultaneousMoves);
         let mut stats = GameLoopStats::default();
 
@@ -2051,7 +2063,7 @@ mod tests {
     fn incoming_18_chat_goes_to_the_simulation_and_hud_logs() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
+        *app.universe_mut() = synthetic_universe(local, &[TeamId::GREEN]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 
@@ -2076,15 +2088,19 @@ mod tests {
 
     /// State for a three-client scenario: the same world, one tank per
     /// team. Clients get a clone and change only `TeamKind`.
-    fn three_team_state() -> (GameState, [max_core::UnitId; 3]) {
+    fn three_team_state() -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        [max_core::UnitId; 3],
+    ) {
         use max_core::geo::Point;
 
-        let mut state = GameState::new();
+        let mut state = max_core::universe::GameUniverse::default();
         let teams = [TeamId::RED, TeamId::GREEN, TeamId::BLUE];
         let mut ids: [max_core::UnitId; 3] = [max_core::UnitId::NO_ID; 3];
 
         for (index, team) in teams.iter().copied().enumerate() {
-            state.team_units[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+            *state.team_units_mut(team).expect("team economy") =
+                TeamUnits::with_clan(TeamClan::Random);
             ids[index] = state
                 .spawn_unit(
                     UnitType::Tank,
@@ -2094,7 +2110,7 @@ mod tests {
                 )
                 .expect("tank spawns");
         }
-        state.play_mode = PlayMode::SimultaneousMoves;
+        state.set_play_mode(PlayMode::SimultaneousMoves);
         (state, ids)
     }
 
@@ -2104,9 +2120,13 @@ mod tests {
     }
 
     impl SimClient {
-        fn new(base: &GameState, local: TeamId, remotes: &[TeamId]) -> Self {
+        fn new(
+            base: &max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+            local: TeamId,
+            remotes: &[TeamId],
+        ) -> Self {
             let mut app = App::new(AppConfig::default());
-            app.install_universe(max_core::universe::GameUniverse::new(base.clone(), max_core::universe::LocalDispatcher));
+            *app.universe_mut() = base.clone();
             for team in 0..PLAYER_TEAM_COUNT {
                 if let Some(info) = app.universe_mut().team_mut(TeamId(team as u8)) {
                     info.team_type = TeamKind::None;
@@ -2345,8 +2365,8 @@ mod tests {
             App::new(AppConfig::default()),
             App::new(AppConfig::default()),
         ];
-        apps[0].install_universe(max_core::universe::GameUniverse::new(synthetic_state(TeamId::RED, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
-        apps[1].install_universe(max_core::universe::GameUniverse::new(synthetic_state(TeamId::GREEN, &[TeamId::RED]), max_core::universe::LocalDispatcher));
+        *apps[0].universe_mut() = synthetic_universe(TeamId::RED, &[TeamId::GREEN]);
+        *apps[1].universe_mut() = synthetic_universe(TeamId::GREEN, &[TeamId::RED]);
 
         let mut fsms = [
             NetworkDispatcher::new(TeamId::RED, PlayMode::SimultaneousMoves),
@@ -2389,7 +2409,7 @@ mod tests {
     fn disconnect_event_stops_the_handler_without_panicking() {
         let local = TeamId::RED;
         let mut app = App::new(AppConfig::default());
-        app.install_universe(max_core::universe::GameUniverse::new(synthetic_state(local, &[TeamId::GREEN]), max_core::universe::LocalDispatcher));
+        *app.universe_mut() = synthetic_universe(local, &[TeamId::GREEN]);
         let mut fsm = NetworkDispatcher::new(local, PlayMode::TurnBased);
         let mut stats = GameLoopStats::default();
 

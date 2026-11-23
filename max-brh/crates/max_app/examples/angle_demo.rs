@@ -69,10 +69,11 @@ fn run(out: &Path) -> Result<(), String> {
     app.init_assets()
         .map_err(|error| format!("ассеты игры: {error}"))?;
 
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
+    *app.universe_mut().team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
     let id = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(
             UnitType::Scout,
             TeamId::RED,
@@ -80,13 +81,13 @@ fn run(out: &Path) -> Result<(), String> {
             unit_flags::MOBILE_LAND_UNIT | unit_flags::SELECTABLE,
         )
         .ok_or("не удалось выставить Scout")?;
-    app.state_mut()
+    app.universe_mut()
         .unit_mut(id)
         .ok_or("юнит не найден")?
         .visible_to_team = [true; 5];
 
     // L-shaped route: 2 cells east, then 2 north. The starting angle is east.
-    let mut unit = app.state().unit(id).ok_or("юнит не найден")?.clone();
+    let mut unit = app.state_ref().unit(id).ok_or("юнит не найден")?.clone();
     unit.angle = 2;
     unit.orders = UnitOrder::Move;
     unit.state = UnitOrderState::InProgress;
@@ -101,7 +102,7 @@ fn run(out: &Path) -> Result<(), String> {
             PathStep::new(0, -1),
         ],
     }));
-    app.state_mut().write_unit(id, unit);
+    app.universe_mut().write_unit(id, unit);
 
     app.viewport_mut().center_on_grid(11, 9);
     app.update_visual_units(0.0);
@@ -116,7 +117,7 @@ fn run(out: &Path) -> Result<(), String> {
         }
         app.update_visual_units(1.0 / 60.0);
 
-        let unit = app.state().unit(id).ok_or("юнит не найден")?;
+        let unit = app.state_ref().unit(id).ok_or("юнит не найден")?;
         let visual = app.visual_position(id).ok_or("юнит не найден")?;
         let visual_angle = app.visual_angle(id).ok_or("юнит не найден")?;
 
@@ -158,7 +159,7 @@ fn run(out: &Path) -> Result<(), String> {
         previous = visual;
     }
 
-    let unit = app.state().unit(id).ok_or("юнит не найден")?;
+    let unit = app.state_ref().unit(id).ok_or("юнит не найден")?;
     let visual = app.visual_position(id).ok_or("юнит не найден")?;
     let visual_angle = app.visual_angle(id).ok_or("юнит не найден")?;
 

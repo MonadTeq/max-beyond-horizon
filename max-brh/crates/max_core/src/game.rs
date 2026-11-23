@@ -217,13 +217,13 @@ pub enum TeamTurnEntry {
 pub struct GameState {
     // --- map and teams ---
     /// The game map.
-    pub map: Map,
+    pub(crate) map: Map,
     /// `UnitsManager_TeamInfo[PLAYER_TEAM_MAX]`.
-    pub teams: [TeamInfo; TEAM_SLOTS],
+    pub(crate) teams: [TeamInfo; TEAM_SLOTS],
     /// `CTInfo::team_units` (economy/technologies, including `ALIEN`).
-    pub team_units: [TeamUnits; TEAM_SLOTS],
+    pub(crate) team_units: [TeamUnits; TEAM_SLOTS],
     /// The simulation `Randomizer` (the seed comes only from packet 13).
-    pub rng: Randomizer,
+    pub(crate) rng: Randomizer,
 
     // --- units ---
     units: Vec<Option<UnitInfo>>,
@@ -237,27 +237,27 @@ pub struct GameState {
     /// Five unit lists in `UnitListKind` order (insertion order).
     lists: [Vec<UnitId>; 5],
     /// `Hash_MapHash` — cell → units (`P5`; `access.rs`/`pathfinding.rs`).
-    pub map_hash: MapHash,
+    pub(crate) map_hash: MapHash,
     /// The unit's group list (`UnitInfo::unit_list` in C++ — `UnitInfoGroup`).
     /// Parallel to the `units`/`order_data` slots.
     unit_group: Vec<Option<u32>>,
     /// Group lists (C++ `SmartList<UnitInfo> UnitInfoGroup`).
-    pub groups: Vec<Option<Vec<UnitId>>>,
+    pub(crate) groups: Vec<Option<Vec<UnitId>>>,
     /// Path request queue (`PathsManager::m_pending_requests`).
-    pub path_requests: std::collections::VecDeque<PathRequest>,
+    pub(crate) path_requests: std::collections::VecDeque<PathRequest>,
     /// `UnitsManager_DelayedAttackTargets[team]` — reaction fire targets.
-    pub delayed_attack_targets: [Vec<UnitId>; TEAM_SLOTS],
+    pub(crate) delayed_attack_targets: [Vec<UnitId>; TEAM_SLOTS],
     /// `UnitsManager_DelayedReactionsTeam` — the team whose turn it is to check
     /// delayed reactions.
-    pub delayed_reactions_team: TeamId,
+    pub(crate) delayed_reactions_team: TeamId,
 
     // --- phase and turn ---
     /// `GameManager_GameState`.
-    pub game_state: GameStateType,
+    pub(crate) game_state: GameStateType,
     /// `GameManager_PlayMode`.
-    pub play_mode: PlayMode,
+    pub(crate) play_mode: PlayMode,
     /// `GameManager_TurnCounter`.
-    pub turn_counter: i32,
+    pub(crate) turn_counter: i32,
     /// Deterministic round cursor: the slot of the next team to play in the
     /// current round (the `for` loop variable of
     /// `GameManager_TeamTurnTurnBased`, `game_manager.cpp:458`).
@@ -266,41 +266,41 @@ pub struct GameState {
     /// the loop variable, so it is **not** part of the snapshot/CRC.
     /// [`Self::begin_round`] resets it to `PLAYER_TEAM_RED`; [`Self::next_team`]
     /// advances it past the started team.
-    pub round_team: usize,
+    pub(crate) round_team: usize,
     /// `GameManager_ActiveTurnTeam`.
-    pub active_turn_team: TeamId,
+    pub(crate) active_turn_team: TeamId,
     /// `GameManager_PlayerTeam` (the local player).
-    pub player_team: TeamId,
+    pub(crate) player_team: TeamId,
     /// `GameManager_UpdateFlag` — alternation of `Ai_CheckReactions` (DESIGN risk 14).
-    pub update_flag: bool,
+    pub(crate) update_flag: bool,
     /// `UnitsManager_UnitIdCounter`.
-    pub unit_id_counter: u32,
+    pub(crate) unit_id_counter: u32,
     /// `UnitsManager_LiveAttackCounter`.
-    pub live_attack_counter: u32,
+    pub(crate) live_attack_counter: u32,
     /// `UnitsManager_OrdersPending` — someone is still moving/fighting this tick.
-    pub orders_pending: bool,
+    pub(crate) orders_pending: bool,
     /// `UnitsManager_CombatEffectsActive`.
-    pub combat_effects_active: bool,
+    pub(crate) combat_effects_active: bool,
     /// `UnitsManager_BobEffectQuota`.
-    pub bob_effect_quota: i8,
+    pub(crate) bob_effect_quota: i8,
     /// `UnitsManager_ResetBobState`.
-    pub reset_bob_state: bool,
+    pub(crate) reset_bob_state: bool,
     /// `UnitsManager_PendingAttacks` — insertion order.
-    pub pending_attacks: Vec<UnitId>,
+    pub(crate) pending_attacks: Vec<UnitId>,
     /// `UnitsManager_PendingAirGroupLeader`.
-    pub pending_air_group_leader: Option<UnitId>,
+    pub(crate) pending_air_group_leader: Option<UnitId>,
     /// `UnitEvent_UnitEvents` (`unitevents.cpp`).
-    pub unit_events: Vec<crate::events::UnitEvent>,
+    pub(crate) unit_events: Vec<crate::events::UnitEvent>,
     /// `UnitsManager_LiveAttacks` (`live_attack` → targets).
-    pub live_attacks: Vec<LiveAttack>,
+    pub(crate) live_attacks: Vec<LiveAttack>,
     /// `UnitsManager_DelayedReactionsPending` (a flag for the network/AI).
-    pub delayed_reactions_pending: bool,
+    pub(crate) delayed_reactions_pending: bool,
     /// Events of the last production turn (`GameManager_ProgressBuildState`):
     /// what was spawned/interrupted. Not part of the digest — it is a UI/QA report.
-    pub production_events: Vec<crate::production::ProductionEvent>,
+    pub(crate) production_events: Vec<crate::production::ProductionEvent>,
     /// Events of the last research turn (`ResearchMenu_NewTurn`):
     /// completed topic levels. Not part of the digest — a UI/QA report.
-    pub research_events: Vec<crate::research::ResearchEvent>,
+    pub(crate) research_events: Vec<crate::research::ResearchEvent>,
     /// Complex power message for the top map line — C++
     /// `ProductionManager::DrawResourceMessage`/`ComposeIndustryMessage`
     /// (`production_manager.cpp:308-330/792-804`), `MESSAGE_BOX_NOTICE`.
@@ -308,56 +308,56 @@ pub struct GameState {
     /// A UI/QA report, not part of the snapshot/CRC (like `production_events`).
     /// Accumulated during the production turn and taken
     /// [`Self::take_industry_message`].
-    pub industry_message: Option<String>,
+    pub(crate) industry_message: Option<String>,
     /// Combat sounds per tick — `SoundManager::PlaySfx(unit, SfxType)`
     /// (`unitinfo.cpp:4725` — shot, `units_manager.cpp:3922/3929` — hit
     /// and explosion). The simulation only accumulates events; the resource/volume is chosen by
     /// the client (`max_app::sfx`, `SC_UNITS` table). Not part of the digest/CRC.
-    pub unit_sounds: Vec<UnitSound>,
+    pub(crate) unit_sounds: Vec<UnitSound>,
     /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
     /// barrier counters so that the state is self-contained.
-    pub turn_indices: [u8; TEAM_SLOTS],
+    pub(crate) turn_indices: [u8; TEAM_SLOTS],
     /// `Remote_NextTurnIndices` (packet 45).
-    pub next_turn_indices: [u8; TEAM_SLOTS],
+    pub(crate) next_turn_indices: [u8; TEAM_SLOTS],
     /// `Remote_TeamDataCrc16` (packet 45).
-    pub team_data_crc16: [u16; TEAM_SLOTS],
+    pub(crate) team_data_crc16: [u16; TEAM_SLOTS],
     /// `Remote_FrameSyncCounter` (packet 00).
-    pub frame_sync_counter: [u8; TEAM_SLOTS],
+    pub(crate) frame_sync_counter: [u8; TEAM_SLOTS],
     /// `Remote_FrameSyncCounter2values` (packet 01).
-    pub frame_sync_counter2: [u8; TEAM_SLOTS],
+    pub(crate) frame_sync_counter2: [u8; TEAM_SLOTS],
     /// `Remote_StateSyncIndices` (packet 54) — the index of the last **full**
     /// (`is_last`) team state, which completes the 54 barrier.
-    pub state_sync_indices: [u8; TEAM_SLOTS],
+    pub(crate) state_sync_indices: [u8; TEAM_SLOTS],
     /// `Remote_StateSyncReceivingIndices` (packet 54) — the index of the chunk
     /// currently being received (resets `state_sync_unit_ids` on index change).
-    pub state_sync_receiving_indices: [u8; TEAM_SLOTS],
+    pub(crate) state_sync_receiving_indices: [u8; TEAM_SLOTS],
     /// `Remote_StateSyncUnitIds` (packet 54) — ids of units sent by the owner
     /// in the current round; `Remote_RemoveExtraUnits` removes extras by them.
-    pub state_sync_unit_ids: [Vec<UnitId>; TEAM_SLOTS],
+    pub(crate) state_sync_unit_ids: [Vec<UnitId>; TEAM_SLOTS],
     /// In-game chat (packet 18) — pure data for the UI/logs, does not affect the sim.
-    pub chat_log: Vec<(TeamId, String)>,
+    pub(crate) chat_log: Vec<(TeamId, String)>,
     /// Mission supplies per team (packet 12) — setup input data.
-    pub mission_supplies: [Option<crate::input::Packet12MissionSupply>; TEAM_SLOTS],
+    pub(crate) mission_supplies: [Option<crate::input::Packet12MissionSupply>; TEAM_SLOTS],
     /// `UnitsManager_Units[team]` cache — the unit for which a delayed reaction
     /// fired in this pass (`UnitsManager_PursueEnemy`).
-    pub units_active: [Option<UnitId>; TEAM_SLOTS],
+    pub(crate) units_active: [Option<UnitId>; TEAM_SLOTS],
     /// Network mode flag (`Remote_IsNetworkGame`).
     ///
     /// `max_core` runs a **lockstep simulation** (DESIGN §1.1/§5.1), so
     /// by default `true`: this enables the network branches of the C++ code (one path
     /// step per tick, `finished_turn` checks, packet application at the start of
     /// the tick).
-    pub network_game: bool,
+    pub(crate) network_game: bool,
     /// The `effects` setting (`ResourceManager_GetSettings()->"effects"`).
     ///
     /// In the simulation it affects only the `moved` counter in `ORDER_BUILD`
     /// (`UnitsManager_ProcessOrderBuild`); UI animations are not ported.
-    pub settings_effects: bool,
+    pub(crate) settings_effects: bool,
     /// The `disable_fire` setting — disable reaction fire (DESIGN §6.5).
-    pub disable_fire: bool,
+    pub(crate) disable_fire: bool,
     /// The `GameManager_RealTime` setting (`paths.cpp:Paths_CalculateStep`):
     /// when true, a path step does not spend `speed`.
-    pub real_time: bool,
+    pub(crate) real_time: bool,
     /// The `enemy_halt` setting ("Halt movement when enemy is detected").
     ///
     /// `Access_UpdateMapStatus` (`access.cpp:827-868`), on detecting an enemy in
@@ -370,27 +370,27 @@ pub struct GameState {
     /// Defaults to `false`: the pure core (unit tests) keeps the previous
     /// behavior; the application sets the value from settings (`settings.cpp`:
     /// `enemy_halt = 1`).
-    pub enemy_halt: bool,
+    pub(crate) enemy_halt: bool,
     /// Input command queue (DESIGN §5.1 step 1).
-    pub commands: CommandQueue,
+    pub(crate) commands: CommandQueue,
     /// AI state: players, task manager, heat maps (P6, `ai.cpp`).
-    pub ai: crate::ai::AiState,
+    pub(crate) ai: crate::ai::AiState,
     /// V70 data needed only for save writing (P3): game settings,
     /// `TeamInfo` UI fields, message logs, `AiPlayer` V70 fields.
     ///
     /// Not part of the canonical digest (`snapshot_bytes`) — it is not game
     /// state but "what C++ keeps outside `GameState`".
-    pub save_meta: crate::save_write::SaveMeta,
+    pub(crate) save_meta: crate::save_write::SaveMeta,
 
     // --- game rules (setup constants; P7) ---
     /// `SaveFormatHeader::mission_index` (0 — generic custom game).
-    pub mission_index: u16,
+    pub(crate) mission_index: u16,
     /// `MissionManager::GetMission()->GetCategory()` (`winloss.cpp:57`).
-    pub mission_category: crate::victory::MissionCategory,
+    pub(crate) mission_category: crate::victory::MissionCategory,
     /// `ini_setting_victory_type` (`VICTORY_TYPE_DURATION`/`SCORE`).
-    pub victory_type: VictoryType,
+    pub(crate) victory_type: VictoryType,
     /// `ini_setting_victory_limit` — the turn or point limit.
-    pub victory_limit: i32,
+    pub(crate) victory_limit: i32,
 }
 
 impl Default for GameState {
@@ -544,7 +544,7 @@ impl GameState {
     ///   are rebuilt from lists and ids (insertion order — file order).
     /// * `MessageLog`, `selected_unit`, camera/zoom and other UI fields are outside
     ///   `max_core` (state-model §6).
-    pub fn load_state(&mut self, save: &crate::save::SaveFile) {
+    pub(crate) fn load_state(&mut self, save: &crate::save::SaveFile) {
         use crate::enums::{AI_STATE_MOVE_FINISHED_REMINDER, AI_STATE_RETREAT_REMINDER};
 
         // --- map and game header ---
@@ -815,7 +815,7 @@ impl GameState {
 
     /// Mutable unit by id.
     #[inline]
-    pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut UnitInfo> {
+    pub(crate) fn unit_mut(&mut self, id: UnitId) -> Option<&mut UnitInfo> {
         let slot = self.lookup(id)?;
         self.units.get_mut(slot).and_then(Option::as_mut)
     }
@@ -832,13 +832,13 @@ impl GameState {
 
     /// Mutable unit presentation.
     #[inline]
-    pub fn presentation_mut(&mut self, id: UnitId) -> Option<&mut UnitPresentation> {
+    pub(crate) fn presentation_mut(&mut self, id: UnitId) -> Option<&mut UnitPresentation> {
         let slot = self.lookup(id)?;
         self.presentations.get_mut(slot).and_then(Option::as_mut)
     }
 
     /// Writes the unit presentation (the slot must exist).
-    pub fn write_presentation(&mut self, id: UnitId, presentation: UnitPresentation) {
+    pub(crate) fn write_presentation(&mut self, id: UnitId, presentation: UnitPresentation) {
         if let Some(slot) = self.lookup(id) {
             if let Some(entry) = self.presentations.get_mut(slot) {
                 *entry = Some(presentation);
@@ -865,7 +865,7 @@ impl GameState {
     }
 
     /// Order-data write.
-    pub fn set_order_data(&mut self, id: UnitId, data: OrderData) {
+    pub(crate) fn set_order_data(&mut self, id: UnitId, data: OrderData) {
         if let Some(slot) = self.lookup(id) {
             if let Some(entry) = self.order_data.get_mut(slot) {
                 *entry = data;
@@ -877,7 +877,7 @@ impl GameState {
     ///
     /// If the cell changed, `Hash_MapHash` is updated — the analog of
     /// `Hash_MapHash.Remove/Add` in `UnitInfo::Move`/`UpdateGridPosition`.
-    pub fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
+    pub(crate) fn write_unit(&mut self, id: UnitId, unit: UnitInfo) {
         // The presentation table is parallel to the `units` slots (F5.3/B): when
         // a slot is added outside spawn, we align the length and provide a default.
         if self.presentations.len() < self.units.len() {
@@ -1308,7 +1308,7 @@ impl GameState {
     /// `flags` — extra caller-layer flags; they are merged with the
     /// type flags from `SC_UNITS` ([`crate::access::unit_type_flags`]), as
     /// `UnitsManager_DeployUnit` takes flags from the unit data.
-    pub fn spawn_unit(
+    pub(crate) fn spawn_unit(
         &mut self,
         unit_type: UnitType,
         team: TeamId,
@@ -1559,7 +1559,7 @@ impl GameState {
     /// hashes, attacks and events, scan coverage and AI tasks.
     ///
     /// TODO(P3): complexes, cargo, trails/rubble, loss statistics.
-    pub fn destroy_unit(&mut self, id: UnitId) {
+    pub(crate) fn destroy_unit(&mut self, id: UnitId) {
         let Some(slot) = self.lookup(id) else {
             return;
         };
@@ -1623,7 +1623,7 @@ impl GameState {
     /// by a click from an unfinished site (`CURSOR_UNIT_NO_GO`,
     /// `game_manager.cpp:5927-5931`), and cancellation goes only through an explicit `stop`
     /// (`ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
-    pub fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
+    pub(crate) fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
         let Some(mut unit) = self.unit(id).cloned() else {
             return false;
         };
@@ -1777,7 +1777,7 @@ impl GameState {
 
     /// `UnitsManager_ProcessOrders` (`units_manager.cpp:1860`) — one pass over
     /// the five lists in fixed order.
-    pub fn process_orders(&mut self) {
+    pub(crate) fn process_orders(&mut self) {
         self.bob_effect_quota = 5;
 
         // `Ai_ClearTasksPendingFlags` (`ai.cpp:273`).
@@ -1883,7 +1883,7 @@ impl GameState {
 
     /// `GameManager_ManageEconomy` — updating the team's production, supply and
     /// research at the start of its turn.
-    pub fn manage_economy(&mut self, team: TeamId) {
+    pub(crate) fn manage_economy(&mut self, team: TeamId) {
         // `team_units->OptimizeComplexes(team)` (`teamunits.cpp:170`):
         // `Access_UpdateResourcesTotal(complex)` — the complex stocks (including
         // mine mining by their `raw/fuel/gold_mining`) are recomputed at the start
@@ -2072,7 +2072,7 @@ impl GameState {
     }
 
     /// Takes the research events of the last turn (for the HUD log).
-    pub fn take_research_events(&mut self) -> Vec<crate::research::ResearchEvent> {
+    pub(crate) fn take_research_events(&mut self) -> Vec<crate::research::ResearchEvent> {
         std::mem::take(&mut self.research_events)
     }
 
@@ -2080,7 +2080,7 @@ impl GameState {
     ///
     /// Accumulated by `PrepareFire`/`UnitsManager_StartExplosion`; the client reads
     /// them (`max_app::App::collect_combat_sounds`) right after the tick.
-    pub fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
+    pub(crate) fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
         std::mem::take(&mut self.unit_sounds)
     }
 
@@ -2333,7 +2333,7 @@ impl GameState {
     /// A **loaded** match does not use this entry: its starting slot is
     /// `GameManager_ActiveTurnTeam`, not `PLAYER_TEAM_RED`, and the economy of that
     /// team must not run again — see [`Self::resume_round`].
-    pub fn begin_round(&mut self) {
+    pub(crate) fn begin_round(&mut self) {
         self.round_team = 0;
     }
 
@@ -2358,7 +2358,7 @@ impl GameState {
     ///
     /// Returns `None` when no playing slot is left at or after the saved active
     /// team — C++ then never enters the loop body (`for` bound reached).
-    pub fn resume_round(&mut self) -> Option<TurnEvent> {
+    pub(crate) fn resume_round(&mut self) -> Option<TurnEvent> {
         // `GameManager_TeamTurnTurnBased` loop start for the load phase
         // (`game_manager.cpp:458`).
         self.round_team = usize::from(self.active_turn_team.0);
@@ -2397,7 +2397,7 @@ impl GameState {
     ///   [`Self::step_end_turn_barrier`], [`Self::step_crc_barrier`] and the
     ///   matching `*_barrier_reached` predicates), so `TurnBarrierFsm` keeps the
     ///   network wait/retransmit.
-    pub fn next_team(&mut self) -> TurnEvent {
+    pub(crate) fn next_team(&mut self) -> TurnEvent {
         loop {
             let Some(team) = self.upcoming_team() else {
                 // Cursor exhausted: the concurrent oracle does not close the
@@ -2483,7 +2483,7 @@ impl GameState {
     /// Returns `true` when the match is over
     /// ([`crate::victory::check_end_game_conditions`]) — then the turn counter
     /// stays and no next round is entered, as in C++.
-    pub fn end_round(&mut self) -> bool {
+    pub(crate) fn end_round(&mut self) -> bool {
         let over = self.finish_turn();
 
         if !over {
@@ -2539,7 +2539,7 @@ impl GameState {
     /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[team]` —
     /// the own team's 00 counter of the round (`remote.cpp`). Pre-increment like
     /// C++, so the first report is 1. Returns the new counter.
-    pub fn step_begin_turn_barrier(&mut self, team: TeamId) -> u8 {
+    pub(crate) fn step_begin_turn_barrier(&mut self, team: TeamId) -> u8 {
         let Some(counter) = self.frame_sync_counter.get(team.0 as usize).copied() else {
             return 0;
         };
@@ -2550,7 +2550,7 @@ impl GameState {
 
     /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[team]` — the own
     /// team's 52 counter of the round (`remote.cpp`). Returns the new counter.
-    pub fn step_end_turn_barrier(&mut self, team: TeamId) -> u8 {
+    pub(crate) fn step_end_turn_barrier(&mut self, team: TeamId) -> u8 {
         let Some(counter) = self.turn_indices.get(team.0 as usize).copied() else {
             return 0;
         };
@@ -2561,7 +2561,7 @@ impl GameState {
 
     /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[team]` — the own team's 45
     /// index of the round (`remote.cpp`). Returns the new index.
-    pub fn step_crc_barrier(&mut self, team: TeamId) -> u8 {
+    pub(crate) fn step_crc_barrier(&mut self, team: TeamId) -> u8 {
         let Some(index) = self.next_turn_indices.get(team.0 as usize).copied() else {
             return 0;
         };
@@ -2604,7 +2604,7 @@ impl GameState {
     /// `remote.cpp:1949`); the sequential loop closes **every** team turn through
     /// this phase, so the caller forces it after 06 — the state change stays in
     /// the deterministic core.
-    pub fn enter_end_turn(&mut self) {
+    pub(crate) fn enter_end_turn(&mut self) {
         self.game_state = GameStateType::EndTurn;
     }
 
@@ -2646,7 +2646,7 @@ impl GameState {
     /// ([`crate::victory::check_end_game_conditions`] — a port of
     /// `menu_check_end_game_conditions`): then C++ does not reset
     /// `finished_turn` and does not increment the turn counter.
-    pub fn finish_turn(&mut self) -> bool {
+    pub(crate) fn finish_turn(&mut self) -> bool {
         if self.game_state != GameStateType::EndTurn {
             return false;
         }
@@ -2692,7 +2692,7 @@ impl GameState {
     }
 
     /// Takes the production events of the last turn (for the HUD log).
-    pub fn take_production_events(&mut self) -> Vec<crate::production::ProductionEvent> {
+    pub(crate) fn take_production_events(&mut self) -> Vec<crate::production::ProductionEvent> {
         std::mem::take(&mut self.production_events)
     }
 
@@ -2718,7 +2718,7 @@ impl GameState {
     }
 
     /// Takes the accumulated power message (for `hud.hint`).
-    pub fn take_industry_message(&mut self) -> Option<String> {
+    pub(crate) fn take_industry_message(&mut self) -> Option<String> {
         self.industry_message.take()
     }
 
@@ -2735,7 +2735,7 @@ impl GameState {
     /// 4. if the phase ≠ `TURN_ACTIVE` and there is no `OrdersPending`: `Ai_CheckReactions`
     ///    via the `update_flag` alternation, `DispatchJobs`, `Ai_CheckReactions`,
     ///    `Ai_CheckEndTurn`.
-    pub fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         // Combat sounds accumulate until the client reads them (`App::collect_combat_sounds`
         // right after the tick). Headless runs do not take them, so the queue
         // is trimmed: events are a UI report, not game state.
@@ -2771,12 +2771,12 @@ impl GameState {
     }
 
     /// Applies all accumulated commands via [`crate::events::apply_command`].
-    pub fn apply_pending_commands(&mut self) -> usize {
+    pub(crate) fn apply_pending_commands(&mut self) -> usize {
         crate::events::apply_pending(self)
     }
 
     /// Enqueues a command (in receive order).
-    pub fn enqueue(&mut self, command: Command) {
+    pub(crate) fn enqueue(&mut self, command: Command) {
         self.commands.push(command);
     }
 
@@ -2806,7 +2806,7 @@ impl GameState {
     /// For computer teams the decision is made by the AI player
     /// (`AiPlayer::CheckEndTurn`); humans and remote teams finish the turn
     /// with packet 06.
-    pub fn check_end_turn(&mut self) {
+    pub(crate) fn check_end_turn(&mut self) {
         crate::ai::ai_check_end_turn(self);
     }
 
@@ -3751,7 +3751,7 @@ mod tests {
     /// menu clan settings.
     #[test]
     fn derelict_team_uses_the_chosen_clan() {
-        let mut state = GameState::with_setup(
+        let state = GameState::with_setup(
             crate::map::Map::new(),
             [
                 TeamKind::Player,

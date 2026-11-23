@@ -62,7 +62,7 @@ fn spotted_enemy_facility_triggers_an_attack() {
     let (mut state, facility) = combat_scenario();
 
     assert_eq!(
-        state.state().ai.players[TeamId::RED.0 as usize]
+        state.snapshot().ai().players[TeamId::RED.0 as usize]
             .spotted_units
             .len(),
         1,
@@ -125,7 +125,7 @@ fn attack_task_targets_the_enemy_team() {
                         state.tick();
 
                         if let Some(task) =
-                            state.state().ai.task_manager.tasks().iter().find(|task| {
+                            state.snapshot().ai().task_manager.tasks().iter().find(|task| {
                                 task.team == TeamId::RED && matches!(task.kind, TaskKind::Attack(_))
                             })
                         {

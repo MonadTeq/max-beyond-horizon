@@ -19,21 +19,18 @@
 //! Every stage is checked against the per-turn stock recomputation and the
 //! canonical digests (`state_checksum`, `state_digest`, `replay_digest_crc`).
 
-use max_core::alloc::{get_cargo_info, update_resources_total};
 use max_core::classification::UnitTypeClassify;
 use max_core::complex::unit_size;
-use max_core::crc;
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
-use max_core::power::complex_totals;
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
 use max_core::unit::{UnitId, UnitListKind};
 use max_core::universe::GameUniverse;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -85,7 +82,7 @@ fn mine_factories_and_power_form_one_connected_complex() {
         );
     }
 
-    let buildings = state.state().team_units[0]
+    let buildings = state.snapshot().team_units()[0]
         .get_complex(complex)
         .expect("complex")
         .buildings;
@@ -109,10 +106,10 @@ fn mine_factories_and_power_form_one_connected_complex() {
     state.unit_mut(ids[5]).expect("FDUMP").storage = 20;
     let _ = state.set_order(ids[4], UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
 
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
 
     let stored = state
-        .state()
+        .snapshot()
         .complex(TeamId::RED, complex.0 as u16)
         .expect("complex");
     assert_eq!(stored.raw, 19, "10 (mine) + 5 (ADUMP) + 4 mining");
@@ -120,14 +117,14 @@ fn mine_factories_and_power_form_one_connected_complex() {
     assert_eq!(stored.power, 0, "+1 POWGEN −1 mine");
     assert_eq!(stored.workers, 3, "HABITAT +3");
 
-    let (materials, capacity) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (materials, capacity) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     assert_eq!(materials.raw, 15, "inventory only, mining is a cache");
     assert_eq!(capacity.raw, 75, "MININGST 25 + ADUMP 50");
     assert_eq!(capacity.fuel, 50, "FDUMP 50");
     assert_eq!(capacity.gold, 0, "no gold storage in the graph");
 
     // The same balance through the power module.
-    let totals = complex_totals(state.state(), TeamId::RED, complex);
+    let totals = state.snapshot().complex_totals(TeamId::RED, complex);
     assert_eq!(totals.raw, stored.raw as i32);
     assert_eq!(totals.fuel, stored.fuel as i32);
     assert_eq!(totals.power, 0);
@@ -151,8 +148,8 @@ fn splitting_a_connector_chain_splits_the_stock_and_capacity() {
 
     state.unit_mut(mine).expect("mine").storage = 10;
     state.unit_mut(dump).expect("dump").storage = 20;
-    update_resources_total(state.state_mut(), TeamId::RED, merged);
-    let (materials, capacity) = get_cargo_info(state.state(), TeamId::RED, merged);
+    state.update_resources_total(TeamId::RED, merged);
+    let (materials, capacity) = state.snapshot().get_cargo_info(TeamId::RED, merged);
     assert_eq!(materials.raw, 30);
     assert_eq!(capacity.raw, 75);
 
@@ -169,22 +166,22 @@ fn splitting_a_connector_chain_splits_the_stock_and_capacity() {
         "connector #1 stays with the mine"
     );
 
-    let (mine_materials, mine_capacity) = get_cargo_info(state.state(), TeamId::RED, mine_complex);
-    let (dump_materials, dump_capacity) = get_cargo_info(state.state(), TeamId::RED, dump_complex);
+    let (mine_materials, mine_capacity) = state.snapshot().get_cargo_info(TeamId::RED, mine_complex);
+    let (dump_materials, dump_capacity) = state.snapshot().get_cargo_info(TeamId::RED, dump_complex);
     assert_eq!(mine_materials.raw, 10);
     assert_eq!(mine_capacity.raw, 25, "only the mine");
     assert_eq!(dump_materials.raw, 20);
     assert_eq!(dump_capacity.raw, 50, "only the ADUMP");
 
     assert_eq!(
-        state.state().team_units[0]
+        state.snapshot().team_units()[0]
             .get_complex(mine_complex)
             .expect("mine complex")
             .buildings,
         2
     );
     assert_eq!(
-        state.state().team_units[0]
+        state.snapshot().team_units()[0]
             .get_complex(dump_complex)
             .expect("dump complex")
             .buildings,
@@ -207,36 +204,36 @@ fn power_off_keeps_the_graph_but_stops_the_mining_income() {
     let _ = state.set_order(mine, UnitOrder::PowerOff, UnitOrderState::ExecutingOrder);
     assert_eq!(complex_of(&state, mine), complex);
     assert_eq!(
-        get_cargo_info(state.state(), TeamId::RED, complex).1.raw,
+        state.snapshot().get_cargo_info(TeamId::RED, complex).1.raw,
         75,
         "capacity is unchanged by the order"
     );
 
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
         0,
         "an off mine adds no production"
     );
-    assert_eq!(complex_totals(state.state(), TeamId::RED, complex).power, 0);
+    assert_eq!(state.snapshot().complex_totals(TeamId::RED, complex).power, 0);
 
     // Powered on again — the same graph, 6 raw of income, −1 power.
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
         6
     );
     assert_eq!(
-        complex_totals(state.state(), TeamId::RED, complex).power,
+        state.snapshot().complex_totals(TeamId::RED, complex).power,
         -1
     );
 }
@@ -268,13 +265,13 @@ fn digest_run(split: bool) -> (u16, u16, u16) {
         state.unit_mut(ids[5]).expect("FDUMP").storage = 20;
         let _ = state.set_order(ids[4], UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
         let complex = complex_of(&state, ids[0]);
-        update_resources_total(state.state_mut(), TeamId::RED, complex);
+        state.update_resources_total(TeamId::RED, complex);
     }
 
     (
-        crc::state_checksum(state.state()),
-        crc::state_digest(state.state()),
-        crc::replay_digest_crc(state.state()),
+        state.snapshot().state_checksum(),
+        state.snapshot().state_digest(),
+        state.snapshot().replay_digest_crc(),
     )
 }
 
@@ -290,17 +287,17 @@ fn complex_graph_digests_are_reproducible() {
     let mine = spawn(&mut state, UnitType::MiningStation, Point::new(20, 20));
     let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(22, 20));
     let _ = dump;
-    let before = crc::state_digest(state.state());
-    let before_replay = crc::replay_digest_crc(state.state());
+    let before = state.snapshot().state_digest();
+    let before_replay = state.snapshot().replay_digest_crc();
 
     state.unit_mut(mine).expect("mine").connectors ^= 0x0004; // CONNECTOR_EAST_TOP
     assert_ne!(
-        crc::state_digest(state.state()),
+        state.snapshot().state_digest(),
         before,
         "connectors enter the snapshot"
     );
     assert_ne!(
-        crc::replay_digest_crc(state.state()),
+        state.snapshot().replay_digest_crc(),
         before_replay,
         "connectors enter the replay digest"
     );

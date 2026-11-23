@@ -44,12 +44,12 @@ fn computer_state() -> GameUniverse {
         ],
     );
 
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Computer;
-    state.state_mut().teams[TeamId::RED.0 as usize].team_clan = TeamClan::Musashi;
-    state.state_mut().team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
-    state.state_mut().ai.settings.opponent = Opponent::Average as u8;
-    max_core::ai_init(state.state_mut());
-    state.state_mut().ai.players[TeamId::RED.0 as usize].strategy =
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Computer;
+    state.teams_mut()[TeamId::RED.0 as usize].team_clan = TeamClan::Musashi;
+    state.team_units_table_mut()[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Musashi);
+    state.ai_mut().settings.opponent = Opponent::Average as u8;
+    state.ai_init();
+    state.ai_mut().players[TeamId::RED.0 as usize].strategy =
         max_core::enums::AiStrategy::TankHorde;
 
     state
@@ -61,10 +61,10 @@ fn begin_turn_moves_powered_research_centres_to_the_fastest_topic() {
 
     // The attack topic is the initial best; shots is five times faster.
     for topic in ResearchTopic::ALL.iter().copied() {
-        state.state_mut().teams[TeamId::RED.0 as usize].research_topics[topic as usize]
+        state.teams_mut()[TeamId::RED.0 as usize].research_topics[topic as usize]
             .turns_to_complete = 12;
     }
-    state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+    state.teams_mut()[TeamId::RED.0 as usize].research_topics
         [ResearchTopic::Shots as usize]
         .turns_to_complete = 1;
 
@@ -78,7 +78,7 @@ fn begin_turn_moves_powered_research_centres_to_the_fastest_topic() {
         unit.research_topic = ResearchTopic::Speed;
     }
 
-    max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
 
     assert_eq!(
         state
@@ -89,7 +89,7 @@ fn begin_turn_moves_powered_research_centres_to_the_fastest_topic() {
         "DetermineResearchProjects must reassign the powered centre"
     );
 
-    let allocation = state.state().research_allocation(TeamId::RED);
+    let allocation = state.snapshot().research_allocation(TeamId::RED);
     assert_eq!(allocation[ResearchTopic::Shots as usize], 1);
     assert_eq!(allocation[ResearchTopic::Speed as usize], 0);
 }
@@ -97,7 +97,7 @@ fn begin_turn_moves_powered_research_centres_to_the_fastest_topic() {
 #[test]
 fn begin_turn_buys_upgrades_for_types_under_construction() {
     let mut state = computer_state();
-    state.state_mut().team_units[TeamId::RED.0 as usize].set_gold(1000);
+    state.team_units_table_mut()[TeamId::RED.0 as usize].set_gold(1000);
 
     // A builder constructing a tank keeps the tank orders in
     // `ProcessBuildOrders`, so `ChooseUpgrade` sees them.
@@ -112,43 +112,43 @@ fn begin_turn_buys_upgrades_for_types_under_construction() {
     }
 
     let index = TeamId::RED.0 as usize;
-    let base_attack = state.state().team_units[index].base_values[UnitType::Tank as usize]
+    let base_attack = state.snapshot().team_units()[index].base_values[UnitType::Tank as usize]
         .get_attribute(ATTRIB_ATTACK);
 
-    max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
 
     assert!(
-        state.state().teams[index].stats_gold_spent_on_upgrades > 0,
+        state.snapshot().teams()[index].stats_gold_spent_on_upgrades > 0,
         "BeginTurn must spend gold on upgrades"
     );
     assert!(
-        state.state().team_units[index].gold < 1000,
+        state.snapshot().team_units()[index].gold < 1000,
         "the team treasury must be charged"
     );
     assert!(
-        state.state().team_units[index].current_values[UnitType::Tank as usize]
+        state.snapshot().team_units()[index].current_values[UnitType::Tank as usize]
             .get_attribute(ATTRIB_ATTACK)
             > base_attack,
         "the chosen tank attack upgrade must land in the current values"
     );
     // The pending order is kept on the player, as in C++.
-    assert!(state.state().ai.players[index].upgrade_cost > 0);
+    assert!(state.snapshot().ai().players[index].upgrade_cost > 0);
 }
 
 #[test]
 fn begin_turn_without_gold_and_orders_changes_nothing() {
     let mut state = computer_state();
-    state.state_mut().team_units[TeamId::RED.0 as usize].set_gold(0);
+    state.team_units_table_mut()[TeamId::RED.0 as usize].set_gold(0);
 
     let index = TeamId::RED.0 as usize;
-    let before = state.state().team_units[index].current_values;
+    let before = state.snapshot().team_units()[index].current_values;
 
-    max_core::ai_begin_turn(state.state_mut(), TeamId::RED);
+    state.ai_begin_turn(TeamId::RED);
 
     assert_eq!(
-        state.state().team_units[index].current_values,
+        state.snapshot().team_units()[index].current_values,
         before,
         "no build orders and no gold: no purchased upgrades"
     );
-    assert_eq!(state.state().teams[index].stats_gold_spent_on_upgrades, 0);
+    assert_eq!(state.snapshot().teams()[index].stats_gold_spent_on_upgrades, 0);
 }

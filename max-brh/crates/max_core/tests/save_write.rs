@@ -51,7 +51,7 @@ fn round_trip(source: &[u8], tag: &str) -> Vec<u8> {
     let save = SaveFile::parse(source).unwrap_or_else(|error| panic!("{tag}: разбор: {error}"));
     let state = GameUniverse::from_save(&save);
     let written = state
-        .state()
+        .snapshot()
         .to_save()
         .to_bytes()
         .unwrap_or_else(|error| panic!("{tag}: запись: {error}"));
@@ -94,7 +94,7 @@ fn round_trip_preserves_key_fields() {
     for (source, tag) in [(SAVE1, "SAVE1"), (SAVE2, "SAVE2")] {
         let original = SaveFile::parse(source).expect("parses");
         let state = GameUniverse::from_save(&original);
-        let rebuilt = state.state().to_save();
+        let rebuilt = state.snapshot().to_save();
 
         // Header/settings.
         assert_eq!(rebuilt.header, original.header, "{tag}: заголовок");
@@ -363,7 +363,7 @@ fn round_trip_preserves_key_fields() {
 fn save_of_a_fresh_game_parses_and_reloads() {
     let mut state = GameUniverse::default();
     for index in 0..4 {
-        state.state_mut().teams[index].team_type = if index == 0 {
+        state.teams_mut()[index].team_type = if index == 0 {
             TeamKind::Player
         } else if index == 1 {
             TeamKind::Computer
@@ -371,23 +371,23 @@ fn save_of_a_fresh_game_parses_and_reloads() {
             TeamKind::None
         };
         if index < 2 {
-            state.state_mut().teams[index].team_clan = max_core::TeamClan::VonGriffin;
-            state.state_mut().team_units[index] =
+            state.teams_mut()[index].team_clan = max_core::TeamClan::VonGriffin;
+            state.team_units_table_mut()[index] =
                 max_core::TeamUnits::with_clan(max_core::TeamClan::VonGriffin);
-            state.state_mut().team_units[index].gold = 150;
+            state.team_units_table_mut()[index].gold = 150;
         }
     }
-    state.state_mut().player_team = TeamId::RED;
-    state.state_mut().play_mode = max_core::PlayMode::TurnBased;
-    state.state_mut().turn_counter = 3;
-    state.state_mut().save_meta.save_name = [0; 30];
+    state.set_player_team(TeamId::RED);
+    state.set_play_mode(max_core::PlayMode::TurnBased);
+    state.set_turn_counter(3);
+    state.save_meta_mut().save_name = [0; 30];
     max_core::save_write::SaveMeta::set_name(
-        &mut state.state_mut().save_meta.save_name,
+        &mut state.save_meta_mut().save_name,
         "Test Save",
     );
-    state.state_mut().save_meta.team_names[0] = [0; 30];
+    state.save_meta_mut().team_names[0] = [0; 30];
     max_core::save_write::SaveMeta::set_name(
-        &mut state.state_mut().save_meta.team_names[0],
+        &mut state.save_meta_mut().team_names[0],
         "Player 1",
     );
 
@@ -397,13 +397,12 @@ fn save_of_a_fresh_game_parses_and_reloads() {
     let harvester = state
         .spawn_unit(UnitType::Harvester, TeamId::GREEN, Point::new(20, 20), 0)
         .expect("harvester spawns");
-    state.state_mut().add_to_draw_list(harvester);
-    state.state_mut().add_to_draw_list(tank);
+    state.add_to_draw_list(harvester);
+    state.add_to_draw_list(tank);
     state
-        .state_mut()
         .push_message(0, "Hello", Point::new(10, 10), Some(tank));
 
-    let bytes = state.state().to_save_bytes().expect("our save writes");
+    let bytes = state.snapshot().to_save_bytes().expect("our save writes");
     let save = SaveFile::parse(&bytes).expect("our save parses");
 
     assert_eq!(save.header.save_name(), "Test Save");
@@ -425,7 +424,7 @@ fn save_of_a_fresh_game_parses_and_reloads() {
 
     // Loading the saved game returns the same key values.
     let reloaded = GameUniverse::from_save(&save);
-    assert_eq!(reloaded.state().turn_counter, 3);
+    assert_eq!(reloaded.snapshot().turn_counter(), 3);
     assert_eq!(reloaded.snapshot().unit_count(), 2);
     assert_eq!(
         reloaded
@@ -436,10 +435,10 @@ fn save_of_a_fresh_game_parses_and_reloads() {
         (UnitType::Tank, Point::new(10, 10))
     );
     assert!(reloaded.snapshot().has_unit(harvester));
-    assert_eq!(reloaded.state().team_units[0].gold, 150);
+    assert_eq!(reloaded.snapshot().team_units()[0].gold, 150);
 
     // Writing again after loading gives the same bytes.
-    let again = reloaded.state().to_save_bytes().expect("writes again");
+    let again = reloaded.snapshot().to_save_bytes().expect("writes again");
     assert_eq!(again, bytes, "save -> load -> save стабилен");
 }
 
@@ -449,7 +448,7 @@ fn save_of_a_fresh_game_parses_and_reloads() {
 fn hashes_of_loaded_state_match_the_file() {
     let original = SaveFile::parse(SAVE1).expect("parses");
     let state = GameUniverse::from_save(&original);
-    let rebuilt = state.state().to_save();
+    let rebuilt = state.snapshot().to_save();
 
     assert_eq!(
         rebuilt.map_hash.buckets().len(),
@@ -461,7 +460,7 @@ fn hashes_of_loaded_state_match_the_file() {
 #[test]
 fn all_units_are_reachable_through_lists_and_hash() {
     let state = GameUniverse::from_save(&SaveFile::parse(SAVE1).expect("parses"));
-    let save = state.state().to_save();
+    let save = state.snapshot().to_save();
 
     let mut in_lists: BTreeMap<UnitId, ()> = BTreeMap::new();
     for kind in max_core::UnitListKind::ALL {
@@ -499,7 +498,7 @@ fn derelict_units_save_and_reload() {
             TeamKind::None,
         ],
     );
-    state.state_mut().player_team = TeamId::RED;
+    state.set_player_team(TeamId::RED);
     let alien = state
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(10, 10), 0)
         .expect("alien tank spawns");
@@ -510,7 +509,7 @@ fn derelict_units_save_and_reload() {
     );
 
     let bytes = state
-        .state()
+        .snapshot()
         .to_save_bytes()
         .expect("save with a derelict unit writes");
     let save = SaveFile::parse(&bytes).expect("save with a derelict unit parses");
@@ -519,7 +518,7 @@ fn derelict_units_save_and_reload() {
     let reloaded = GameUniverse::from_save(&save);
     assert!(reloaded.snapshot().has_unit(alien));
     assert_eq!(
-        reloaded.state().to_save_bytes().expect("writes again"),
+        reloaded.snapshot().to_save_bytes().expect("writes again"),
         bytes,
         "save -> load -> save стабилен с derelict-юнитом"
     );

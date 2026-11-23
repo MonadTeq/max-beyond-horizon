@@ -19,7 +19,7 @@
 //! `GameManager_CheckDesync`), `tools/sim_vectors/vectors.txt` (P7).
 
 use max_core::crc::{
-    self, get_crc16_word, replay_digest_bytes, replay_digest_crc, state_checksum, state_digest,
+    self, get_crc16_word,
     CRC16_INITIAL, CRC16_POLYNOMIAL, REPLAY_DIGEST_MAGIC,
 };
 use max_core::enums::{PlayMode, UnitType};
@@ -195,11 +195,11 @@ fn packet_45_crc_of_reference_saves_is_pinned() {
     let state2 = loaded_state(SAVE2);
 
     // Packet 45 only covers units of teams that play; it is the desync barrier.
-    assert_eq!(state_checksum(state1.state()), SAVE1_CHECKSUM);
-    assert_eq!(state_checksum(state2.state()), SAVE2_CHECKSUM);
+    assert_eq!(state1.snapshot().state_checksum(), SAVE1_CHECKSUM);
+    assert_eq!(state2.snapshot().state_checksum(), SAVE2_CHECKSUM);
     // Units exist, so the value is not the initial one.
-    assert_ne!(state_checksum(state1.state()), CRC16_INITIAL);
-    assert_ne!(state_checksum(state2.state()), CRC16_INITIAL);
+    assert_ne!(state1.snapshot().state_checksum(), CRC16_INITIAL);
+    assert_ne!(state2.snapshot().state_checksum(), CRC16_INITIAL);
 }
 
 /// Packet 45 CRC of the SAVE1.CAM state — reference lock.
@@ -212,11 +212,11 @@ fn replay_digest_of_reference_saves_is_pinned() {
     let state1 = loaded_state(SAVE1);
     let state2 = loaded_state(SAVE2);
 
-    let digest1 = replay_digest_bytes(state1.state());
-    let digest2 = replay_digest_bytes(state2.state());
+    let digest1 = state1.snapshot().replay_digest_bytes();
+    let digest2 = state2.snapshot().replay_digest_bytes();
 
-    assert_eq!(replay_digest_crc(state1.state()), SAVE1_DIGEST_CRC);
-    assert_eq!(replay_digest_crc(state2.state()), SAVE2_DIGEST_CRC);
+    assert_eq!(state1.snapshot().replay_digest_crc(), SAVE1_DIGEST_CRC);
+    assert_eq!(state2.snapshot().replay_digest_crc(), SAVE2_DIGEST_CRC);
     assert_eq!(digest1.len(), SAVE1_DIGEST_LEN);
     assert_eq!(digest2.len(), SAVE2_DIGEST_LEN);
     assert_eq!(digest1.len() % 2, 0);
@@ -224,11 +224,11 @@ fn replay_digest_of_reference_saves_is_pinned() {
 
     // The trailer is the CRC of everything before it.
     assert_eq!(
-        replay_digest_crc(state1.state()),
+        state1.snapshot().replay_digest_crc(),
         reference_crc16(&digest1[..digest1.len() - 2])
     );
     assert_eq!(
-        replay_digest_crc(state2.state()),
+        state2.snapshot().replay_digest_crc(),
         reference_crc16(&digest2[..digest2.len() - 2])
     );
 }
@@ -247,10 +247,10 @@ fn state_digest_of_reference_saves_is_pinned() {
     let state1 = loaded_state(SAVE1);
     let state2 = loaded_state(SAVE2);
 
-    assert_eq!(state_digest(state1.state()), SAVE1_STATE_DIGEST);
-    assert_eq!(state_digest(state2.state()), SAVE2_STATE_DIGEST);
+    assert_eq!(state1.snapshot().state_digest(), SAVE1_STATE_DIGEST);
+    assert_eq!(state2.snapshot().state_digest(), SAVE2_STATE_DIGEST);
     assert_eq!(
-        state_digest(state1.state()),
+        state1.snapshot().state_digest(),
         crc::crc16(&state1.snapshot().snapshot_bytes())
     );
 }
@@ -267,40 +267,39 @@ const SAVE2_STATE_DIGEST: u16 = 0xD3F1;
 #[test]
 fn replay_digest_layout_is_stable() {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
-    state.state_mut().play_mode = PlayMode::SimultaneousMoves;
-    state.state_mut().turn_counter = 0x0102_0304;
-    state.state_mut().active_turn_team = TeamId::GREEN;
-    state.state_mut().player_team = TeamId::BLUE;
-    state.state_mut().unit_id_counter = 0x0506_0708;
-    state.state_mut().rng =
-        Randomizer::from_state([0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444]);
+    state.teams_mut()[0].team_type = max_core::team::TeamKind::Player;
+    state.set_play_mode(PlayMode::SimultaneousMoves);
+    state.set_turn_counter(0x0102_0304);
+    state.set_active_turn_team(TeamId::GREEN);
+    state.set_player_team(TeamId::BLUE);
+    state.set_unit_id_counter(0x0506_0708);
+    *state.rng_mut() = Randomizer::from_state([0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444]);
 
-    let digest = replay_digest_bytes(state.state());
+    let digest = state.snapshot().replay_digest_bytes();
     assert_eq!(&digest[..8], REPLAY_DIGEST_MAGIC);
 
     // SurfaceMap CRC, ResourceMap CRC, turn counter, 4 state bytes,
     // unit id counter, then 4 RNG words — all little-endian.
     assert_eq!(
         le_u16(&digest[8..10]),
-        crc::crc16(&state.state().map.surface.to_bytes())
+        crc::crc16(&state.snapshot().map().surface.to_bytes())
     );
     assert_eq!(
         le_u16(&digest[10..12]),
-        crc::crc16(&state.state().map.resources.to_le_bytes())
+        crc::crc16(&state.snapshot().map().resources.to_le_bytes())
     );
     assert_eq!(le_i32(&digest[12..16]), 0x0102_0304);
     assert_eq!(
         &digest[16..20],
         &[
-            state.state().game_state as u8,
+            state.snapshot().game_state() as u8,
             TeamId::GREEN.0,
             TeamId::BLUE.0,
             PlayMode::SimultaneousMoves as u8,
         ]
     );
     assert_eq!(le_u32(&digest[20..24]), 0x0506_0708);
-    for (index, word) in state.state().rng.state().iter().enumerate() {
+    for (index, word) in state.snapshot().rng().state().iter().enumerate() {
         assert_eq!(
             le_u32(&digest[24 + index * 4..28 + index * 4]),
             *word,
@@ -337,63 +336,63 @@ fn mutations() -> Vec<Mutation> {
     vec![
         Mutation {
             name: "turn_counter",
-            apply: |state| state.state_mut().turn_counter += 1,
+            apply: |state| state.set_turn_counter(state.snapshot().turn_counter() + 1),
             packet_45_changes: false,
         },
         Mutation {
             name: "active_turn_team",
-            apply: |state| state.state_mut().active_turn_team = TeamId::GREEN,
+            apply: |state| state.set_active_turn_team(TeamId::GREEN),
             packet_45_changes: false,
         },
         Mutation {
             name: "player_team",
-            apply: |state| state.state_mut().player_team = TeamId::GREEN,
+            apply: |state| state.set_player_team(TeamId::GREEN),
             packet_45_changes: false,
         },
         Mutation {
             name: "play_mode",
-            apply: |state| state.state_mut().play_mode = PlayMode::TurnBased,
+            apply: |state| state.set_play_mode(PlayMode::TurnBased),
             packet_45_changes: false,
         },
         Mutation {
             name: "unit_id_counter",
             apply: |state| {
-                state.state_mut().unit_id_counter = state.state().unit_id_counter.wrapping_add(1000)
+                state.set_unit_id_counter(state.snapshot().unit_id_counter().wrapping_add(1000))
             },
             packet_45_changes: false,
         },
         Mutation {
             name: "rng_state",
             apply: |state| {
-                let mut words = state.state().rng.state();
+                let mut words = state.snapshot().rng().state();
                 words[0] ^= 1;
-                state.state_mut().rng.set_state(words);
+                state.rng_mut().set_state(words);
             },
             packet_45_changes: false,
         },
         Mutation {
             name: "team_points",
-            apply: |state| state.state_mut().teams[0].team_points ^= 0x8000_0000,
+            apply: |state| state.teams_mut()[0].team_points ^= 0x8000_0000,
             packet_45_changes: false,
         },
         Mutation {
             name: "team_gold",
-            apply: |state| state.state_mut().team_units[0].gold ^= 0xFFFF,
+            apply: |state| state.team_units_table_mut()[0].gold ^= 0xFFFF,
             packet_45_changes: false,
         },
         Mutation {
             name: "research_level",
-            apply: |state| state.state_mut().teams[0].research_topics[0].research_level ^= 1,
+            apply: |state| state.teams_mut()[0].research_topics[0].research_level ^= 1,
             packet_45_changes: false,
         },
         Mutation {
             name: "unit_counters",
-            apply: |state| state.state_mut().teams[0].unit_counters[0] ^= 1,
+            apply: |state| state.teams_mut()[0].unit_counters[0] ^= 1,
             packet_45_changes: false,
         },
         Mutation {
             name: "casualties",
-            apply: |state| state.state_mut().teams[0].casualties[0] ^= 1,
+            apply: |state| state.teams_mut()[0].casualties[0] ^= 1,
             packet_45_changes: false,
         },
         Mutation {
@@ -412,13 +411,13 @@ fn mutations() -> Vec<Mutation> {
 #[test]
 fn replay_digest_reacts_to_every_tracked_group() {
     let base = loaded_state(SAVE1);
-    let reference = replay_digest_bytes(base.state());
+    let reference = base.snapshot().replay_digest_bytes();
 
     for mutation in mutations() {
         let mut state = base.clone();
         (mutation.apply)(&mut state);
         assert_ne!(
-            replay_digest_bytes(state.state()),
+            state.snapshot().replay_digest_bytes(),
             reference,
             "replay digest ignored `{}`",
             mutation.name
@@ -429,21 +428,21 @@ fn replay_digest_reacts_to_every_tracked_group() {
 #[test]
 fn packet_45_crc_reacts_only_to_unit_fields() {
     let base = loaded_state(SAVE1);
-    let reference = state_checksum(base.state());
+    let reference = base.snapshot().state_checksum();
 
     for mutation in mutations() {
         let mut state = base.clone();
         (mutation.apply)(&mut state);
         if mutation.packet_45_changes {
             assert_ne!(
-                state_checksum(state.state()),
+                state.snapshot().state_checksum(),
                 reference,
                 "packet 45 CRC ignored `{}`",
                 mutation.name
             );
         } else {
             assert_eq!(
-                state_checksum(state.state()),
+                state.snapshot().state_checksum(),
                 reference,
                 "packet 45 CRC must not include `{}`",
                 mutation.name
@@ -455,7 +454,7 @@ fn packet_45_crc_reacts_only_to_unit_fields() {
 #[test]
 fn packet_45_crc_tracks_each_unit_list() {
     let mut state = loaded_state(SAVE1);
-    let reference = state_checksum(state.state());
+    let reference = state.snapshot().state_checksum();
 
     // Every list except `Particle` participates (`GameManager_CheckDesync`).
     for kind in [
@@ -470,7 +469,7 @@ fn packet_45_crc_tracks_each_unit_list() {
         unit.grid.x = unit.grid.x.wrapping_add(1);
         changed.write_unit(id, unit);
         assert_ne!(
-            state_checksum(changed.state()),
+            changed.snapshot().state_checksum(),
             reference,
             "list {kind:?} is not covered by packet 45 CRC"
         );
@@ -481,7 +480,7 @@ fn packet_45_crc_tracks_each_unit_list() {
         .snapshot()
         .unit_list(max_core::UnitListKind::GroundCover)[0];
     state.destroy_unit(removed);
-    assert_ne!(state_checksum(state.state()), reference);
+    assert_ne!(state.snapshot().state_checksum(), reference);
 }
 
 /// `GameManager_GetUnitListChecksum` skips units with `EXPLODING` and units
@@ -489,8 +488,8 @@ fn packet_45_crc_tracks_each_unit_list() {
 /// already being removed.
 fn fresh_crc_state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = max_core::team::TeamKind::Player;
-    state.state_mut().team_units[0] =
+    state.teams_mut()[0].team_type = max_core::team::TeamKind::Player;
+    state.team_units_table_mut()[0] =
         max_core::team::TeamUnits::with_clan(max_core::enums::TeamClan::Random);
     state
 }
@@ -501,7 +500,7 @@ fn packet_45_crc_skips_exploding_units() {
     let tank = state
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
         .expect("tank");
-    let with_tank = state_checksum(state.state());
+    let with_tank = state.snapshot().state_checksum();
     assert_ne!(with_tank, CRC16_INITIAL, "the tank must be counted");
 
     let mut exploding = state.clone();
@@ -509,7 +508,7 @@ fn packet_45_crc_skips_exploding_units() {
     unit.flags |= max_core::enums::unit_flags::EXPLODING;
     exploding.write_unit(tank, unit);
     assert_eq!(
-        state_checksum(exploding.state()),
+        exploding.snapshot().state_checksum(),
         CRC16_INITIAL,
         "an exploding unit must be skipped like C++"
     );
@@ -519,7 +518,7 @@ fn packet_45_crc_skips_exploding_units() {
     let mut unit = no_id.snapshot().unit(tank).expect("unit").clone();
     unit.id = max_core::UnitId::NO_ID;
     no_id.write_unit(tank, unit);
-    assert_eq!(state_checksum(no_id.state()), CRC16_INITIAL);
+    assert_eq!(no_id.snapshot().state_checksum(), CRC16_INITIAL);
 }
 
 #[test]
@@ -530,11 +529,11 @@ fn digests_are_independent_of_clone_and_load_order() {
 
     for state in [&second, &clone] {
         assert_eq!(
-            replay_digest_bytes(state.state()),
-            replay_digest_bytes(first.state())
+            state.snapshot().replay_digest_bytes(),
+            first.snapshot().replay_digest_bytes()
         );
-        assert_eq!(state_checksum(state.state()), state_checksum(first.state()));
-        assert_eq!(state_digest(state.state()), state_digest(first.state()));
+        assert_eq!(state.snapshot().state_checksum(), first.snapshot().state_checksum());
+        assert_eq!(state.snapshot().state_digest(), first.snapshot().state_digest());
         assert_eq!(
             state.snapshot().snapshot_bytes(),
             first.snapshot().snapshot_bytes()
@@ -545,7 +544,7 @@ fn digests_are_independent_of_clone_and_load_order() {
 #[test]
 fn state_checksum_ignores_particles_and_empty_teams() {
     let mut state = fresh_crc_state();
-    let reference = state_checksum(state.state());
+    let reference = state.snapshot().state_checksum();
     assert_eq!(reference, CRC16_INITIAL, "no units yet");
 
     // A missile lives in the `Particle` list, which `CheckDesync` does not
@@ -553,7 +552,7 @@ fn state_checksum_ignores_particles_and_empty_teams() {
     state
         .spawn_unit(UnitType::Rocket, TeamId::RED, Point::new(4, 4), 0)
         .expect("rocket");
-    assert_eq!(state_checksum(state.state()), reference);
+    assert_eq!(state.snapshot().state_checksum(), reference);
     assert_eq!(
         state
             .snapshot()
@@ -569,13 +568,13 @@ fn state_checksum_ignores_particles_and_empty_teams() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(5, 5), 0)
         .expect("green tank");
     assert_eq!(
-        state_checksum(state.state()),
+        state.snapshot().state_checksum(),
         CRC16_INITIAL,
         "green is not playing"
     );
-    state.state_mut().teams[1].team_type = max_core::team::TeamKind::Computer;
+    state.teams_mut()[1].team_type = max_core::team::TeamKind::Computer;
     assert_ne!(
-        state_checksum(state.state()),
+        state.snapshot().state_checksum(),
         CRC16_INITIAL,
         "green now plays"
     );
@@ -587,5 +586,5 @@ fn state_checksum_ignores_particles_and_empty_teams() {
     state
         .spawn_unit(UnitType::AlienTank, TeamId::ALIEN, Point::new(6, 6), 0)
         .expect("alien tank");
-    assert_ne!(state_checksum(state.state()), CRC16_INITIAL);
+    assert_ne!(state.snapshot().state_checksum(), CRC16_INITIAL);
 }

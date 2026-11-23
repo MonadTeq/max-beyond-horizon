@@ -8,8 +8,6 @@
 
 mod support;
 
-use max_core::combat;
-use max_core::crc;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
@@ -148,7 +146,7 @@ fn explode_lifecycle_spawns_and_despawns_the_effect() {
         let attacker = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(6, 5));
 
         state.unit_mut(victim).unwrap().hits = 1;
-        combat::attack_unit(state.state_mut(), victim, attacker, 0, 2);
+        state.attack_unit(victim, attacker, 0, 2);
         {
             let victim_unit = state.snapshot().unit(victim).expect("victim");
             assert_eq!(victim_unit.hits, 0);
@@ -207,8 +205,8 @@ fn explode_lifecycle_spawns_and_despawns_the_effect() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
 }
 
@@ -268,7 +266,7 @@ fn move_request_path_and_emergency_stop() {
         state.snapshot().unit(unit).unwrap().state,
         UnitOrderState::NewOrder
     );
-    assert_eq!(state.state().path_requests.len(), 1);
+    assert_eq!(state.snapshot().path_requests().len(), 1);
 
     // Tick 2: the path is applied; the hull turns toward the next step before
     // the first cell transition (`GroundPath::Execute` + `Move`).
@@ -332,8 +330,8 @@ fn order_cycle_is_bit_identical() {
 
         (
             state.snapshot().snapshot_bytes(),
-            crc::state_checksum(state.state()),
-            crc::replay_digest_bytes(state.state()),
+            state.snapshot().state_checksum(),
+            state.snapshot().replay_digest_bytes(),
         )
     }
 

@@ -27,7 +27,7 @@ pub fn game() -> GameUniverse {
     universe.set_network_game(false);
     universe.set_game_state(GameStateType::InGame);
     universe.set_play_mode(PlayMode::TurnBased);
-    universe.state_mut().active_turn_team = TeamId::RED;
+    universe.set_active_turn_team(TeamId::RED);
     universe.team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
     universe
         .team_mut(TeamId::GREEN)
@@ -40,14 +40,14 @@ pub fn game() -> GameUniverse {
         .expect("GREEN economy") = TeamUnits::with_clan(TeamClan::Random);
     // Scenario units are placed next to each other; visibility is an explicit
     // input fact, not a scan result (`GameManager_AllVisible`).
-    universe.state_mut().ai.all_visible = true;
+    universe.ai_mut().all_visible = true;
     universe
 }
 
 /// The same game with fog of war (`GameManager_AllVisible = false`).
 pub fn fog_game() -> GameUniverse {
     let mut universe = game();
-    universe.state_mut().ai.all_visible = false;
+    universe.ai_mut().all_visible = false;
     universe
 }
 

@@ -135,7 +135,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     );
 
     // A click on an own infantryman: **it** gets the order (C++ `GameManager_Unit`).
-    let state = app.state_copy();
+    let state = app.universe().clone();
     let command = max_app::unitmenu::load_mode_click(StateRef::from(&state), carrier, infantry)
         .expect("load click")
         .expect("приказ");
@@ -146,7 +146,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
             match &packet.payload {
                 max_core::input::OrderPayload::P3(p3) => {
                     assert_eq!(p3.p2.p1.order, UnitOrder::MoveToUnit);
-                    assert_eq!(p3.move_to, state.unit(carrier).expect("транспорт").grid);
+                    assert_eq!(p3.move_to, state.snapshot().unit(carrier).expect("транспорт").grid);
                 }
                 other => panic!("ожидался P3, получен {other:?}"),
             }
@@ -156,8 +156,8 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
 
     // The second click, when the passenger is already in the transport cell and ready:
     // `ORDER_LAND`/`INIT` with `parent = transport` (`game_manager.cpp:6824`).
-    let mut same_cell = app.state_copy();
-    let carrier_grid = same_cell.unit(carrier).expect("транспорт").grid;
+    let mut same_cell = app.universe().clone();
+    let carrier_grid = same_cell.snapshot().unit(carrier).expect("транспорт").grid;
     if let Some(unit) = same_cell.unit_mut(infantry) {
         unit.grid = carrier_grid;
         unit.state = UnitOrderState::ExecutingOrder;
@@ -195,8 +195,8 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
         return;
     }
 
-    let mut state = app.state_copy();
-    let center = Point::new(state.map.size.width / 2, state.map.size.height / 2);
+    let mut state = app.universe().clone();
+    let center = Point::new(state.snapshot().map().size.width / 2, state.snapshot().map().size.height / 2);
     let point = free_point(&app, center);
     let commando = state
         .spawn_unit(

@@ -9,7 +9,6 @@
 //! bit-identical (D). Consumers are checked through their observable state
 //! (unit order/path, event queue, counters).
 
-use max_core::crc;
 use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
 use max_core::enums::{PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::{self, ApplyOutcome};
@@ -26,13 +25,13 @@ const TANK_FLAGS: u32 = MOBILE_LAND_UNIT | SELECTABLE;
 /// A local two-human game with one tank per side.
 fn dispatcher_state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().network_game = false;
-    state.state_mut().play_mode = PlayMode::TurnBased;
+    state.set_network_game(false);
+    state.set_play_mode(PlayMode::TurnBased);
 
     for team in [TeamId::RED, TeamId::GREEN] {
         let index = team.0 as usize;
-        state.state_mut().teams[index].team_type = TeamKind::Player;
-        state.state_mut().team_units[index] = TeamUnits::with_clan(TeamClan::Random);
+        state.teams_mut()[index].team_type = TeamKind::Player;
+        state.team_units_table_mut()[index] = TeamUnits::with_clan(TeamClan::Random);
     }
 
     state
@@ -92,25 +91,25 @@ fn batch_is_applied_in_receive_order() {
     state.submit(order_command(red, UnitOrder::Await));
     state.submit(Command::Seed(Packet13Seed { seed: 0x0BAD_F00D }));
 
-    assert_eq!(state.state().commands.len(), 4);
-    assert_eq!(state.state_mut().apply_pending_commands(), 4);
-    assert!(state.state().commands.is_empty());
-    assert_eq!(state.state().commands.applied(), 4);
+    assert_eq!(state.snapshot().commands().len(), 4);
+    assert_eq!(state.flush_commands(), 4);
+    assert!(state.snapshot().commands().is_empty());
+    assert_eq!(state.snapshot().commands().applied(), 4);
 
     assert_eq!(
         state.snapshot().unit(red).expect("red tank").orders,
         UnitOrder::Await
     );
-    assert_eq!(state.state().chat_log.len(), 1);
-    assert_eq!(state.state().chat_log[0].0, TeamId::GREEN);
-    assert_eq!(state.state().chat_log[0].1, "ready");
-    assert_eq!(state.state().rng, max_core::Randomizer::new(0x0BAD_F00D));
+    assert_eq!(state.snapshot().chat_log().len(), 1);
+    assert_eq!(state.snapshot().chat_log()[0].0, TeamId::GREEN);
+    assert_eq!(state.snapshot().chat_log()[0].1, "ready");
+    assert_eq!(*state.snapshot().rng(), max_core::Randomizer::new(0x0BAD_F00D));
 
     // The reverse order of the two order commands yields the other final order.
     let mut reversed = dispatcher_state();
     reversed.submit(order_command(red, UnitOrder::Await));
     reversed.submit(order_command(red, UnitOrder::Sentry));
-    reversed.state_mut().apply_pending_commands();
+    reversed.flush_commands();
     assert_eq!(
         reversed.snapshot().unit(red).expect("red tank").orders,
         UnitOrder::Sentry
@@ -147,7 +146,7 @@ fn stop_event_is_delivered_to_the_order_cycle() {
         state.tick();
 
         assert!(
-            state.state().unit_events.is_empty(),
+            state.snapshot().unit_events().is_empty(),
             "the event queue drains"
         );
         assert!(
@@ -166,12 +165,12 @@ fn stop_event_is_delivered_to_the_order_cycle() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 }
 
@@ -185,7 +184,7 @@ fn unknown_unit_does_not_block_the_rest_of_the_batch() {
 
     let unknown = order_command(missing, UnitOrder::Sentry);
     assert_eq!(
-        events::apply_command(state.state_mut(), &unknown),
+        state.apply_now(unknown.clone()),
         ApplyOutcome::UnknownUnit
     );
 
@@ -196,9 +195,9 @@ fn unknown_unit_does_not_block_the_rest_of_the_batch() {
     }));
     state.submit(Command::Seed(Packet13Seed { seed: 7 }));
 
-    assert_eq!(state.state_mut().apply_pending_commands(), 3);
-    assert_eq!(state.state().chat_log.len(), 1);
-    assert_eq!(state.state().rng, max_core::Randomizer::new(7));
+    assert_eq!(state.flush_commands(), 3);
+    assert_eq!(state.snapshot().chat_log().len(), 1);
+    assert_eq!(*state.snapshot().rng(), max_core::Randomizer::new(7));
     assert_eq!(
         state.snapshot().unit(red).expect("red tank").orders,
         UnitOrder::Await
@@ -211,16 +210,16 @@ fn unknown_unit_does_not_block_the_rest_of_the_batch() {
 #[test]
 fn barrier_delivery_is_ordered_and_idempotent() {
     let mut base = dispatcher_state();
-    base.state_mut().network_game = true;
+    base.set_network_game(true);
     // Only RED plays, so a single report assembles the barrier.
-    base.state_mut().teams[TeamId::GREEN.0 as usize].team_type = TeamKind::None;
+    base.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::None;
 
     let mut once = base.clone();
     once.submit(Command::TurnBarrier(Packet00TurnBarrier {
         team: TeamId::RED,
         counter: 3,
     }));
-    assert_eq!(once.state_mut().apply_pending_commands(), 1);
+    assert_eq!(once.flush_commands(), 1);
     assert_eq!(once.snapshot().begin_turn_barrier(), Some(3));
 
     let mut twice = once.clone();
@@ -228,7 +227,7 @@ fn barrier_delivery_is_ordered_and_idempotent() {
         team: TeamId::RED,
         counter: 3,
     }));
-    assert_eq!(twice.state_mut().apply_pending_commands(), 1);
+    assert_eq!(twice.flush_commands(), 1);
     assert_eq!(twice.snapshot().begin_turn_barrier(), Some(3));
     assert_eq!(
         twice.snapshot().snapshot_bytes(),
@@ -238,7 +237,7 @@ fn barrier_delivery_is_ordered_and_idempotent() {
 
     // Two reports with diverging counters never assemble a barrier.
     let mut diverged = dispatcher_state();
-    diverged.state_mut().network_game = true;
+    diverged.set_network_game(true);
     diverged.submit(Command::TurnBarrier(Packet00TurnBarrier {
         team: TeamId::RED,
         counter: 1,
@@ -247,6 +246,6 @@ fn barrier_delivery_is_ordered_and_idempotent() {
         team: TeamId::GREEN,
         counter: 2,
     }));
-    assert_eq!(diverged.state_mut().apply_pending_commands(), 2);
+    assert_eq!(diverged.flush_commands(), 2);
     assert_eq!(diverged.snapshot().begin_turn_barrier(), None);
 }

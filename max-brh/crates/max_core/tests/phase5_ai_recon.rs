@@ -112,8 +112,8 @@ fn explore_uses_the_available_scout() {
     assert_eq!(count_units(&state, TeamId::RED, UnitType::Scout), 1);
 
     let attached = state
-        .state()
-        .ai
+        .snapshot()
+        .ai()
         .task_manager
         .tasks()
         .iter()
@@ -121,8 +121,8 @@ fn explore_uses_the_available_scout() {
         .any(|task| {
             matches!(task.kind, max_core::ai::TaskKind::Explore { .. })
                 && state
-                    .state()
-                    .ai
+                    .snapshot()
+                    .ai()
                     .task_manager
                     .unit_task(scout)
                     .map(|task_id| task_id == task.id)

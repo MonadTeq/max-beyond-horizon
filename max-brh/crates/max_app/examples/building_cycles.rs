@@ -61,22 +61,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_screen(640, 480);
     let mut app = max_app::App::new(config);
     app.init_assets()?;
-    app.state_mut().teams[0].team_type = TeamKind::Player;
-    app.state_mut().team_units[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_mut(TeamId::RED).expect("RED slot").team_type = TeamKind::Player;
+    *app.universe_mut().team_units_mut(TeamId::RED).expect("RED economy") =
+        max_core::TeamUnits::with_clan(TeamClan::Random);
 
     // Mine 2×2 at (30,22) and POWGEN 1×1 at (32,22): the mine has east
     // connectors, the generator has the west pipe (`D_SMLBLD` frame 5).
     let mine = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(30, 22), 0)
         .expect("mining station");
     let powgen = app
-        .state_mut()
+        .universe_mut()
         .spawn_unit(UnitType::PowerGenerator, TeamId::RED, Point::new(32, 22), 0)
         .expect("power generator");
 
     for (id, orders) in [(mine, UnitOrder::PowerOn), (powgen, UnitOrder::PowerOn)] {
-        let unit = app.state_mut().unit_mut(id).expect("здание");
+        let unit = app.universe_mut().unit_mut(id).expect("здание");
         unit.orders = orders;
         unit.state = UnitOrderState::ExecutingOrder;
     }

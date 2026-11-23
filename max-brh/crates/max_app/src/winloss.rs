@@ -17,8 +17,6 @@
 
 use max_core::enums::{WinLossState, UNIT_END};
 use max_core::team::{TeamId, TeamKind};
-#[cfg(test)]
-use max_core::GameState;
 use max_core::universe::StateRef;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
 // max_core); no glob re-exports (phase 5.2).
@@ -371,6 +369,8 @@ pub fn silver_color(palette: &crate::panels::UiPalette) -> Rgba {
 
 #[cfg(test)]
 mod tests {
+    use max_core::universe::GameUniverse;
+
     use super::*;
 
     #[test]
@@ -379,7 +379,7 @@ mod tests {
         local.outcome = Some(crate::local::LocalOutcome {
             victory: true,
             team: TeamId::RED,
-            status: max_core::victory::evaluate_status(&GameState::new(), 0),
+            status: GameUniverse::default().snapshot().evaluate_status(),
             turn_counter: 17,
             player_name: "Tester".to_string(),
         });

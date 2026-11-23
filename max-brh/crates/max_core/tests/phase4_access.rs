@@ -20,7 +20,6 @@
 //! `unitinfo.cpp` (`IsBridgeElevated`), `SC_UNITS`.
 
 use max_core::access::{
-    is_accessible, is_accessible_ignoring, modified_surface_type, surface_type,
     ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS, ACCESS_MODIFIER_IGNORE_SURFACE_CLASS,
     ACCESS_MODIFIER_IGNORE_VISIBILITY, ACCESS_MODIFIER_MOVES_UNDER_BRIDGE,
     ACCESS_MODIFIER_SAME_CLASS_BLOCKS, SURFACE_TYPE_COAST, SURFACE_TYPE_LAND, SURFACE_TYPE_WATER,
@@ -47,12 +46,12 @@ const SAME: u32 = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 /// explicit input of each test).
 fn game() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().network_game = false;
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().teams[1].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[1] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().ai.all_visible = false;
+    state.set_network_game(false);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.teams_mut()[1].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.team_units_table_mut()[1] = TeamUnits::with_clan(TeamClan::Random);
+    state.ai_mut().all_visible = false;
     state
 }
 
@@ -71,12 +70,10 @@ fn spawn(
 #[test]
 fn ignore_surface_class_skips_water_and_occupancy_checks() {
     let mut state = game();
-    state.state_mut().map.surface.set(3, 3, Surface::WATER);
+    state.map_mut().surface.set(3, 3, Surface::WATER);
     // A tank cannot enter water (land_type = LAND) ...
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(3, 3),
             0
@@ -86,9 +83,7 @@ fn ignore_surface_class_skips_water_and_occupancy_checks() {
     // ... and pays 12 without the modifier only for a passable surface; on water
     // the `land_type` mask wins first.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(3, 3),
             ACCESS_MODIFIER_IGNORE_SURFACE_CLASS
@@ -98,7 +93,7 @@ fn ignore_surface_class_skips_water_and_occupancy_checks() {
     );
 
     // With the modifier the unit loop is skipped entirely, even for a blocker.
-    state.state_mut().ai.all_visible = true;
+    state.ai_mut().all_visible = true;
     spawn(
         &mut state,
         UnitType::Tank,
@@ -107,9 +102,7 @@ fn ignore_surface_class_skips_water_and_occupancy_checks() {
         MOBILE_LAND_UNIT | SELECTABLE,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(4, 4),
             SAME
@@ -117,9 +110,7 @@ fn ignore_surface_class_skips_water_and_occupancy_checks() {
         0
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(4, 4),
             SAME | ACCESS_MODIFIER_IGNORE_SURFACE_CLASS
@@ -155,9 +146,7 @@ fn same_class_and_enemy_same_class_blocking() {
 
     // Not idle: the own unit blocks every land path with SameClassBlocks.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(5, 5),
             SAME
@@ -166,9 +155,7 @@ fn same_class_and_enemy_same_class_blocking() {
     );
     // The enemy blocks with EnemySameClassBlocks, the own unit does not.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(6, 5),
             ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS
@@ -176,9 +163,7 @@ fn same_class_and_enemy_same_class_blocking() {
         0
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(5, 5),
             ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS
@@ -187,9 +172,7 @@ fn same_class_and_enemy_same_class_blocking() {
     );
     // Without any modifier a mobile unit does not block (`AccessModifier_None`).
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(5, 5),
             0
@@ -199,9 +182,7 @@ fn same_class_and_enemy_same_class_blocking() {
     // An idle unit does not block (`GetOrder() != ORDER_IDLE` in C++).
     state.unit_mut(own).expect("unit").orders = UnitOrder::Idle;
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(5, 5),
             SAME
@@ -223,9 +204,7 @@ fn visibility_and_detection_gate_blocking() {
     );
     // Invisible + not detected: the mine does not participate in the check.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(7, 7),
             SAME
@@ -239,9 +218,7 @@ fn visibility_and_detection_gate_blocking() {
         .expect("mine")
         .spot_by_team(TeamId::RED);
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(7, 7),
             SAME
@@ -250,9 +227,7 @@ fn visibility_and_detection_gate_blocking() {
     );
     // The mine's owner is not blocked by its own mine.
     assert_ne!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::GREEN,
             Point::new(7, 7),
             SAME
@@ -274,9 +249,7 @@ fn visibility_and_detection_gate_blocking() {
         .expect("unit")
         .is_visible_to_team(TeamId::RED));
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(8, 7),
             SAME
@@ -285,9 +258,7 @@ fn visibility_and_detection_gate_blocking() {
         "a hidden unit must not block"
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(8, 7),
             SAME | ACCESS_MODIFIER_IGNORE_VISIBILITY
@@ -300,7 +271,7 @@ fn visibility_and_detection_gate_blocking() {
 #[test]
 fn air_units_block_only_air_and_landed_aircraft_block_ground() {
     let mut state = game();
-    state.state_mut().ai.all_visible = true;
+    state.ai_mut().all_visible = true;
     let fighter = spawn(
         &mut state,
         UnitType::Fighter,
@@ -318,9 +289,7 @@ fn air_units_block_only_air_and_landed_aircraft_block_ground() {
 
     // An air unit blocks an air path with SameClassBlocks.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Fighter,
+        state.snapshot().is_accessible(UnitType::Fighter,
             TeamId::RED,
             Point::new(8, 8),
             SAME
@@ -329,9 +298,7 @@ fn air_units_block_only_air_and_landed_aircraft_block_ground() {
     );
     // A landed aircraft (no HOVERING) blocks a ground path ...
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(8, 8),
             SAME
@@ -340,9 +307,7 @@ fn air_units_block_only_air_and_landed_aircraft_block_ground() {
     );
     // ... a hovering one does not.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(9, 8),
             SAME
@@ -358,9 +323,7 @@ fn air_units_block_only_air_and_landed_aircraft_block_ground() {
         MOBILE_LAND_UNIT | SELECTABLE,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Fighter,
+        state.snapshot().is_accessible(UnitType::Fighter,
             TeamId::RED,
             Point::new(10, 8),
             SAME
@@ -373,8 +336,8 @@ fn air_units_block_only_air_and_landed_aircraft_block_ground() {
 #[test]
 fn stationary_objects_semantics() {
     let mut state = game();
-    state.state_mut().map.surface.set(20, 5, Surface::WATER);
-    state.state_mut().ai.all_visible = true;
+    state.map_mut().surface.set(20, 5, Surface::WATER);
+    state.ai_mut().all_visible = true;
 
     // ROAD: cost 2 for a ground unit; a second road is not allowed on the cell.
     spawn(
@@ -385,9 +348,7 @@ fn stationary_objects_semantics() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(11, 5),
             SAME
@@ -395,9 +356,7 @@ fn stationary_objects_semantics() {
         2
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Road,
+        state.snapshot().is_accessible(UnitType::Road,
             TeamId::RED,
             Point::new(11, 5),
             SAME
@@ -414,9 +373,7 @@ fn stationary_objects_semantics() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(12, 5),
             SAME
@@ -424,9 +381,7 @@ fn stationary_objects_semantics() {
         2
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Road,
+        state.snapshot().is_accessible(UnitType::Road,
             TeamId::RED,
             Point::new(12, 5),
             SAME
@@ -445,9 +400,7 @@ fn stationary_objects_semantics() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(20, 5),
             SAME
@@ -456,9 +409,7 @@ fn stationary_objects_semantics() {
         "rubble over water keeps the pre-loop water surcharge"
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Corvette,
+        state.snapshot().is_accessible(UnitType::Corvette,
             TeamId::RED,
             Point::new(20, 5),
             SAME
@@ -468,7 +419,7 @@ fn stationary_objects_semantics() {
     );
 
     // WATER PLATFORM: the cell becomes land, cost 4 for a ground unit.
-    state.state_mut().map.surface.set(21, 5, Surface::WATER);
+    state.map_mut().surface.set(21, 5, Surface::WATER);
     spawn(
         &mut state,
         UnitType::WaterPlatform,
@@ -477,9 +428,7 @@ fn stationary_objects_semantics() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(21, 5),
             SAME
@@ -496,9 +445,7 @@ fn stationary_objects_semantics() {
         STATIONARY | max_core::enums::unit_flags::BUILDING,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(13, 5),
             SAME
@@ -507,9 +454,7 @@ fn stationary_objects_semantics() {
     );
     // An air path ignores the building (the C++ air branch has no default arm).
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Fighter,
+        state.snapshot().is_accessible(UnitType::Fighter,
             TeamId::RED,
             Point::new(13, 5),
             SAME
@@ -526,9 +471,7 @@ fn stationary_objects_semantics() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(16, 5),
             SAME
@@ -546,9 +489,7 @@ fn stationary_objects_semantics() {
         STATIONARY | max_core::enums::unit_flags::CONNECTOR_UNIT,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Connector,
+        state.snapshot().is_accessible(UnitType::Connector,
             TeamId::RED,
             Point::new(15, 5),
             SAME
@@ -556,9 +497,7 @@ fn stationary_objects_semantics() {
         0
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Radar,
+        state.snapshot().is_accessible(UnitType::Radar,
             TeamId::RED,
             Point::new(15, 5),
             SAME
@@ -567,9 +506,7 @@ fn stationary_objects_semantics() {
         "a foreign connector blocks a stationary structure"
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(15, 5),
             0
@@ -582,21 +519,21 @@ fn stationary_objects_semantics() {
 #[test]
 fn modified_surface_for_bridges_and_platforms() {
     let mut state = game();
-    state.state_mut().map.surface.set(30, 5, Surface::WATER);
-    state.state_mut().map.surface.set(31, 5, Surface::COAST);
-    state.state_mut().map.surface.set(32, 5, Surface::LAND);
+    state.map_mut().surface.set(30, 5, Surface::WATER);
+    state.map_mut().surface.set(31, 5, Surface::COAST);
+    state.map_mut().surface.set(32, 5, Surface::LAND);
 
     // No overlay: the raw surface is returned, including coast.
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(30, 5), false),
+        state.snapshot().modified_surface_type(Point::new(30, 5), false),
         SURFACE_TYPE_WATER
     );
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(31, 5), true),
+        state.snapshot().modified_surface_type(Point::new(31, 5), true),
         SURFACE_TYPE_COAST
     );
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(32, 5), false),
+        state.snapshot().modified_surface_type(Point::new(32, 5), false),
         SURFACE_TYPE_LAND
     );
 
@@ -613,20 +550,18 @@ fn modified_surface_for_bridges_and_platforms() {
         state.snapshot().unit(bridge).expect("bridge")
     ));
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(30, 5), false),
+        state.snapshot().modified_surface_type(Point::new(30, 5), false),
         SURFACE_TYPE_LAND
     );
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(30, 5), true),
+        state.snapshot().modified_surface_type(Point::new(30, 5), true),
         SURFACE_TYPE_WATER
     );
 
     // The cost view follows: a tank crosses the bridge for 2, a ship sees water
     // (cost 4) ...
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(30, 5),
             SAME
@@ -634,9 +569,7 @@ fn modified_surface_for_bridges_and_platforms() {
         2
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Corvette,
+        state.snapshot().is_accessible(UnitType::Corvette,
             TeamId::RED,
             Point::new(30, 5),
             SAME
@@ -646,9 +579,7 @@ fn modified_surface_for_bridges_and_platforms() {
     // ... except with `MovesUnderBridge`: on a flat bridge C++ makes the cell
     // land for such a unit (`access.cpp:182-186`), so it is blocked.
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Corvette,
+        state.snapshot().is_accessible(UnitType::Corvette,
             TeamId::RED,
             Point::new(30, 5),
             SAME | ACCESS_MODIFIER_MOVES_UNDER_BRIDGE
@@ -668,9 +599,7 @@ fn modified_surface_for_bridges_and_platforms() {
     ));
     for flags in [SAME, SAME | ACCESS_MODIFIER_MOVES_UNDER_BRIDGE] {
         assert_eq!(
-            is_accessible(
-                state.state(),
-                UnitType::Corvette,
+            state.snapshot().is_accessible(UnitType::Corvette,
                 TeamId::RED,
                 Point::new(30, 5),
                 flags
@@ -681,7 +610,7 @@ fn modified_surface_for_bridges_and_platforms() {
     }
 
     // A platform: land from both points of view for the modified surface.
-    state.state_mut().map.surface.set(33, 5, Surface::WATER);
+    state.map_mut().surface.set(33, 5, Surface::WATER);
     spawn(
         &mut state,
         UnitType::WaterPlatform,
@@ -690,11 +619,11 @@ fn modified_surface_for_bridges_and_platforms() {
         STATIONARY | GROUND_COVER,
     );
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(33, 5), false),
+        state.snapshot().modified_surface_type(Point::new(33, 5), false),
         SURFACE_TYPE_LAND
     );
     assert_eq!(
-        modified_surface_type(state.state(), Point::new(33, 5), true),
+        state.snapshot().modified_surface_type(Point::new(33, 5), true),
         SURFACE_TYPE_LAND,
         "the C++ `mode` branch only keeps water for a BRIDGE"
     );
@@ -703,7 +632,7 @@ fn modified_surface_for_bridges_and_platforms() {
 #[test]
 fn ignoring_units_matches_the_build_placement_trick() {
     let mut state = game();
-    state.state_mut().ai.all_visible = true;
+    state.ai_mut().all_visible = true;
     let tank = spawn(
         &mut state,
         UnitType::Tank,
@@ -712,9 +641,7 @@ fn ignoring_units_matches_the_build_placement_trick() {
         MOBILE_LAND_UNIT | SELECTABLE,
     );
     assert_eq!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(40, 40),
             SAME
@@ -724,9 +651,7 @@ fn ignoring_units_matches_the_build_placement_trick() {
     // `UnitsManager_IssueBuildOrder` removes the builder from the hash before
     // the site check; the ignoring variant reproduces that without mutating.
     assert_eq!(
-        is_accessible_ignoring(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible_ignoring(UnitType::Tank,
             TeamId::RED,
             Point::new(40, 40),
             SAME,
@@ -736,9 +661,7 @@ fn ignoring_units_matches_the_build_placement_trick() {
     );
     // Ignoring an unrelated id changes nothing.
     assert_eq!(
-        is_accessible_ignoring(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible_ignoring(UnitType::Tank,
             TeamId::RED,
             Point::new(40, 40),
             SAME,
@@ -760,21 +683,21 @@ fn map_boundaries() {
         Point::new(-1, -1),
     ] {
         assert_eq!(
-            is_accessible(state.state(), UnitType::Tank, TeamId::RED, grid, flags),
+            state.snapshot().is_accessible(UnitType::Tank, TeamId::RED, grid, flags),
             0,
             "off-map cell {grid:?}"
         );
         assert_eq!(
-            surface_type(state.state(), grid),
+            state.snapshot().surface_type(grid),
             0,
             "off-map surface {grid:?}"
         );
     }
     // The last valid cell is accessible and has a surface.
     let last = Point::new(MAP_WIDTH as i16 - 1, MAP_HEIGHT as i16 - 1);
-    assert_eq!(surface_type(state.state(), last), SURFACE_TYPE_LAND);
+    assert_eq!(state.snapshot().surface_type(last), SURFACE_TYPE_LAND);
     assert_eq!(
-        is_accessible(state.state(), UnitType::Tank, TeamId::RED, last, flags),
+        state.snapshot().is_accessible(UnitType::Tank, TeamId::RED, last, flags),
         4
     );
 }
@@ -784,9 +707,7 @@ fn costs_crc(state: &GameUniverse, unit_type: UnitType, flags: u32) -> u16 {
     let mut bytes = Vec::with_capacity((MAP_WIDTH * MAP_HEIGHT) as usize);
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let cost = is_accessible(
-                state.state(),
-                unit_type,
+            let cost = state.snapshot().is_accessible(unit_type,
                 TeamId::RED,
                 Point::new(x as i16, y as i16),
                 flags,
@@ -841,12 +762,10 @@ fn fresh_state_surface_defaults_to_land() {
         (50, 50),
         (MAP_WIDTH as i16 - 1, MAP_HEIGHT as i16 - 1),
     ] {
-        assert_eq!(state.state().map.surface_at(x, y), Surface::LAND);
+        assert_eq!(state.snapshot().map().surface_at(x, y), Surface::LAND);
     }
     assert!(
-        is_accessible(
-            state.state(),
-            UnitType::Tank,
+        state.snapshot().is_accessible(UnitType::Tank,
             TeamId::RED,
             Point::new(50, 50),
             SAME

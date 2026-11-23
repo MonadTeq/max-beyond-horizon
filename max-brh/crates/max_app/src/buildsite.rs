@@ -74,8 +74,6 @@
 
 use max_core::access;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::geo::{Point, DIRECTION_OFFSETS};
 use max_core::production;
@@ -537,13 +535,16 @@ mod tests {
     use max_core::enums::Surface;
     use max_core::geo::{MAP_HEIGHT, MAP_WIDTH};
 
-    fn land_state() -> (GameState, UnitId) {
-        let mut state = GameState::new();
+    fn land_state() -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        UnitId,
+    ) {
+        let mut state = max_core::universe::GameUniverse::default();
 
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
                 *state
-                    .map
+                    .map_mut()
                     .surface
                     .tiles_mut()
                     .get_mut(y as usize * MAP_WIDTH as usize + x as usize)
@@ -551,7 +552,10 @@ mod tests {
             }
         }
 
-        state.teams[0].team_type = max_core::team::TeamKind::Player;
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .team_type = max_core::team::TeamKind::Player;
         let id = state
             .spawn_unit(
                 UnitType::Constructor,
@@ -613,7 +617,7 @@ mod tests {
     #[test]
     fn initial_site_uses_issue_build_order_candidates() {
         let (state, builder) = land_state();
-        let grid = state.unit(builder).unwrap().grid;
+        let grid = state.snapshot().unit(builder).unwrap().grid;
 
         let site = StateRef::from(&state).initial_build_site(
             TeamId::RED,
@@ -630,7 +634,7 @@ mod tests {
     #[test]
     fn cursor_selects_the_cell_the_player_points_at() {
         let (mut state, builder) = land_state();
-        let grid = state.unit(builder).unwrap().grid;
+        let grid = state.snapshot().unit(builder).unwrap().grid;
         let anchor = StateRef::from(&state).initial_build_site(
             TeamId::RED,
             UnitType::TrainingHall,
@@ -663,7 +667,7 @@ mod tests {
         for dy in 0..2 {
             for dx in 0..2 {
                 *state
-                    .map
+                    .map_mut()
                     .surface
                     .tiles_mut()
                     .get_mut(
@@ -680,7 +684,7 @@ mod tests {
     #[test]
     fn anchor_far_from_the_builder_is_never_valid() {
         let (state, builder) = land_state();
-        let builder_grid = state.unit(builder).unwrap().grid;
+        let builder_grid = state.snapshot().unit(builder).unwrap().grid;
         // An anchor three cells away from the builder — that never happens with
         // `GetBuilderUnitCursor`; confirmation must be invalid.
         let far = Point::new(builder_grid.x + 3, builder_grid.y);
@@ -702,20 +706,18 @@ mod tests {
     #[test]
     fn builder_does_not_center_on_a_tape_that_does_not_cover_him() {
         let (mut state, builder) = land_state();
-        let builder_grid = state.unit(builder).unwrap().grid;
+        let builder_grid = state.snapshot().unit(builder).unwrap().grid;
         let far = Point::new(builder_grid.x + 3, builder_grid.y + 3);
         let unit = state.unit_mut(builder).unwrap();
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::BuildInProgress;
 
-        let _ = max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        let _ = state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             far,
         );
 
-        let unit = state.unit(builder).unwrap();
+        let unit = state.snapshot().unit(builder).unwrap();
         assert_eq!(
             tape_center_offset(StateRef::from(&state), unit),
             (0, 0),
@@ -736,16 +738,14 @@ mod tests {
         // C++ on finishing the positioning turns NW(7) by a step → N(0).
         state.unit_mut(builder).unwrap().angle = 0;
 
-        let tape = max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        let tape = state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             anchor,
         )
         .expect("площадка поставлена");
-        assert_eq!(state.unit(tape.tape).unwrap().parent_unit, Some(builder));
+        assert_eq!(state.snapshot().unit(tape.tape).unwrap().parent_unit, Some(builder));
 
-        let unit = state.unit(builder).unwrap();
+        let unit = state.snapshot().unit(builder).unwrap();
         assert_eq!(tape_center_offset(StateRef::from(&state), unit), (-32, -32));
 
         let (center_x, center_y) = site_center_world(UnitType::TrainingHall, anchor);
@@ -766,7 +766,7 @@ mod tests {
         state.unit_mut(builder).unwrap().angle = 7;
         for moved in 0..=4u8 {
             state.unit_mut(builder).unwrap().moved = moved;
-            let unit = state.unit(builder).unwrap();
+            let unit = state.snapshot().unit(builder).unwrap();
             let offset = tape_center_offset(StateRef::from(&state), unit);
             assert_eq!(offset, (-8 * i32::from(moved), -8 * i32::from(moved)));
         }
@@ -781,9 +781,7 @@ mod tests {
         state.unit_mut(builder).unwrap().state = UnitOrderState::TapePositioningEnter;
         state.unit_mut(builder).unwrap().moved = 1;
 
-        max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             anchor,
         )
@@ -791,18 +789,18 @@ mod tests {
 
         // The builder is west of the center, facing east — the shift is exactly (1,0)*8.
         state.unit_mut(builder).unwrap().angle = 2;
-        let unit = state.unit(builder).unwrap();
+        let unit = state.snapshot().unit(builder).unwrap();
         assert_eq!(tape_center_offset(StateRef::from(&state), unit), (8, 0));
 
         // Diagonal case: facing NW — the (1,1) diagonal.
         state.unit_mut(builder).unwrap().angle = 7;
-        let unit = state.unit(builder).unwrap();
+        let unit = state.snapshot().unit(builder).unwrap();
         assert_eq!(tape_center_offset(StateRef::from(&state), unit), (-8, -8));
 
         // The other directions — exactly `DIRECTION_OFFSETS[angle] * 8`.
         for angle in 0..8u8 {
             state.unit_mut(builder).unwrap().angle = angle;
-            let unit = state.unit(builder).unwrap();
+            let unit = state.snapshot().unit(builder).unwrap();
             let offset = tape_center_offset(StateRef::from(&state), unit);
             let step = DIRECTION_OFFSETS[usize::from(angle)];
 
@@ -819,9 +817,7 @@ mod tests {
         let (mut state, builder) = land_state();
         let anchor = Point::new(29, 19);
         state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
-        max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             anchor,
         )
@@ -837,7 +833,7 @@ mod tests {
         ];
 
         for (grid, angle, step) in cases {
-            let mut unit = state.unit(builder).unwrap().clone();
+            let mut unit = state.snapshot().unit(builder).unwrap().clone();
             unit.grid = grid;
             unit.state = UnitOrderState::TapePositioningEnter;
 
@@ -867,9 +863,7 @@ mod tests {
         let (mut state, builder) = land_state();
         let anchor = Point::new(29, 19);
         state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
-        max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             anchor,
         )
@@ -878,7 +872,7 @@ mod tests {
         // `ORDER_AWAIT_TAPE_POSITIONING`/`DEINIT` (`PositionInTape`): the builder
         // is still in the tape center — the entry shift (the builder is in the SE corner of the 2×2,
         // the anchor is the NW corner, so the entry is NW: −32,−32).
-        let mut unit = state.unit(builder).unwrap().clone();
+        let mut unit = state.snapshot().unit(builder).unwrap().clone();
         unit.orders = UnitOrder::AwaitTapePositioning;
         unit.state = UnitOrderState::TapePositioningDeinit;
         unit.moved = 0;
@@ -954,15 +948,13 @@ mod tests {
         let (mut state, builder) = land_state();
         let anchor = Point::new(29, 19);
         state.unit_mut(builder).unwrap().grid = Point::new(30, 20);
-        max_core::production::deploy_construction_site(
-            &mut state,
-            builder,
+        state.deploy_construction_site(builder,
             UnitType::TrainingHall,
             anchor,
         )
         .expect("площадка поставлена");
 
-        let mut unit = state.unit(builder).unwrap().clone();
+        let mut unit = state.snapshot().unit(builder).unwrap().clone();
         unit.orders = UnitOrder::AwaitTapePositioning;
         unit.state = UnitOrderState::TapePositioningInit;
         unit.prior_orders = UnitOrder::Build;
@@ -974,7 +966,7 @@ mod tests {
         // Tick 1: INIT → ENTER and the first (only) turn step 0 → NW(7).
         // C++: `if (moved || !Paths_UpdateAngle(...))` — while the turn is not
         // finished, `moved` does not grow and the sprite does not move.
-        max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
+        state.position_in_tape(&mut unit, move_to);
         assert_eq!(unit.state, UnitOrderState::TapePositioningEnter);
         assert_eq!(unit.angle, 7, "строитель довернулся к ленте (NW)");
         assert_eq!(unit.moved, 0, "до доворота сдвига нет");
@@ -982,14 +974,14 @@ mod tests {
         assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (0, 0));
 
         // Tick 2: the angle is already the target — the first sliding step (−8,−8).
-        max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
+        state.position_in_tape(&mut unit, move_to);
         assert_eq!(unit.moved, 1);
         state.write_unit(builder, unit.clone());
         assert_eq!(tape_center_offset(StateRef::from(&state), &unit), (-8, -8));
 
         // Ticks 3–5: three more steps of 8 px — exactly to the tape center.
         for step in 2..=4u8 {
-            max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
+            state.position_in_tape(&mut unit, move_to);
             assert_eq!(unit.moved, step);
             state.write_unit(builder, unit.clone());
             assert_eq!(
@@ -1012,7 +1004,7 @@ mod tests {
 
         // Tick 6: `moved >= 4` — `RestoreOrders` into ORDER_BUILD and a turn by a step
         // (`Paths_UpdateAngle(this, (angle + 1) & 7)`): NW(7) → N(0).
-        max_core::unit_order::position_in_tape(&mut state, &mut unit, move_to);
+        state.position_in_tape(&mut unit, move_to);
         assert_eq!(unit.orders, UnitOrder::Build);
         assert_eq!(unit.state, UnitOrderState::BuildInProgress);
         assert_eq!(unit.angle, 0, "C++ доворачивает на (angle + 1) & 7");

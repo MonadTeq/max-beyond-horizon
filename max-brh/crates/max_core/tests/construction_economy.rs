@@ -17,7 +17,7 @@
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::production::{
-    self, max_possible_build_rate, BuildError, ProductionEventKind, ProductionManager,
+    self, max_possible_build_rate, BuildError, ProductionEventKind,
 };
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::GameUniverse;
@@ -25,15 +25,15 @@ use max_core::{TeamClan, TeamUnits};
 
 fn economy_state(gold: u32) -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[0].set_gold(gold);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.team_units_table_mut()[0].set_gold(gold);
     state
 }
 
 fn production_turn(state: &mut GameUniverse) -> Vec<max_core::ProductionEvent> {
     state.manage_economy(TeamId::RED);
-    production::progress_build_state(state.state_mut(), TeamId::RED)
+    state.progress_build_state(TeamId::RED)
 }
 
 fn count_type(state: &GameUniverse, unit_type: UnitType) -> usize {
@@ -109,7 +109,7 @@ fn constructor_pays_raw_material_and_never_goes_negative() {
     let mut state = economy_state(150);
     let builder = constructor(&mut state, 40);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(builder, UnitType::TrainingHall)
         .expect("queue");
@@ -142,7 +142,7 @@ fn constructor_pays_raw_material_and_never_goes_negative() {
         "40 − 10 × 2"
     );
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         150,
         "золото команды стройкой не тратится"
     );
@@ -155,7 +155,7 @@ fn short_materials_pause_the_build_without_spending_or_progressing() {
     let mut state = economy_state(0);
     let builder = constructor(&mut state, 1);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(builder, UnitType::TrainingHall)
         .expect("queue");
@@ -202,12 +202,12 @@ fn build_completes_exactly_after_the_paid_turns() {
     // Exactly 5 turns at rate 2 — the order is rejected (20 is needed for all 10).
     let builder = constructor(&mut state, 20);
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).commit(builder),
+        state.production_manager(TeamId::RED).commit(builder),
         Err(BuildError::EmptyQueue),
         "очередь пуста — сначала enqueue"
     );
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(builder, UnitType::TrainingHall)
         .expect("queue");
@@ -304,7 +304,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         "завод и ADUMP — один комплекс"
     );
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     manager.commit(factory).expect("build");
     drop(manager);
@@ -330,7 +330,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         state.snapshot().unit(factory).expect("factory").build_time,
         1
     );
-    assert_eq!(state.state().team_units[0].gold(), 0, "золото не тратится");
+    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
 
     // Second turn: nothing to pay with — pause, the order is intact.
     let events = production_turn(&mut state);
@@ -341,7 +341,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         "нехватка материалов — пауза: {events:?}"
     );
     assert_eq!(
-        state.state().team_units[0].gold(),
+        state.snapshot().team_units()[0].gold(),
         0,
         "золото не уходит в минус"
     );
@@ -355,7 +355,7 @@ fn factory_pays_the_connected_complex_materials_and_never_goes_negative() {
         "склад не уходит в минус"
     );
     assert_eq!(
-        ProductionManager::new(state.state_mut(), TeamId::RED).queue(factory),
+        state.production_manager(TeamId::RED).queue(factory),
         vec![UnitType::Infantry],
         "заказ сохранён"
     );
@@ -398,7 +398,7 @@ fn factory_without_connected_storage_pauses_even_with_team_materials() {
     state.unit_mut(far_dump).expect("MaterialStorage").storage = 50;
     power_the_complex(&mut state, factory);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager.enqueue(factory, UnitType::Infantry).expect("queue");
     assert_eq!(
         manager.commit(factory),
@@ -432,7 +432,7 @@ fn paused_build_resumes_when_materials_arrive() {
     let mut state = economy_state(0);
     let builder = constructor(&mut state, 20);
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(builder, UnitType::TrainingHall)
         .expect("queue");

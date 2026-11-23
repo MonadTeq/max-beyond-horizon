@@ -164,8 +164,11 @@ pub use max_types::enums::{
     UnitOrderType, UnitType, VictoryType, WinLossState,
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
+// Stage B §7: `GameState` is **not** re-exported any more — the public entry is
+// `crate::universe::GameUniverse` plus the read-only `StateRef`. The type itself
+// stays `pub(crate)`-visible to the facade and the inline `#[cfg(test)]` modules.
 pub use game::{
-    GameState, LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound, UnitSoundKind,
+    LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound, UnitSoundKind,
     GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT,
     PLAYER_TEAM_MAX, TEAM_SLOTS,
 };

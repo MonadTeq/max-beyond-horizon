@@ -40,7 +40,8 @@
 //! let mut world = GameState::new();
 //! world.with_task_manager(|tm, world| {
 //!     let _ = tm.task_count();
-//!     let _ = world.turn_counter;
+//!     // `world` is the rest of the state; only read-only methods are public.
+//!     let _ = world.unit_count();
 //! });
 //! ```
 //!

@@ -34,8 +34,6 @@
 use max_assets::image::SimpleImage;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType, VictoryType};
 use max_core::game::PLAYER_TEAM_COUNT;
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::{UnitInfo, UnitListKind};
@@ -2680,7 +2678,7 @@ mod tests {
         use max_core::geo::{Point, MAP_TILES};
         use max_core::team::TeamId;
 
-        let mut state = GameState::new();
+        let mut state = max_core::universe::GameUniverse::default();
         let own = state
             .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
             .unwrap();
@@ -2840,7 +2838,7 @@ mod tests {
         use max_core::enums::{unit_flags, UnitOrder, UnitType};
         use max_core::geo::Point;
 
-        let mut state = GameState::new();
+        let mut state = max_core::universe::GameUniverse::default();
         let id = state
             .spawn_unit(
                 UnitType::Tank,
@@ -2942,26 +2940,30 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// A match with real team attributes (`TeamUnits::with_clan(Random)`).
-    fn stats_state() -> GameState {
+    fn stats_state() -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
         use max_core::enums::TeamClan;
         use max_core::team::TeamUnits;
 
-        let mut state = GameState::new();
-        state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
-        state.player_team = TeamId::RED;
+        let mut state = max_core::universe::GameUniverse::default();
+        *state.team_units_mut(TeamId::RED).expect("RED economy") =
+            TeamUnits::with_clan(TeamClan::Random);
+        state.set_player_team(TeamId::RED);
 
         state
     }
 
     /// A unit in the match: `spawn_unit` + `DeployUnit` (a new unit has `storage = 0`).
-    fn deployed(state: &mut GameState, unit_type: UnitType) -> UnitInfo {
+    fn deployed(
+        state: &mut max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        unit_type: UnitType,
+    ) -> UnitInfo {
         let id = state
             .spawn_unit(unit_type, TeamId::RED, max_core::geo::Point::new(20, 20), 0)
             .expect("юнит создан");
 
         state.unit_mut(id).expect("юнит в состоянии").storage = 0;
 
-        state.unit(id).expect("юнит").clone()
+        state.snapshot().unit(id).expect("юнит").clone()
     }
 
     fn labels(rows: &[Option<StatRow>; 4]) -> [Option<&'static str>; 4] {

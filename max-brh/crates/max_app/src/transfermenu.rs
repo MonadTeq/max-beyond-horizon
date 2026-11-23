@@ -53,8 +53,6 @@
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitOrderState};
-#[cfg(test)]
-use max_core::game::GameState;
 use max_core::universe::StateRef;
 use max_core::team::TeamId;
 // Explicit import of the classification extension type (`UnitTypeClassify` — sealed in
@@ -881,10 +879,18 @@ mod tests {
     use max_render::buffer::PixelRect;
     use max_render::layout::MAIN_MAP;
 
-    fn state_with_transfer() -> (GameState, UnitId, UnitId) {
-        let mut state = GameState::new();
-        state.teams[0].team_type = max_core::team::TeamKind::Player;
-        state.team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    fn state_with_transfer() -> (
+        max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
+        UnitId,
+        UnitId,
+    ) {
+        let mut state = max_core::universe::GameUniverse::default();
+        state
+            .team_mut(TeamId::RED)
+            .expect("RED slot")
+            .team_type = max_core::team::TeamKind::Player;
+        *state.team_units_mut(TeamId::RED).expect("RED economy") =
+            TeamUnits::with_clan(TeamClan::Random);
 
         let mine = state
             .spawn_unit(
@@ -894,7 +900,7 @@ mod tests {
                 unit_flags::STATIONARY | unit_flags::BUILDING,
             )
             .expect("mine");
-        let complex = state.unit(mine).expect("mine").complex.expect("complex");
+        let complex = state.snapshot().unit(mine).expect("mine").complex.expect("complex");
         let dump = state
             .spawn_unit(
                 UnitType::MaterialStorage,
@@ -903,12 +909,16 @@ mod tests {
                 unit_flags::STATIONARY | unit_flags::BUILDING,
             )
             .expect("dump");
-        if let Some(own) = state.unit(dump).and_then(|unit| unit.complex) {
-            state.team_units[0].remove_complex(own);
+        if let Some(own) = state.snapshot().unit(dump).and_then(|unit| unit.complex) {
+            state
+                .team_units_mut(TeamId::RED)
+                .expect("RED economy")
+                .remove_complex(own);
         }
         state.unit_mut(dump).expect("dump").complex = Some(complex);
         state
-            .team_units[0]
+            .team_units_mut(TeamId::RED)
+            .expect("RED economy")
             .get_complex_mut(complex)
             .expect("complex")
             .grow();
@@ -1074,10 +1084,12 @@ mod tests {
         let (state, truck, dump) = state_with_transfer();
         // A click on the mine (RAW, but this is a 25 storage) — the type matches, it is the target.
         let mine = state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
                 state
+                    .snapshot()
                     .unit(*id)
                     .is_some_and(|unit| unit.unit_type == UnitType::MiningStation)
             })
@@ -1088,10 +1100,12 @@ mod tests {
         // the building with fuel — there is none, so `None` (no transfer).
         let cargo_state = state;
         let fuel_truck = cargo_state
+            .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .find(|id| {
                 cargo_state
+                    .snapshot()
                     .unit(*id)
                     .is_some_and(|unit| unit.unit_type == UnitType::SupplyTruck)
             })

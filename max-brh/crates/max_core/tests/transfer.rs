@@ -6,22 +6,17 @@
 //! `access.cpp` (`Access_UpdateResourcesTotal`),
 //! `game_manager.cpp` (`ManageEconomy`, `GameManager_TransferCargo`).
 
-use max_core::alloc::{get_cargo_info, update_resources_total};
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
-use max_core::transfer::{
-    complex_free_capacity, complex_transfer, find_unit_with_cargo_type, process_transfer,
-    transfer_cargo_kind, transfer_menu_cargo_info,
-};
 use max_core::unit::{UnitId, UnitInfo, UnitListKind};
 use max_core::universe::GameUniverse;
 use max_core::victory::CargoType;
 
 fn test_state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -48,11 +43,11 @@ fn spawn_in_complex(
     if let Some(target) = target {
         if let Some(own) = state.snapshot().unit(id).and_then(|unit| unit.complex) {
             if own != target {
-                state.state_mut().team_units[0].remove_complex(own);
+                state.team_units_table_mut()[0].remove_complex(own);
             }
         }
         state.unit_mut(id).expect("unit").complex = Some(target);
-        if let Some(complex) = state.state_mut().team_units[0].get_complex_mut(target) {
+        if let Some(complex) = state.team_units_table_mut()[0].get_complex_mut(target) {
             complex.grow();
         }
     }
@@ -114,17 +109,17 @@ fn transfer_menu_info_matches_get_cargo_info_for_own_complex() {
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(21, 21));
 
     assert_eq!(
-        transfer_menu_cargo_info(state.state(), mine, truck, CargoType::Raw),
+        state.snapshot().transfer_menu_cargo_info(mine, truck, CargoType::Raw),
         (15, 75),
         "mine 25 + ADUMP 50"
     );
     assert_eq!(
-        transfer_menu_cargo_info(state.state(), truck, mine, CargoType::Raw),
+        state.snapshot().transfer_menu_cargo_info(truck, mine, CargoType::Raw),
         (0, 50),
         "у грузовика нет комплекса — только storage/ATTRIB_STORAGE"
     );
     assert_eq!(
-        complex_free_capacity(state.state(), TeamId::RED, complex, CargoType::Raw),
+        state.snapshot().complex_free_capacity(TeamId::RED, complex, CargoType::Raw),
         60
     );
 }
@@ -159,14 +154,14 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
 
     state.unit_mut(mine).expect("mine").storage = 20;
     state.unit_mut(dump).expect("MaterialStorage").storage = 0;
-    update_resources_total(state.state_mut(), TeamId::RED, mine_complex);
+    state.update_resources_total(TeamId::RED, mine_complex);
 
     let truck = spawn_truck(&mut state, UnitType::SupplyTruck, Point::new(23, 20));
 
     // `TransferMenu_GetUnitCargoInfo`: the source has a complex different from
     // the target's (the truck has none) — the whole pool is shown.
     assert_eq!(
-        transfer_menu_cargo_info(state.state(), dump, truck, CargoType::Raw),
+        state.snapshot().transfer_menu_cargo_info(dump, truck, CargoType::Raw),
         (20, 75),
         "запас комплекса 20, ёмкость 25 (шахта) + 50 (ADUMP)"
     );
@@ -182,7 +177,7 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
         unit.prior_state = UnitOrderState::ExecutingOrder;
     }
 
-    process_transfer(state.state_mut(), truck);
+    state.process_transfer(truck);
 
     assert_eq!(storage(&state, truck), 12);
     assert_eq!(storage(&state, dump), 0, "пустой склад ничего не отдал");
@@ -192,7 +187,7 @@ fn xfer_takes_materials_from_the_whole_connected_complex() {
         "остаток взят из шахты того же комплекса"
     );
     assert_eq!(
-        get_cargo_info(state.state(), TeamId::RED, mine_complex)
+        state.snapshot().get_cargo_info(TeamId::RED, mine_complex)
             .0
             .raw,
         8,
@@ -227,13 +222,13 @@ fn transfer_to_complex_and_back_changes_both_sides() {
         unit.parent_unit = Some(dump);
         unit.transfer_cargo = 12;
     }
-    process_transfer(state.state_mut(), truck);
+    state.process_transfer(truck);
 
     assert_eq!(storage(&state, truck), 18);
     assert_eq!(storage(&state, dump), 12);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
@@ -242,13 +237,13 @@ fn transfer_to_complex_and_back_changes_both_sides() {
 
     // Negative: complex -> unit.
     state.unit_mut(truck).expect("truck").transfer_cargo = -5;
-    process_transfer(state.state_mut(), truck);
+    state.process_transfer(truck);
 
     assert_eq!(storage(&state, truck), 23);
     assert_eq!(storage(&state, dump), 7);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
@@ -287,7 +282,7 @@ fn transfer_order_processor_runs_restores_orders_and_is_deterministic() {
             unit.prior_state = UnitOrderState::ExecutingOrder;
         }
 
-        max_core::unit_order::process_order(state.state_mut(), truck);
+        state.process_order(truck);
 
         let unit = state.snapshot().unit(truck).expect("truck");
         assert_eq!(
@@ -300,7 +295,7 @@ fn transfer_order_processor_runs_restores_orders_and_is_deterministic() {
             unit.storage,
             storage(&state, dump),
             state
-                .state()
+                .snapshot()
                 .complex(TeamId::RED, complex.0 as u16)
                 .expect("complex")
                 .raw,
@@ -337,14 +332,14 @@ fn find_unit_with_cargo_type_follows_stationary_order() {
     );
 
     // The stationary list — by y; equal y inserts the new building earlier.
-    let found = find_unit_with_cargo_type(state.state(), TeamId::RED, complex, CargoType::Raw);
+    let found = state.snapshot().find_unit_with_cargo_type(TeamId::RED, complex, CargoType::Raw);
     assert!(found == Some(first) || found == Some(second));
     assert_eq!(
-        find_unit_with_cargo_type(state.state(), TeamId::RED, complex, CargoType::Fuel),
+        state.snapshot().find_unit_with_cargo_type(TeamId::RED, complex, CargoType::Fuel),
         None
     );
     assert_eq!(
-        find_unit_with_cargo_type(state.state(), TeamId::RED, complex, CargoType::Raw)
+        state.snapshot().find_unit_with_cargo_type(TeamId::RED, complex, CargoType::Raw)
             .and_then(|id| state.snapshot().unit(id))
             .map(|unit| unit.unit_type),
         Some(UnitType::MaterialStorage)
@@ -420,7 +415,7 @@ fn mining_income_is_pulled_into_the_mine_and_then_the_dump() {
     assert_eq!(storage(&state, mine), 25);
     assert_eq!(storage(&state, dump), 5);
 
-    let (materials, capacity) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (materials, capacity) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     assert_eq!(materials.raw, 30);
     assert_eq!(capacity.raw, 75);
 }
@@ -474,16 +469,16 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
     );
 
     let complex = complex_of(&state, mine);
-    let (materials, capacity) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (materials, capacity) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     assert_eq!(capacity.raw, 25);
     assert_eq!(materials.raw, 25, "инвентарь не растёт сверх ёмкости");
 
     // The remainder lies in the complex cache until the next recomputation and is lost:
     // `Access_UpdateResourcesTotal` resets the field and counts the inventory.
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
@@ -494,7 +489,7 @@ fn mining_overflow_is_lost_when_complex_capacity_is_exhausted() {
     assert_eq!(storage(&state, mine), 25);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
@@ -527,7 +522,7 @@ fn fuel_and_gold_income_need_their_own_storage_buildings() {
     // The mine has RAW cargo: there is nowhere to put fuel and gold.
     state.manage_economy(TeamId::RED);
     assert_eq!(storage(&state, mine), 0);
-    let (materials, _) = get_cargo_info(state.state(), TeamId::RED, complex);
+    let (materials, _) = state.snapshot().get_cargo_info(TeamId::RED, complex);
     assert_eq!(materials.fuel, 0);
     assert_eq!(materials.gold, 0);
 
@@ -634,11 +629,11 @@ fn complex_transfer_negative_uses_buildings_in_stationary_order() {
     state.unit_mut(mine).expect("mine").storage = 0;
     state.unit_mut(first).expect("first").storage = 10;
     state.unit_mut(second).expect("second").storage = 10;
-    if let Some(target) = state.state_mut().complex_mut(TeamId::RED, complex.0 as u16) {
+    if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
         target.raw = 20;
     }
 
-    complex_transfer(state.state_mut(), TeamId::RED, complex, -15, 0, 0);
+    state.complex_transfer(TeamId::RED, complex, -15, 0, 0);
 
     assert_eq!(storage(&state, first), 0, "первое в списке отдаёт первым");
     assert_eq!(storage(&state, second), 5);
@@ -655,11 +650,11 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
     );
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 45;
-    if let Some(target) = state.state_mut().complex_mut(TeamId::RED, complex.0 as u16) {
+    if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
         target.raw = 45;
     }
 
-    transfer_cargo_kind(state.state_mut(), dump, CargoType::Raw, 20);
+    state.transfer_cargo_kind(dump, CargoType::Raw, 20);
 
     let unit = state.snapshot().unit(dump).expect("dump");
     assert_eq!(unit.storage, 50, "склад не превышает ATTRIB_STORAGE");
@@ -670,17 +665,17 @@ fn transfer_cargo_kind_never_exceeds_storage_capacity() {
     // is normalized on the next `Access_UpdateResourcesTotal` from the inventory.
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,
         65
     );
 
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
     assert_eq!(
         state
-            .state()
+            .snapshot()
             .complex(TeamId::RED, complex.0 as u16)
             .expect("complex")
             .raw,

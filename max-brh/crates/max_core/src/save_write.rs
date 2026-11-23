@@ -848,7 +848,7 @@ impl GameState {
 
     /// Replaces the save settings/service fields (used when creating
     /// a game and when saving from the UI).
-    pub fn set_save_meta(&mut self, meta: SaveMeta) {
+    pub(crate) fn set_save_meta(&mut self, meta: SaveMeta) {
         self.save_meta = meta;
     }
 

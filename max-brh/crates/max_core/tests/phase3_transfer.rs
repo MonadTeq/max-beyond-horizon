@@ -13,23 +13,17 @@
 //! The transfer always changes **two** sides (the building's `storage` and the
 //! complex field), exactly as in C++.
 
-use max_core::alloc::{get_cargo_info, update_resources_total};
-use max_core::crc;
 use max_core::enums::{unit_flags, TeamClan, UnitType};
 use max_core::geo::Point;
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
-use max_core::transfer::{
-    complex_stored, complex_transfer, process_transfer, transfer_cargo_kind,
-    transfer_menu_cargo_info,
-};
 use max_core::unit::UnitId;
 use max_core::universe::GameUniverse;
 use max_core::victory::CargoType;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -56,7 +50,7 @@ fn complex_of(state: &GameUniverse, id: UnitId) -> ComplexId {
 
 fn field(state: &GameUniverse, complex: ComplexId, cargo: CargoType) -> i16 {
     let target = state
-        .state()
+        .snapshot()
         .complex(TeamId::RED, complex.0 as u16)
         .expect("complex");
 
@@ -76,7 +70,7 @@ fn order_transfer(state: &mut GameUniverse, unit: UnitId, parent: UnitId, amount
         unit.transfer_cargo = amount;
     }
 
-    process_transfer(state.state_mut(), unit);
+    state.process_transfer(unit);
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +84,6 @@ fn raw_transfer_round_trip_changes_both_sides() {
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 10;
     state
-        .state_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
         .expect("complex")
         .raw = 10;
@@ -114,7 +107,7 @@ fn raw_transfer_round_trip_changes_both_sides() {
     assert_eq!(state.snapshot().unit(dump).expect("dump").storage, 15);
     assert_eq!(field(&state, complex, CargoType::Raw), 15);
     assert_eq!(
-        complex_stored(state.state(), TeamId::RED, complex, CargoType::Raw),
+        state.snapshot().complex_stored(TeamId::RED, complex, CargoType::Raw),
         15
     );
 }
@@ -127,7 +120,6 @@ fn fuel_and_gold_transfers_use_their_own_cargo_type() {
     let fuel_complex = complex_of(&state, fuel);
     state.unit_mut(fuel).expect("FDUMP").storage = 5;
     state
-        .state_mut()
         .complex_mut(TeamId::RED, fuel_complex.0 as u16)
         .expect("complex")
         .fuel = 5;
@@ -157,7 +149,7 @@ fn fuel_and_gold_transfers_use_their_own_cargo_type() {
 
     // The transfer menu shows the building's own stock when the complexes match.
     assert_eq!(
-        transfer_menu_cargo_info(state.state(), gold, gold, CargoType::Gold),
+        state.snapshot().transfer_menu_cargo_info(gold, gold, CargoType::Gold),
         (3, 50)
     );
 }
@@ -193,7 +185,7 @@ fn transfer_overflow_is_distributed_over_member_storage_in_order() {
         "overflow"
     );
     assert_eq!(
-        complex_stored(state.state(), TeamId::RED, complex, CargoType::Raw),
+        state.snapshot().complex_stored(TeamId::RED, complex, CargoType::Raw),
         70
     );
     // C++ `TransferRaw` adds the amount to the complex field, subtracts the
@@ -210,12 +202,11 @@ fn draining_more_than_the_complex_holds_never_drives_storage_negative() {
     state.unit_mut(first).expect("first").storage = 10;
     state.unit_mut(second).expect("second").storage = 10;
     state
-        .state_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
         .expect("complex")
         .raw = 20;
 
-    complex_transfer(state.state_mut(), TeamId::RED, complex, -30, 0, 0);
+    state.complex_transfer(TeamId::RED, complex, -30, 0, 0);
 
     assert_eq!(state.snapshot().unit(first).expect("first").storage, 0);
     assert_eq!(state.snapshot().unit(second).expect("second").storage, 0);
@@ -227,9 +218,9 @@ fn draining_more_than_the_complex_holds_never_drives_storage_negative() {
 
     // `Access_UpdateResourcesTotal` recomputes the cache from the inventory — the
     // negative value disappears and nothing is lost or created.
-    update_resources_total(state.state_mut(), TeamId::RED, complex);
+    state.update_resources_total(TeamId::RED, complex);
     assert_eq!(field(&state, complex, CargoType::Raw), 0);
-    assert_eq!(get_cargo_info(state.state(), TeamId::RED, complex).0.raw, 0);
+    assert_eq!(state.snapshot().get_cargo_info(TeamId::RED, complex).0.raw, 0);
 }
 
 #[test]
@@ -239,7 +230,7 @@ fn a_transfer_of_a_foreign_cargo_type_is_ignored() {
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 0;
 
-    transfer_cargo_kind(state.state_mut(), dump, CargoType::Fuel, 10);
+    state.transfer_cargo_kind(dump, CargoType::Fuel, 10);
 
     assert_eq!(state.snapshot().unit(dump).expect("dump").storage, 0);
     assert_eq!(field(&state, complex, CargoType::Fuel), 0);
@@ -256,7 +247,6 @@ fn run_transfers() -> GameUniverse {
     let complex = complex_of(&state, dump);
     state.unit_mut(dump).expect("dump").storage = 10;
     state
-        .state_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
         .expect("complex")
         .raw = 10;
@@ -277,16 +267,16 @@ fn transfer_digests_are_reproducible() {
     let second = run_transfers();
 
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 
     // The truck's storage enters both the packet-45 CRC (`GetUnitListChecksum`
@@ -306,15 +296,15 @@ fn transfer_digests_are_reproducible() {
     changed.unit_mut(truck).expect("truck").storage += 1;
 
     assert_ne!(
-        crc::state_checksum(changed.state()),
-        crc::state_checksum(first.state())
+        changed.snapshot().state_checksum(),
+        first.snapshot().state_checksum()
     );
     assert_ne!(
-        crc::state_digest(changed.state()),
-        crc::state_digest(first.state())
+        changed.snapshot().state_digest(),
+        first.snapshot().state_digest()
     );
     assert_ne!(
-        crc::replay_digest_crc(changed.state()),
-        crc::replay_digest_crc(first.state())
+        changed.snapshot().replay_digest_crc(),
+        first.snapshot().replay_digest_crc()
     );
 }

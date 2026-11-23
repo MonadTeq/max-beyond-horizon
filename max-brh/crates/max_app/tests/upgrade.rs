@@ -1,7 +1,6 @@
 //! P6: purchasable upgrades screen — the chain UI → `TeamUnits` → new units.
 
 use max_core::enums::{TeamClan, UnitType};
-use max_core::game::GameState;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_app::upgrademenu::{UpgradeFilter, UpgradeMenu};
@@ -9,13 +8,20 @@ use max_app::{App, AppConfig};
 
 fn app_with_team() -> App {
     let mut app = App::new(AppConfig::default());
-    let mut state = GameState::new();
-    state.player_team = TeamId::RED;
-    state.active_turn_team = TeamId::RED;
-    state.teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
-    state.team_units[TeamId::RED.0 as usize].gold = 500;
-    app.install_universe(max_core::universe::GameUniverse::new(state, max_core::universe::LocalDispatcher));
+    let mut state = max_core::universe::GameUniverse::default();
+    state.set_player_team(TeamId::RED);
+    state.set_active_turn_team(TeamId::RED);
+    state
+        .team_mut(TeamId::RED)
+        .expect("RED slot")
+        .team_type = TeamKind::Player;
+    *state.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+    state
+        .team_units_mut(TeamId::RED)
+        .expect("RED economy")
+        .gold = 500;
+    *app.universe_mut() = state;
     app
 }
 

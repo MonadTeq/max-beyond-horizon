@@ -1,4 +1,4 @@
-//! Stage A facade tests — `max_core::universe` (stage-A task
+//! Stage A facade tests — `crate::universe` (stage-A task
 //! `game-universe-stage-a.md` §3).
 //!
 //! What is proved here:
@@ -21,23 +21,23 @@
 //!    `step_*_barrier` (the counters stay `0`) and its `snapshot_bytes` is
 //!    identical to the network-style run with the barriers disabled.
 
-use max_core::crc;
-use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
-use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
-use max_core::events::{
+use crate::crc;
+use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+use crate::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};
+use crate::events::{
     command_end_turn_barrier, command_finished_turn, command_move_linear, payload_p1_for,
 };
-use max_core::geo::Point;
-use max_core::input::{
+use crate::geo::Point;
+use crate::input::{
     Command, OrderPayload, Packet13Seed, Packet50StopUnit, PayloadP2, PayloadP3,
 };
-use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::unit::UnitId;
-use max_core::universe::{
+use crate::team::{TeamId, TeamKind, TeamUnits};
+use crate::unit::UnitId;
+use crate::universe::{
     BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher,
     NetworkCommand, RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, SubmitOutcome,
 };
-use max_core::GameState;
+use crate::game::GameState;
 
 // ---------------------------------------------------------------------------
 // Scenario helpers
@@ -83,7 +83,7 @@ fn replay_frames(red: UnitId, green: UnitId) -> Vec<Frame> {
         Frame {
             commands: vec![
                 Command::Seed(Packet13Seed { seed: 0xDEAD_BEEF }),
-                Command::Order(max_core::input::Packet08Order {
+                Command::Order(crate::input::Packet08Order {
                     unit: red,
                     payload: OrderPayload::P3(PayloadP3 {
                         p2: PayloadP2 {
@@ -126,7 +126,7 @@ fn replay_frames(red: UnitId, green: UnitId) -> Vec<Frame> {
                     UnitOrderState::InProgress,
                 ),
                 Command::Stop(Packet50StopUnit { unit: green }),
-                Command::MoveFinished(max_core::input::Packet41MoveFinished::port_form(red, true)),
+                Command::MoveFinished(crate::input::Packet41MoveFinished::port_form(red, true)),
             ],
             ticks: 5,
         },
@@ -161,11 +161,11 @@ fn run_script(path: Path) -> Vec<Vec<u8>> {
         match path {
             Path::Legacy => {
                 for command in frame.commands {
-                    universe.state_mut().enqueue(command);
+                    (&mut universe.state).enqueue(command);
                 }
                 for _ in 0..frame.ticks {
-                    universe.state_mut().tick();
-                    snapshots.push(universe.state().snapshot_bytes());
+                    (&mut universe.state).tick();
+                    snapshots.push((&universe.state).snapshot_bytes());
                 }
             }
             Path::Facade => {
@@ -174,17 +174,17 @@ fn run_script(path: Path) -> Vec<Vec<u8>> {
                 }
                 for _ in 0..frame.ticks {
                     universe.tick();
-                    snapshots.push(universe.state().snapshot_bytes());
+                    snapshots.push((&universe.state).snapshot_bytes());
                 }
             }
         }
     }
 
     // The turn close, as the scripted reference does it.
-    let _ = universe.state_mut().finish_turn();
+    let _ = (&mut universe.state).finish_turn();
     for _ in 0..3 {
         universe.tick();
-        snapshots.push(universe.state().snapshot_bytes());
+        snapshots.push((&universe.state).snapshot_bytes());
     }
 
     snapshots
@@ -272,11 +272,11 @@ fn delta_since_reports_the_current_version_once() {
     let delta = universe.delta_since(0).expect("one tick is a change");
     assert_eq!(delta.from_seq, 0);
     assert_eq!(delta.seq, 1);
-    assert_eq!(delta.checksum, crc::state_digest(universe.state()));
+    assert_eq!(delta.checksum, crc::state_digest(&universe.state));
     assert_eq!(delta.checksum, delta.state.state_digest());
     assert_eq!(
         delta.state.snapshot_bytes(),
-        universe.state().snapshot_bytes()
+        (&universe.state).snapshot_bytes()
     );
     assert!(
         universe.delta_since(1).is_none(),
@@ -403,14 +403,14 @@ fn submit_remote_applies_state_sync_immediately_and_queues_commands() {
     let (state, green) = remote_state();
     let mut universe = GameUniverse::new(state, TestNetworkDispatcher);
 
-    let hits_before = universe.state().unit(green).expect("unit").hits;
-    let packet = max_core::events::StateSyncPacket {
+    let hits_before = (&universe.state).unit(green).expect("unit").hits;
+    let packet = crate::events::StateSyncPacket {
         team: TeamId::GREEN,
         sync_index: 1,
         is_last: false,
         units: vec![(
             green,
-            max_core::events::UnitStatePacket {
+            crate::events::UnitStatePacket {
                 unit_type: UnitType::Tank as u16,
                 team: TeamId::GREEN.0,
                 hits: hits_before.saturating_sub(1),
@@ -427,7 +427,7 @@ fn submit_remote_applies_state_sync_immediately_and_queues_commands() {
     universe.submit_remote(RemoteCommand::StateSync(packet));
 
     assert_eq!(
-        universe.state().unit(green).expect("unit").hits,
+        (&universe.state).unit(green).expect("unit").hits,
         hits_before.saturating_sub(1),
         "the authoritative state is applied without a tick"
     );
@@ -436,14 +436,14 @@ fn submit_remote_applies_state_sync_immediately_and_queues_commands() {
     // A command is only queued.
     universe.submit_remote(RemoteCommand::Command(command_finished_turn(TeamId::GREEN)));
     assert!(
-        !universe.state().teams[1].finished_turn,
+        !(&universe.state).teams[1].finished_turn,
         "a remote command must not be applied before the tick"
     );
     assert_eq!(universe.seq(), 1);
 
     universe.tick();
     assert!(
-        universe.state().teams[1].finished_turn,
+        (&universe.state).teams[1].finished_turn,
         "the queued command is applied at the start of the next tick"
     );
     assert_eq!(universe.seq(), 2);
@@ -469,7 +469,7 @@ fn local_dispatcher_is_pure_and_does_not_step_barriers() {
         begin_turn: Some(0),
         end_turn: Some(0),
         crc: Some(0),
-        state_sync: [0; max_core::TEAM_SLOTS],
+        state_sync: [0; crate::TEAM_SLOTS],
         local_team: TeamId::RED,
         play_mode: PlayMode::TurnBased,
     };
@@ -492,11 +492,11 @@ fn local_dispatcher_is_pure_and_does_not_step_barriers() {
     );
 
     // Gate-4 part: in single player the barrier counters are never stepped.
-    let state = universe.state();
-    assert_eq!(state.frame_sync_counter, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(state.turn_indices, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(state.next_turn_indices, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(state.team_data_crc16, [0; max_core::TEAM_SLOTS]);
+    let state = &universe.state;
+    assert_eq!(state.frame_sync_counter, [0; crate::TEAM_SLOTS]);
+    assert_eq!(state.turn_indices, [0; crate::TEAM_SLOTS]);
+    assert_eq!(state.next_turn_indices, [0; crate::TEAM_SLOTS]);
+    assert_eq!(state.team_data_crc16, [0; crate::TEAM_SLOTS]);
     assert_eq!(state.begin_turn_barrier(), Some(0));
     assert_eq!(state.end_turn_barrier(), Some(0));
     assert_eq!(state.crc_barrier(), Some(0));
@@ -505,7 +505,7 @@ fn local_dispatcher_is_pure_and_does_not_step_barriers() {
     // takes peer input (ADR §2).
     universe.submit_remote(RemoteCommand::Command(command_finished_turn(TeamId::GREEN)));
     assert!(
-        universe.state().commands.is_empty(),
+        (&universe.state).commands.is_empty(),
         "a local dispatcher ignores remote commands"
     );
 }
@@ -543,7 +543,7 @@ fn submit_reports_dropped_and_accepted_with_full_context() {
     let forbidden = Command::Stop(Packet50StopUnit { unit: green });
     assert_eq!(universe.submit(forbidden.clone()), SubmitOutcome::Dropped);
     assert!(
-        universe.state().commands.is_empty(),
+        (&universe.state).commands.is_empty(),
         "a dropped command never reaches the queue"
     );
 
@@ -564,7 +564,7 @@ fn submit_reports_dropped_and_accepted_with_full_context() {
         })
         .expect("the rejection is reported");
     assert_eq!(rejection.0, forbidden);
-    assert_eq!(rejection.1, max_core::events::ApplyOutcome::Ignored);
+    assert_eq!(rejection.1, crate::events::ApplyOutcome::Ignored);
     assert_eq!(rejection.2, 0);
     assert_eq!(rejection.3, RejectSource::DroppedByRoute);
     assert!(stream.drain(&mut universe).is_empty());
@@ -573,7 +573,7 @@ fn submit_reports_dropped_and_accepted_with_full_context() {
         universe.submit(command_finished_turn(TeamId::RED)),
         SubmitOutcome::Accepted
     );
-    assert_eq!(universe.state().commands.len(), 1);
+    assert_eq!((&universe.state).commands.len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +594,7 @@ fn gate4_state() -> GameState {
 fn single_player_turn_cycle_closes_without_barrier_steppers() {
     // Single player: the facade, `LocalDispatcher`, no barrier steppers.
     let mut universe = GameUniverse::new(gate4_state(), LocalDispatcher);
-    let turn_before = universe.state().turn_counter;
+    let turn_before = (&universe.state).turn_counter;
 
     assert_eq!(
         universe.submit(command_finished_turn(TeamId::RED)),
@@ -602,31 +602,31 @@ fn single_player_turn_cycle_closes_without_barrier_steppers() {
     );
     universe.tick();
     assert_eq!(
-        universe.state().game_state,
+        (&universe.state).game_state,
         GameStateType::EndTurn,
         "packet 06 put the turn-based match into the end-of-turn phase"
     );
-    assert!(universe.state().teams[0].finished_turn);
+    assert!((&universe.state).teams[0].finished_turn);
 
     // The core turn close (`finish_turn`) is called by the turn machine; this gate
     // drives the core close explicitly (the facade cycle through `end_local_turn`
     // is covered by `tests/universe_turn.rs`).
-    let over = universe.state_mut().finish_turn();
+    let over = (&mut universe.state).finish_turn();
     assert!(!over, "the match is not over");
     universe.tick();
 
     assert_eq!(
-        universe.state().turn_counter,
+        (&universe.state).turn_counter,
         turn_before + 1,
         "the turn counter advanced exactly once"
     );
 
     // No barrier stepper was called: every barrier counter is still zero.
-    let single = universe.state();
-    assert_eq!(single.frame_sync_counter, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(single.turn_indices, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(single.next_turn_indices, [0; max_core::TEAM_SLOTS]);
-    assert_eq!(single.team_data_crc16, [0; max_core::TEAM_SLOTS]);
+    let single = &universe.state;
+    assert_eq!(single.frame_sync_counter, [0; crate::TEAM_SLOTS]);
+    assert_eq!(single.turn_indices, [0; crate::TEAM_SLOTS]);
+    assert_eq!(single.next_turn_indices, [0; crate::TEAM_SLOTS]);
+    assert_eq!(single.team_data_crc16, [0; crate::TEAM_SLOTS]);
 
     // The network-style driver with the barriers disabled: the same commands
     // through the queue (00/52/45 are **not** sent, the steppers are not called).

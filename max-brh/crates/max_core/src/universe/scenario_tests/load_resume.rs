@@ -32,16 +32,17 @@
 //! the builder's storage (`unitinfo.cpp:2904-2915`, `game.rs:2086`), so the
 //! storage value records how many economy passes the team went through.
 
-use max_core::enums::{
+use crate::enums::{
     unit_flags::{MOBILE_LAND_UNIT, SELECTABLE},
     GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType,
 };
-use max_core::events::{apply_command, command_finished_turn};
-use max_core::geo::Point;
-use max_core::save::SaveFile;
-use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::universe::{EventStream, GameEvent, GameUniverse, LocalDispatcher, TurnNotice};
-use max_core::{crc, GameState, TurnEvent};
+use crate::events::{apply_command, command_finished_turn};
+use crate::geo::Point;
+use crate::save::SaveFile;
+use crate::team::{TeamId, TeamKind, TeamUnits};
+use crate::universe::{EventStream, GameEvent, GameUniverse, LocalDispatcher, TurnNotice};
+use crate::game::GameState;
+use crate::{crc, TurnEvent};
 
 /// Raw storage of a freshly created builder before any economy pass.
 const BUILDER_STORAGE: i16 = 40;
@@ -123,7 +124,7 @@ fn economy_state() -> GameState {
 }
 
 /// The builder slot of `team` (the only `CONSTRCT` of the scenario).
-fn builder_of(state: &GameState, team: TeamId) -> max_core::UnitId {
+fn builder_of(state: &GameState, team: TeamId) -> crate::UnitId {
     state
         .unit_ids_in_order()
         .into_iter()
@@ -383,14 +384,14 @@ fn facade_resume_local_round_is_a_single_turn_start() {
         seq_before + 1,
         "one atomic facade operation — one version bump"
     );
-    assert_eq!(universe.state().active_turn_team, TeamId::RED);
+    assert_eq!((&universe.state).active_turn_team, TeamId::RED);
     assert_eq!(
-        builder_storage(universe.state(), TeamId::RED),
+        builder_storage(&universe.state, TeamId::RED),
         BUILDER_STORAGE - BUILDER_RAW_PER_TURN,
         "the facade path does not re-apply the economy either"
     );
     assert_same_bytes(
-        &universe.state().snapshot_bytes(),
+        &(&universe.state).snapshot_bytes(),
         &loaded_snapshot,
         "the facade resume must leave the loaded state untouched",
     );
@@ -410,8 +411,8 @@ fn facade_resume_local_round_is_a_single_turn_start() {
 
     // No round was closed and the machine is not run further: the next turn step
     // would be GREEN (as in C++, which breaks out after the first team).
-    assert_eq!(universe.state().turn_counter, 1);
-    assert!(!universe.state().teams[1].finished_turn);
+    assert_eq!((&universe.state).turn_counter, 1);
+    assert!(!(&universe.state).teams[1].finished_turn);
 }
 
 #[test]
@@ -433,5 +434,5 @@ fn facade_resume_returns_false_when_no_playing_team_is_left() {
         seq_before,
         "nothing changed — no version bump"
     );
-    assert_eq!(universe.state().active_turn_team, TeamId::GRAY);
+    assert_eq!((&universe.state).active_turn_team, TeamId::GRAY);
 }

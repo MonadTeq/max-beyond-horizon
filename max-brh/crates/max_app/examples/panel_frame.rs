@@ -45,10 +45,10 @@ fn main() -> anyhow::Result<()> {
     app.new_game(&NewGameConfig::p2_reference())?;
 
     let unit = app
-        .state()
+        .state_ref()
         .unit_ids_in_order()
         .into_iter()
-        .filter_map(|id| app.state().unit(id))
+        .filter_map(|id| app.state_ref().unit(id))
         .find(|unit| {
             unit.team == app.player_team()
                 && unit.hits > 0

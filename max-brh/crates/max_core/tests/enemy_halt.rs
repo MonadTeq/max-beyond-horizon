@@ -18,7 +18,7 @@ use max_core::universe::GameUniverse;
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::with_setup(
-        GameUniverse::default().state().map.clone(),
+        GameUniverse::default().snapshot().map().clone(),
         [
             TeamKind::Player,
             TeamKind::Computer,
@@ -27,7 +27,7 @@ fn state() -> GameUniverse {
         ],
     );
 
-    state.state_mut().player_team = TeamId::RED;
+    state.set_player_team(TeamId::RED);
     state
 }
 
@@ -66,12 +66,12 @@ fn setup_two_units(
 
     state.write_unit(enemy, enemy_unit);
     order_move(&mut state, mover, Point::new(26, 20));
-    state.state_mut().enemy_halt = enemy_halt;
+    state.set_enemy_halt(enemy_halt);
 
     // The unit "enters" an unscanned area: as in the game, where a step
     // reveals a new cell. Otherwise the cell is already covered by spawn and
     // `Access_OnCellRevealed` is not called (C++ behaves the same way).
-    for map in &mut state.state_mut().ai.heat_maps {
+    for map in &mut state.ai_mut().heat_maps {
         map.clear();
     }
 
@@ -82,12 +82,12 @@ fn setup_two_units(
 fn enemy_halt_queues_an_emergency_stop_for_a_moving_unit() {
     let (mut state, mover, _) = setup_two_units(true);
 
-    state.state_mut().update_map_status(mover, true);
+    state.update_map_status(mover, true);
 
     assert!(
         state
-            .state()
-            .unit_events
+            .snapshot()
+            .unit_events()
             .iter()
             .any(|event| event.unit() == mover),
         "движущийся юнит, увидевший врага, должен получить EmergencyStop"
@@ -95,8 +95,8 @@ fn enemy_halt_queues_an_emergency_stop_for_a_moving_unit() {
 
     // Applying the event (which `UnitsManager_ProcessOrders` does) actually
     // stops the unit: `StopMovement` → `BlockedOnPathRequest`.
-    let event = state.state_mut().unit_events.remove(0);
-    max_core::events::process_unit_event(state.state_mut(), &event);
+    let event = state.unit_events_mut().remove(0);
+    state.process_unit_event(&event);
 
     let unit = state.snapshot().unit(mover).expect("юнит жив");
     assert_ne!(
@@ -111,10 +111,10 @@ fn enemy_halt_queues_an_emergency_stop_for_a_moving_unit() {
 fn enemy_halt_off_keeps_the_unit_moving() {
     let (mut state, mover, _) = setup_two_units(false);
 
-    state.state_mut().update_map_status(mover, true);
+    state.update_map_status(mover, true);
 
     assert!(
-        state.state().unit_events.is_empty(),
+        state.snapshot().unit_events().is_empty(),
         "при выключенной настройке событий остановки нет"
     );
 
@@ -131,10 +131,10 @@ fn enemy_halt_ignores_idle_units() {
         state.write_unit(mover, unit);
     }
 
-    state.state_mut().update_map_status(mover, true);
+    state.update_map_status(mover, true);
 
     assert!(
-        state.state().unit_events.is_empty(),
+        state.snapshot().unit_events().is_empty(),
         "C++ проверяет `order != ORDER_AWAIT` (access.cpp:830)"
     );
 }
@@ -142,12 +142,12 @@ fn enemy_halt_ignores_idle_units() {
 #[test]
 fn enemy_halt_ignores_remote_teams() {
     let (mut state, mover, _) = setup_two_units(true);
-    state.state_mut().teams[0].team_type = TeamKind::Remote;
+    state.teams_mut()[0].team_type = TeamKind::Remote;
 
-    state.state_mut().update_map_status(mover, true);
+    state.update_map_status(mover, true);
 
     assert!(
-        state.state().unit_events.is_empty(),
+        state.snapshot().unit_events().is_empty(),
         "C++ останавливает только TEAM_TYPE_PLAYER/COMPUTER (access.cpp:828)"
     );
 }

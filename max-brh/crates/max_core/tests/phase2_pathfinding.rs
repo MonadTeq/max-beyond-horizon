@@ -8,7 +8,6 @@
 mod support;
 
 use max_core::access;
-use max_core::crc;
 use max_core::enums::{Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_WIDTH};
 use max_core::team::TeamId;
@@ -18,7 +17,7 @@ use support::{game, order_move, spawn, start_turn, ticks};
 
 fn wall(state: &mut GameUniverse, x: i16, from_y: i16, to_y: i16) {
     for y in from_y..=to_y {
-        state.state_mut().map.surface.set(x, y, Surface::WATER);
+        state.map_mut().surface.set(x, y, Surface::WATER);
     }
 }
 
@@ -47,7 +46,7 @@ fn tank_routes_around_a_water_wall() {
                 let tank = state.snapshot().unit(unit).expect("unit");
                 if tank.grid != previous {
                     assert_eq!(
-                        state.state().map.surface_at(tank.grid.x, tank.grid.y),
+                        state.snapshot().map().surface_at(tank.grid.x, tank.grid.y),
                         Surface::LAND,
                         "the tank entered water at {:?}",
                         tank.grid
@@ -79,12 +78,12 @@ fn tank_routes_around_a_water_wall() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 }
 
@@ -100,8 +99,8 @@ fn unreachable_goal_leaves_the_tank_waiting() {
                     continue;
                 }
                 state
-                    .state_mut()
-                    .map
+                    .map_mut()
+                    
                     .surface
                     .set(15 + dx, 15 + dy, Surface::WATER);
             }
@@ -117,10 +116,10 @@ fn unreachable_goal_leaves_the_tank_waiting() {
         assert_eq!(unit_ref.state, UnitOrderState::ExecutingOrder);
         assert!(unit_ref.path.is_none());
         assert!(
-            state.state().path_requests.is_empty(),
+            state.snapshot().path_requests().is_empty(),
             "the queue is drained"
         );
-        assert!(state.state().path_requests.is_empty());
+        assert!(state.snapshot().path_requests().is_empty());
         state
     }
 
@@ -131,8 +130,8 @@ fn unreachable_goal_leaves_the_tank_waiting() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
 }
 
@@ -142,7 +141,7 @@ fn sea_unit_routes_along_the_water_lane() {
     let mut state = game();
     // Only the row y = 5 is water; everything else is land.
     for x in 0..MAP_WIDTH {
-        state.state_mut().map.surface.set(x, 5, Surface::WATER);
+        state.map_mut().surface.set(x, 5, Surface::WATER);
     }
 
     let ship = spawn(
@@ -169,7 +168,7 @@ fn sea_unit_routes_along_the_water_lane() {
                     unit.grid
                 );
                 assert_eq!(
-                    state.state().map.surface_at(unit.grid.x, unit.grid.y),
+                    state.snapshot().map().surface_at(unit.grid.x, unit.grid.y),
                     Surface::WATER,
                     "ship on non-water {:?}",
                     unit.grid
@@ -194,7 +193,7 @@ fn sea_unit_routes_along_the_water_lane() {
     // from a land cell (the only route would cross water or leave the map edge).
     let mut land_state = game();
     for x in 0..MAP_WIDTH {
-        land_state.state_mut().map.surface.set(x, 5, Surface::WATER);
+        land_state.map_mut().surface.set(x, 5, Surface::WATER);
     }
     let tank = spawn(
         &mut land_state,
@@ -298,12 +297,12 @@ fn queued_path_requests_are_deterministic() {
         order_move(&mut state, second, Point::new(9, 9));
 
         ticks(&mut state, 1);
-        assert_eq!(state.state().path_requests.len(), 2);
-        assert_eq!(state.state().path_requests[0].unit, first);
-        assert_eq!(state.state().path_requests[1].unit, second);
+        assert_eq!(state.snapshot().path_requests().len(), 2);
+        assert_eq!(state.snapshot().path_requests()[0].unit, first);
+        assert_eq!(state.snapshot().path_requests()[1].unit, second);
 
         ticks(&mut state, 9);
-        assert!(state.state().path_requests.is_empty());
+        assert!(state.snapshot().path_requests().is_empty());
         for unit in [first, second] {
             assert!(
                 state.snapshot().unit(unit).unwrap().path.is_some()
@@ -320,7 +319,7 @@ fn queued_path_requests_are_deterministic() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
 }

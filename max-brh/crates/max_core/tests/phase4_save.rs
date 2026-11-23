@@ -586,9 +586,9 @@ fn every_unit_field_survives_a_write_cycle() {
 /// Builds a save of a fresh game with one unit of each path kind.
 fn save_with_paths() -> Vec<u8> {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().player_team = TeamId::RED;
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    state.set_player_team(TeamId::RED);
 
     let tank = state
         .spawn_unit(
@@ -644,7 +644,7 @@ fn save_with_paths() -> Vec<u8> {
             direction_y: -4,
         }));
 
-    state.state().to_save_bytes().expect("writes")
+    state.snapshot().to_save_bytes().expect("writes")
 }
 
 #[test]
@@ -861,9 +861,9 @@ fn invalid_enum_values_are_rejected() {
 /// A one-unit save with a message log entry that has a recognizable marker.
 fn marker_save() -> (Vec<u8>, [u8; 11]) {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().player_team = TeamId::RED;
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    state.set_player_team(TeamId::RED);
     let tank = state
         .spawn_unit(
             max_core::enums::UnitType::Tank,
@@ -873,9 +873,8 @@ fn marker_save() -> (Vec<u8>, [u8; 11]) {
         )
         .expect("tank");
     state
-        .state_mut()
         .push_message(0, "PHASE4MARK", Point::new(10, 10), Some(tank));
-    let bytes = state.state().to_save_bytes().expect("writes");
+    let bytes = state.snapshot().to_save_bytes().expect("writes");
     (bytes, *b"PHASE4MARK\0")
 }
 

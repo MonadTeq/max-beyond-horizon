@@ -17,7 +17,6 @@
 //! topic reaches a level, the upgrade lands on the current values, and a second
 //! research center halves the time.
 
-use max_core::crc;
 use max_core::enums::{ResearchTopic, TeamClan, UnitType};
 use max_core::research::{
     research_attribute, research_attribute_values, research_factor, research_turns_to_complete,
@@ -40,17 +39,17 @@ const TOPICS: [ResearchTopic; 8] = [
 
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[TeamId::RED.0 as usize].team_type = TeamKind::Player;
-    state.state_mut().team_units[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[TeamId::RED.0 as usize].team_type = TeamKind::Player;
+    state.team_units_table_mut()[TeamId::RED.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
 fn topic(state: &GameUniverse, topic: ResearchTopic) -> ResearchTopicInfo {
-    state.state().teams[TeamId::RED.0 as usize].research_topics[topic as usize]
+    state.snapshot().teams()[TeamId::RED.0 as usize].research_topics[topic as usize]
 }
 
 fn set_topic(state: &mut GameUniverse, topic: ResearchTopic, info: ResearchTopicInfo) {
-    state.state_mut().teams[TeamId::RED.0 as usize].research_topics[topic as usize] = info;
+    state.teams_mut()[TeamId::RED.0 as usize].research_topics[topic as usize] = info;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +59,7 @@ fn set_topic(state: &mut GameUniverse, topic: ResearchTopic, info: ResearchTopic
 #[test]
 fn all_eight_topics_complete_a_level_and_apply_the_delta() {
     let mut state = state();
-    let units_before = state.state().team_units[TeamId::RED.0 as usize].clone();
+    let units_before = state.snapshot().team_units()[TeamId::RED.0 as usize].clone();
 
     for topic_value in TOPICS {
         set_topic(
@@ -74,7 +73,7 @@ fn all_eight_topics_complete_a_level_and_apply_the_delta() {
         );
     }
 
-    let events = state.state_mut().advance_research(TeamId::RED);
+    let events = state.advance_research(TeamId::RED);
 
     assert_eq!(events.len(), 8, "one event per topic: {events:?}");
     for (index, event) in events.iter().enumerate() {
@@ -85,7 +84,7 @@ fn all_eight_topics_complete_a_level_and_apply_the_delta() {
 
     // `ResearchMenu_ApplyUpgrades`: for every type `current += new − old`, where
     // `old/new` come from the topic level and the **base** value.
-    let units_after = &state.state().team_units[TeamId::RED.0 as usize];
+    let units_after = &state.snapshot().team_units()[TeamId::RED.0 as usize];
     for topic_value in TOPICS {
         let attribute = research_attribute(topic_value);
         for unit_type in [UnitType::Tank, UnitType::Infantry, UnitType::MiningStation] {
@@ -110,7 +109,7 @@ fn all_eight_topics_complete_a_level_and_apply_the_delta() {
 fn three_levels_accumulate_the_attack_bonus() {
     let mut state = state();
     let tank = UnitType::Tank as usize;
-    let base_attack = state.state().team_units[TeamId::RED.0 as usize].base_values[tank].attack;
+    let base_attack = state.snapshot().team_units()[TeamId::RED.0 as usize].base_values[tank].attack;
 
     set_topic(
         &mut state,
@@ -126,10 +125,10 @@ fn three_levels_accumulate_the_attack_bonus() {
         // `ManageEconomy` re-initializes the timer for the next level.
         state.manage_economy(TeamId::RED);
         // Fast-forward: one research turn completes the level.
-        state.state_mut().teams[TeamId::RED.0 as usize].research_topics
+        state.teams_mut()[TeamId::RED.0 as usize].research_topics
             [ResearchTopic::Attack as usize]
             .turns_to_complete = 1;
-        let events = state.state_mut().advance_research(TeamId::RED);
+        let events = state.advance_research(TeamId::RED);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].level, level);
     }
@@ -138,7 +137,7 @@ fn three_levels_accumulate_the_attack_bonus() {
     // Each level adds `level * base / 10 − (level − 1) * base / 10`; the sum is
     // `3 * base / 10` because C++ re-applies the cumulative difference.
     assert_eq!(
-        state.state().team_units[TeamId::RED.0 as usize].current_values[tank].attack,
+        state.snapshot().team_units()[TeamId::RED.0 as usize].current_values[tank].attack,
         base_attack + (3 * base_attack) / 10
     );
 }
@@ -161,7 +160,7 @@ fn a_second_research_center_halves_the_time_to_complete() {
         },
     );
     for turn in 1..=turns {
-        let events = single.state_mut().advance_research(TeamId::RED);
+        let events = single.advance_research(TeamId::RED);
         assert_eq!(
             events.is_empty(),
             turn < turns,
@@ -183,7 +182,7 @@ fn a_second_research_center_halves_the_time_to_complete() {
         },
     );
     for turn in 1..=expected {
-        let events = double.state_mut().advance_research(TeamId::RED);
+        let events = double.advance_research(TeamId::RED);
         assert_eq!(
             events.len(),
             usize::from(turn == expected),
@@ -248,10 +247,10 @@ fn run_research(turns: usize) -> GameUniverse {
     for _ in 0..turns {
         state.manage_economy(TeamId::RED);
         for topic_value in TOPICS {
-            state.state_mut().teams[TeamId::RED.0 as usize].research_topics[topic_value as usize]
+            state.teams_mut()[TeamId::RED.0 as usize].research_topics[topic_value as usize]
                 .turns_to_complete = 1;
         }
-        state.state_mut().advance_research(TeamId::RED);
+        state.advance_research(TeamId::RED);
     }
 
     state
@@ -263,16 +262,16 @@ fn research_digests_are_reproducible() {
     let second = run_research(4);
 
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 
     // The research levels and the current attribute values are part of the
@@ -280,16 +279,16 @@ fn research_digests_are_reproducible() {
     // the unit lists (`GetUnitListChecksum`) and does not include team research,
     // which is C++ behavior.
     let mut changed = first.clone();
-    changed.state_mut().teams[TeamId::RED.0 as usize].research_topics
+    changed.teams_mut()[TeamId::RED.0 as usize].research_topics
         [ResearchTopic::Attack as usize]
         .research_level += 1;
     assert_ne!(
-        crc::state_digest(changed.state()),
-        crc::state_digest(first.state())
+        changed.snapshot().state_digest(),
+        first.snapshot().state_digest()
     );
     assert_ne!(
-        crc::replay_digest_crc(changed.state()),
-        crc::replay_digest_crc(first.state())
+        changed.snapshot().replay_digest_crc(),
+        first.snapshot().replay_digest_crc()
     );
 
     // `run_research` produced four completed levels per topic.

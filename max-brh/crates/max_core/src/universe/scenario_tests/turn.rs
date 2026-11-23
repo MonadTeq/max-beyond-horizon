@@ -26,19 +26,20 @@
 //!    inside the facade (stage-A task §6 item 4): the same state as `begin_round` +
 //!    `next_team` on the raw state.
 
-use max_core::crc;
-use max_core::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
-use max_core::enums::{PlayMode, TeamClan, UnitType, VictoryType};
-use max_core::events::{apply_command, command_finished_turn};
-use max_core::geo::Point;
-use max_core::input::Command;
-use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::universe::{
+use crate::crc;
+use crate::enums::unit_flags::{MOBILE_LAND_UNIT, SELECTABLE};
+use crate::enums::{PlayMode, TeamClan, UnitType, VictoryType};
+use crate::events::{apply_command, command_finished_turn};
+use crate::geo::Point;
+use crate::input::Command;
+use crate::team::{TeamId, TeamKind, TeamUnits};
+use crate::universe::{
     BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher,
     NetworkCommand, RemoteCommand, RemoteHandling, RoutedCommand, SubmitOutcome, TurnNotice,
 };
-use max_core::victory::{self, WinLossStatus};
-use max_core::{GameState, TurnEvent, TEAM_SLOTS};
+use crate::victory::{self, WinLossStatus};
+use crate::game::GameState;
+use crate::{TurnEvent, TEAM_SLOTS};
 
 // ---------------------------------------------------------------------------
 // Scenario helpers
@@ -156,7 +157,7 @@ fn check_06_without_a_shift(hot_seat: bool, closes: usize) {
     let mut stream = universe.subscribe();
 
     assert_eq!(
-        universe.state().snapshot_bytes(),
+        (&universe.state).snapshot_bytes(),
         legacy.snapshot_bytes(),
         "the two runs must start from the same state"
     );
@@ -164,7 +165,7 @@ fn check_06_without_a_shift(hot_seat: bool, closes: usize) {
     for step in 0..closes {
         let team = legacy.active_turn_team;
         assert_eq!(
-            universe.state().active_turn_team,
+            (&universe.state).active_turn_team,
             team,
             "step {step}: both paths must act for the same team"
         );
@@ -173,14 +174,14 @@ fn check_06_without_a_shift(hot_seat: bool, closes: usize) {
         universe.end_local_turn(team);
 
         assert_eq!(
-            universe.state().snapshot_bytes(),
+            (&universe.state).snapshot_bytes(),
             legacy.snapshot_bytes(),
             "step {step} (team {team:?}): end_local_turn ≠ apply(06)+enter_end_turn+next_team"
         );
-        assert_eq!(universe.state().turn_counter, legacy.turn_counter);
-        assert_eq!(universe.state().player_team, legacy.player_team);
-        assert_eq!(universe.state().round_team, legacy.round_team);
-        assert_eq!(universe.state().active_turn_team, legacy.active_turn_team);
+        assert_eq!((&universe.state).turn_counter, legacy.turn_counter);
+        assert_eq!((&universe.state).player_team, legacy.player_team);
+        assert_eq!((&universe.state).round_team, legacy.round_team);
+        assert_eq!((&universe.state).active_turn_team, legacy.active_turn_team);
 
         // The peek data is exactly what the old application loop read before
         // every step.
@@ -203,7 +204,7 @@ fn check_06_without_a_shift(hot_seat: bool, closes: usize) {
         }
 
         // Gate 4 part: the local machine never steps the barrier counters.
-        let state = universe.state();
+        let state = &universe.state;
         assert_eq!(state.frame_sync_counter, [0; TEAM_SLOTS]);
         assert_eq!(state.turn_indices, [0; TEAM_SLOTS]);
         assert_eq!(state.next_turn_indices, [0; TEAM_SLOTS]);
@@ -236,7 +237,7 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
     let mut immediate = GameUniverse::new(started_state(false), LocalDispatcher);
     let mut stream = queued.subscribe();
 
-    let before = queued.state().snapshot_bytes();
+    let before = (&queued.state).snapshot_bytes();
 
     // Path 1: `submit(06)` — only the queue. Nothing is applied, the turn stays
     // open and no turn notice is produced.
@@ -244,14 +245,14 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
         queued.submit(command_finished_turn(TeamId::RED)),
         SubmitOutcome::Accepted
     );
-    assert_eq!(queued.state().commands.len(), 1, "the command is queued");
+    assert_eq!((&queued.state).commands.len(), 1, "the command is queued");
     assert_eq!(
-        queued.state().snapshot_bytes(),
+        (&queued.state).snapshot_bytes(),
         before,
         "submit must not mutate the state"
     );
-    assert!(!queued.state().teams[0].finished_turn);
-    assert_eq!(queued.state().active_turn_team, TeamId::RED);
+    assert!(!(&queued.state).teams[0].finished_turn);
+    assert_eq!((&queued.state).active_turn_team, TeamId::RED);
     assert!(
         drain_turn_notices(&mut queued, &mut stream).is_empty(),
         "the queue path must not run the turn machine"
@@ -261,17 +262,17 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
     // already acting before any tick.
     immediate.end_local_turn(TeamId::RED);
     assert!(
-        immediate.state().teams[0].finished_turn,
+        (&immediate.state).teams[0].finished_turn,
         "06 is applied immediately"
     );
     assert_eq!(
-        immediate.state().active_turn_team,
+        (&immediate.state).active_turn_team,
         TeamId::GREEN,
         "the next team is already acting"
     );
-    assert_eq!(immediate.state().round_team, 2, "the round cursor moved");
+    assert_eq!((&immediate.state).round_team, 2, "the round cursor moved");
     assert_ne!(
-        immediate.state().snapshot_bytes(),
+        (&immediate.state).snapshot_bytes(),
         before,
         "the immediate path changes the state"
     );
@@ -280,22 +281,22 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
     // does not close the turn by itself (the machine is a facade operation, not a
     // tick phase).
     queued.tick();
-    assert!(queued.state().teams[0].finished_turn);
+    assert!((&queued.state).teams[0].finished_turn);
     assert_eq!(
-        queued.state().active_turn_team,
+        (&queued.state).active_turn_team,
         TeamId::RED,
         "a queued 06 does not start the next team"
     );
     assert_eq!(
-        queued.state().round_team,
+        (&queued.state).round_team,
         1,
         "a queued 06 does not move the round cursor"
     );
 
     // The two paths are distinguishable in the state and the snapshots differ.
     assert_ne!(
-        immediate.state().snapshot_bytes(),
-        queued.state().snapshot_bytes(),
+        (&immediate.state).snapshot_bytes(),
+        (&queued.state).snapshot_bytes(),
         "the two 06 paths must not collapse into one behaviour"
     );
 }
@@ -307,13 +308,13 @@ fn end_local_turn_and_submit_06_are_distinguishable() {
 #[test]
 fn single_player_cycle_through_the_facade_keeps_barriers_at_zero() {
     let mut universe = GameUniverse::new(started_state(false), LocalDispatcher);
-    let turn_before = universe.state().turn_counter;
+    let turn_before = (&universe.state).turn_counter;
 
     // Human RED: a simulation tick, then End Turn → the computer GREEN.
     universe.tick();
     universe.end_local_turn(TeamId::RED);
     assert_eq!(
-        universe.state().active_turn_team,
+        (&universe.state).active_turn_team,
         TeamId::GREEN,
         "the computer turn started"
     );
@@ -324,15 +325,15 @@ fn single_player_cycle_through_the_facade_keeps_barriers_at_zero() {
     universe.end_local_turn(TeamId::GREEN);
 
     assert_eq!(
-        universe.state().turn_counter,
+        (&universe.state).turn_counter,
         turn_before + 1,
         "the round advanced the turn counter exactly once"
     );
 
-    let single = universe.state().snapshot_bytes();
+    let single = (&universe.state).snapshot_bytes();
 
     // No barrier stepper was called: every barrier counter is still zero.
-    let state = universe.state();
+    let state = &universe.state;
     assert_eq!(state.frame_sync_counter, [0; TEAM_SLOTS]);
     assert_eq!(state.turn_indices, [0; TEAM_SLOTS]);
     assert_eq!(state.next_turn_indices, [0; TEAM_SLOTS]);
@@ -355,7 +356,7 @@ fn single_player_cycle_through_the_facade_keeps_barriers_at_zero() {
         "single player and the barrier-free network run must be byte-identical"
     );
     assert_eq!(
-        crc::state_digest(universe.state()),
+        crc::state_digest(&universe.state),
         crc::state_digest(&network)
     );
 
@@ -444,11 +445,11 @@ fn turn_notice_status_is_reported_only_on_game_over() {
     // not mutate the teams before returning, so the same evaluation is repeatable.
     assert_eq!(
         status,
-        victory::evaluate_status(universe.state(), universe.state().turn_counter),
+        victory::evaluate_status(&universe.state, (&universe.state).turn_counter),
         "the notice status must be the status evaluated before finish_turn"
     );
     assert_eq!(
-        universe.state().turn_counter,
+        (&universe.state).turn_counter,
         1,
         "a finished match does not advance the counter"
     );
@@ -472,7 +473,7 @@ fn begin_local_round_matches_the_legacy_round_entry() {
     universe.begin_local_round();
 
     assert_eq!(
-        universe.state().snapshot_bytes(),
+        (&universe.state).snapshot_bytes(),
         legacy.snapshot_bytes(),
         "begin_local_round must be the same state as begin_round + next_team"
     );
@@ -522,7 +523,7 @@ fn hot_seat_begin_turn_peek_survives_the_move_into_the_facade() {
     assert_eq!(notices[0].previous_player_team, TeamId::RED);
 
     assert_eq!(
-        universe.state().snapshot_bytes(),
+        (&universe.state).snapshot_bytes(),
         {
             let _ = legacy_close(&mut legacy, TeamId::RED);
             legacy.snapshot_bytes()

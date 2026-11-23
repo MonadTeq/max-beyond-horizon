@@ -623,6 +623,46 @@ impl<'a> StateRef<'a> {
         &self.state.save_meta
     }
 
+    /// The simulation RNG (`game.rs:226`) — read-only for the scenario digests.
+    pub fn rng(&self) -> &'a crate::rng::Randomizer {
+        &self.state.rng
+    }
+
+    /// `Hash_MapHash` — the cell → units index (`game.rs:240`).
+    pub fn map_hash(&self) -> &'a crate::hash::MapHash {
+        &self.state.map_hash
+    }
+
+    /// `UnitsManager_UnitIdCounter` (`game.rs:277`).
+    pub fn unit_id_counter(&self) -> u32 {
+        self.state.unit_id_counter
+    }
+
+    /// `GameState::to_save` (`save_write.rs:835`) — the live state as a V70 tree.
+    pub fn to_save(&self) -> crate::save::SaveFile {
+        self.state.to_save()
+    }
+
+    /// `GameState::is_visible_on_heat_map` (`ai/threat.rs:888`).
+    pub fn is_visible_on_heat_map(&self, unit: &crate::unit::UnitInfo, team: TeamId) -> bool {
+        self.state.is_visible_on_heat_map(unit, team)
+    }
+
+    /// `GameState::ai_heat_map_complete` (`ai/threat.rs:895`).
+    pub fn ai_heat_map_complete(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
+        self.state.ai_heat_map_complete(team, grid_x, grid_y)
+    }
+
+    /// `GameState::ai_heat_map_stealth_sea` (`ai/threat.rs:902`).
+    pub fn ai_heat_map_stealth_sea(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
+        self.state.ai_heat_map_stealth_sea(team, grid_x, grid_y)
+    }
+
+    /// `GameState::ai_heat_map_stealth_land` (`ai/threat.rs:909`).
+    pub fn ai_heat_map_stealth_land(&self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
+        self.state.ai_heat_map_stealth_land(team, grid_x, grid_y)
+    }
+
     /// `TeamUnits::CreateComplex`-computed research allocation (`game.rs:1994`).
     pub fn research_allocation(&self, team: TeamId) -> [u32; RESEARCH_TOPIC_COUNT] {
         self.state.research_allocation(team)
@@ -865,16 +905,128 @@ impl<'a> StateRef<'a> {
     pub fn cargo_info(&self, team: TeamId, complex: crate::team::ComplexId) -> (Cargo, Cargo) {
         crate::alloc::get_cargo_info(self.state, team, complex)
     }
+
+    // — stage B §7: read-only helper delegates for the integration scenarios —
+
+    /// `alloc::get_cargo_info` (`alloc.rs:`) — the C++ name.
+    pub fn get_cargo_info(&self, team: TeamId, complex: crate::team::ComplexId) -> (Cargo, Cargo) {
+        crate::alloc::get_cargo_info(self.state, team, complex)
+    }
+
+    /// `alloc::get_cargo_mining` — extraction and capacity.
+    pub fn get_cargo_mining(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+    ) -> (Cargo, Cargo) {
+        crate::alloc::get_cargo_mining(self.state, team, complex)
+    }
+
+    /// `alloc::get_cargo_minable` — consumption.
+    pub fn get_cargo_minable(&self, team: TeamId, complex: crate::team::ComplexId) -> Cargo {
+        crate::alloc::get_cargo_minable(self.state, team, complex)
+    }
+
+    /// `alloc::total_mining` (`alloc.rs:675`).
+    pub fn total_mining(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        kind: crate::alloc::MiningKind,
+    ) -> i32 {
+        crate::alloc::total_mining(self.state, team, complex, kind)
+    }
+
+    /// `alloc::mining_survey` (`alloc.rs:197`).
+    pub fn mining_survey(&self, grid: Point) -> (i32, i32, i32) {
+        crate::alloc::mining_survey(self.state, grid)
+    }
+
+    /// `power::complex_totals` (`power.rs:306`).
+    pub fn complex_totals(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+    ) -> crate::power::EnergyTotals {
+        crate::power::complex_totals(self.state, team, complex)
+    }
+
+    /// `access::modified_surface_type` (`access.rs:331`).
+    pub fn modified_surface_type(&self, grid: Point, mode: bool) -> u8 {
+        crate::access::modified_surface_type(self.state, grid, mode)
+    }
+
+    /// `production::complex_raw_materials` (`production.rs:1083`).
+    pub fn complex_raw_materials(&self, team: TeamId, complex: crate::team::ComplexId) -> i32 {
+        crate::production::complex_raw_materials(self.state, team, complex)
+    }
+
+    /// `victory::default_win_loss_conditions` (`victory.rs:880`).
+    pub fn default_win_loss_conditions(&self, team: TeamId) -> crate::enums::WinLossState {
+        crate::victory::default_win_loss_conditions(self.state, team)
+    }
+
+    /// `victory::count_ready_units` (`victory.rs:170`).
+    pub fn count_ready_units(&self, team: TeamId, unit_type: UnitType) -> i32 {
+        crate::victory::count_ready_units(self.state, team, unit_type)
+    }
+
+    /// `access::is_accessible_ignoring` (`access.rs:381`).
+    pub fn is_accessible_ignoring(
+        &self,
+        unit_type: UnitType,
+        team: TeamId,
+        grid: Point,
+        flags: u32,
+        ignored: &[UnitId],
+    ) -> u32 {
+        crate::access::is_accessible_ignoring(self.state, unit_type, team, grid, flags, ignored)
+    }
+
+    /// `TaskManager::task_is_unit_usable` (`ai/task_manager.rs:1271`).
+    pub fn task_is_unit_usable(&self, task_id: u32, unit: UnitId) -> bool {
+        self.state
+            .ai
+            .task_manager
+            .task_is_unit_usable(self.state, task_id, unit)
+    }
+
+    /// `access::surface_type` (`access.rs:324`).
+    pub fn surface_type(&self, grid: Point) -> u8 {
+        crate::access::surface_type(self.state, grid)
+    }
+
+    /// `deploy::survey_resources_in_area` (`deploy.rs:121`).
+    pub fn survey_resources_in_area(&self, grid: Point, radius: i32) -> (i32, i32, i32) {
+        crate::deploy::survey_resources_in_area(self.state, grid, radius)
+    }
+
+    /// `transfer::complex_free_capacity` (`transfer.rs:376`).
+    pub fn complex_free_capacity(
+        &self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        cargo: CargoType,
+    ) -> i32 {
+        crate::transfer::complex_free_capacity(self.state, team, complex, cargo)
+    }
+
+    /// `build_orders::get_filtered_weight_table` (`ai/build_orders.rs`).
+    pub fn get_filtered_weight_table(
+        &self,
+        player: &crate::ai::AiPlayer,
+        unit_type: Option<UnitType>,
+        flags: u8,
+    ) -> crate::ai::weight::WeightTable {
+        crate::ai::build_orders::get_filtered_weight_table(player, self.state, unit_type, flags)
+    }
 }
 
-impl<'a> From<&'a GameState> for StateRef<'a> {
-    /// A read view over a state the caller already owns (tests/QA harnesses).
-    ///
-    /// Stage B keeps `GameState` public, so an integration test may still build a
-    /// state directly and observe it through the same read surface the application
-    /// uses. The application itself always goes through [`GameUniverse::snapshot`].
-    fn from(state: &'a GameState) -> Self {
-        Self { state }
+impl<'a, D: Dispatcher> From<&'a GameUniverse<D>> for StateRef<'a> {
+    /// The read view of a facade instance — the same as [`GameUniverse::snapshot`],
+    /// written as a conversion for the scenario/menu tests.
+    fn from(universe: &'a GameUniverse<D>) -> Self {
+        universe.snapshot()
     }
 }
 
@@ -909,8 +1061,10 @@ pub struct GameUniverse<D: Dispatcher = LocalDispatcher> {
 }
 
 impl<D: Dispatcher> GameUniverse<D> {
-    /// Wraps an existing state with a dispatcher.
-    pub fn new(state: GameState, dispatcher: D) -> Self {
+    /// Wraps an existing state with a dispatcher (crate-internal: the public
+    /// constructors are [`Self::with_dispatcher`], [`Self::with_setup`] and
+    /// [`Self::from_save`]).
+    pub(crate) fn new(state: GameState, dispatcher: D) -> Self {
         Self {
             state,
             dispatcher,
@@ -918,6 +1072,11 @@ impl<D: Dispatcher> GameUniverse<D> {
             outgoing: Vec::new(),
             bus: EventBus::default(),
         }
+    }
+
+    /// An empty world with the given dispatcher (network-FSM/test harness).
+    pub fn with_dispatcher(dispatcher: D) -> Self {
+        Self::new(GameState::new(), dispatcher)
     }
 
     // — the single point of change —
@@ -1202,6 +1361,26 @@ impl<D: Dispatcher> GameUniverse<D> {
         self.state.rng.set_seed(seed);
     }
 
+    /// The simulation RNG, mutable — the scenario harness sets a saved state.
+    pub fn rng_mut(&mut self) -> &mut crate::rng::Randomizer {
+        &mut self.state.rng
+    }
+
+    /// `GameManager_TeamTurnTurnBased` round cursor (`game.rs:269`) — setup write.
+    pub fn set_round_team(&mut self, value: usize) {
+        self.state.round_team = value;
+    }
+
+    /// `UnitsManager_UnitIdCounter` (`game.rs:277`) — setup write (V70/CRC tests).
+    pub fn set_unit_id_counter(&mut self, value: u32) {
+        self.state.unit_id_counter = value;
+    }
+
+    /// The pending unit-event queue (`game.rs:293`), mutable (scenario harness).
+    pub fn unit_events_mut(&mut self) -> &mut Vec<UnitEvent> {
+        &mut self.state.unit_events
+    }
+
     /// `UnitsManager_TeamInfo[PLAYER_TEAM_MAX]` — replaces the team table
     /// (`game.rs:222`).
     pub fn set_teams(&mut self, teams: [TeamInfo; TEAM_SLOTS]) {
@@ -1395,6 +1574,26 @@ impl<D: Dispatcher> GameUniverse<D> {
     pub fn set_team_data_crc16(&mut self, team: TeamId, value: u16) {
         self.state.team_data_crc16[team.0 as usize] = value;
     }
+
+    /// `Remote_FrameSyncCounter` table, mutable (packet 00 tests).
+    pub fn frame_sync_counters_mut(&mut self) -> &mut [u8; TEAM_SLOTS] {
+        &mut self.state.frame_sync_counter
+    }
+
+    /// `Remote_TurnIndices` table, mutable (packet 52 tests).
+    pub fn turn_indices_mut(&mut self) -> &mut [u8; TEAM_SLOTS] {
+        &mut self.state.turn_indices
+    }
+
+    /// `Remote_NextTurnIndices` table, mutable (packet 45 tests).
+    pub fn next_turn_indices_mut(&mut self) -> &mut [u8; TEAM_SLOTS] {
+        &mut self.state.next_turn_indices
+    }
+
+    /// `Remote_TeamDataCrc16` table, mutable (packet 45 tests).
+    pub fn team_data_crc16_mut(&mut self) -> &mut [u16; TEAM_SLOTS] {
+        &mut self.state.team_data_crc16
+    }
     /// `Complex::Transfer` (`transfer.rs`) — the QA complex-stock writer.
     pub fn complex_transfer(
         &mut self,
@@ -1582,19 +1781,218 @@ impl<D: Dispatcher> GameUniverse<D> {
         self.state.spot_by_team(id, team);
     }
 
-    // — stage A only: temporary accesses, removed in stage B —
+    // — stage B §7: the remaining setup/test writers used by the integration
+    // scenarios after the encapsulation cut (1:1 calls, no `seq` bump) —
 
-    /// The wrapped state (stage A only, guardrail 2).
-    ///
-    /// It exists so that the existing `max_app` code keeps compiling while the
-    /// renderer migrates to [`Self::snapshot`]. Stage B removes it.
-    pub fn state(&self) -> &GameState {
-        &self.state
+    /// `GameState::take_industry_message` (`game.rs:2721`) — the UI report queue.
+    pub fn take_industry_message(&mut self) -> Option<String> {
+        self.state.take_industry_message()
     }
 
-    /// The wrapped state, mutable (stage A only, guardrail 2).
-    pub fn state_mut(&mut self) -> &mut GameState {
-        &mut self.state
+    /// `GameState::advance_research` (`game.rs:2064`) — the research turn.
+    pub fn advance_research(&mut self, team: TeamId) -> Vec<crate::research::ResearchEvent> {
+        self.state.advance_research(team)
+    }
+
+    /// `research::research_new_turn` (`research.rs`) — one research-centre turn
+    /// over the team's economy and counters.
+    pub fn research_new_turn(&mut self, team: TeamId) -> Vec<crate::research::ResearchEvent> {
+        crate::research::research_new_turn(
+            &mut self.state.team_units[team.0 as usize],
+            &mut self.state.teams[team.0 as usize],
+            team,
+        )
+    }
+
+    /// `GameState::ai_begin_turn` (`ai/mod.rs:429`) — the AI turn start.
+    pub fn ai_begin_turn(&mut self, team: TeamId) {
+        self.state.ai_begin_turn(team);
+    }
+
+    /// `GameState::update_map_status` (`ai/threat.rs:708`) — the scan of one unit.
+    pub fn update_map_status(&mut self, id: UnitId, mode: bool) {
+        self.state.update_map_status(id, mode);
+    }
+
+    /// `GameState::ai_append_task` (`ai/mod.rs:240`) — the scenario task writer.
+    pub fn ai_append_task(
+        &mut self,
+        team: TeamId,
+        parent: Option<u32>,
+        priority: u16,
+        kind: crate::ai::TaskKind,
+    ) -> u32 {
+        self.state.ai_append_task(team, parent, priority, kind)
+    }
+
+    /// `GameState::ai_remind_move_finished` (`ai/mod.rs:260`).
+    pub fn ai_remind_move_finished(&mut self, unit: UnitId, priority: bool) {
+        self.state.ai_remind_move_finished(unit, priority);
+    }
+
+    /// `GameState::execute_reminders` (`ai/mod.rs:353`).
+    pub fn execute_reminders(&mut self) -> bool {
+        self.state.execute_reminders()
+    }
+
+    /// `TaskManager::begin_turn` through the temporary task-manager split
+    /// (`GameState::with_task_manager`, `ai/mod.rs:229`) — the scenario harness
+    /// drives the task manager turn directly.
+    pub fn ai_task_begin_turn(&mut self, team: TeamId) {
+        self.state
+            .with_task_manager(|task_manager, world| task_manager.begin_turn(world, team));
+    }
+
+    /// `TaskManager::end_turn` through `GameState::with_task_manager`.
+    pub fn ai_task_end_turn(&mut self, team: TeamId) {
+        self.state
+            .with_task_manager(|task_manager, world| task_manager.end_turn(world, team));
+    }
+
+    /// `TaskManager::attach_task_to_unit` through `GameState::with_task_manager`.
+    pub fn ai_attach_task_to_unit(&mut self, unit: UnitId, task: u32) {
+        self.state
+            .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(unit, task));
+    }
+
+    /// `GameState::add_to_draw_list` (`game.rs:1117`) — the V70 draw-list writer.
+    pub fn add_to_draw_list(&mut self, id: UnitId) {
+        self.state.add_to_draw_list(id);
+    }
+
+    /// `GameState::process_orders` (`game.rs:1780`) — the rules phase of one tick.
+    pub fn process_orders(&mut self) {
+        self.state.process_orders();
+    }
+
+    /// `GameState::push_message` (`save_write.rs:857`) — the V70 message-log writer.
+    pub fn push_message(&mut self, team: u8, text: &str, point: Point, unit: Option<UnitId>) {
+        self.state.push_message(team, text, point, unit);
+    }
+
+    /// `combat::attack_unit` (`combat.rs:100`) — direct damage (scenario writer).
+    pub fn attack_unit(
+        &mut self,
+        target_id: UnitId,
+        attacker_id: UnitId,
+        attack_potential: i32,
+        direction: i32,
+    ) {
+        crate::combat::attack_unit(
+            &mut self.state,
+            target_id,
+            attacker_id,
+            attack_potential,
+            direction,
+        );
+    }
+
+    /// `combat::attack` (`combat.rs`) — the fire order of one unit.
+    pub fn attack(&mut self, id: UnitId, grid: Point) {
+        crate::combat::attack(&mut self.state, id, grid);
+    }
+
+    /// `combat::check_reaction` (`combat.rs:746`).
+    pub fn check_reaction(&mut self, unit1_id: UnitId, unit2_id: UnitId) -> bool {
+        crate::combat::check_reaction(&mut self.state, unit1_id, unit2_id)
+    }
+
+    /// `combat::spot_unit` (`combat.rs:207`).
+    pub fn spot_unit(&mut self, id: UnitId, team: TeamId) {
+        crate::combat::spot_unit(&mut self.state, id, team);
+    }
+
+    /// `events::process_unit_event` (`events.rs:86`).
+    pub fn process_unit_event(&mut self, event: &UnitEvent) {
+        events::process_unit_event(&mut self.state, event);
+    }
+
+    /// `deploy::deploy_starting_units` (`deploy.rs:654`).
+    pub fn deploy_starting_units(
+        &mut self,
+        start_gold: u32,
+        max_resources: i32,
+        teams: &[crate::setup::TeamStart],
+    ) -> usize {
+        crate::deploy::deploy_starting_units(&mut self.state, start_gold, max_resources, teams)
+    }
+
+    /// `deploy::deploy_starting_units_with` (`deploy.rs:674`).
+    pub fn deploy_starting_units_with(
+        &mut self,
+        max_resources: i32,
+        deployments: &[crate::deploy::TeamDeployment],
+    ) -> usize {
+        crate::deploy::deploy_starting_units_with(&mut self.state, max_resources, deployments)
+    }
+
+    /// `victory::check_end_game_conditions` (`victory.rs:1506`).
+    pub fn check_end_game_conditions(&mut self) -> bool {
+        victory::check_end_game_conditions(&mut self.state)
+    }
+
+    /// `alloc::update_resources_total` (`alloc.rs:638`).
+    pub fn update_resources_total(&mut self, team: TeamId, complex: crate::team::ComplexId) {
+        crate::alloc::update_resources_total(&mut self.state, team, complex);
+    }
+
+    /// `transfer::transfer_cargo_kind` (`transfer.rs:183`).
+    pub fn transfer_cargo_kind(&mut self, unit_id: UnitId, cargo: CargoType, amount: i32) {
+        crate::transfer::transfer_cargo_kind(&mut self.state, unit_id, cargo, amount);
+    }
+
+    /// `transfer::process_transfer` (`transfer.rs:259`).
+    pub fn process_transfer(&mut self, unit_id: UnitId) {
+        crate::transfer::process_transfer(&mut self.state, unit_id);
+    }
+
+    /// `power::optimize_complex` (`power.rs:586`) — the industry allocator.
+    pub fn optimize_complex(
+        &mut self,
+        team: TeamId,
+        complex: crate::team::ComplexId,
+        selected: Option<UnitId>,
+        proposal: Option<UnitId>,
+        show_messages: bool,
+    ) -> crate::power::IndustryOutcome {
+        crate::power::optimize_complex(
+            &mut self.state,
+            team,
+            complex,
+            selected,
+            proposal,
+            show_messages,
+        )
+    }
+
+    /// `unit_order::issue_factory_exit` (`unit_order.rs:2380`).
+    pub fn issue_factory_exit(&mut self, factory_id: UnitId) -> bool {
+        crate::unit_order::issue_factory_exit(&mut self.state, factory_id)
+    }
+
+    /// `unit_order::process_order` (`unit_order.rs`) — one rules step of a unit.
+    pub fn process_order(&mut self, id: UnitId) {
+        crate::unit_order::process_order(&mut self.state, id);
+    }
+
+    /// `unit_order::position_in_tape` (`unit_order.rs`) — the builder tape step.
+    pub fn position_in_tape(&mut self, unit: &mut UnitInfo, move_to: Point) {
+        crate::unit_order::position_in_tape(&mut self.state, unit, move_to);
+    }
+
+    /// `access::build_clearing` (`access.rs`) — the terrain-clearing builder step.
+    pub fn build_clearing(&mut self, unit_id: UnitId, mode: bool) -> Option<UnitId> {
+        crate::access::build_clearing(&mut self.state, unit_id, mode)
+    }
+
+    /// `ai_unit_spotted` (`ai/mod.rs`) — the AI report of a spotted unit.
+    pub fn ai_unit_spotted(&mut self, unit: UnitId, team: TeamId) {
+        crate::ai::ai_unit_spotted(&mut self.state, unit, team);
+    }
+
+    /// The production queue of a team (`production.rs:1156`), borrowing the state.
+    pub fn production_manager(&mut self, team: TeamId) -> crate::production::ProductionManager<'_> {
+        crate::production::ProductionManager::new(&mut self.state, team)
     }
 
     // — internals —
@@ -1640,11 +2038,6 @@ impl GameUniverse<LocalDispatcher> {
             outgoing: Vec::new(),
             bus: EventBus::default(),
         }
-    }
-
-    /// The wrapped state, consuming the facade (stage A migration helper).
-    pub fn into_state(self) -> GameState {
-        self.state
     }
 
     // — the local team-turn machine (stage A, ADR §1/§4) —
@@ -1791,3 +2184,9 @@ impl Default for GameUniverse<LocalDispatcher> {
         Self::new(GameState::new(), LocalDispatcher)
     }
 }
+
+/// Stage-A/B equivalence scenarios (`tests/universe*.rs` before §7): they need
+/// the legacy `GameState` path next to the facade path, which is crate-private
+/// after the encapsulation cut.
+#[cfg(test)]
+mod scenario_tests;

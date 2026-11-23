@@ -8,9 +8,8 @@
 //! Scenario shape: menu setup → `generate_map` → `GameUniverse` → landing →
 //! turns/ticks → expected units, economy and determinism (D).
 
-use max_core::crc;
 use max_core::deploy::{
-    deploy_starting_units, survey_resources_in_area, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
+    DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
     SURVEY_RESOURCE_LIMIT,
 };
 use max_core::enums::{GameStateType, Surface, TeamClan, UnitOrder, UnitOrderState, UnitType};
@@ -72,14 +71,12 @@ fn new_game() -> GameUniverse {
             TeamKind::None,
         ],
     );
-    state.state_mut().network_game = false;
-    state.state_mut().rng = Randomizer::new(SEED);
+    state.set_network_game(false);
+    *state.rng_mut() = Randomizer::new(SEED);
     // `GameManager_InitGame`: the first turn is number 1.
-    state.state_mut().turn_counter = 1;
+    state.set_turn_counter(1);
 
-    let deployed = deploy_starting_units(
-        state.state_mut(),
-        DEFAULT_START_GOLD,
+    let deployed = state.deploy_starting_units(DEFAULT_START_GOLD,
         setup.settings.max_resources,
         &setup.teams,
     );
@@ -96,16 +93,16 @@ fn new_game() -> GameUniverse {
 /// `max_app`; `max_core` owns the phase and the counters).
 fn play_round(state: &mut GameUniverse, ticks_per_team: usize) {
     for team_index in 0..PLAYER_TEAM_COUNT {
-        let kind = state.state().teams[team_index].team_type;
+        let kind = state.snapshot().teams()[team_index].team_type;
         if kind == TeamKind::None || kind == TeamKind::Eliminated {
             continue;
         }
 
         let team = TeamId(team_index as u8);
-        state.state_mut().teams[team_index].finished_turn = false;
+        state.teams_mut()[team_index].finished_turn = false;
         state.manage_economy(team);
-        state.state_mut().active_turn_team = team;
-        state.state_mut().game_state = GameStateType::InGame;
+        state.set_active_turn_team(team);
+        state.set_game_state(GameStateType::InGame);
 
         for _ in 0..ticks_per_team {
             state.tick();
@@ -145,18 +142,18 @@ fn setup_deploy_and_turn_ticks_are_bit_identical() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::state_digest(first.state()),
-        crc::state_digest(second.state())
+        first.snapshot().state_digest(),
+        second.snapshot().state_digest()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
-    assert_eq!(first.state().turn_counter, 4);
+    assert_eq!(first.snapshot().turn_counter(), 4);
     assert_eq!(first.snapshot().unit_count(), 2 * UNITS_PER_TEAM);
 }
 
@@ -169,7 +166,7 @@ fn deployed_base_keeps_both_teams_alive_after_a_turn() {
     // Straight after landing (`GameManager_ProcessTeamMissionSupplyUnits`).
     for team in [TeamId::RED, TeamId::GREEN] {
         assert_eq!(
-            state.state().team_units[team.0 as usize].gold,
+            state.snapshot().team_units()[team.0 as usize].gold,
             DEFAULT_START_GOLD,
             "team {team:?}"
         );
@@ -196,20 +193,18 @@ fn deployed_base_keeps_both_teams_alive_after_a_turn() {
 
     for team in [TeamId::RED, TeamId::GREEN] {
         assert_eq!(
-            max_core::victory::default_win_loss_conditions(state.state(), team),
+            state.snapshot().default_win_loss_conditions(team),
             max_core::enums::WinLossState::Generic,
             "team {team:?}"
         );
         assert_eq!(
-            state.state().team_units[team.0 as usize].gold,
+            state.snapshot().team_units()[team.0 as usize].gold,
             DEFAULT_START_GOLD,
             "team {team:?}"
         );
     }
 
-    assert!(!max_core::victory::check_end_game_conditions(
-        state.state_mut()
-    ));
+    assert!(!state.check_end_game_conditions());
     assert_eq!(state.snapshot().unit_count(), 2 * UNITS_PER_TEAM);
 }
 
@@ -219,16 +214,16 @@ fn deployed_base_keeps_both_teams_alive_after_a_turn() {
 fn landing_on_a_barren_map_keeps_every_unit_inside_the_map() {
     let mut state = GameUniverse::default();
     for team in [TeamId::RED, TeamId::GREEN] {
-        state.state_mut().teams[team.0 as usize].team_type = TeamKind::Player;
-        state.state_mut().team_units[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
+        state.teams_mut()[team.0 as usize].team_type = TeamKind::Player;
+        state.team_units_table_mut()[team.0 as usize] = TeamUnits::with_clan(TeamClan::Random);
     }
-    state.state_mut().network_game = false;
+    state.set_network_game(false);
 
     let teams = [
         TeamStart::new(TeamId::RED, Point::new(20, 20)),
         TeamStart::new(TeamId::GREEN, Point::new(80, 20)),
     ];
-    let deployed = deploy_starting_units(state.state_mut(), DEFAULT_START_GOLD, 20, &teams);
+    let deployed = state.deploy_starting_units(DEFAULT_START_GOLD, 20, &teams);
 
     assert_eq!(deployed, 2 * UNITS_PER_TEAM);
     assert_eq!(state.snapshot().unit_count(), 2 * UNITS_PER_TEAM);
@@ -269,10 +264,10 @@ fn survey_clamps_each_resource_type_independently() {
         let mut state = GameUniverse::default();
         for y in 0..MAP_HEIGHT {
             for x in 0..MAP_WIDTH {
-                state.state_mut().map.surface.set(x, y, Surface::LAND);
+                state.map_mut().surface.set(x, y, Surface::LAND);
                 state
-                    .state_mut()
-                    .map
+                    .map_mut()
+                    
                     .resources
                     .set(x, y, ResourceMapEntry::NONE);
             }
@@ -289,7 +284,7 @@ fn survey_clamps_each_resource_type_independently() {
                     None
                 };
                 if let Some(kind) = kind {
-                    state.state_mut().map.resources.set(
+                    state.map_mut().resources.set(
                         x,
                         y,
                         ResourceMapEntry::new(16, Some(kind), 0),
@@ -308,7 +303,7 @@ fn survey_clamps_each_resource_type_independently() {
     // 18 raw + 18 fuel cells at 16 each: both sums are 288 > 255.
     let both_over = state_with_area(18, 18);
     assert_eq!(
-        survey_resources_in_area(both_over.state(), center, radius),
+        both_over.snapshot().survey_resources_in_area( center, radius),
         (SURVEY_RESOURCE_LIMIT, 0, SURVEY_RESOURCE_LIMIT),
         "raw and fuel must each reach the cap, not share one budget"
     );
@@ -317,7 +312,7 @@ fn survey_clamps_each_resource_type_independently() {
     // clamp does not consume the fuel allowance.
     let raw_over_only = state_with_area(18, 8);
     assert_eq!(
-        survey_resources_in_area(raw_over_only.state(), center, radius),
+        raw_over_only.snapshot().survey_resources_in_area( center, radius),
         (SURVEY_RESOURCE_LIMIT, 0, 128),
         "a saturated raw counter must leave fuel below the cap untouched"
     );
@@ -353,10 +348,10 @@ fn landing_at_the_map_corner_stays_inside_the_bounds() {
             TeamKind::None,
         ],
     );
-    state.state_mut().network_game = false;
+    state.set_network_game(false);
 
     let teams = [TeamStart::new(TeamId::RED, Point::new(1, 1))];
-    let deployed = deploy_starting_units(state.state_mut(), DEFAULT_START_GOLD, 20, &teams);
+    let deployed = state.deploy_starting_units(DEFAULT_START_GOLD, 20, &teams);
 
     assert_eq!(deployed, UNITS_PER_TEAM);
     for id in state.snapshot().unit_ids_in_order() {

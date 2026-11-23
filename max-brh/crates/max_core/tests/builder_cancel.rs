@@ -19,18 +19,16 @@
 //! already complete, the exit is allowed (`ORDER_ACTIVATE`) and does not cancel construction.
 
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-use max_core::events::apply_command;
 use max_core::geo::Point;
 use max_core::input::{Command, Packet38Move};
-use max_core::production::{self, ProductionManager};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::{TeamClan, UnitId};
 
 fn state_with_gold(gold: u32) -> max_core::universe::GameUniverse {
     let mut state = max_core::universe::GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
-    state.state_mut().team_units[0].set_gold(gold);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.team_units_table_mut()[0].set_gold(gold);
     state
 }
 
@@ -57,7 +55,7 @@ fn start_training_hall_build(state: &mut max_core::universe::GameUniverse) -> (U
     // `UnitsManager_DeployUnit` zeroes the new unit's storage.
     state.unit_mut(constructor).expect("constructor").storage = 40;
 
-    let mut manager = ProductionManager::new(state.state_mut(), TeamId::RED);
+    let mut manager = state.production_manager(TeamId::RED);
     manager
         .enqueue(constructor, UnitType::TrainingHall)
         .expect("constructor builds training halls");
@@ -81,7 +79,7 @@ fn assert_build_intact(state: &max_core::universe::GameUniverse, builder: UnitId
         "прогресс стройки сохранён"
     );
     assert!(
-        production::construction_utility(state.state(), TeamId::RED, site).is_some(),
+        state.snapshot().construction_utility(TeamId::RED, site).is_some(),
         "лента площадки на месте"
     );
 }
@@ -100,7 +98,7 @@ fn assert_build_cancelled(state: &max_core::universe::GameUniverse, builder: Uni
         "путь к площадке снят (`path = nullptr`)"
     );
     assert!(
-        production::construction_utility(state.state(), TeamId::RED, site).is_none(),
+        state.snapshot().construction_utility(TeamId::RED, site).is_none(),
         "лента площадки снята с карты"
     );
     for id in state.snapshot().units_at(site).iter().copied() {
@@ -153,7 +151,7 @@ fn packet_38_move_does_not_cancel_the_unfinished_build() {
         group_speed: 0,
         path: None,
     };
-    apply_command(state.state_mut(), &Command::Move(packet));
+    state.apply_now(Command::Move(packet));
 
     let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
@@ -183,7 +181,7 @@ fn packet_08_move_does_not_cancel_the_unfinished_build() {
             disabled_reaction_fire: false,
         }),
     };
-    apply_command(state.state_mut(), &Command::Order(order));
+    state.apply_now(Command::Order(order));
 
     let unit = state.snapshot().unit(builder).expect("builder alive");
     assert_eq!(
@@ -205,7 +203,7 @@ fn leaving_a_finished_site_keeps_the_foundation() {
 
     for _ in 0..10 {
         state.manage_economy(TeamId::RED);
-        production::progress_build_state(state.state_mut(), TeamId::RED);
+        state.progress_build_state(TeamId::RED);
     }
 
     let unit = state.snapshot().unit(builder).expect("builder alive");

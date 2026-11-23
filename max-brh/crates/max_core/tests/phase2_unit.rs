@@ -9,7 +9,6 @@
 
 mod support;
 
-use max_core::crc;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::TeamId;
@@ -62,16 +61,16 @@ fn move_spends_speed_and_restores_await_deterministically() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
     assert_ne!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(game().state()),
+        first.snapshot().state_checksum(),
+        game().snapshot().state_checksum(),
         "the scenario must change the state CRC"
     );
 }
@@ -170,11 +169,11 @@ fn fire_consumes_ammo_and_reload_restores_it() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        crc::state_checksum(first.state()),
-        crc::state_checksum(second.state())
+        first.snapshot().state_checksum(),
+        second.snapshot().state_checksum()
     );
     assert_eq!(
-        crc::replay_digest_bytes(first.state()),
-        crc::replay_digest_bytes(second.state())
+        first.snapshot().replay_digest_bytes(),
+        second.snapshot().replay_digest_bytes()
     );
 }

@@ -20,13 +20,12 @@
 //! `access.cpp` (`Access_IsAccessible`), `object-classifier.md`.
 
 use max_core::access::{
-    is_accessible, unit_type_flags, unit_type_land_type, ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    unit_type_flags, unit_type_land_type, ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
     SURFACE_TYPE_COAST, SURFACE_TYPE_LAND, SURFACE_TYPE_WATER,
 };
 use max_core::classification::{
     CargoKind, CombatRole, Environment, Footprint, Mobility, ObjectKind, UnitTypeClassify,
 };
-use max_core::crc::{replay_digest_crc, state_digest};
 use max_core::enums::{Surface, TeamClan, UnitType};
 use max_core::geo::Point;
 use max_core::production::{self, BUILDABLE, FACTORIES, MOBILE_BUILDERS};
@@ -39,8 +38,8 @@ use max_core::UnitListKind;
 /// `SC_ATTRI` values into the instance).
 fn state() -> GameUniverse {
     let mut state = GameUniverse::default();
-    state.state_mut().teams[0].team_type = TeamKind::Player;
-    state.state_mut().team_units[0] = TeamUnits::with_clan(TeamClan::Random);
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.team_units_table_mut()[0] = TeamUnits::with_clan(TeamClan::Random);
     state
 }
 
@@ -105,8 +104,8 @@ fn every_type_spawns_into_its_classified_list_and_footprint() {
         // The `MapHash` footprint: a quad building occupies exactly four cells,
         // anything else exactly one.
         let occupied: Vec<(u16, u16)> = state
-            .state()
-            .map_hash
+            .snapshot()
+            .map_hash()
             .iter_objects()
             .filter(|object| object.units.contains(&id))
             .map(|object| (object.x, object.y))
@@ -184,9 +183,9 @@ fn expected_access_cost(unit_type: UnitType, surface: u8) -> u32 {
 #[test]
 fn passability_over_land_water_and_coast_follows_classification() {
     let mut state = state();
-    state.state_mut().map.surface.set(0, 0, Surface::LAND);
-    state.state_mut().map.surface.set(1, 0, Surface::WATER);
-    state.state_mut().map.surface.set(2, 0, Surface::COAST);
+    state.map_mut().surface.set(0, 0, Surface::LAND);
+    state.map_mut().surface.set(1, 0, Surface::WATER);
+    state.map_mut().surface.set(2, 0, Surface::COAST);
     let flags = ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 
     for &unit_type in UnitType::ALL {
@@ -195,7 +194,7 @@ fn passability_over_land_water_and_coast_follows_classification() {
             (Point::new(1, 0), SURFACE_TYPE_WATER),
             (Point::new(2, 0), SURFACE_TYPE_COAST),
         ] {
-            let actual = is_accessible(state.state(), unit_type, TeamId::RED, grid, flags);
+            let actual = state.snapshot().is_accessible(unit_type, TeamId::RED, grid, flags);
             assert_eq!(
                 actual,
                 expected_access_cost(unit_type, surface),
@@ -320,15 +319,15 @@ fn digest_of_one_unit_of_every_type_is_stable() {
         second.snapshot().snapshot_bytes()
     );
     assert_eq!(
-        replay_digest_crc(first.state()),
-        replay_digest_crc(second.state())
+        first.snapshot().replay_digest_crc(),
+        second.snapshot().replay_digest_crc()
     );
-    assert_eq!(state_digest(first.state()), state_digest(second.state()));
+    assert_eq!(first.snapshot().state_digest(), second.snapshot().state_digest());
 
     // Pinned digest of the "all types" state: a change in spawn bookkeeping,
     // classification-driven defaults or attribute tables moves it.
-    assert_eq!(state_digest(first.state()), ALL_TYPES_STATE_DIGEST);
-    assert_eq!(replay_digest_crc(first.state()), ALL_TYPES_REPLAY_DIGEST);
+    assert_eq!(first.snapshot().state_digest(), ALL_TYPES_STATE_DIGEST);
+    assert_eq!(first.snapshot().replay_digest_crc(), ALL_TYPES_REPLAY_DIGEST);
 
     // A single classification fact (a building's footprint) is part of the
     // digest: clearing `BUILDING`-derived cells by hand is visible.
@@ -337,7 +336,7 @@ fn digest_of_one_unit_of_every_type_is_stable() {
     let mut unit = modified.snapshot().unit(id).expect("unit").clone();
     unit.shots = unit.shots.wrapping_add(1);
     modified.write_unit(id, unit);
-    assert_ne!(state_digest(modified.state()), ALL_TYPES_STATE_DIGEST);
+    assert_ne!(modified.snapshot().state_digest(), ALL_TYPES_STATE_DIGEST);
 }
 
 /// `state_digest` of a state with one unit of every one of the 93 types.

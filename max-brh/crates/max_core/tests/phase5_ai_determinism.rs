@@ -175,7 +175,7 @@ fn assert_deterministic(
 fn strategy_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("strategy", strategy_scenario, STRATEGY_CRCS);
     assert_eq!(
-        state.state().ai.players[TeamId::RED.0 as usize].strategy,
+        state.snapshot().ai().players[TeamId::RED.0 as usize].strategy,
         AiStrategy::Missiles
     );
 }
@@ -200,7 +200,7 @@ fn factory_scenario_is_deterministic_and_pinned() {
 fn combat_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("combat", combat_scenario, COMBAT_CRCS);
     assert!(
-        state.state().ai.players[TeamId::RED.0 as usize]
+        state.snapshot().ai().players[TeamId::RED.0 as usize]
             .spotted_units
             .len()
             <= 2
@@ -211,7 +211,7 @@ fn combat_scenario_is_deterministic_and_pinned() {
 fn research_scenario_is_deterministic_and_pinned() {
     let state = assert_deterministic("research", research_scenario, RESEARCH_CRCS);
     assert!(
-        state.state().teams[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades > 0,
+        state.snapshot().teams()[TeamId::RED.0 as usize].stats_gold_spent_on_upgrades > 0,
         "the research scenario must have bought upgrades"
     );
 }

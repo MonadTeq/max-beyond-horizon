@@ -1233,18 +1233,28 @@ fn non_ascii_player_name_renders_with_the_fallback_glyph() {
 ///
 /// Prepares a controlled map for frame tests: without foreign units, resource
 /// knowledge and palette "beacons" that could change pixels.
-fn empty_land_state() -> max_core::GameState {
-    let mut state = max_core::GameState::new();
+fn empty_land_state(
+) -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
+    let mut state = max_core::universe::GameUniverse::default();
 
     for y in 0..max_core::geo::MAP_HEIGHT {
         for x in 0..max_core::geo::MAP_WIDTH {
-            let _ = state.map.surface.set(x, y, max_core::enums::Surface::LAND);
+            let _ = state
+                .map_mut()
+                .surface
+                .set(x, y, max_core::enums::Surface::LAND);
         }
     }
 
-    state.teams[0].team_type = max_core::team::TeamKind::Player;
-    state.team_units[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
-    state.team_units[0].set_gold(2000);
+    state
+        .team_mut(max_core::TeamId::RED)
+        .expect("RED slot")
+        .team_type = max_core::team::TeamKind::Player;
+    let team_units = state
+        .team_units_mut(max_core::TeamId::RED)
+        .expect("RED economy");
+    *team_units = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    team_units.set_gold(2000);
     state
 }
 
@@ -1266,10 +1276,7 @@ fn assets_app_with_land() -> Option<App> {
     };
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    app.install_universe(max_core::universe::GameUniverse::new(
-        empty_land_state(),
-        max_core::universe::LocalDispatcher,
-    ));
+    *app.universe_mut() = empty_land_state();
     app.viewport_mut().center_on_grid(40, 40);
 
     Some(app)
@@ -1313,10 +1320,7 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 
     let mut app = App::new(AppConfig::default());
-    app.install_universe(max_core::universe::GameUniverse::new(
-        empty_land_state(),
-        max_core::universe::LocalDispatcher,
-    ));
+    *app.universe_mut() = empty_land_state();
 
     let site = Point::new(40, 40);
     let team = app.player_team();
@@ -1590,10 +1594,7 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
     use max_core::enums::UnitType;
 
     let mut app = App::new(AppConfig::default());
-    app.install_universe(max_core::universe::GameUniverse::new(
-        empty_land_state(),
-        max_core::universe::LocalDispatcher,
-    ));
+    *app.universe_mut() = empty_land_state();
 
     let cell = Point::new(40, 40);
     let tank = app
@@ -1672,7 +1673,7 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
 #[test]
 fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-    use max_core::production::ProductionManager;
+    
 
     let Some(mut app) = assets_app_with_land() else {
         return;

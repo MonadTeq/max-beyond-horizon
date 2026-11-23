@@ -468,7 +468,7 @@ impl UnitState {
     ///
     /// The order of values follows `Remote_CreateNetPacket_23` (`remote.cpp`); the move and fire
     /// points are taken from `OrderData` (`UnitInfo::move_to_grid_*` in C++).
-    pub fn from_unit(state: &max_core::game::GameState, unit: &UnitInfo) -> Self {
+    pub fn from_unit(state: max_core::universe::StateRef<'_>, unit: &UnitInfo) -> Self {
         let order = state.order_data(unit.id);
 
         Self {
@@ -685,7 +685,7 @@ impl StateSync {
 /// at most [`STATE_SYNC_UNITS_PER_PACKET`] per packet, and the economy tail only
 /// in the last chunk. For an empty team a single packet with `is_last` is returned.
 pub fn state_sync_for(
-    state: &max_core::game::GameState,
+    state: max_core::universe::StateRef<'_>,
     team: TeamId,
     sync_index: u8,
 ) -> Vec<StateSync> {
@@ -768,9 +768,9 @@ fn chunk_sizes(total: usize) -> Vec<usize> {
 /// Read-only projection: sim → wire. Does not call apply_*, does not mutate GameState.
 ///
 /// The tail of packet 54 (team economy) from `TeamInfo`/`TeamUnits`.
-fn state_sync_tail(state: &max_core::game::GameState, team: TeamId) -> StateSyncTail {
-    let info = &state.teams[team.0 as usize];
-    let team_units = &state.team_units[team.0 as usize];
+fn state_sync_tail(state: max_core::universe::StateRef<'_>, team: TeamId) -> StateSyncTail {
+    let info = &state.teams()[team.0 as usize];
+    let team_units = &state.team_units()[team.0 as usize];
     let mut tail = StateSyncTail {
         gold: team_units.gold,
         gold_spent_on_upgrades: info.stats_gold_spent_on_upgrades,
@@ -817,16 +817,20 @@ pub const MAX_SAVE_FILE_LEN: usize = MAX_STRING_LEN;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use max_core::game::GameState;
+    use max_core::universe::GameUniverse;
     use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_types::geo::Point;
     use max_types::team::TeamKind;
     use max_types::UNIT_COUNT;
 
-    fn state_with_green_units(count: usize) -> (GameState, Vec<UnitId>) {
-        let mut state = GameState::new();
-        state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
-        state.team_units[TeamId::GREEN.0 as usize] = max_core::team::TeamUnits::with_clan(TeamClan::Random);
+    fn state_with_green_units(count: usize) -> (GameUniverse, Vec<UnitId>) {
+        let mut state = GameUniverse::default();
+        state
+            .team_mut(TeamId::GREEN)
+            .expect("GREEN slot")
+            .team_type = TeamKind::Remote;
+        *state.team_units_mut(TeamId::GREEN).expect("GREEN economy") =
+            max_core::team::TeamUnits::with_clan(TeamClan::Random);
 
         let mut ids = Vec::with_capacity(count);
         for index in 0..count {
@@ -850,18 +854,33 @@ mod tests {
     #[test]
     fn state_sync_chunks_fit_transport_and_put_the_tail_last() {
         let (mut state, ids) = state_with_green_units(40);
-        state.team_units[TeamId::GREEN.0 as usize].gold = 777;
-        state.teams[TeamId::GREEN.0 as usize].stats_gold_spent_on_upgrades = 12;
-        state.teams[TeamId::GREEN.0 as usize].number_of_objects_created = 5;
-        state.teams[TeamId::GREEN.0 as usize].unit_counters[UnitType::Tank as usize] = 9;
-        state.teams[TeamId::GREEN.0 as usize].research_topics[2] = ResearchTopicInfo {
+        state
+            .team_units_mut(TeamId::GREEN)
+            .expect("GREEN economy")
+            .gold = 777;
+        state
+            .team_mut(TeamId::GREEN)
+            .expect("GREEN slot")
+            .stats_gold_spent_on_upgrades = 12;
+        state
+            .team_mut(TeamId::GREEN)
+            .expect("GREEN slot")
+            .number_of_objects_created = 5;
+        state
+            .team_mut(TeamId::GREEN)
+            .expect("GREEN slot")
+            .unit_counters[UnitType::Tank as usize] = 9;
+        state
+            .team_mut(TeamId::GREEN)
+            .expect("GREEN slot")
+            .research_topics[2] = ResearchTopicInfo {
             research_level: 4,
             turns_to_complete: 5,
             allocation: 6,
         };
         state.set_order(ids[39], UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
 
-        let packets = state_sync_for(&state, TeamId::GREEN, 3);
+        let packets = state_sync_for(state.snapshot(), TeamId::GREEN, 3);
         assert_eq!(packets.len(), 2, "40 юнитов → 30 + 10");
         assert_eq!(STATE_SYNC_UNITS_PER_PACKET, 32, "номинал C++");
 
@@ -900,10 +919,13 @@ mod tests {
 
     #[test]
     fn state_sync_for_an_empty_team_is_one_last_chunk() {
-        let mut state = GameState::new();
-        state.teams[TeamId::BLUE.0 as usize].team_type = TeamKind::Remote;
+        let mut state = GameUniverse::default();
+        state
+            .team_mut(TeamId::BLUE)
+            .expect("BLUE slot")
+            .team_type = TeamKind::Remote;
 
-        let packets = state_sync_for(&state, TeamId::BLUE, 1);
+        let packets = state_sync_for(state.snapshot(), TeamId::BLUE, 1);
         assert_eq!(packets.len(), 1);
         assert!(packets[0].is_last);
         assert!(packets[0].units.is_empty());
@@ -923,7 +945,7 @@ mod tests {
     fn state_sync_packets_fit_the_transport_limit() {
         // 100 units: non-final chunks of 30, the last one carries the 478-byte tail.
         let (state, _) = state_with_green_units(100);
-        let packets = state_sync_for(&state, TeamId::GREEN, 1);
+        let packets = state_sync_for(state.snapshot(), TeamId::GREEN, 1);
 
         assert!(packets.len() >= 4);
         for packet in packets {
@@ -955,8 +977,8 @@ mod tests {
     #[test]
     fn wire_unit_state_converts_to_core_packet() {
         let (state, ids) = state_with_green_units(1);
-        let unit = state.unit(ids[0]).expect("unit");
-        let mut wire = UnitState::from_unit(&state, unit);
+        let unit = state.snapshot().unit(ids[0]).expect("unit");
+        let mut wire = UnitState::from_unit(state.snapshot(), unit);
         wire.experience = 17;
         wire.storage = -3;
 
