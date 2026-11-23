@@ -62,7 +62,9 @@ fn new_game() -> GameState {
     );
     state.network_game = false;
     state.rng = Randomizer::new(SEED);
-    // `GameManager_InitGame`: the first turn is number 1 (`max_app` mirrors it).
+    // `GameManager_InitUnitsAndGameState` (`game_manager.cpp:3035`): the first
+    // turn is number 1 (called from `GameManager_GameSetup` before
+    // `GameManager_InitGame`, which does not touch the counter).
     state.turn_counter = 1;
     state.mission_category = victory::MissionCategory::Custom;
     state.mission_index = 0;
@@ -162,6 +164,70 @@ fn score_limit_is_inclusive_per_team() {
         status.team_status[TeamId::GREEN.0 as usize],
         WinLossState::Generic
     );
+}
+
+/// `VICTORY_TYPE_SCORE` is evaluated for every team, not only for the local
+/// player: an AI team reaching the limit ends the match while the local human
+/// is alive and below the limit.
+#[test]
+fn score_limit_ends_the_game_for_a_non_local_ai_team() {
+    let mut state = new_game();
+    state.player_team = TeamId::RED;
+    state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Computer;
+    state.victory_type = VictoryType::Score;
+    state.victory_limit = 10;
+
+    assert!(!play_round(&mut state, 1), "no points yet");
+
+    state.teams[TeamId::RED.0 as usize].team_points = 3;
+    assert!(
+        !play_round(&mut state, 1),
+        "3 points of the local player are below the limit"
+    );
+
+    let turn = state.turn_counter;
+    state.teams[TeamId::GREEN.0 as usize].team_points = 10;
+    assert!(
+        play_round(&mut state, 1),
+        "an AI team at the limit ends the match"
+    );
+    assert_eq!(
+        state.turn_counter, turn,
+        "a finished game keeps the last turn"
+    );
+
+    let status = victory::evaluate_status(&state, state.turn_counter);
+    assert_eq!(
+        status.team_status[TeamId::RED.0 as usize],
+        WinLossState::Generic,
+        "the local player has not won or lost"
+    );
+    assert_eq!(
+        status.team_status[TeamId::GREEN.0 as usize],
+        WinLossState::Generic
+    );
+    assert_eq!(
+        status.teams_in_play, 2,
+        "the local human is still in play when the AI ends the match"
+    );
+}
+
+/// Regression: with every slot `TeamKind::None` the C++ loop in
+/// `menu_check_end_game_conditions` never enters its body, so the match is not
+/// over and `finish_turn` advances the turn counter normally.
+#[test]
+fn finish_turn_without_playing_teams_advances_the_counter() {
+    let mut state = new_game();
+    for team in 0..PLAYER_TEAM_COUNT {
+        state.teams[team].team_type = TeamKind::None;
+    }
+    state.game_state = GameStateType::EndTurn;
+    let turn = state.turn_counter;
+
+    assert!(!state.finish_turn(), "no playing team can end the match");
+    assert_eq!(state.turn_counter, turn + 1);
+    assert_eq!(state.game_state, GameStateType::InGame);
+    assert!(!victory::check_end_game_conditions(&mut state));
 }
 
 /// Destroying every opponent unit ends the match through the generic script

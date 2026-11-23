@@ -80,7 +80,9 @@ pub const SMALL_SLAB_IMAGE_COUNT: i32 = 1;
 
 /// Cells in the scan radius of `Survey_GetTotalResourcesInArea`/`SetInitialMining`.
 pub const SURVEY_RADIUS: i32 = 1;
-/// Resource sum limit in `Survey_GetTotalResourcesInArea` (`255`).
+/// Per-resource cap in `Survey_GetResourcesInArea` (`survey.cpp:193-203`):
+/// raw, gold and fuel are each clamped to 255 independently, not as a shared
+/// sum. `Survey_GetTotalResourcesInArea` passes this value as `resource_limit`.
 pub const SURVEY_RESOURCE_LIMIT: i32 = 255;
 /// `Access_FindReachableSpot` searches across the whole map width during landing
 /// (`ResourceManager_MapSize.x`).
@@ -448,6 +450,11 @@ pub fn deploy_team_supplies(
     let mut deployed = Vec::with_capacity(loadout.len() + 4);
     let team_index = team.0 as usize;
 
+    // Defensive divergence: C++ `GameManager_ProcessTeamMissionSupplyUnits`
+    // has no bounds check on `team` and indexes `UnitsManager_TeamMissionSupplies`
+    // directly; every call site (`game_manager.cpp:3110`, `i < PLAYER_TEAM_MAX - 1`)
+    // stays inside the playable range and never reaches `ALIEN`. The guard keeps
+    // the Rust API safe without changing observable behaviour.
     if team_index >= PLAYER_TEAM_COUNT {
         return deployed;
     }

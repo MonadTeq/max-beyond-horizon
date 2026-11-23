@@ -9,7 +9,10 @@
 //! turns/ticks → expected units, economy and determinism (D).
 
 use max_core::crc;
-use max_core::deploy::{deploy_starting_units, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD};
+use max_core::deploy::{
+    deploy_starting_units, survey_resources_in_area, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD,
+    SURVEY_RESOURCE_LIMIT,
+};
 use max_core::enums::{GameStateType, Surface, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events;
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
@@ -233,6 +236,67 @@ fn landing_on_a_barren_map_keeps_every_unit_inside_the_map() {
         .expect("mining station");
     assert_eq!(mine.total_mining, 0, "nothing to mine on a barren map");
     assert_eq!(mine.raw_mining_max, 0);
+}
+
+/// `Survey_GetResourcesInArea` (`survey.cpp:193-203`) clamps raw, gold and fuel
+/// separately: the 255 cap is per resource type, not a shared budget, so cells
+/// with raw and fuel both above the cap saturate both counters at once.
+#[test]
+fn survey_clamps_each_resource_type_independently() {
+    /// Builds a map whose 6×6 scan area (from `(40, 40)`, radius 5) holds the
+    /// first `raw_cells` cells with 16 materials and the next `fuel_cells`
+    /// cells with 16 fuel; every other cell is empty.
+    fn state_with_area(raw_cells: i16, fuel_cells: i16) -> GameState {
+        let mut state = GameState::new();
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                state.map.surface.set(x, y, Surface::LAND);
+                state.map.resources.set(x, y, ResourceMapEntry::NONE);
+            }
+        }
+
+        let mut index = 0i16;
+        for y in 40..=45i16 {
+            for x in 40..=45i16 {
+                let kind = if index < raw_cells {
+                    Some(ResourceKind::Raw)
+                } else if index < raw_cells + fuel_cells {
+                    Some(ResourceKind::Fuel)
+                } else {
+                    None
+                };
+                if let Some(kind) = kind {
+                    state
+                        .map
+                        .resources
+                        .set(x, y, ResourceMapEntry::new(16, Some(kind), 0));
+                }
+                index += 1;
+            }
+        }
+
+        state
+    }
+
+    let center = Point::new(40, 40);
+    let radius = 5;
+
+    // 18 raw + 18 fuel cells at 16 each: both sums are 288 > 255.
+    let both_over = state_with_area(18, 18);
+    assert_eq!(
+        survey_resources_in_area(&both_over, center, radius),
+        (SURVEY_RESOURCE_LIMIT, 0, SURVEY_RESOURCE_LIMIT),
+        "raw and fuel must each reach the cap, not share one budget"
+    );
+
+    // 18 raw (288 → cap) + 8 fuel (128, below the cap → unchanged): the raw
+    // clamp does not consume the fuel allowance.
+    let raw_over_only = state_with_area(18, 8);
+    assert_eq!(
+        survey_resources_in_area(&raw_over_only, center, radius),
+        (SURVEY_RESOURCE_LIMIT, 0, 128),
+        "a saturated raw counter must leave fuel below the cap untouched"
+    );
 }
 
 /// Landing at the first valid map cell (1, 1) stays inside the map: the
