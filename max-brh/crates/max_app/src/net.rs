@@ -63,7 +63,7 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use max_core::enums::{GameStateType, Planet, PlayMode, VictoryType};
+use max_core::enums::{Planet, PlayMode, VictoryType};
 use max_core::events::apply_state_sync;
 use max_core::game::{GameState, PLAYER_TEAM_COUNT};
 use max_core::geo::Point;
@@ -1426,10 +1426,12 @@ impl TurnBarrierFsm {
     }
 
     /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[own]` → 00.
+    ///
+    /// The counter lives in `GameState` (`snapshot_bytes`), so the increment is a
+    /// core transition ([`GameState::step_begin_turn_barrier`]); the FSM keeps the
+    /// packet, the wait and the retransmit.
     fn begin(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let slot = self.local_team.0 as usize;
-        let counter = state.frame_sync_counter[slot].wrapping_add(1);
-        state.frame_sync_counter[slot] = counter;
+        let counter = state.step_begin_turn_barrier(self.local_team);
         self.begin_counter = counter;
         self.phase = BarrierPhase::Begin;
 
@@ -1440,8 +1442,7 @@ impl TurnBarrierFsm {
     }
 
     fn begin_reached(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| state.frame_sync_counter[team] == self.begin_counter)
+        state.begin_turn_barrier_reached(self.begin_counter)
     }
 
     /// `Remote_WaitComplexTotals`: own team's 53 for the current turn.
@@ -1470,9 +1471,7 @@ impl TurnBarrierFsm {
 
     /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[own]` → 52.
     fn end(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let slot = self.local_team.0 as usize;
-        let counter = state.turn_indices[slot].wrapping_add(1);
-        state.turn_indices[slot] = counter;
+        let counter = state.step_end_turn_barrier(self.local_team);
         self.end_counter = counter;
         self.phase = BarrierPhase::End;
 
@@ -1485,8 +1484,7 @@ impl TurnBarrierFsm {
     }
 
     fn end_reached(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| state.turn_indices[team] == self.end_counter)
+        state.end_turn_barrier_reached(self.end_counter)
     }
 
     /// `Remote_SynchronizeUnitStates`: `++Remote_StateSyncIndex` → 54.
@@ -1523,9 +1521,7 @@ impl TurnBarrierFsm {
 
     /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[own]` → 45.
     fn crc(&mut self, state: &mut GameState) -> Vec<Packet> {
-        let slot = self.local_team.0 as usize;
-        let index = state.next_turn_indices[slot].wrapping_add(1);
-        state.next_turn_indices[slot] = index;
+        let index = state.step_crc_barrier(self.local_team);
         self.crc_index = index;
         self.crc_checksum = max_core::crc::state_checksum(state);
         self.phase = BarrierPhase::Crc;
@@ -1534,8 +1530,7 @@ impl TurnBarrierFsm {
     }
 
     fn crc_reached(&self, state: &GameState) -> bool {
-        self.remote_teams(state)
-            .all(|team| state.next_turn_indices[team] == self.crc_index)
+        state.crc_barrier_reached(self.crc_index)
     }
 
     /// CRC comparison after the 45 barrier: all peers have the same `crc16`.
@@ -2011,9 +2006,7 @@ async fn run_game_loop(
         }
 
         // finish_turn: 52 is closed, all peers move to the next turn.
-        if app.state().game_state != GameStateType::EndTurn {
-            app.state_mut().game_state = GameStateType::EndTurn;
-        }
+        app.state_mut().enter_end_turn();
         let game_over = app.state_mut().finish_turn();
         fsm.on_turn_finished();
         stats.turns_finished = stats.turns_finished.saturating_add(1);
@@ -2827,7 +2820,7 @@ mod tests {
         assert_eq!(checksums[0], checksums[2], "CRC A == C");
 
         for client in &mut clients {
-            client.app.state_mut().game_state = GameStateType::EndTurn;
+            client.app.state_mut().enter_end_turn();
             let _ = client.app.state_mut().finish_turn();
         }
         let turns: Vec<i32> = clients

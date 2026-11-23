@@ -32,7 +32,9 @@
 //!   `SetNewOrderInt`, `RestoreOrders`, `BlockedOnPathRequest`, movement
 //!   (`ExecuteMove`/`Move`), 32 `ProcessOrder*` processors (P4);
 //! * [`game`] — `GameState`: five unit lists, `ProcessOrders`, tick loop,
-//!   end of turn, barriers, canonical state digest (P4);
+//!   end of turn, the team-turn machine ([`game::TurnEvent`]:
+//!   `begin_round`/`next_team`/`end_round`), barriers and their steppers,
+//!   canonical state digest (P4);
 //! * [`access`] — cell passability (`Access_IsAccessible` with flags and
 //!   `land_type` of 93 types from `SC_UNITS`), `MapHash` occupancy, attack targets,
 //!   transport boarding, `IsEngaged`, group lists (P5);
@@ -162,7 +164,7 @@ pub use max_types::enums::{
 };
 pub use events::{apply_command, ApplyOutcome, CommandQueue, UnitEvent};
 pub use game::{
-    GameState, LiveAttack, OrderData, UnitSound, UnitSoundKind,
+    GameState, LiveAttack, OrderData, TurnEvent, UnitSound, UnitSoundKind,
     GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT,
     PLAYER_TEAM_MAX, TEAM_SLOTS,
 };

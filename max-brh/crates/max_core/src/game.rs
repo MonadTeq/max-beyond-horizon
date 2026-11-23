@@ -161,6 +161,34 @@ pub struct UnitSound {
 }
 
 // ---------------------------------------------------------------------------
+// Team-turn machine
+// ---------------------------------------------------------------------------
+
+/// One step of the team-turn machine — the body of the C++
+/// `GameManager_TeamTurnTurnBased` (`game_manager.cpp:451`) /
+/// `GameManager_TeamTurnConcurrent` (`game_manager.cpp:500`) loop.
+///
+/// The event says what the deterministic core did and what the application has
+/// to do next (wait for input, show the hot-seat «Begin turn» window, autosave).
+/// The transition itself — the round cursor, the economy, the active team, the
+/// phase and the AI start — belongs to [`GameState::next_team`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEvent {
+    /// A human team's turn started (`GameManager_UpdateGui`, `TEAM_TYPE_PLAYER`):
+    /// the application waits for input.
+    Human(TeamId),
+    /// A computer team's turn started (`Ai_BeginTurn`).
+    Computer(TeamId),
+    /// The round is closed (`GameManager_TeamTurnFinish`); [`GameState::end_round`]
+    /// has already entered the next round, so the caller asks [`GameState::next_team`]
+    /// again for its first team.
+    RoundClosed,
+    /// The match is over: `menu_check_end_game_conditions` returned `true`, the
+    /// turn counter was **not** advanced (as in C++).
+    GameOver,
+}
+
+// ---------------------------------------------------------------------------
 // GameState
 // ---------------------------------------------------------------------------
 
@@ -211,6 +239,15 @@ pub struct GameState {
     pub play_mode: PlayMode,
     /// `GameManager_TurnCounter`.
     pub turn_counter: i32,
+    /// Deterministic round cursor: the slot of the next team to play in the
+    /// current round (the `for` loop variable of
+    /// `GameManager_TeamTurnTurnBased`, `game_manager.cpp:458`).
+    ///
+    /// It is the position of the turn machine, not a game fact: C++ keeps it in
+    /// the loop variable, so it is **not** part of the snapshot/CRC.
+    /// [`Self::begin_round`] resets it to `PLAYER_TEAM_RED`; [`Self::next_team`]
+    /// advances it past the started team.
+    pub round_team: usize,
     /// `GameManager_ActiveTurnTeam`.
     pub active_turn_team: TeamId,
     /// `GameManager_PlayerTeam` (the local player).
@@ -380,6 +417,7 @@ impl GameState {
             game_state: GameStateType::InGame,
             play_mode: PlayMode::TurnBased,
             turn_counter: 0,
+            round_team: 0,
             active_turn_team: TeamId::RED,
             player_team: TeamId::RED,
             update_flag: false,
@@ -506,6 +544,9 @@ impl GameState {
         self.turn_counter = save.game.turn_counter;
         self.active_turn_team = save.game.active_turn_team;
         self.player_team = save.game.player_team;
+        // The round cursor is not stored in V70: a loaded match starts a new
+        // round iteration from `PLAYER_TEAM_RED`.
+        self.round_team = 0;
         // V70 does not store the RNG state (see "Intentional divergences").
         self.rng = Randomizer::new(save.header.rng_seed);
         self.unit_id_counter = INITIAL_UNIT_ID_COUNTER;
@@ -2199,18 +2240,151 @@ impl GameState {
         }
     }
 
-    /// `GameManager_AreTeamsFinishedTurn` (`game_manager.cpp:2520`).
+    /// `GameManager_AreTeamsFinishedTurn` (`game_manager.cpp:2520`) — the
+    /// concurrent round barrier: every playing team has finished its turn.
     pub fn are_teams_finished_turn(&self) -> bool {
-        for team in 0..PLAYER_TEAM_COUNT {
+        self.first_unfinished_playing_slot().is_none()
+    }
+
+    /// The first playing slot whose team has not finished the round
+    /// (`GameManager_AreTeamsFinishedTurn`); `None` — all playing teams finished.
+    fn first_unfinished_playing_slot(&self) -> Option<usize> {
+        (0..PLAYER_TEAM_COUNT).find(|&team| {
             let info = &self.teams[team];
-            if info.team_type != TeamKind::None
+            info.team_type != TeamKind::None
                 && info.team_type != TeamKind::Eliminated
                 && !info.finished_turn
-            {
-                return false;
-            }
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Team-turn machine (`GameManager_TeamTurnTurnBased` /
+    // `GameManager_TeamTurnConcurrent`, `GameManager_GameLoop`)
+    // -----------------------------------------------------------------------
+
+    /// The team the next [`Self::next_team`] call will start; `None` — the next
+    /// call closes the round ([`TurnEvent::RoundClosed`]/[`TurnEvent::GameOver`]).
+    ///
+    /// Read-only peek: the application layer needs it for the values C++ takes
+    /// *before* the transition (`WinLoss_Status` before `GameManager_TeamTurnFinish`,
+    /// `GameManager_PlayerTeam` before `GameManager_UpdateGui` switches it).
+    pub fn upcoming_team(&self) -> Option<TeamId> {
+        (self.round_team..PLAYER_TEAM_COUNT).find_map(|team| {
+            let kind = self.teams[team].team_type;
+            (kind != TeamKind::None && kind != TeamKind::Eliminated).then_some(TeamId(team as u8))
+        })
+    }
+
+    /// Enters a round of the turn machine: resets the round cursor, as
+    /// `GameManager_TeamTurnTurnBased` starts its loop at `PLAYER_TEAM_RED`
+    /// (`game_manager.cpp:458`).
+    ///
+    /// The economy of every team is managed by [`Self::next_team`] at the start
+    /// of that team's turn (`GameManager_ManageEconomy` inside the C++ loop).
+    pub fn begin_round(&mut self) {
+        self.round_team = 0;
+    }
+
+    /// One step of the team-turn machine (`GameManager_TeamTurnTurnBased`,
+    /// `game_manager.cpp:451-498`; `GameManager_TeamTurnConcurrent`,
+    /// `game_manager.cpp:500-581`; the `GameManager_GameLoop` body, `:651-665`).
+    ///
+    /// Finds the next playing slot (skipping `TEAM_TYPE_NONE`/`TEAM_TYPE_ELIMINATED`),
+    /// resets its `finished_turn`, runs `GameManager_ManageEconomy(team)`, sets
+    /// `GameManager_ActiveTurnTeam`/`GameManager_GameState` and, for a computer
+    /// team, calls `Ai_BeginTurn(team)` — the `GameManager_UpdateGui` switch
+    /// (`game_manager.cpp:2430-2488`). For a human team it switches
+    /// `GameManager_PlayerTeam` (`:2445`) and returns [`TurnEvent::Human`].
+    ///
+    /// # Both play modes
+    ///
+    /// The port iterates the slots sequentially in **both** modes, because the
+    /// caller owns the simulation ticks and several teams cannot be advanced
+    /// "at once": a `SimultaneousMoves` round visits the same slots in the same
+    /// order as a `TurnBased` one, so the observable state evolution does not
+    /// depend on the mode (the C++ `TeamTurnConcurrent` economy/AI pass is
+    /// expanded into the per-team turn starts, the same order RED..GRAY).
+    /// The concurrent contract is kept where it is deterministic:
+    ///
+    /// * the round closes only through [`Self::end_round`], and in
+    ///   `SimultaneousMoves` it additionally waits for the
+    ///   [`Self::are_teams_finished_turn`] barrier (`TeamTurnConcurrent`'s
+    ///   `while (!GameManager_AreTeamsFinishedTurn())`): if a playing team has
+    ///   not finished, the cursor is re-armed on it instead of closing;
+    /// * packets 00/52/45 stay with the caller ([`Self::step_begin_turn_barrier`],
+    ///   [`Self::step_end_turn_barrier`], [`Self::step_crc_barrier`] and the
+    ///   matching `*_barrier_reached` predicates), so `TurnBarrierFsm` keeps the
+    ///   network wait/retransmit.
+    pub fn next_team(&mut self) -> TurnEvent {
+        loop {
+            let Some(team) = self.upcoming_team() else {
+                // Cursor exhausted: the concurrent oracle does not close the
+                // round until every playing team finished (`TeamTurnConcurrent`).
+                if self.play_mode == PlayMode::SimultaneousMoves && !self.are_teams_finished_turn()
+                {
+                    if let Some(slot) = self.first_unfinished_playing_slot() {
+                        self.round_team = slot;
+                        continue;
+                    }
+                }
+
+                // `GameManager_GameLoop`: `GameManager_TeamTurnFinish` → next round.
+                return if self.end_round() {
+                    TurnEvent::GameOver
+                } else {
+                    TurnEvent::RoundClosed
+                };
+            };
+
+            let slot = team.0 as usize;
+            let kind = self.teams[slot].team_type;
+
+            // `GameManager_TeamTurnTurnBased`: `finished_turn` is reset before
+            // `GameManager_UpdateGui` (`game_manager.cpp:472`).
+            self.teams[slot].finished_turn = false;
+            // `GameManager_ManageEconomy(team)` at the start of the team turn.
+            self.manage_economy(team);
+            // `GameManager_UpdateGui`: `GameManager_ActiveTurnTeam = team`,
+            // `GameManager_GameState = GAME_STATE_8_IN_GAME` (`:2411`, `:2423`).
+            self.active_turn_team = team;
+            self.game_state = GameStateType::InGame;
+            // The cursor moves past the started team: after the turn is closed
+            // by packet 06 the next step continues with the following slot.
+            self.round_team = slot + 1;
+
+            return match kind {
+                TeamKind::Player => {
+                    // `TEAM_TYPE_PLAYER`: the local player owns the turn.
+                    self.player_team = team;
+                    TurnEvent::Human(team)
+                }
+                _ => {
+                    // `TEAM_TYPE_COMPUTER`: `Ai_BeginTurn(team)`. A local match
+                    // never has `TEAM_TYPE_REMOTE` teams, so the remote branch of
+                    // `GameManager_UpdateGui` has no event of its own here.
+                    self.ai_begin_turn(team);
+                    TurnEvent::Computer(team)
+                }
+            };
         }
-        true
+    }
+
+    /// `GameManager_TeamTurnFinish` (`game_manager.cpp:583`) and the transition
+    /// to the next round: [`Self::finish_turn`] (victory check, `finished_turn`
+    /// reset, score graph, `turn_counter += 1`, production/research turns),
+    /// then [`Self::begin_round`].
+    ///
+    /// Returns `true` when the match is over
+    /// ([`crate::victory::check_end_game_conditions`]) — then the turn counter
+    /// stays and no next round is entered, as in C++.
+    pub fn end_round(&mut self) -> bool {
+        let over = self.finish_turn();
+
+        if !over {
+            self.begin_round();
+        }
+
+        over
     }
 
     /// The common end-of-turn barrier counter (packet 52) if **all** playing
@@ -2245,6 +2419,87 @@ impl GameState {
     /// teams agree. `None` — the barrier is not assembled (desync/waiting).
     pub fn crc_barrier(&self) -> Option<u8> {
         self.common_barrier(|state, team| state.next_turn_indices[team])
+    }
+
+    // -----------------------------------------------------------------------
+    // Barrier steppers (the local team's pre-increment, `remote.cpp`)
+    //
+    // The read-only `*_barrier()` above are the "all playing teams agree" view;
+    // the "every peer reported this value" view the network FSM needs is below
+    // (`*_barrier_reached`). Both stay in the deterministic core: the counters
+    // are simulation state (`snapshot_bytes`), so the UI must not write them.
+    // -----------------------------------------------------------------------
+
+    /// `Remote_WaitBeginTurnAcknowledge`: `++Remote_FrameSyncCounter[team]` —
+    /// the own team's 00 counter of the round (`remote.cpp`). Pre-increment like
+    /// C++, so the first report is 1. Returns the new counter.
+    pub fn step_begin_turn_barrier(&mut self, team: TeamId) -> u8 {
+        let Some(counter) = self.frame_sync_counter.get(team.0 as usize).copied() else {
+            return 0;
+        };
+        let counter = counter.wrapping_add(1);
+        self.frame_sync_counter[team.0 as usize] = counter;
+        counter
+    }
+
+    /// `Remote_WaitEndTurnAcknowledge`: `++Remote_TurnIndices[team]` — the own
+    /// team's 52 counter of the round (`remote.cpp`). Returns the new counter.
+    pub fn step_end_turn_barrier(&mut self, team: TeamId) -> u8 {
+        let Some(counter) = self.turn_indices.get(team.0 as usize).copied() else {
+            return 0;
+        };
+        let counter = counter.wrapping_add(1);
+        self.turn_indices[team.0 as usize] = counter;
+        counter
+    }
+
+    /// `Remote_CheckDesync`: `++Remote_NextTurnIndices[team]` — the own team's 45
+    /// index of the round (`remote.cpp`). Returns the new index.
+    pub fn step_crc_barrier(&mut self, team: TeamId) -> u8 {
+        let Some(index) = self.next_turn_indices.get(team.0 as usize).copied() else {
+            return 0;
+        };
+        let index = index.wrapping_add(1);
+        self.next_turn_indices[team.0 as usize] = index;
+        index
+    }
+
+    /// Packet 00 barrier: every remote team (`TEAM_TYPE_REMOTE`) reports
+    /// `counter` in `Remote_FrameSyncCounter` (`Remote_WaitBeginTurnAcknowledge`,
+    /// `remote.cpp:1876-1933`).
+    pub fn begin_turn_barrier_reached(&self, counter: u8) -> bool {
+        self.remote_barrier_reached(|state, team| state.frame_sync_counter[team], counter)
+    }
+
+    /// Packet 52 barrier: every remote team reports `counter` in
+    /// `Remote_TurnIndices` (`Remote_WaitEndTurnAcknowledge`).
+    pub fn end_turn_barrier_reached(&self, counter: u8) -> bool {
+        self.remote_barrier_reached(|state, team| state.turn_indices[team], counter)
+    }
+
+    /// Packet 45 barrier: every remote team reports `index` in
+    /// `Remote_NextTurnIndices` (`Remote_CheckDesync`).
+    pub fn crc_barrier_reached(&self, index: u8) -> bool {
+        self.remote_barrier_reached(|state, team| state.next_turn_indices[team], index)
+    }
+
+    /// Whether every remote team (`TEAM_TYPE_REMOTE`) reports the expected value
+    /// (`None` — trivially true, e.g. a local match).
+    fn remote_barrier_reached(&self, value: impl Fn(&Self, usize) -> u8, expected: u8) -> bool {
+        (0..PLAYER_TEAM_COUNT)
+            .filter(|&team| self.teams[team].team_type == TeamKind::Remote)
+            .all(|team| value(self, team) == expected)
+    }
+
+    /// `GameManager_RefreshOrders`: the team finished its turn — the phase
+    /// becomes `GAME_STATE_9_END_TURN`, which [`Self::finish_turn`] requires.
+    ///
+    /// Packet 06 sets it for `TurnBased` only ([`crate::events::apply_command`],
+    /// `remote.cpp:1949`); the sequential loop closes **every** team turn through
+    /// this phase, so the caller forces it after 06 — the state change stays in
+    /// the deterministic core.
+    pub fn enter_end_turn(&mut self) {
+        self.game_state = GameStateType::EndTurn;
     }
 
     /// The common barrier value by teams (`None` — no agreement).

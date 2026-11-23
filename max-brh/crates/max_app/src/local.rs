@@ -20,6 +20,16 @@
 //!    (`GameManager_TeamTurnFinish`): victory/defeat conditions, flag reset,
 //!    `turn_counter += 1`.
 //!
+//! # Layer split (refactor #6)
+//!
+//! Steps 1, 2, 3 and 5 are the **deterministic** team-turn machine and live in
+//! [`max_core::GameState`]: [`max_core::GameState::begin_round`] resets the round
+//! cursor, [`max_core::GameState::next_team`] performs one step and returns a
+//! [`max_core::TurnEvent`], [`max_core::GameState::end_round`] closes the round
+//! (`finish_turn` + the next round). This module only consumes the events: the
+//! hot-seat «Begin turn» window, the autosave, the HUD log, the camera focus, the
+//! turn timer and [`LocalPhase`] — it never writes simulation fields itself.
+//!
 //! Turn timer — `settings["timer"]` (`GameManager_UpdateTurnTimer`); `0` —
 //! no limit. Pause (`PauseMenu`) stops both the ticks and the timer.
 //!
@@ -29,6 +39,7 @@
 
 use max_core::enums::{GameStateType, PlayMode, WinLossState};
 use max_core::events::command_finished_turn;
+use max_core::game::TurnEvent;
 use max_core::geo::Point;
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
@@ -420,8 +431,6 @@ pub struct LocalGame {
     pub paused: bool,
     /// Ticks in the current AI turn.
     pub ai_ticks: u32,
-    /// Team index in the round (`0..LOCAL_TEAM_COUNT`).
-    pub round_team: usize,
     /// Match result.
     pub outcome: Option<LocalOutcome>,
     /// M-HS: human teams in slot order (`GameManager_UpdateHumanPlayerCount`).
@@ -451,7 +460,6 @@ impl LocalGame {
             active_team: human,
             paused: false,
             ai_ticks: 0,
-            round_team: 0,
             outcome: None,
             human_teams,
             notice: None,
@@ -748,251 +756,232 @@ impl App {
         self.hud.clear();
     }
 
-    /// `GameManager_TeamTurnTurnBased` for the round start: we go over the teams
-    /// from `RED`, skipping empty/eliminated ones; a human — wait for input, a computer —
-    /// `Ai_BeginTurn`.
+    /// `GameManager_TeamTurnTurnBased` round entry: the deterministic round
+    /// cursor is reset in the core ([`max_core::GameState::begin_round`]), the
+    /// application only advances to the first playing team.
     fn local_begin_round(&mut self) {
-        let mut local = self.local.take().expect("local game must exist");
-        local.round_team = 0;
-        local.phase = LocalPhase::Advancing;
-        self.local = Some(local);
+        {
+            let mut local = self.local.take().expect("local game must exist");
+            local.phase = LocalPhase::Advancing;
+            self.local = Some(local);
+        }
+        self.state_mut().begin_round();
         self.local_next_team();
     }
 
-    /// Next team of the round (or closing the round).
+    /// Consumes [`TurnEvent`]s until a team has to act (a human turn or a
+    /// computer turn) or the match is over.
+    ///
+    /// All deterministic transitions happen in the core
+    /// ([`max_core::GameState::next_team`] / [`max_core::GameState::end_round`]);
+    /// this layer only reacts to the event: the hot-seat «Begin turn» window, the
+    /// autosave, the HUD log, the camera focus, the turn timer and [`LocalPhase`].
+    ///
+    /// The two values the UI needs *before* the step are read with a peek, as in
+    /// C++: `GameLoop` evaluates `WinLoss_Status` before `GameManager_TeamTurnFinish`,
+    /// and `GameManager_UpdateGui` compares `GameManager_PlayerTeam` before
+    /// switching it to the new human team.
     fn local_next_team(&mut self) {
-        loop {
-            let Some(local) = self.local.as_ref() else {
-                return;
-            };
-            let round_team = local.round_team;
-
-            if round_team >= LOCAL_TEAM_COUNT {
-                self.local_finish_round();
-                return;
-            }
-
-            let team = TeamId(round_team as u8);
-            let playing = {
-                let state = self.state();
-                let kind = state.teams[round_team].team_type;
-                kind != TeamKind::None && kind != TeamKind::Eliminated
-            };
-
-            if !playing {
-                if let Some(local) = self.local.as_mut() {
-                    local.round_team += 1;
-                }
-                continue;
-            }
-
-            // `GameManager_ManageEconomy(team)` at the start of the team turn.
-            // `GameManager_TeamTurnTurnBased` (`game_manager.cpp:472`): before
-            // `UpdateGui` the team's `finished_turn` is reset.
-            self.state_mut().teams[round_team].finished_turn = false;
-            self.state_mut().manage_economy(team);
-            self.state_mut().active_turn_team = team;
-            self.state_mut().game_state = GameStateType::InGame;
-
-            let kind = self.state().teams[round_team].team_type;
-
-            if kind == TeamKind::Player {
-                let (setup_timer, hot_seat) = self
-                    .local
-                    .as_ref()
-                    .map(|local| (local.setup.timer, local.is_hot_seat()))
-                    .unwrap_or((0, false));
-                let timer_left = if setup_timer == 0 {
-                    0.0
-                } else {
-                    // C++: `ini_timer_setting == 0 && player is computer → 45`,
-                    // for a human 0 means "no timer".
-                    setup_timer as f32
-                };
-
-                // `GameManager_UpdateGui`: the «Begin turn» window is shown if
-                // the human team changed (`GameManager_PlayerTeam != team`)
-                // and there is more than one human (`GameManager_HumanPlayerCount`).
-                let previous_player_team = self.state().player_team;
-                let notice =
-                    (hot_seat && previous_player_team != team).then(|| TurnNotice::new(team));
-
-                {
-                    let state = self.state_mut();
-                    state.player_team = team;
-                    state.game_state = GameStateType::InGame;
-                }
-
-                let mut local = self.local.take().expect("local game");
-                local.phase = LocalPhase::PlayerTurn;
-                local.active_team = team;
-                local.timer_left = timer_left;
-                local.ai_ticks = 0;
-                local.notice = notice;
-                let hot_seat = local.is_hot_seat();
-                self.local = Some(local);
-
-                // The selection does not move between players: otherwise the new player
-                // would order a foreign unit (`GameManager_UpdateGuiControl`).
-                self.hud.clear_interaction();
-                // The power message (`ProductionManager::DrawResourceMessage`)
-                // is re-established after the turn change: `clear_interaction`
-                // removes `hint` together with the selection.
-                if let Some(message) = self.state().industry_message.clone() {
-                    self.hud.set_hint(message);
-                }
-                // The command popup belongs to the previous selection
-                // (`GameManager_DeinitPopupButtons` on the turn change).
-                self.close_unit_menu();
-                self.focus_player();
-
-                if let Some(notice) = notice {
-                    self.hud.push_log(crate::hotseat::notice_log_line(&notice));
-                } else {
-                    self.hud.push_log(if hot_seat {
-                        format!(
-                            "Turn {}: {} moves",
-                            self.state().turn_counter,
-                            team_name(team)
-                        )
-                    } else {
-                        format!("Turn {}: your move", self.state().turn_counter)
-                    });
-                }
-
-                return;
-            }
-
-            // Computer team: `Ai_BeginTurn(team)`.
-            self.state_mut().ai_begin_turn(team);
-
-            let mut local = self.local.take().expect("local game");
-            local.phase = LocalPhase::AiTurn(team);
-            local.active_team = team;
-            local.ai_ticks = 0;
-            // `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER`:
-            // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` —
-            // the AI turn timer starts from this value (the panel shows it
-            // with the same `GameManager_DrawTurnTimer`), so it is visible also during the
-            // computer turn (in QA — 00:45).
-            local.timer_left = local.setup.endturn.max(45) as f32;
-            self.local = Some(local);
-            self.hud.push_log(format!(
-                "Turn {}: {} (computer)",
-                self.state().turn_counter,
-                team_name(team)
-            ));
+        if self.local.is_none() {
             return;
+        }
+
+        loop {
+            let upcoming = self.state().upcoming_team();
+            let previous_player_team = self.state().player_team;
+            let closing_status = upcoming
+                .is_none()
+                .then(|| victory::evaluate_status(self.state(), self.state().turn_counter));
+
+            let event = if closing_status.is_some() {
+                // P4: measurement of `GameManager_TeamTurnFinish` (victory/defeat,
+                // points, production of all teams) — the closing step only.
+                let turn_counter = self.state().turn_counter;
+                let _profile = crate::profile::finish_turn_scope(turn_counter);
+                self.state_mut().next_team()
+            } else {
+                self.state_mut().next_team()
+            };
+
+            match event {
+                TurnEvent::Human(team) => {
+                    self.local_start_human_turn(team, previous_player_team);
+                    return;
+                }
+                TurnEvent::Computer(team) => {
+                    self.local_start_ai_turn(team);
+                    return;
+                }
+                TurnEvent::RoundClosed => self.local_finish_round(),
+                TurnEvent::GameOver => {
+                    // `GameOver` is only reported by the closing step, so the
+                    // pre-step status is the one C++ passes to the screen.
+                    let status = closing_status.unwrap_or_else(|| {
+                        victory::evaluate_status(self.state(), self.state().turn_counter)
+                    });
+                    self.local_game_over(status);
+                    return;
+                }
+            }
         }
     }
 
-    /// `GameManager_TeamTurnFinish`: victory check, the next round.
-    fn local_finish_round(&mut self) {
-        // C++ computes `WinLoss_Status` **before** `menu_check_end_game_conditions` and
-        // passes it to the screen; `finish_turn` does the same check inside.
-        let status = victory::evaluate_status(self.state(), self.state().turn_counter);
-        let turn_counter = self.state().turn_counter;
-        // P4: measurement of `GameManager_TeamTurnFinish` (victory/defeat, points,
-        // production of all teams). The measurement does not change the call order —
-        // `finish_turn` is called exactly once at the same point.
-        let over = {
-            let _profile = crate::profile::finish_turn_scope(turn_counter);
-
-            self.state_mut().finish_turn()
+    /// Human team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_PLAYER`): the
+    /// timer, the hot-seat «Begin turn» window, the selection reset, the camera
+    /// focus and the HUD log.
+    fn local_start_human_turn(&mut self, team: TeamId, previous_player_team: TeamId) {
+        let (setup_timer, hot_seat) = self
+            .local
+            .as_ref()
+            .map(|local| (local.setup.timer, local.is_hot_seat()))
+            .unwrap_or((0, false));
+        let timer_left = if setup_timer == 0 {
+            0.0
+        } else {
+            // C++: `ini_timer_setting == 0 && player is computer → 45`,
+            // for a human 0 means "no timer".
+            setup_timer as f32
         };
 
+        // `GameManager_UpdateGui`: the «Begin turn» window is shown if
+        // the human team changed (`GameManager_PlayerTeam != team`)
+        // and there is more than one human (`GameManager_HumanPlayerCount`).
+        let notice = (hot_seat && previous_player_team != team).then(|| TurnNotice::new(team));
+
+        {
+            let mut local = self.local.take().expect("local game");
+            local.phase = LocalPhase::PlayerTurn;
+            local.active_team = team;
+            local.timer_left = timer_left;
+            local.ai_ticks = 0;
+            local.notice = notice;
+            self.local = Some(local);
+        }
+
+        // The selection does not move between players: otherwise the new player
+        // would order a foreign unit (`GameManager_UpdateGuiControl`).
+        self.hud.clear_interaction();
+        // The power message (`ProductionManager::DrawResourceMessage`)
+        // is re-established after the turn change: `clear_interaction`
+        // removes `hint` together with the selection.
+        if let Some(message) = self.state().industry_message.clone() {
+            self.hud.set_hint(message);
+        }
+        // The command popup belongs to the previous selection
+        // (`GameManager_DeinitPopupButtons` on the turn change).
+        self.close_unit_menu();
+        self.focus_player();
+
+        if let Some(notice) = notice {
+            self.hud.push_log(crate::hotseat::notice_log_line(&notice));
+        } else {
+            self.hud.push_log(if hot_seat {
+                format!(
+                    "Turn {}: {} moves",
+                    self.state().turn_counter,
+                    team_name(team)
+                )
+            } else {
+                format!("Turn {}: your move", self.state().turn_counter)
+            });
+        }
+    }
+
+    /// Computer team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_COMPUTER`):
+    /// the core already ran `Ai_BeginTurn(team)`, the application starts the AI
+    /// timer and the [`LocalPhase::AiTurn`].
+    fn local_start_ai_turn(&mut self, team: TeamId) {
+        let mut local = self.local.take().expect("local game");
+        local.phase = LocalPhase::AiTurn(team);
+        local.active_team = team;
+        local.ai_ticks = 0;
+        // `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER`:
+        // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` —
+        // the AI turn timer starts from this value (the panel shows it
+        // with the same `GameManager_DrawTurnTimer`), so it is visible also during the
+        // computer turn (in QA — 00:45).
+        local.timer_left = local.setup.endturn.max(45) as f32;
+        self.local = Some(local);
+        self.hud.push_log(format!(
+            "Turn {}: {} (computer)",
+            self.state().turn_counter,
+            team_name(team)
+        ));
+    }
+
+    /// `GameManager_TeamTurnFinish`, non-final branch: the production/research
+    /// reports of the closed round, the next round entry, the autosave.
+    ///
+    /// The core already ran `finish_turn` (victory check, `finished_turn` reset,
+    /// score graph, `turn_counter += 1`, production/research turns) and entered
+    /// the next round; the caller continues with [`Self::local_next_team`].
+    ///
+    /// The production/research event queues are UI/QA reports (they are not part
+    /// of the snapshot/CRC): taking them is the application's consumption of the
+    /// core's report, not a simulation transition.
+    fn local_finish_round(&mut self) {
         // Production turn events (`GameManager_ReportNewUnitsMessage`):
         // only for the local player, so that the log is not flooded with foreign
         // factories.
-        if !over {
-            let player = self.state().player_team;
-            let events = self.state_mut().take_production_events();
+        let player = self.state().player_team;
+        let events = self.state_mut().take_production_events();
 
-            for event in events.iter().filter(|event| event.builder.team() == player) {
-                let name = crate::buildmenu::unit_name(event.unit_type);
+        for event in events.iter().filter(|event| event.builder.team() == player) {
+            let name = crate::buildmenu::unit_name(event.unit_type);
 
-                match event.kind {
-                    max_core::ProductionEventKind::Spawned => {
-                        self.hud.push_log(format!("{name} ready"))
-                    }
-                    max_core::ProductionEventKind::BuildingDone => {
-                        self.hud.push_log(format!("{name} built"))
-                    }
-                    max_core::ProductionEventKind::PausedNoMaterials => self
-                        .hud
-                        .push_log("Production paused: not enough raw materials"),
-                    max_core::ProductionEventKind::PausedNoResources => self
-                        .hud
-                        .push_log("Production paused: not enough raw materials"),
-                    max_core::ProductionEventKind::PausedNoPower => {
-                        self.hud.push_log("Production paused: not enough power")
-                    }
-                    max_core::ProductionEventKind::PausedNoFuel => {
-                        self.hud.push_log("Production paused: not enough fuel")
-                    }
-                    max_core::ProductionEventKind::PausedNoWorkers => {
-                        self.hud.push_log("Production paused: not enough workers")
-                    }
-                    max_core::ProductionEventKind::PausedNoGold => {
-                        self.hud.push_log("Production paused: not enough gold")
-                    }
-                    max_core::ProductionEventKind::NoSpawnCell => self
-                        .hud
-                        .push_log("Production: no free cell near the factory"),
-                    max_core::ProductionEventKind::RubbleCleared => {
-                        self.hud.push_log("Rubble cleared")
-                    }
+            match event.kind {
+                max_core::ProductionEventKind::Spawned => {
+                    self.hud.push_log(format!("{name} ready"))
                 }
-            }
-
-            // `ResearchMenu_NewTurn`: completed topics (P6).
-            let research = self.state_mut().take_research_events();
-            for event in research.iter().filter(|event| event.team == player) {
-                self.hud.push_log(format!(
-                    "Research complete: {:?} level {}",
-                    event.topic, event.level
-                ));
-            }
-
-            // `ProductionManager::DrawResourceMessage` (`production_manager.cpp:792-804`):
-            // «Adjustments made: …» over the map (`MESSAGE_BOX_NOTICE`).
-            // The message lives in the state until the end of the round and is re-established
-            // on entering the human turn (the turn change clears `hint`).
-            if let Some(message) = self.state().industry_message.clone() {
-                self.hud.set_hint(message);
+                max_core::ProductionEventKind::BuildingDone => {
+                    self.hud.push_log(format!("{name} built"))
+                }
+                max_core::ProductionEventKind::PausedNoMaterials => self
+                    .hud
+                    .push_log("Production paused: not enough raw materials"),
+                max_core::ProductionEventKind::PausedNoResources => self
+                    .hud
+                    .push_log("Production paused: not enough raw materials"),
+                max_core::ProductionEventKind::PausedNoPower => {
+                    self.hud.push_log("Production paused: not enough power")
+                }
+                max_core::ProductionEventKind::PausedNoFuel => {
+                    self.hud.push_log("Production paused: not enough fuel")
+                }
+                max_core::ProductionEventKind::PausedNoWorkers => {
+                    self.hud.push_log("Production paused: not enough workers")
+                }
+                max_core::ProductionEventKind::PausedNoGold => {
+                    self.hud.push_log("Production paused: not enough gold")
+                }
+                max_core::ProductionEventKind::NoSpawnCell => self
+                    .hud
+                    .push_log("Production: no free cell near the factory"),
+                max_core::ProductionEventKind::RubbleCleared => {
+                    self.hud.push_log("Rubble cleared")
+                }
             }
         }
 
-        if over {
-            let player_team = self.state().player_team;
-            let is_winner = if status.team_status[player_team.0 as usize] == WinLossState::Generic {
-                status.team_rank[player_team.0 as usize] == 1
-            } else {
-                status.team_status[player_team.0 as usize] == WinLossState::Won
-            };
+        // `ResearchMenu_NewTurn`: completed topics (P6).
+        let research = self.state_mut().take_research_events();
+        for event in research.iter().filter(|event| event.team == player) {
+            self.hud.push_log(format!(
+                "Research complete: {:?} level {}",
+                event.topic, event.level
+            ));
+        }
 
-            let mut local = self.local.take().expect("local game");
-            local.phase = LocalPhase::Finished;
-            local.notice = None;
-            local.outcome = Some(LocalOutcome {
-                victory: is_winner,
-                team: player_team,
-                status,
-                turn_counter,
-                player_name: local.display_name(player_team),
-            });
-            self.local = Some(local);
-            self.hud.push_log(if is_winner {
-                "Game over: you win"
-            } else {
-                "Game over: you lose"
-            });
-            return;
+        // `ProductionManager::DrawResourceMessage` (`production_manager.cpp:792-804`):
+        // «Adjustments made: …» over the map (`MESSAGE_BOX_NOTICE`).
+        // The message lives in the state until the end of the round and is re-established
+        // on entering the human turn (the turn change clears `hint`).
+        if let Some(message) = self.state().industry_message.clone() {
+            self.hud.set_hint(message);
         }
 
         {
             let mut local = self.local.take().expect("local game");
-            local.round_team = 0;
             local.phase = LocalPhase::Advancing;
             self.local = Some(local);
         }
@@ -1002,7 +991,37 @@ impl App {
         // C++ `GameManager_UpdateGui(team, …, enable_autosave = true)` for the first
         // team of the round: autosave (slot 10) with `SETUP.auto_save` enabled.
         self.autosave();
-        self.local_next_team();
+    }
+
+    /// `GameManager_TeamTurnFinish`, final branch: the round close reported the
+    /// end of the match (`menu_check_end_game_conditions`); the screen data is
+    /// assembled from the `WinLoss_Status` evaluated **before** the close.
+    fn local_game_over(&mut self, status: WinLossStatus) {
+        let player_team = self.state().player_team;
+        let is_winner = if status.team_status[player_team.0 as usize] == WinLossState::Generic {
+            status.team_rank[player_team.0 as usize] == 1
+        } else {
+            status.team_status[player_team.0 as usize] == WinLossState::Won
+        };
+        // `finish_turn` does not advance the counter when the game is over.
+        let turn_counter = self.state().turn_counter;
+
+        let mut local = self.local.take().expect("local game");
+        local.phase = LocalPhase::Finished;
+        local.notice = None;
+        local.outcome = Some(LocalOutcome {
+            victory: is_winner,
+            team: player_team,
+            status,
+            turn_counter,
+            player_name: local.display_name(player_team),
+        });
+        self.local = Some(local);
+        self.hud.push_log(if is_winner {
+            "Game over: you win"
+        } else {
+            "Game over: you lose"
+        });
     }
 
     /// Human End Turn: packet `06` (`GameManager_RefreshOrders` →
@@ -1021,16 +1040,15 @@ impl App {
 
         let team = local.active_team;
         let _ = self.apply(command_finished_turn(team));
-
-        if self.state().game_state != GameStateType::EndTurn {
-            self.state_mut().game_state = GameStateType::EndTurn;
-        }
+        // `GameManager_RefreshOrders`: the team's turn is over, the phase is
+        // `GAME_STATE_9_END_TURN` (a core transition; the core already moved the
+        // round cursor past `team` when it started the turn).
+        self.state_mut().enter_end_turn();
 
         self.hud.push_log(format!("{} ended turn", team_name(team)));
 
         if let Some(local) = self.local.as_mut() {
             local.phase = LocalPhase::Advancing;
-            local.round_team = team.0 as usize + 1;
         }
 
         self.local_next_team();
@@ -1216,15 +1234,14 @@ impl App {
 
                 if finished || timed_out {
                     let _ = self.apply(command_finished_turn(team));
-                    if self.state().game_state != GameStateType::EndTurn {
-                        self.state_mut().game_state = GameStateType::EndTurn;
-                    }
+                    // `GameManager_RefreshOrders`: the team's turn is over, the
+                    // phase is `GAME_STATE_9_END_TURN` (a core transition).
+                    self.state_mut().enter_end_turn();
 
                     update.turn_closed = true;
 
                     if let Some(local) = self.local.as_mut() {
                         local.phase = LocalPhase::Advancing;
-                        local.round_team = team.0 as usize + 1;
                     }
 
                     self.local_next_team();
@@ -1297,7 +1314,9 @@ pub struct LocalSave {
     pub timer_left_ms: u32,
     /// Pause.
     pub paused: bool,
-    /// Team index in the round.
+    /// Round cursor of the deterministic turn machine
+    /// (`GameState::round_team`). Kept in the container byte layout for
+    /// compatibility; the simulation value lives in `max_core`.
     pub round_team: u8,
     /// Ticks in the current AI turn.
     pub ai_ticks: u32,
@@ -1328,7 +1347,7 @@ impl LocalSave {
             active_team: local.active_team,
             timer_left_ms: (local.timer_left.max(0.0) * 1000.0) as u32,
             paused: local.paused,
-            round_team: local.round_team.min(u8::MAX as usize) as u8,
+            round_team: app.state().round_team.min(u8::MAX as usize) as u8,
             ai_ticks: local.ai_ticks,
             finished: local.finished(),
             victory: local.victory(),
@@ -1678,7 +1697,6 @@ impl App {
 
         let mut local = LocalGame::new(loaded);
         local.phase = LocalPhase::Advancing;
-        local.round_team = 0;
         self.local = Some(local);
         self.hud.clear();
         self.hud.push_log("Local game loaded from a V70 save");
