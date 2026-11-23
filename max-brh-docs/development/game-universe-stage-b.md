@@ -106,6 +106,13 @@
   `apply_pending_commands`, `enqueue`, `process_orders`, `manage_economy`,
   `next_team`, `begin_round`, `resume_round`, `end_round`, `enter_end_turn`,
   `finish_turn`, `step_*_barrier`, `check_end_turn`) — `pub(crate)`.
+- **А4 — немедленные барьерные факты (дополняет решение 2 ADR).**
+  `NetworkDispatcher::receive` классифицирует входящий `RemoteCommand::Command`:
+  барьер согласия `TurnBarrier`/`EndTurnBarrier`/`CrcBarrier` (00/52/45) →
+  `ApplyBarrier` (немедленно, `events::apply_command` → `seq += 1`); 54 →
+  `ApplyStateSync`; всё прочее → `Replay` (очередь до `tick`). Мост
+  `App::submit_remote` (немедленная семантика) остаётся до §6 и заменяется
+  фасадным `GameUniverse<NetworkDispatcher>::submit_remote` с этим правилом.
 
 ## 1. Обязательное чтение перед стартом
 
@@ -172,11 +179,12 @@
    `universe.step_*_barrier(...)`. Логика (счётчики, фазы, пакеты, retransmit
    3 с, timeout 30 с, resume-54) остаётся **байт-в-байт** прежней.
 3. `impl Dispatcher for NetworkDispatcher` (ADR §2):
-   - `route`: команда, влияющая на симуляцию → `Broadcast`; барьеры (`00`/`01`/
-     `52`/`45`/`53`/`54`) и локальные настройки → `Local`; запрещённый порядок →
-     `Drop`.
-   - `receive`: `RemoteCommand::Command` → `Replay`; `RemoteCommand::StateSync` →
-     `ApplyStateSync`.
+   - `route` (исчерпывающе по 18 вариантам `Command`): `00`/`01`/`52`/`45`/`53` →
+     `Local`; `13 Seed` → `Drop` (re-seed RNG в середине партии запрещён); всё
+     прочее (`06`/`08`/`10`/`11`/`12`/`14`/`18`/`20`/`38`/`41`/`43`/`50`) →
+     `Broadcast`. `54` в `route` не участвует (это `StateSync`, не `Command`).
+   - `receive`: барьер согласия `00`/`52`/`45` → `ApplyBarrier` (немедленно, А4);
+     прочие `Command` → `Replay`; `StateSync` → `ApplyStateSync`.
    - `advances_turns` → `false` (ход продвигает барьерная FSM, `net.rs:2020-2024`).
    - `plan` → `vec![]` (см. §0.2 А2).
 
@@ -339,6 +347,16 @@ saveload,preferences,soak,menu*}.rs` (≈298 обращений, см. `lib.rs`)
 5. `App::flush_commands` (`lib.rs:912-914`, использует
    `universe.state_mut().apply_pending_commands()`) → фасадный конфиг-метод
    (например `GameUniverse::flush_commands`).
+6. **Обязательное предусловие (А4):** перед переходом `App →
+   `GameUniverse<NetworkDispatcher>` внедрить `RemoteHandling::ApplyBarrier`
+   (00/52/45 — немедленно) в `universe.rs::submit_remote`; без этого барьерный
+   путь `wait_barrier` дедлочит на 30-сек таймауте.
+6b. **Подключить `drain_outgoing`** в `run_game_loop`: после `app.tick()` забирать
+   `app.drain_outgoing()` и слать `NetworkCommand::Command` через `SessionHandle`
+   (вещание 06/08/38/41/50/18/…). Одновременно сменить `outgoing` на накопление
+   (`extend`, не `=`) — иначе `submit(Broadcast)` теряет пакет при следующем
+   `tick` (`plan()` возвращает `vec![]`). Барьерные пакеты FSM остаются вне
+   `drain_outgoing` (А2).
 
 Критерий: `cargo check -p max_app` зелёный; `App::state()/state_mut()`
 (`lib.rs:879/886`) больше **не вызываются** нигде (остаются только как

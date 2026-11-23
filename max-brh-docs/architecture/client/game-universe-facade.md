@@ -178,8 +178,9 @@ pub enum RoutedCommand {
 }
 
 pub enum RemoteHandling {
-    Replay(Command),                // положить в очередь в порядке поступления
-    ApplyStateSync(StateSyncPacket),// применить авторитетное состояние сразу (пакет 54)
+    Replay(Command),                 // очередь, в порядке поступления (симуляционные команды)
+    ApplyBarrier(Command),           // немедленное барьерное согласие (00/52/45) — счётчики
+    ApplyStateSync(StateSyncPacket), // авторитетное состояние сразу (пакет 54)
     Ignore,
 }
 
@@ -224,8 +225,16 @@ Zero-sized, детерминированный. `route` → всегда `Local`
 ### `NetworkDispatcher` (в `max_app`)
 
 Реализует trait **на стороне приложения** (владеет `SessionHandle` и переносит
-нынешнюю `TurnBarrierFsm` из `net.rs`). `route`: команда, влияющая на симуляцию →
-`Broadcast`; барьеры → `Local`. `receive`: `RemoteCommand::Command` → `Replay`
+нынешнюю `TurnBarrierFsm` из `net.rs`).
+
+`route` (исчерпывающе по `Command`): барьеры/локальные настройки
+`00`/`01`/`52`/`45`/`53` → `Local`; `13 Seed` → `Drop` (re-seed RNG в середине
+партии запрещён); всё прочее → `Broadcast`. `14 Deploy`/`12 MissionSupply` —
+init-only, финальная классификация за аналитиком (рекомендация: 14 → `Drop`,
+12 → `Broadcast`). `54` в `route` не участвует (это `StateSync`, не `Command`).
+
+`receive`: `RemoteCommand::Command` с барьером согласия (`00`/`52`/`45`) →
+`ApplyBarrier` (немедленно); прочие `RemoteCommand::Command` → `Replay`
 (в порядке поступления); `RemoteCommand::StateSync` → `ApplyStateSync`. `plan`:
 пре-инкремент барьерных счётчиков и генерация
 `NetworkCommand::Command(TurnBarrier/EndTurnBarrier/CrcBarrier)` + resume-54.
@@ -436,7 +445,7 @@ pub enum RemoteCommand {
 | 3 | **правила/счётчики** | `state.process_orders()` (если фаза ≠ `TurnActive`, `game.rs:2676`); затем AI: `check_reactions`/`dispatch_path_jobs`/`check_reactions`/`check_end_turn` (если `!orders_pending`, `game.rs:2681-2690`) |
 | 4 | **hash/CRC** | `seq += 1`; `checksum = crc::state_digest(&state)` (`crc.rs:205`) — **после** мутаций |
 | 5 | **события** | push `GameEvent::{Production,Research,Sound,Industry,Chat,Turn,CommandRejected}` в `EventBus` |
-| 6 | **outgoing** | `self.outgoing = dispatcher.plan(&BarrierFacts{…})` (Q24: синхронный Vec, отдаётся `drain_outgoing`) |
+| 6 | **outgoing** | `self.outgoing.extend(self.dispatcher.plan(&facts))`: вещаемые команды, накопленные `submit` (`Broadcast`), **плюс** барьерный план `plan()`. `drain_outgoing()` отдаёт всё с последнего слива (один раз за итерацию сетевого цикла). `=`-перезапись запрещена (теряет `Broadcast`-пакеты) |
 
 Порядок фаз 1–3 **бит-в-бит** повторяет существующий `GameState::tick`
 (`game.rs:2659-2692`) — фасад лишь добавляет 4–6 (версию, события, outgoing)
@@ -551,8 +560,12 @@ pub enum RemoteCommand {
    (этап B) возвращает `false` и продвигает ход барьерной FSM, как сейчас
    (`net.rs:2020-2024`). `begin_round`/`end_round` на этапе A допустимо оставить
    публичными для конфигурационных сценариев.
-2. **`submit` — только очередь; `StateSync` — немедленно.** Сдвиг `06`/лобби-команд
-   на один тик — принятая цена; гейт — §6, риск 3.
+2. **`submit` — только очередь; `StateSync` (54) и барьерное согласие
+   (`00`/`52`/`45`) — немедленно.** Барьерное согласие — канал FSM, а не
+   lockstep-команда: `wait_barrier` не тикает, поэтому отложенный `Replay`
+   барьеров даёт 30-сек дедлок и сдвиг CRC-счётчиков на тик. Механизм —
+   «немедленные барьерные факты» (`RemoteHandling::ApplyBarrier`, §2/§6), гейтируется
+   §6 шаг 5.
 3. **`StateDelta` — грубая сейчас, полевой diff — этап B.** Не делать сразу.
 4. **`Dispatcher` — generic `GameUniverse<D = LocalDispatcher>`.** Мономорфизация,
    zero-cost; смена типа — создание нового `GameUniverse`, а не подмена `Box`.
