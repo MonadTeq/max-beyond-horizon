@@ -38,6 +38,7 @@ use crate::universe::{
     NetworkCommand, RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, SubmitOutcome,
 };
 use crate::game::GameState;
+use crate::map::Map;
 
 // ---------------------------------------------------------------------------
 // Scenario helpers
@@ -654,4 +655,91 @@ fn single_player_turn_cycle_closes_without_barrier_steppers() {
         single.snapshot_bytes(),
         "stepped barriers must be visible in the snapshot"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 8. Stage C §3 — dispatcher accessors and the explicit setup constructor (A2/A3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dispatcher_accessors_return_the_same_stored_object() {
+    /// Counts routed commands: proves that both accessors reach the stored policy,
+    /// not a copy of it.
+    struct CountingDispatcher {
+        routed: usize,
+    }
+
+    impl Dispatcher for CountingDispatcher {
+        fn route(&mut self, cmd: Command) -> RoutedCommand {
+            self.routed += 1;
+            RoutedCommand::Local(cmd)
+        }
+
+        fn receive(&mut self, _cmd: RemoteCommand) -> RemoteHandling {
+            RemoteHandling::Ignore
+        }
+
+        fn plan(&mut self, _facts: &BarrierFacts) -> Vec<NetworkCommand> {
+            Vec::new()
+        }
+    }
+
+    let mut universe = GameUniverse::with_dispatcher(CountingDispatcher { routed: 0 });
+
+    let shared: *const CountingDispatcher = universe.dispatcher();
+    let exclusive: *mut CountingDispatcher = universe.dispatcher_mut();
+    assert!(
+        std::ptr::eq(shared, exclusive.cast_const()),
+        "dispatcher() and dispatcher_mut() must address the same stored dispatcher"
+    );
+
+    assert_eq!(
+        universe.submit(command_finished_turn(TeamId::RED)),
+        SubmitOutcome::Accepted
+    );
+    assert_eq!(
+        universe.dispatcher().routed,
+        1,
+        "dispatcher_mut() is the policy the facade actually uses"
+    );
+}
+
+#[test]
+fn with_setup_and_dispatcher_matches_the_local_setup_byte_for_byte() {
+    let team_kinds = [
+        TeamKind::Player,
+        TeamKind::Computer,
+        TeamKind::None,
+        TeamKind::None,
+    ];
+    let map = Map::new();
+
+    let mut local = GameUniverse::with_setup(map.clone(), team_kinds);
+    let mut network =
+        GameUniverse::with_setup_and_dispatcher(map, team_kinds, TestNetworkDispatcher);
+
+    // The constructor only chooses the dispatcher: the canonical world bytes and
+    // the facade version are identical right after construction.
+    assert_eq!(
+        local.snapshot().snapshot_bytes(),
+        network.snapshot().snapshot_bytes(),
+        "the setup constructor must not change the world bytes"
+    );
+    assert_eq!(
+        local.snapshot().state_digest(),
+        network.snapshot().state_digest()
+    );
+    assert_eq!(local.seq(), network.seq());
+
+    // The dispatcher is facade state and never enters snapshot_bytes/CRC: a few
+    // steps keep the two runs byte-identical.
+    for _ in 0..4 {
+        local.tick();
+        network.tick();
+        assert_eq!(
+            local.snapshot().snapshot_bytes(),
+            network.snapshot().snapshot_bytes(),
+            "ticks must not leak the dispatcher into the snapshot"
+        );
+    }
 }

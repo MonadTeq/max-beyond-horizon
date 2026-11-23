@@ -12,14 +12,16 @@
 //! * `App::submit` reaches the same state as [`App::enqueue`] (the single command
 //!   path of stage A).
 
+use max_app::net::dispatcher::NetworkDispatcher;
 use max_app::{App, AppConfig};
 use max_core::enums::TeamClan;
-use max_core::enums::{UnitOrder, UnitOrderState};
+use max_core::enums::{PlayMode, UnitOrder, UnitOrderState};
 use max_core::events::{command_end_turn_barrier, command_finished_turn, command_move_linear};
 use max_core::geo::Point;
 use max_core::input::{Command, Packet13Seed};
+use max_core::map::Map;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
-use max_core::universe::SubmitOutcome;
+use max_core::universe::{GameUniverse, SubmitOutcome};
 
 fn app() -> App {
     let mut app = App::new(AppConfig::default());
@@ -169,4 +171,40 @@ fn app_order_command_travels_through_the_facade() {
         app.state_ref().commands().is_empty(),
         "the order is applied at the start of the tick"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 5. Stage C §3 — the explicit-dispatcher setup constructor (A3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn with_setup_and_dispatcher_accepts_the_network_dispatcher() {
+    // The network constructor is the same world generator as `with_setup`: only
+    // the dispatcher differs, and the dispatcher is facade state (ADR §3), so the
+    // canonical bytes and the CRC must not depend on it.
+    let team_kinds = [
+        TeamKind::Player,
+        TeamKind::Computer,
+        TeamKind::None,
+        TeamKind::None,
+    ];
+    let map = Map::new();
+
+    let local = GameUniverse::with_setup(map.clone(), team_kinds);
+    let network = GameUniverse::with_setup_and_dispatcher(
+        map,
+        team_kinds,
+        NetworkDispatcher::new(TeamId::RED, PlayMode::TurnBased),
+    );
+
+    assert_eq!(
+        local.snapshot().snapshot_bytes(),
+        network.snapshot().snapshot_bytes(),
+        "a network setup must be byte-identical to a local setup"
+    );
+    assert_eq!(
+        local.snapshot().state_digest(),
+        network.snapshot().state_digest()
+    );
+    assert_eq!(local.seq(), network.seq());
 }

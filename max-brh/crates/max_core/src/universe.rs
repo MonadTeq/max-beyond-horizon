@@ -1062,8 +1062,9 @@ pub struct GameUniverse<D: Dispatcher = LocalDispatcher> {
 
 impl<D: Dispatcher> GameUniverse<D> {
     /// Wraps an existing state with a dispatcher (crate-internal: the public
-    /// constructors are [`Self::with_dispatcher`], [`Self::with_setup`] and
-    /// [`Self::from_save`]).
+    /// constructors are [`Self::with_dispatcher`],
+    /// [`Self::with_setup_and_dispatcher`] and `GameUniverse::<LocalDispatcher>`'s
+    /// `with_setup`/`from_save`).
     pub(crate) fn new(state: GameState, dispatcher: D) -> Self {
         Self {
             state,
@@ -1077,6 +1078,39 @@ impl<D: Dispatcher> GameUniverse<D> {
     /// An empty world with the given dispatcher (network-FSM/test harness).
     pub fn with_dispatcher(dispatcher: D) -> Self {
         Self::new(GameState::new(), dispatcher)
+    }
+
+    /// A world from `GameState::with_setup` with an explicit dispatcher (A3).
+    ///
+    /// This is the common world generator of the local and the network
+    /// constructors: only the dispatcher differs, so the canonical world bytes are
+    /// the same. `GameUniverse::<LocalDispatcher>::with_setup` delegates here with
+    /// [`LocalDispatcher`].
+    pub fn with_setup_and_dispatcher(
+        map: Map,
+        team_kinds: [TeamKind; PLAYER_TEAM_COUNT],
+        dispatcher: D,
+    ) -> Self {
+        Self::new(GameState::with_setup(map, team_kinds), dispatcher)
+    }
+
+    // — the dispatcher: the asynchronous driver's entry point (A2) —
+
+    /// The transport policy stored in this universe (A2).
+    ///
+    /// This is the documented entry point of the asynchronous driver (the network
+    /// game loop): the driver owns the barrier FSM, reads the world through
+    /// [`Self::snapshot`] and pairs this accessor with [`Self::drain_outgoing`] and
+    /// [`Self::submit_remote`]. The dispatcher is **facade** state: it never enters
+    /// `GameState::snapshot_bytes` or any CRC (ADR §3, guardrails 6).
+    pub fn dispatcher(&self) -> &D {
+        &self.dispatcher
+    }
+
+    /// The transport policy stored in this universe, mutable (A2) — see
+    /// [`Self::dispatcher`].
+    pub fn dispatcher_mut(&mut self) -> &mut D {
+        &mut self.dispatcher
     }
 
     // — the single point of change —
@@ -2025,8 +2059,11 @@ impl<D: Dispatcher> GameUniverse<D> {
 impl GameUniverse<LocalDispatcher> {
     /// A local universe with a map and a set of teams — `GameState::with_setup`
     /// (`game.rs:486`), the usual test/scenario constructor.
+    ///
+    /// Delegates to [`Self::with_setup_and_dispatcher`] with [`LocalDispatcher`],
+    /// so the local and the network constructors share one world generator (A3).
     pub fn with_setup(map: Map, team_kinds: [TeamKind; PLAYER_TEAM_COUNT]) -> Self {
-        Self::new(GameState::with_setup(map, team_kinds), LocalDispatcher)
+        Self::with_setup_and_dispatcher(map, team_kinds, LocalDispatcher)
     }
 
     /// A local universe from a V70 save (`from_save` counts as a state version).
