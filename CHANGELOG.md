@@ -1,5 +1,36 @@
 ## [Unreleased]
 
+### Добавлено
+
+- **B6 — debug-секция Preferences (C++ `invalid`, `OptionsMenu`).** В игровом
+  варианте диалога (`PREFSPIC`) появились шесть отладочных контролов оракула:
+  `Disable Fire` (`disable_fire`) и `Real Time` (`real_time`) — чекбоксы, и четыре
+  поля управления командами — `red/green/blue/gray_team_player` (`0..3`, ключи
+  `settings.cpp` `TEAMS`). Секция строится по `OptionsMenu::Init`: только в
+  debug-сборке (`#if !defined(NDEBUG)`) и при `debug=1`, список начинается на
+  20 px выше (`window_uly = -20`), а три read-only подписи секции `options`
+  (`play_mode`/`opponent`/`victory_limit`) убираются — так шесть строк помещаются
+  над кнопками. Включение — `debug=1` в `preferences.ini` (C++ `settings.json`),
+  который читает интерактивный запуск.
+- **Разделение презентации и симуляции (правило C3).** Тумблеры не пишут
+  `GameState`: при закрытии диалога значения устанавливаются узким install-API
+  фасада (`set_disable_fire`, `set_real_time`, `set_team_type` — по образцу
+  `enemy_halt`), как `GameManager_MenuClickPreferencesButton`
+  (`game_manager.cpp:3925-3943`). `disable_fire`/`real_time`/`team_type` —
+  поля канонического дайджеста, поэтому их смена двигает `snapshot_bytes` по
+  назначению (C++ шлёт `real_time`/`disable_fire` в пакете старта партии,
+  `remote.cpp:2469`); гейт `debug` — чисто UI-состояние и дайджест не трогает.
+  `adopt_universe` применяет сохранённые `disable_fire`/`real_time` к новой
+  партии (`GameManager_InitGame`, `game_manager.cpp:3025`).
+- **Тесты и гейты B6.** Unit-тесты раскладки debug-секции (313/313/333/333/353/353,
+  длина списка 26 при gate on; `SETUPPIC` — по-прежнему 14), парсинг/диапазоны
+  ключей, round-trip `preferences.ini`; интеграционные — установка через фасад
+  только на `Done`, `Cancel` возвращает снятые значения, гейт дайджеста
+  (`debug` не двигает `snapshot_bytes`, установленный `disable_fire` — двигает),
+  отрисовка панели. `preferences.qa` — PASS; golden-набор `preferences` — PASS,
+  кадры байт-в-байт совпадают с прогоном до изменения (дрейф 0.445 % — прежний,
+  ниже порога 1 %); render-readonly — PASS.
+
 ### Рефакторинг
 
 - **Рефакторинг кода под новые стандарты (фазы Ф0–Ф5.3).** Внутренняя

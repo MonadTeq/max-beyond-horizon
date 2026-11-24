@@ -1565,6 +1565,21 @@ impl<D: Dispatcher> GameUniverse<D> {
         &mut self.state.team_units
     }
 
+    /// `UnitsManager_TeamInfo[team].team_type` (`game_manager.cpp:3940-3943`) — the
+    /// narrow install setter of one team-control slot.
+    ///
+    /// The debug `Preferences` section (`red_team_player` … `gray_team_player`,
+    /// `optionsmenu.hpp`) is its only caller: the C++ dialog edits the settings and
+    /// `GameManager_MenuClickPreferencesButton` copies them into the live team table
+    /// when the window closes. This is therefore an **install** write (the same kind
+    /// as [`Self::set_teams`]), not a UI mutation channel; setup code keeps using
+    /// [`Self::team_mut`]/[`Self::set_teams`].
+    pub fn set_team_type(&mut self, team: TeamId, kind: TeamKind) {
+        if let Some(info) = self.state.teams.get_mut(team.0 as usize) {
+            info.team_type = kind;
+        }
+    }
+
     /// Host-authoritative team elimination (`PLAN-host-mode.md` §4, H4).
     ///
     /// Sets the slot to [`TeamKind::Eliminated`] — the barrier FSM's

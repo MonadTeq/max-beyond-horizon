@@ -9,7 +9,10 @@ use std::path::{Path, PathBuf};
 
 use max_app::audio::{AudioPlayer, NoopBackend};
 use max_app::local::LocalSetup;
-use max_app::preferences::{Preferences, PreferencesAction, PreferencesVariant, PrefKey};
+use max_app::preferences::{
+    Preferences, PreferencesAction, PreferencesInfo, PreferencesVariant, PrefKey,
+    DEBUG_SECTION_BUILT,
+};
 use max_app::qa::runner::repo_root;
 use max_app::ui::{InputEvent, Key, MenuClient, Screen, Transition, UiContext};
 use max_app::{App, AppConfig, AppMode};
@@ -375,4 +378,314 @@ fn cancel_reverts_the_draft() {
     );
     // The application does the rollback via `initial` — here we check the snapshot itself.
     assert!(dialog.initial.effects, "initial не меняется");
+}
+
+// ---------------------------------------------------------------------------
+// B6 — debug section (`invalid`)
+// ---------------------------------------------------------------------------
+//
+// Oracle: `optionsmenu.hpp` (controls 30..35) and
+// `GameManager_MenuClickPreferencesButton` (`game_manager.cpp:3925-3943`). The
+// section is a developer tool: it is built in debug builds only and needs
+// `settings["debug"]`, so every test below returns early in a release build.
+
+/// Application without game data: the debug section only needs the facade.
+fn plain_app(save_dir: &Path) -> App {
+    App::new(AppConfig::default().with_save_dir(save_dir))
+}
+
+/// A click on `Disable Fire` changes the settings draft at once, but the match is
+/// written only when the dialog closes — through the facade install API, never by
+/// the UI (rule C3). `Done` transfers both switches (`real_time` too), like
+/// `GameManager_MenuClickPreferencesButton` re-reading `settings`.
+#[test]
+fn debug_switches_install_through_the_facade_when_the_dialog_closes() {
+    if !DEBUG_SECTION_BUILT {
+        eprintln!("preferences: debug section is compiled out in a release build");
+        return;
+    }
+
+    let dir = temp_dir("debug-install");
+    let mut app = plain_app(&dir);
+    app.set_preferences(Preferences {
+        debug: true,
+        ..Preferences::default()
+    });
+
+    assert!(app.open_preferences());
+    let dialog = app.preferences_dialog().expect("dialog");
+    assert!(dialog.has_debug_section(), "debug = 1 opens the section");
+    let disable_fire = dialog
+        .screen_rect(PrefKey::DisableFire)
+        .expect("Disable Fire");
+    let real_time = dialog.screen_rect(PrefKey::RealTime).expect("Real Time");
+
+    assert_eq!(
+        app.preferences_input(InputEvent::MouseClick(
+            disable_fire.ulx + disable_fire.width / 2,
+            disable_fire.uly + disable_fire.height / 2,
+        )),
+        Some(PreferencesAction::Changed)
+    );
+    assert!(app.preferences().disable_fire, "the draft changed");
+    assert!(
+        !app.state_ref().disable_fire(),
+        "C3: a toggle never writes GameState directly"
+    );
+
+    assert_eq!(
+        app.preferences_input(InputEvent::MouseClick(
+            real_time.ulx + real_time.width / 2,
+            real_time.uly + real_time.height / 2,
+        )),
+        Some(PreferencesAction::Changed)
+    );
+    assert!(!app.state_ref().real_time());
+
+    // `Done` closes the window: the settings are installed into the match.
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Enter)),
+        Some(PreferencesAction::Done)
+    );
+    assert!(app.preferences_dialog().is_none());
+    assert!(app.state_ref().disable_fire(), "installed on Done");
+    assert!(app.state_ref().real_time(), "installed on Done");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The four team fields are `EDIT_INT` controls (`red_team_player` …): the value
+/// reaches the settings on `Done` and the live `TeamInfo::team_type` through
+/// `GameUniverse::set_team_type` — the same slot C++ writes in
+/// `GameManager_MenuClickPreferencesButton`.
+#[test]
+fn debug_team_field_installs_the_team_control_slot() {
+    if !DEBUG_SECTION_BUILT {
+        return;
+    }
+
+    let dir = temp_dir("debug-team");
+    let mut app = plain_app(&dir);
+    app.set_preferences(Preferences {
+        debug: true,
+        ..Preferences::default()
+    });
+    assert!(app.open_preferences());
+
+    // An empty world starts with every slot empty; the dialog shows what is installed.
+    assert_eq!(
+        app.preferences_dialog()
+            .expect("dialog")
+            .value(PrefKey::RedTeamPlayer),
+        Some(TeamKind::None as i32)
+    );
+
+    let rect = app
+        .preferences_dialog()
+        .expect("dialog")
+        .screen_rect(PrefKey::RedTeamPlayer)
+        .expect("Red Team");
+    let (x, y) = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
+
+    assert_eq!(
+        app.preferences_input(InputEvent::MouseClick(x, y)),
+        Some(PreferencesAction::None)
+    );
+    // "0" -> backspace -> "3" -> Enter commits the field (`TextEdit`, `EDIT_INT`).
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Backspace)),
+        Some(PreferencesAction::None)
+    );
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Char('3'))),
+        Some(PreferencesAction::None)
+    );
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Enter)),
+        Some(PreferencesAction::Changed)
+    );
+
+    // `EDIT_INT` reaches the settings only on `Done` (`optionsmenu.cpp:533-560`).
+    assert_eq!(app.preferences().team_players[0], TeamKind::None);
+    assert_eq!(
+        app.state_ref().team(TeamId::RED).expect("red").team_type,
+        TeamKind::None
+    );
+
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Enter)),
+        Some(PreferencesAction::Done)
+    );
+    assert_eq!(
+        app.state_ref().team(TeamId::RED).expect("red").team_type,
+        TeamKind::Remote,
+        "the installed slot is `TEAM_TYPE_REMOTE` (3)"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The digest gate: `debug` is UI state and leaves `snapshot_bytes` untouched; the
+/// switches it reveals are simulation fields (`game.rs:357/360`), so installing one
+/// **does** move the digest — by design, C++ sends both in the match setup packet
+/// (`remote.cpp:2469-2471`). While the dialog is open nothing is installed.
+#[test]
+fn debug_gate_keeps_the_snapshot_and_the_installed_switch_moves_it() {
+    if !DEBUG_SECTION_BUILT {
+        return;
+    }
+
+    let dir = temp_dir("debug-digest");
+    let mut app = plain_app(&dir);
+    let before = app.state_ref().snapshot_bytes();
+
+    // Gate off: open and close the dialog — the canonical bytes do not move.
+    assert!(app.open_preferences());
+    assert!(!app.preferences_dialog().expect("dialog").has_debug_section());
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Enter)),
+        Some(PreferencesAction::Done)
+    );
+    assert_eq!(
+        app.state_ref().snapshot_bytes(),
+        before,
+        "`debug` is UI state, outside the snapshot"
+    );
+
+    // Gate on: the draft changes, the digest still does not move until `Done`.
+    app.set_preferences(Preferences {
+        debug: true,
+        ..app.preferences().clone()
+    });
+    let before = app.state_ref().snapshot_bytes();
+    assert!(app.open_preferences());
+    let rect = app
+        .preferences_dialog()
+        .expect("dialog")
+        .screen_rect(PrefKey::DisableFire)
+        .expect("Disable Fire");
+    app.preferences_input(InputEvent::MouseClick(
+        rect.ulx + rect.width / 2,
+        rect.uly + rect.height / 2,
+    ));
+    assert_eq!(
+        app.state_ref().snapshot_bytes(),
+        before,
+        "the dialog only edits the draft"
+    );
+
+    app.preferences_input(InputEvent::Key(Key::Enter));
+    assert_ne!(
+        app.state_ref().snapshot_bytes(),
+        before,
+        "`disable_fire` is a simulation field of the digest (`game.rs:357`)"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `Cancel` restores the values the dialog opened with and re-installs them, so the
+/// match keeps running with the settings it had (`last_rest_state` in C++).
+#[test]
+fn debug_cancel_restores_the_installed_values() {
+    if !DEBUG_SECTION_BUILT {
+        return;
+    }
+
+    let dir = temp_dir("debug-cancel");
+    let mut app = plain_app(&dir);
+    app.set_preferences(Preferences {
+        debug: true,
+        ..Preferences::default()
+    });
+
+    // Install `Disable Fire = 1` with `Done`.
+    assert!(app.open_preferences());
+    let rect = app
+        .preferences_dialog()
+        .expect("dialog")
+        .screen_rect(PrefKey::DisableFire)
+        .expect("Disable Fire");
+    app.preferences_input(InputEvent::MouseClick(
+        rect.ulx + rect.width / 2,
+        rect.uly + rect.height / 2,
+    ));
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Enter)),
+        Some(PreferencesAction::Done)
+    );
+    assert!(app.state_ref().disable_fire());
+
+    // Reopen: the dialog shows the installed value. Toggle it off and cancel.
+    assert!(app.open_preferences());
+    assert_eq!(
+        app.preferences_dialog()
+            .expect("dialog")
+            .value(PrefKey::DisableFire),
+        Some(1)
+    );
+    let rect = app
+        .preferences_dialog()
+        .expect("dialog")
+        .screen_rect(PrefKey::DisableFire)
+        .expect("Disable Fire");
+    app.preferences_input(InputEvent::MouseClick(
+        rect.ulx + rect.width / 2,
+        rect.uly + rect.height / 2,
+    ));
+    assert!(
+        app.state_ref().disable_fire(),
+        "still only the draft while the dialog is open"
+    );
+    assert_eq!(
+        app.preferences_input(InputEvent::Key(Key::Escape)),
+        Some(PreferencesAction::Cancel)
+    );
+    assert!(
+        app.state_ref().disable_fire(),
+        "Cancel puts the opening values back"
+    );
+    assert!(app.preferences().disable_fire);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The panel itself: the six debug rows are painted over `PREFSPIC` above the
+/// dialog buttons, and `debug = 0` paints the old frame.
+#[test]
+fn debug_section_is_painted_above_the_dialog_buttons() {
+    if !DEBUG_SECTION_BUILT {
+        return;
+    }
+
+    let dir = temp_dir("debug-draw");
+    let Some(app) = app_with_assets(&dir) else {
+        return;
+    };
+    let assets = app.assets().expect("assets");
+    let info = PreferencesInfo::default();
+    let off = max_app::preferences::PreferencesDialog::new(
+        PreferencesVariant::InGame,
+        Preferences::default(),
+        info,
+    );
+    let on = max_app::preferences::PreferencesDialog::new(
+        PreferencesVariant::InGame,
+        Preferences {
+            debug: true,
+            ..Preferences::default()
+        },
+        info,
+    );
+
+    let mut plain = max_render::buffer::RgbaBuffer::new(640, 480);
+    let mut debug = max_render::buffer::RgbaBuffer::new(640, 480);
+    assert!(off.draw(&mut plain, assets) > 0, "the dialog paints");
+    assert!(on.draw(&mut debug, assets) > 0, "the debug dialog paints");
+    assert!(
+        changed_pixels(&plain, &debug) > 0,
+        "the debug section draws six more rows"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

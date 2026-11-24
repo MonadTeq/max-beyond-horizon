@@ -29,14 +29,52 @@
 //! `20 − (Text_GetHeight() + 3) = 7` (`FONT5` — 10 px). Hidden controls
 //! (`IsControlVisible`) do not take a row. For `SETUPPIC` `Init` stops at
 //! the `preferences` section, so the main menu shows only the `SETUP` part
-//! (sound/video/autosave/network/name); for `PREFSPIC` — all sections up to `invalid`
-//! (the `debug` controls are not ported).
+//! (sound/video/autosave/network/name); for `PREFSPIC` — all sections, the debug
+//! one (`invalid`) included when it is enabled (see below).
 //!
 //! | Section | Controls |
 //! |---|---|
 //! | `setup` | `Volume:` (label), `Enhanced graphics` (Setup only), Music/FX/Voice/Video volumes + `Disable…`, `Auto-Save Enabled`, `Host Address:`/`Host Port:` (Setup only), `Player Name:` |
 //! | `preferences` | `Animate Effects`, `Click to Scroll`, `Double Unit Steps`, `Track Selected Unit`, `Halt movement when enemy is detected`, `Auto-Select Next Unit`, `Scroll Speed` |
 //! | `options` | `Turn Time:`/`End Turn Time:` (edit int), `Play Mode: %s`, `Computer Player(s): %s`, `Game ends at %i %s.` (read-only) |
+//! | `invalid` | debug only: `Disable Fire`, `Real Time`, `Red Team`/`Green Team`/`Blue Team`/`Gray Team` (edit int 0..3) |
+//!
+//! # Debug section (`invalid`, B6)
+//!
+//! `optionsmenu.hpp` keeps six controls after the `invalid` section marker:
+//! `disable_fire` (`Disable Fire`, `d5fa`) and `real_time` (`Real Time`, `6a65`)
+//! checkboxes plus the four team-control fields `red_team_player` (`3bda`),
+//! `green_team_player` (`3bb7`), `blue_team_player` (`11a8`), `gray_team_player`
+//! (`75a0`), each `0..=3` (C++ `TEAM_TYPE_NONE..TEAM_TYPE_REMOTE`). This is a
+//! developer tool, not a player setting: `OptionsMenu::Init` builds it only in a
+//! debug build (`#if !defined(NDEBUG)`) and only while `settings["debug"]` is set.
+//! The same switch starts the list 20 px higher (`window_uly = -20`) and drops the
+//! three read-only `options` labels, which is what makes the six extra rows fit
+//! above the dialog buttons (`OptionsMenu::Init`).
+//!
+//! Effect split (rule C3 — a toggle never writes `GameState` from the UI):
+//!
+//! * `debug` — the gate itself: UI state, outside the snapshot;
+//! * `disable_fire` — **simulation**: reaction fire off (`game.rs:357`,
+//!   `unit_order::blocked_on_path_request`, `combat`), installed through
+//!   `GameUniverse::set_disable_fire`;
+//! * `real_time` — **simulation**: a path step does not spend `speed`
+//!   (`game.rs:360`, `pathfinding`), installed through `GameUniverse::set_real_time`;
+//! * `red/green/blue/gray_team_player` — **simulation**: the team-control slot
+//!   (`TeamInfo::team_type`, `game_manager.cpp:3940-3943`), installed through
+//!   `GameUniverse::set_team_type`.
+//!
+//! The values reach the match when the dialog closes (`Done`/`Cancel`), the point
+//! where C++ `GameManager_MenuClickPreferencesButton` (`game_manager.cpp:3925-3943`)
+//! re-reads them; the dialog is modal, so no simulation step runs while it is open
+//! (for `disable_fire` C++ reads the setting live, which the modal window makes
+//! indistinguishable). `debug` off — the default — installs nothing, so the
+//! existing dialog behavior and the canonical digest are unchanged.
+//!
+//! Enabling: `debug=1` in `<save_dir>/preferences.ini` (the C++ `settings.json` in
+//! `FilePathGamePref`), which the interactive launch loads before the game
+//! (`App::load_preferences_from_disk`); the QA driver keeps the defaults and never
+//! sees the section unless a scenario sets the setting.
 //!
 //! Slider: the label `Text_TextBox(ulx, uly, 185, 20)`, the `PRFSLIT` groove 57×3 at
 //! `x = ulx + Text_GetWidth(caption) + 10`, `y = uly + 8`; the `PRFSLIDE` thumb
@@ -112,6 +150,7 @@ use std::path::{Path, PathBuf};
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{Opponent, PlayMode, VictoryType};
 use max_core::save::IniPreferences;
+use max_core::team::{TeamId, TeamKind};
 use max_core::universe::Dispatcher;
 use max_render::buffer::{PixelRect, RgbaBuffer};
 use max_render::text::{draw_text_gnw_centered, draw_text_gnw_shadowed, GnwFontId};
@@ -171,7 +210,8 @@ const NAME_H: i32 = 17;
 pub enum PreferencesVariant {
     /// `menu_setup_window()`: only the `setup` section.
     Setup,
-    /// `menu_preferences_window()`: all sections (except `debug`).
+    /// `menu_preferences_window()`: all sections, plus the debug one (`invalid`)
+    /// when it is enabled.
     InGame,
 }
 
@@ -254,8 +294,20 @@ pub enum PrefKey {
     OpponentLabel,
     /// `victory_limit` (label).
     VictoryLabel,
-    /// `invalid` section (debug controls; the port stops there).
+    /// `invalid` section: the debug controls start here.
     SectionInvalid,
+    /// `disable_fire` (debug section).
+    DisableFire,
+    /// `real_time` (debug section).
+    RealTime,
+    /// `red_team_player` (debug section, `0..=3`).
+    RedTeamPlayer,
+    /// `green_team_player` (debug section, `0..=3`).
+    GreenTeamPlayer,
+    /// `blue_team_player` (debug section, `0..=3`).
+    BlueTeamPlayer,
+    /// `gray_team_player` (debug section, `0..=3`).
+    GrayTeamPlayer,
 }
 
 impl PrefKey {
@@ -292,6 +344,12 @@ impl PrefKey {
             Self::OpponentLabel => "opponent",
             Self::VictoryLabel => "victory_limit",
             Self::SectionInvalid => "invalid",
+            Self::DisableFire => "disable_fire",
+            Self::RealTime => "real_time",
+            Self::RedTeamPlayer => "red_team_player",
+            Self::GreenTeamPlayer => "green_team_player",
+            Self::BlueTeamPlayer => "blue_team_player",
+            Self::GrayTeamPlayer => "gray_team_player",
         }
     }
 
@@ -324,6 +382,12 @@ impl PrefKey {
             "play_mode" => Self::PlayModeLabel,
             "opponent" | "computer_players" => Self::OpponentLabel,
             "victory" | "victory_limit" => Self::VictoryLabel,
+            "disable_fire" | "no_fire" | "fire_off" => Self::DisableFire,
+            "real_time" | "realtime" => Self::RealTime,
+            "red_team_player" | "red_team" => Self::RedTeamPlayer,
+            "green_team_player" | "green_team" => Self::GreenTeamPlayer,
+            "blue_team_player" | "blue_team" => Self::BlueTeamPlayer,
+            "gray_team_player" | "gray_team" => Self::GrayTeamPlayer,
             _ => return None,
         };
 
@@ -346,6 +410,8 @@ impl PrefKey {
                 | Self::FollowUnit
                 | Self::EnemyHalt
                 | Self::AutoSelect
+                | Self::DisableFire
+                | Self::RealTime
         )
     }
 
@@ -361,8 +427,27 @@ impl PrefKey {
     pub const fn is_edit(self) -> bool {
         matches!(
             self,
-            Self::HostAddress | Self::HostPort | Self::PlayerName | Self::TurnTimer | Self::EndTurn
+            Self::HostAddress
+                | Self::HostPort
+                | Self::PlayerName
+                | Self::TurnTimer
+                | Self::EndTurn
+                | Self::RedTeamPlayer
+                | Self::GreenTeamPlayer
+                | Self::BlueTeamPlayer
+                | Self::GrayTeamPlayer
         )
+    }
+
+    /// The team-control slot of a debug field (`red_team_player` — 0 … `gray_team_player` — 3).
+    pub const fn team_slot(self) -> Option<usize> {
+        match self {
+            Self::RedTeamPlayer => Some(0),
+            Self::GreenTeamPlayer => Some(1),
+            Self::BlueTeamPlayer => Some(2),
+            Self::GrayTeamPlayer => Some(3),
+            _ => None,
+        }
     }
 
     /// Slider/number field bounds (`range_min`, `range_max` from C++).
@@ -371,6 +456,11 @@ impl PrefKey {
             Self::QuickScroll => (4, 128),
             Self::HostPort => (1024, 65535),
             Self::TurnTimer | Self::EndTurn => (0, 32767),
+            // `red_team_player` … `gray_team_player`: `TEAM_TYPE_NONE..=TEAM_TYPE_REMOTE`.
+            Self::RedTeamPlayer
+            | Self::GreenTeamPlayer
+            | Self::BlueTeamPlayer
+            | Self::GrayTeamPlayer => (0, 3),
             _ => (0, 100),
         }
     }
@@ -458,13 +548,16 @@ const DEFS: [Def; 36] = [
     ),
     def(PrefKey::VictoryLabel, ControlKind::Label, "Game ends at %i %s.", 25),
     def(PrefKey::SectionInvalid, ControlKind::Section, "", 0),
-    // the debug section (`invalid`) is not part of the port: 6 controls below.
-    def(PrefKey::SectionInvalid, ControlKind::Checkbox, "", 25),
-    def(PrefKey::SectionInvalid, ControlKind::Checkbox, "", 210),
-    def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 25),
-    def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 210),
-    def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 25),
-    def(PrefKey::SectionInvalid, ControlKind::EditInt, "", 210),
+    // Debug section (`invalid`, `options_menu_buttons` 30..35). Built only in a
+    // debug build with `settings["debug"]` set (`OptionsMenu::Init`): two checkboxes
+    // and the four team-control fields, captions `d5fa`, `6a65`, `3bda`, `3bb7`,
+    // `11a8`, `75a0`.
+    def(PrefKey::DisableFire, ControlKind::Checkbox, "Disable Fire", 25),
+    def(PrefKey::RealTime, ControlKind::Checkbox, "Real Time", 210),
+    def(PrefKey::RedTeamPlayer, ControlKind::EditInt, "Red Team", 25),
+    def(PrefKey::GreenTeamPlayer, ControlKind::EditInt, "Green Team", 210),
+    def(PrefKey::BlueTeamPlayer, ControlKind::EditInt, "Blue Team", 25),
+    def(PrefKey::GrayTeamPlayer, ControlKind::EditInt, "Gray Team", 210),
 ];
 
 /// `play_mode`/`opponent`/`victory_*` values for the read-only labels.
@@ -528,12 +621,17 @@ impl PreferencesInfo {
     }
 }
 
-/// User settings (`SETUP` + `PREFERENCES` + part of `OPTIONS`).
+/// `PLAYER_TEAM_MAX - 1` — the four playing teams the debug section can re-assign.
+pub const DEBUG_TEAM_COUNT: usize = 4;
+
+/// User settings (`SETUP` + `PREFERENCES` + part of `OPTIONS` + `DEBUG`).
 ///
 /// Default values — `settings.cpp`: `effects=1`, `click_scroll=1`,
 /// `quick_scroll=16`, `fast_movement=1`, `follow_unit=0`, `auto_select=0`,
 /// `enemy_halt=1`; volumes 100, `auto_save=1`, `enhanced_graphics=1`,
-/// `player_name="Player 1"`, `timer=180`, `endturn=45`.
+/// `player_name="Player 1"`, `timer=180`, `endturn=45`. Debug (`settings.cpp`
+/// `DEBUG`/`TEAMS`): `debug=0`, `disable_fire=0`, `real_time=0`, team control
+/// `red=1` (player), `green=2` (computer), `blue=0`, `gray=0` (`TEAM_TYPE_NONE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preferences {
     /// `effects` — «Animate Effects».
@@ -580,6 +678,20 @@ pub struct Preferences {
     pub turn_timer: i32,
     /// `endturn` (sec).
     pub endturn: i32,
+    /// `debug` — the `invalid` debug section gate (`settings.cpp` `DEBUG`).
+    ///
+    /// Pure UI state: it decides whether the six debug controls are laid out and
+    /// installed; it is not part of the snapshot. The section itself is built into
+    /// debug builds only ([`DEBUG_SECTION_BUILT`]).
+    pub debug: bool,
+    /// `disable_fire` — reaction fire off (simulation, `game.rs:357`).
+    pub disable_fire: bool,
+    /// `real_time` — a path step does not spend `speed` (`GameManager_RealTime`,
+    /// `game.rs:360`).
+    pub real_time: bool,
+    /// `red_team_player` … `gray_team_player` — who controls each team
+    /// (`menu_team_player_setting`, `settings.cpp` `TEAMS`), `0..=3`.
+    pub team_players: [TeamKind; DEBUG_TEAM_COUNT],
 }
 
 impl Default for Preferences {
@@ -607,6 +719,15 @@ impl Default for Preferences {
             host_port: 31554,
             turn_timer: 180,
             endturn: 45,
+            debug: false,
+            disable_fire: false,
+            real_time: false,
+            team_players: [
+                TeamKind::Player,
+                TeamKind::Computer,
+                TeamKind::None,
+                TeamKind::None,
+            ],
         }
     }
 }
@@ -669,12 +790,18 @@ impl Preferences {
             PrefKey::FollowUnit => self.follow_unit,
             PrefKey::EnemyHalt => self.enemy_halt,
             PrefKey::AutoSelect => self.auto_select,
+            PrefKey::DisableFire => self.disable_fire,
+            PrefKey::RealTime => self.real_time,
             _ => return None,
         })
     }
 
     /// Numeric value by key.
     pub fn int_value(&self, key: PrefKey) -> Option<i32> {
+        if let Some(slot) = key.team_slot() {
+            return Some(team_kind_value(self.team_players[slot]));
+        }
+
         Some(match key {
             PrefKey::MusicLevel => self.music_level,
             PrefKey::FxSoundLevel => self.fx_sound_level,
@@ -712,6 +839,8 @@ impl Preferences {
             PrefKey::FollowUnit => self.follow_unit = value,
             PrefKey::EnemyHalt => self.enemy_halt = value,
             PrefKey::AutoSelect => self.auto_select = value,
+            PrefKey::DisableFire => self.disable_fire = value,
+            PrefKey::RealTime => self.real_time = value,
             _ => return false,
         }
 
@@ -722,6 +851,11 @@ impl Preferences {
     pub fn set_int(&mut self, key: PrefKey, value: i32) -> bool {
         let (min, max) = key.range();
         let value = value.clamp(min, max);
+
+        if let Some(slot) = key.team_slot() {
+            self.team_players[slot] = team_kind_from_value(value);
+            return true;
+        }
 
         match key {
             PrefKey::MusicLevel => self.music_level = value,
@@ -806,6 +940,22 @@ impl Preferences {
                 }
                 "timer" => prefs.turn_timer = parse_int(value).unwrap_or(prefs.turn_timer),
                 "endturn" => prefs.endturn = parse_int(value).unwrap_or(prefs.endturn),
+                // DEBUG/TEAMS section (`settings.cpp`): the debug dialog section.
+                "debug" => prefs.debug = parse_bool(value, prefs.debug),
+                "disable_fire" => prefs.disable_fire = parse_bool(value, prefs.disable_fire),
+                "real_time" => prefs.real_time = parse_bool(value, prefs.real_time),
+                "red_team_player" => {
+                    prefs.team_players[0] = parse_team_kind(value, prefs.team_players[0])
+                }
+                "green_team_player" => {
+                    prefs.team_players[1] = parse_team_kind(value, prefs.team_players[1])
+                }
+                "blue_team_player" => {
+                    prefs.team_players[2] = parse_team_kind(value, prefs.team_players[2])
+                }
+                "gray_team_player" => {
+                    prefs.team_players[3] = parse_team_kind(value, prefs.team_players[3])
+                }
                 _ => {}
             }
         }
@@ -843,6 +993,21 @@ impl Preferences {
         out.push_str(&format!("host_port={}\n", self.host_port));
         out.push_str(&format!("timer={}\n", self.turn_timer));
         out.push_str(&format!("endturn={}\n", self.endturn));
+        // DEBUG/TEAMS (`settings.cpp`): the `invalid` debug dialog section.
+        push_bool(&mut out, "debug", self.debug);
+        push_bool(&mut out, "disable_fire", self.disable_fire);
+        push_bool(&mut out, "real_time", self.real_time);
+        for (slot, name) in [
+            (0, "red_team_player"),
+            (1, "green_team_player"),
+            (2, "blue_team_player"),
+            (3, "gray_team_player"),
+        ] {
+            out.push_str(&format!(
+                "{name}={}\n",
+                team_kind_value(self.team_players[slot])
+            ));
+        }
 
         std::fs::write(path, out)
     }
@@ -850,6 +1015,32 @@ impl Preferences {
 
 fn push_bool(out: &mut String, name: &str, value: bool) {
     out.push_str(&format!("{name}={}\n", i32::from(value)));
+}
+
+/// The debug edit value of a team-control slot (`TEAM_TYPE_*`, `0..=3`).
+const fn team_kind_value(kind: TeamKind) -> i32 {
+    kind as i32
+}
+
+/// `TeamKind` by the value typed into `red_team_player` … `gray_team_player`.
+///
+/// C++ stores the raw number and the range is `0..=3`, so `Eliminated` (4) is not
+/// reachable from the dialog; anything else falls back to `None` like the empty slot.
+const fn team_kind_from_value(value: i32) -> TeamKind {
+    match value {
+        1 => TeamKind::Player,
+        2 => TeamKind::Computer,
+        3 => TeamKind::Remote,
+        _ => TeamKind::None,
+    }
+}
+
+/// Parses the settings-file value of a team-control slot; `0..=3`, otherwise the fallback.
+fn parse_team_kind(text: &str, fallback: TeamKind) -> TeamKind {
+    match parse_int(text) {
+        Some(value @ 0..=3) => team_kind_from_value(value),
+        _ => fallback,
+    }
 }
 
 fn parse_bool(text: &str, fallback: bool) -> bool {
@@ -902,11 +1093,29 @@ pub enum PreferencesAction {
     Help,
 }
 
+/// The debug section is compiled into debug builds only — C++ `#if !defined(NDEBUG)`.
+///
+/// A release build has no debug controls at all, exactly like the C++ release build,
+/// so `settings["debug"]` cannot open a developer switch in a shipped client.
+pub const DEBUG_SECTION_BUILT: bool = cfg!(debug_assertions);
+
+/// Whether the `invalid` debug section is part of the dialog.
+///
+/// Mirrors `OptionsMenu::Init`: the section needs a debug build
+/// ([`DEBUG_SECTION_BUILT`]) and `ResourceManager_GetSettings()->GetNumericValue("debug")`.
+/// The gate is UI state — it only decides whether the six controls are laid out and
+/// installed, it never reaches the simulation or the canonical digest.
+pub fn debug_section_enabled(preferences: &Preferences) -> bool {
+    DEBUG_SECTION_BUILT && preferences.debug
+}
+
 /// Open `Preferences` dialog with an editable copy of the values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreferencesDialog {
     /// `SETUPPIC` or `PREFSPIC`.
     variant: PreferencesVariant,
+    /// The `invalid` debug section is laid out (`settings["debug"]`, debug build).
+    debug: bool,
     /// Editable values.
     pub draft: Preferences,
     /// Snapshot for `Cancel`.
@@ -927,10 +1136,12 @@ pub struct PreferencesDialog {
 impl PreferencesDialog {
     /// Creates the dialog with the `OptionsMenu::Init` layout for the variant.
     pub fn new(variant: PreferencesVariant, prefs: Preferences, info: PreferencesInfo) -> Self {
-        let rows = layout(variant);
+        let debug = debug_section_enabled(&prefs);
+        let rows = layout(variant, debug);
 
         Self {
             variant,
+            debug,
             draft: prefs.clone(),
             initial: prefs,
             info,
@@ -940,6 +1151,11 @@ impl PreferencesDialog {
             edit_buffer: String::new(),
             edit_initial: String::new(),
         }
+    }
+
+    /// The debug section is part of this dialog (debug build with `settings["debug"]`).
+    pub const fn has_debug_section(&self) -> bool {
+        self.debug
     }
 
     /// Dialog variant.
@@ -1580,9 +1796,18 @@ impl PreferencesDialog {
 }
 
 /// `OptionsMenu::Init` layout for the variant.
-fn layout(variant: PreferencesVariant) -> Vec<Row> {
+///
+/// `debug` — the `invalid` debug section is enabled (debug build with
+/// `settings["debug"]`): the in-game list starts 20 px higher (`window_uly = -20`),
+/// the three read-only `options` labels are skipped and the `invalid` section is not
+/// a stop, which is exactly how the six extra rows fit above the dialog buttons.
+fn layout(variant: PreferencesVariant, debug: bool) -> Vec<Row> {
     let mut rows = Vec::new();
-    let mut y = 20;
+    let mut y = if debug && variant == PreferencesVariant::InGame {
+        -20
+    } else {
+        20
+    };
     let font_height = LABEL_FONT.height();
 
     for def in &DEFS {
@@ -1591,11 +1816,11 @@ fn layout(variant: PreferencesVariant) -> Vec<Row> {
         }
 
         if def.kind == ControlKind::Section {
-            // `SETUPPIC` ends the list at the `preferences` section,
-            // `PREFSPIC` — at `invalid` (the debug section is not ported).
+            // `SETUPPIC` ends the list at the `preferences` section, `PREFSPIC` — at
+            // `invalid` unless the debug section is enabled.
             let stop = match def.key {
                 PrefKey::SectionPreferences => variant == PreferencesVariant::Setup,
-                PrefKey::SectionInvalid => true,
+                PrefKey::SectionInvalid => !debug,
                 _ => false,
             };
 
@@ -1604,6 +1829,18 @@ fn layout(variant: PreferencesVariant) -> Vec<Row> {
             }
 
             y += 20;
+            continue;
+        }
+
+        // With the debug section the three read-only `options` labels are dropped
+        // (`OptionsMenu::Init`, `#if !defined(NDEBUG)`), which is where the room for
+        // the debug rows comes from.
+        if debug
+            && matches!(
+                def.key,
+                PrefKey::PlayModeLabel | PrefKey::OpponentLabel | PrefKey::VictoryLabel
+            )
+        {
             continue;
         }
 
@@ -1892,6 +2129,10 @@ impl<D: Dispatcher> crate::App<D> {
     /// on every step, and C++ has no packet for it. `Preferences` is outside the
     /// snapshot by design (`sdl-ui-integration.md` §4, "debug-Preferences — чисто
     /// UI-настройки, вне снапшота").
+    ///
+    /// The debug section (`debug`, `disable_fire`, `real_time`, team slots) is **not**
+    /// applied here: C++ re-reads it only after the dialog closes, so it goes through
+    /// [`Self::install_debug_preferences`] from the dialog path.
     fn sync_preferences_to_game(&mut self) {
         let enemy_halt = self.preferences.enemy_halt;
         self.universe.set_enemy_halt(enemy_halt);
@@ -1899,6 +2140,43 @@ impl<D: Dispatcher> crate::App<D> {
         if let Some(local) = self.local.as_mut() {
             local.setup.timer = self.preferences.turn_timer.max(0) as u32;
             local.setup.endturn = self.preferences.endturn.max(0) as u32;
+        }
+    }
+
+    /// Installs the debug section (`invalid`) into the live match.
+    ///
+    /// Oracle: `GameManager_MenuClickPreferencesButton` (`game_manager.cpp:3925-3943`)
+    /// runs right after `menu_preferences_window` returns and copies the settings the
+    /// window can change into the running game — `GameManager_RealTime` (`real_time`)
+    /// and `UnitsManager_TeamInfo[team].team_type` for the four playing teams. The
+    /// port does the same here, and `disable_fire` too (C++ reads it live at every
+    /// use; the dialog is modal, so installing it at close is indistinguishable).
+    ///
+    /// This is the **install** channel, not a UI mutation (rule C3, SDL/UI Stage B2
+    /// item 7 "install/preferences"): the switches travel through the narrow facade
+    /// API (`set_disable_fire`, `set_real_time`, `set_team_type`) exactly like
+    /// `enemy_halt` does, never as a `GameState` write from the dialog.
+    ///
+    /// `disable_fire`, `real_time` and the team types are canonical digest fields
+    /// ([`max_core::game::GameState::snapshot_bytes`]), so changing one moves
+    /// `snapshot_bytes` by design: C++ carries `real_time`/`disable_fire` in the match
+    /// setup packet (`remote.cpp:2469-2471`) and the team slots are part of
+    /// `UnitsManager_TeamInfo`. With the gate off nothing is installed, so the digest
+    /// does not move. In a network match a switch therefore desyncs the peers — a
+    /// deliberate property of the developer tool, and C++ behaves the same way (no
+    /// packet synchronizes the team slots after the dialog).
+    fn install_debug_preferences(&mut self) {
+        let (disable_fire, real_time, team_players) = (
+            self.preferences.disable_fire,
+            self.preferences.real_time,
+            self.preferences.team_players,
+        );
+
+        self.universe.set_disable_fire(disable_fire);
+        self.universe.set_real_time(real_time);
+
+        for (slot, kind) in team_players.iter().enumerate() {
+            self.universe.set_team_type(TeamId(slot as u8), *kind);
         }
     }
 
@@ -1998,11 +2276,41 @@ impl<D: Dispatcher> crate::App<D> {
             draft.player_name = local.display_name(self.state_ref().player_team());
         }
 
+        // The debug section: C++ reads these six values from `settings`, which the
+        // `ChoosePlayerMenu` and the previous dialog wrote, so the window always shows
+        // what is installed. The port keeps the authoritative copy in the live match
+        // (`GameManager_RealTime`, `UnitsManager_TeamInfo`), therefore the draft starts
+        // from the installed values. Reading the state is allowed for the UI; writing
+        // happens only when the dialog closes, through the narrow install API
+        // (`GameManager_MenuClickPreferencesButton`, `game_manager.cpp:3925-3943`).
+        let debug_installed = debug_section_enabled(&draft);
+
+        if debug_installed {
+            let state = self.state_ref();
+            draft.disable_fire = state.disable_fire();
+            draft.real_time = state.real_time();
+
+            for (slot, kind) in draft.team_players.iter_mut().enumerate() {
+                if let Some(info) = state.team(TeamId(slot as u8)) {
+                    *kind = info.team_type;
+                }
+            }
+        }
+
         let mut dialog = PreferencesDialog::new(PreferencesVariant::InGame, draft, info);
         // `Cancel` restores the application values at the moment of opening: the name
         // field shows the team name, but the global `player_name` changes
-        // only on `Done` (like `SetStringValue` in `OptionsMenu::Run`).
+        // only on `Done` (like `SetStringValue` in `OptionsMenu::Run`). The debug
+        // section restores the values that are installed right now, so `Cancel`
+        // leaves the match untouched.
         dialog.initial = self.preferences.clone();
+
+        if dialog.has_debug_section() {
+            dialog.initial.disable_fire = dialog.draft.disable_fire;
+            dialog.initial.real_time = dialog.draft.real_time;
+            dialog.initial.team_players = dialog.draft.team_players;
+        }
+
         self.preferences_dialog = Some(dialog);
         true
     }
@@ -2025,14 +2333,16 @@ impl<D: Dispatcher> crate::App<D> {
                 // C++ `OptionsMenu`: checkboxes and sliders write `settings` immediately
                 // (`SetVolume`/`SetNumericValue`), while EDIT_STR/EDIT_INT — only
                 // on `Done` (`optionsmenu.cpp:533-560`). Therefore the draft is
-                // applied entirely except for the input fields: otherwise the name/timer
-                // would change on leaving the field without "Done".
+                // applied entirely except for the input fields, which keep the value
+                // the dialog opened with (`dialog.initial`; for the debug team slots
+                // that is the installed one, see `open_preferences`).
                 let mut applied = dialog.draft.clone();
-                applied.player_name = self.preferences.player_name.clone();
-                applied.host_address = self.preferences.host_address.clone();
-                applied.host_port = self.preferences.host_port;
-                applied.turn_timer = self.preferences.turn_timer;
-                applied.endturn = self.preferences.endturn;
+                applied.player_name = dialog.initial.player_name.clone();
+                applied.host_address = dialog.initial.host_address.clone();
+                applied.host_port = dialog.initial.host_port;
+                applied.turn_timer = dialog.initial.turn_timer;
+                applied.endturn = dialog.initial.endturn;
+                applied.team_players = dialog.initial.team_players;
 
                 self.preferences = applied;
                 self.sync_preferences_to_game();
@@ -2051,12 +2361,26 @@ impl<D: Dispatcher> crate::App<D> {
                     local.rename_team(player_team, dialog.draft.player_name.clone());
                 }
                 self.sync_preferences_to_game();
+
+                // `GameManager_MenuClickPreferencesButton` (`game_manager.cpp:3925`)
+                // re-reads the settings once `OptionsMenu::Run` returns; the debug
+                // switches are installed there, through the narrow facade API.
+                if dialog.has_debug_section() {
+                    self.install_debug_preferences();
+                }
+
                 self.persist_preferences();
                 self.hud.push_log("Preferences saved");
             }
             PreferencesAction::Cancel => {
                 self.preferences = dialog.initial.clone();
                 self.sync_preferences_to_game();
+
+                // The restored snapshot holds the values the dialog opened with, so this
+                // install puts back exactly what was running before the dialog.
+                if dialog.has_debug_section() {
+                    self.install_debug_preferences();
+                }
             }
         }
 
@@ -2127,6 +2451,180 @@ mod tests {
         assert_eq!(y(PrefKey::PlayerName), Some(213));
         assert!(dialog.row(PrefKey::Effects).is_none());
         assert_eq!(dialog.rows().len(), 14);
+    }
+
+    /// The debug section (`invalid`) follows the C++ `Init` exactly: the in-game
+    /// list starts at `-20`, the three read-only `options` labels are dropped and the
+    /// six debug controls land at 313/313/333/333/353/353 — above the 383 button row.
+    #[test]
+    fn debug_layout_matches_the_cpp_window_uly_algorithm() {
+        if !DEBUG_SECTION_BUILT {
+            eprintln!("preferences: release build — the debug section is compiled out");
+            return;
+        }
+
+        let prefs = Preferences {
+            debug: true,
+            ..Preferences::default()
+        };
+        let dialog = PreferencesDialog::new(
+            PreferencesVariant::InGame,
+            prefs,
+            PreferencesInfo::default(),
+        );
+        let y = |key| dialog.row(key).map(|row| row.y);
+
+        assert!(dialog.has_debug_section());
+
+        // `window_uly = -20`: the whole shared block is 40 px higher than usual.
+        assert_eq!(y(PrefKey::MusicVolumeLabel), Some(20));
+        assert_eq!(y(PrefKey::TurnTimer), Some(273));
+        // The three labels the debug section replaces.
+        assert!(dialog.row(PrefKey::PlayModeLabel).is_none());
+        assert!(dialog.row(PrefKey::OpponentLabel).is_none());
+        assert!(dialog.row(PrefKey::VictoryLabel).is_none());
+        // Six debug controls: `disable_fire`/`real_time`, then four team fields.
+        assert_eq!(y(PrefKey::DisableFire), Some(313));
+        assert_eq!(y(PrefKey::RealTime), Some(313));
+        assert_eq!(y(PrefKey::RedTeamPlayer), Some(333));
+        assert_eq!(y(PrefKey::GreenTeamPlayer), Some(333));
+        assert_eq!(y(PrefKey::BlueTeamPlayer), Some(353));
+        assert_eq!(y(PrefKey::GrayTeamPlayer), Some(353));
+        assert_eq!(dialog.rows().len(), 26);
+
+        let last = dialog.rows().last().expect("debug row");
+        assert!(
+            last.y + 20 <= 383,
+            "debug section ends above the dialog buttons: y = {}",
+            last.y
+        );
+
+        // `SETUPPIC` still stops at `preferences`: no debug controls in the menu.
+        let setup = PreferencesDialog::new(
+            PreferencesVariant::Setup,
+            Preferences {
+                debug: true,
+                ..Preferences::default()
+            },
+            PreferencesInfo::default(),
+        );
+        assert!(setup.rows().iter().all(|row| row.key.team_slot().is_none()));
+        assert_eq!(setup.rows().len(), 14);
+    }
+
+    /// The gate needs both a debug build (`#if !defined(NDEBUG)`) and `settings["debug"]`.
+    #[test]
+    fn debug_section_is_gated_by_the_build_and_the_setting() {
+        let enabled = Preferences {
+            debug: true,
+            ..Preferences::default()
+        };
+
+        assert_eq!(debug_section_enabled(&enabled), DEBUG_SECTION_BUILT);
+        assert!(!debug_section_enabled(&Preferences::default()));
+        assert!(
+            !dialog(PreferencesVariant::InGame).has_debug_section(),
+            "`debug = 0` (settings.cpp default) keeps the section out"
+        );
+    }
+
+    /// The QA/`preferences.ini` names of the debug controls and their C++ ranges.
+    #[test]
+    fn debug_keys_parse_and_carry_the_cpp_ranges() {
+        for (key, name) in [
+            (PrefKey::DisableFire, "disable_fire"),
+            (PrefKey::RealTime, "real_time"),
+            (PrefKey::RedTeamPlayer, "red_team_player"),
+            (PrefKey::GreenTeamPlayer, "green_team_player"),
+            (PrefKey::BlueTeamPlayer, "blue_team_player"),
+            (PrefKey::GrayTeamPlayer, "gray_team_player"),
+        ] {
+            assert_eq!(key.name(), name);
+            assert_eq!(PrefKey::parse(name), Some(key));
+        }
+
+        assert_eq!(PrefKey::parse("red_team"), Some(PrefKey::RedTeamPlayer));
+        assert!(PrefKey::DisableFire.is_checkbox());
+        assert!(PrefKey::RealTime.is_checkbox());
+        assert!(!PrefKey::DisableFire.is_edit());
+        assert!(PrefKey::RedTeamPlayer.is_edit());
+        assert!(!PrefKey::RedTeamPlayer.is_checkbox());
+        assert_eq!(PrefKey::range(PrefKey::RedTeamPlayer), (0, 3));
+        assert_eq!(PrefKey::range(PrefKey::GrayTeamPlayer), (0, 3));
+        assert_eq!(PrefKey::RedTeamPlayer.team_slot(), Some(0));
+        assert_eq!(PrefKey::GrayTeamPlayer.team_slot(), Some(3));
+        assert_eq!(PrefKey::RealTime.team_slot(), None);
+    }
+
+    /// The team slots are `0..=3` (`TEAM_TYPE_NONE..=TEAM_TYPE_REMOTE`) and clamp.
+    #[test]
+    fn team_slots_roundtrip_and_clamp_like_the_edit_fields() {
+        let mut prefs = Preferences::default();
+        assert_eq!(
+            prefs.team_players,
+            [
+                TeamKind::Player,
+                TeamKind::Computer,
+                TeamKind::None,
+                TeamKind::None
+            ]
+        );
+        assert_eq!(prefs.int_value(PrefKey::RedTeamPlayer), Some(1));
+        assert_eq!(prefs.int_value(PrefKey::GreenTeamPlayer), Some(2));
+
+        assert!(prefs.set_int(PrefKey::RedTeamPlayer, 3));
+        assert_eq!(prefs.team_players[0], TeamKind::Remote);
+
+        // Clamped: `Eliminated` (4) is not reachable from the dialog.
+        assert!(prefs.set_int(PrefKey::BlueTeamPlayer, 9));
+        assert_eq!(prefs.team_players[2], TeamKind::Remote);
+        assert!(prefs.set_int(PrefKey::BlueTeamPlayer, -1));
+        assert_eq!(prefs.team_players[2], TeamKind::None);
+
+        // Checkbox accessors.
+        assert!(!prefs.bool_value(PrefKey::DisableFire).unwrap_or(true));
+        assert!(prefs.set_bool(PrefKey::DisableFire, true));
+        assert!(prefs.disable_fire);
+        assert!(prefs.set_bool(PrefKey::RealTime, true));
+        assert!(prefs.real_time);
+    }
+
+    /// Settings file: the debug section survives write → read.
+    #[test]
+    fn debug_preferences_file_roundtrip() {
+        let dir = std::env::temp_dir().join(format!(
+            "max-brh-prefs-debug-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0)
+        ));
+        let path = preferences_path_for(&dir);
+        let prefs = Preferences {
+            debug: true,
+            disable_fire: true,
+            real_time: true,
+            team_players: [
+                TeamKind::Remote,
+                TeamKind::None,
+                TeamKind::Player,
+                TeamKind::Computer,
+            ],
+            ..Preferences::default()
+        };
+
+        prefs.save_file(&path).expect("save");
+        let loaded = Preferences::load_file(&path).expect("load");
+        assert_eq!(loaded, prefs);
+
+        let text = std::fs::read_to_string(&path).expect("file");
+        assert!(text.contains("debug=1"), "{text}");
+        assert!(text.contains("disable_fire=1"), "{text}");
+        assert!(text.contains("red_team_player=3"), "{text}");
+        assert!(text.contains("gray_team_player=2"), "{text}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A click on a checkbox toggles the value (like `win_button_down` in C++),

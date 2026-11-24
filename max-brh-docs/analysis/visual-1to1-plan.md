@@ -40,7 +40,7 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
 | B3 | Курсор площадки для инженера (`GetBuilderUnitCursor` для ENGINEER) | **сделано**: кнопка `Path` (`BLDPTH_U`), лента 1×1, строка/столбец — §33 |
 | B4 | Настройки из Preferences, которые только сохраняются: `click_scroll`, `quick_scroll`, `fast_movement`, `follow_unit`, `auto_select`, `enemy_halt`, `disable_music/voice/movie`, `enhanced_graphics`, `host/port`, `Turn Time`/`End Turn Time`, `Player Name` | **сделано (2026-11-20)**: камера/скролл, скорость спрайта, слежение, авто-выделение, `enemy_halt` в симуляции, таймеры хода и имя игрока — §34. Остались только `disable_music/voice/movie`, `enhanced_graphics`, `host_address`/`host_port` (музыки/видео в слое нет, сеть — CLI) |
 | B5 | Управление камерой/выделением из Preferences (скролл, скорость) | **сделано** в рамках B4: краевой скролл (`click_scroll`), `quick_scroll`, `follow_unit`, `auto_select` — §34 |
-| B6 | Debug-секция Preferences (`invalid`) | не портирована |
+| B6 | Debug-секция Preferences (`invalid`) | **реализовано (2026-11-24)**, приёмка QA/владельца — §43 `visual-1to1-status.md` |
 
 ## C. Анимации
 

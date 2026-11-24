@@ -4980,3 +4980,93 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 * `build_paused` — поле порта (в C++ его нет): производное от ресурсов
   состояние, в снапшот/CRC не входит; после загрузки сейва пересчитывается на
   ближайшем `manage_economy`.
+
+## 43. Debug-секция Preferences (`invalid`, B6) — реализовано, приёмка за QA/владельцем
+
+### 43.1 Оракул
+
+`max-cpp-port/src/optionsmenu.hpp` (`options_menu_buttons`, строки 70–107) и
+`optionsmenu.cpp` (`Init`, `InitCheckboxControl`, `InitEditControl`); значения
+ключей — `settings.cpp` (`DEBUG`/`TEAMS`); эффекты — `game_manager.cpp:3025`
+(`GameManager_RealTime`), `game_manager.cpp:3925-3943`
+(`GameManager_MenuClickPreferencesButton`), `units_manager.cpp:3436/4493` и
+`unitinfo.cpp:3639/3691` (`disable_fire`).
+
+Секция `invalid` — шесть контролов после маркера-секции:
+
+| Ключ | Контрол | Диапазон | Смысл |
+|---|---|---|---|
+| `disable_fire` | `Disable Fire` (`d5fa`), чекбокс | 0/1 | реакционный огонь и оценка атак выключены (симуляция) |
+| `real_time` | `Real Time` (`6a65`), чекбокс | 0/1 | шаг пути не тратит `speed` (`GameManager_RealTime`, симуляция) |
+| `red_team_player` | `Red Team` (`3bda`), поле | 0–3 | кто управляет командой (`TEAM_TYPE_NONE..TEAM_TYPE_REMOTE`) |
+| `green_team_player` | `Green Team` (`3bb7`), поле | 0–3 | то же |
+| `blue_team_player` | `Blue Team` (`11a8`), поле | 0–3 | то же |
+| `gray_team_player` | `Gray Team` (`75a0`), поле | 0–3 | то же |
+
+Гейт оракула: секция строится только при `#if !defined(NDEBUG)` и
+`settings["debug"]`; тогда `window_uly` начинается с `-20`, а подписи
+`play_mode`/`opponent`/`victory_limit` пропускаются — так шесть строк помещаются
+над кнопками диалога.
+
+### 43.2 Реализация (`max_app::preferences`)
+
+* Поля `Preferences`: `debug`, `disable_fire`, `real_time`,
+  `team_players: [TeamKind; 4]`; ключи `preferences.ini` совпадают с
+  `settings.cpp`, значения команд пишутся как 0–3. `to_ini`/`apply_ini` V70 не
+  менялись — там по-прежнему семь полей.
+* `PrefKey::{DisableFire, RealTime, RedTeamPlayer, GreenTeamPlayer,
+  BlueTeamPlayer, GrayTeamPlayer}`: `range()` командных полей — `(0, 3)`,
+  `is_edit` для четырёх полей, `is_checkbox` для `disable_fire`/`real_time`;
+  имена совпадают с ключами оракула (QA `prefs toggle/set`).
+* `layout(variant, debug)` повторяет `OptionsMenu::Init`: `y = -20` для
+  `PREFSPIC` при включённом гейте, пропуск трёх подписей, `invalid` — не стоп.
+  Тест `debug_layout_matches_the_cpp_window_uly_algorithm`: 313/313/333/333/353/353,
+  последняя строка выше кнопок (383), длина списка 26; `SETUPPIC` — по-прежнему 14.
+* `DEBUG_SECTION_BUILT = cfg!(debug_assertions)` (аналог `#if !defined(NDEBUG)`)
+  плюс `settings["debug"]` (`Preferences::debug`). Включение — `debug=1` в
+  `preferences.ini` (интерактивный запуск читает файл, `main.rs`); QA-драйвер
+  значения по умолчанию не читает.
+* Отрисовка — общий `draw_row` (чекбоксы `UNCHKED`/`CHECKED`, поля `PREFEDIT`,
+  подписи `FONT5`); отдельного холста/панели не добавлялось.
+
+### 43.3 Разделение «презентация / симуляция» (C3)
+
+* `debug` — чисто UI-состояние: решает, строится ли секция; в снапшот/CRC не
+  входит.
+* `disable_fire`, `real_time`, `team_players` — симуляционные: при закрытии
+  диалога (`Done` и `Cancel`) `App::install_debug_preferences` ставит их узким
+  install-API фасада (`GameUniverse::{set_disable_fire, set_real_time,
+  set_team_type}`), по образцу `enemy_halt`, без записи `GameState` из UI.
+  Значения на открытии диалога берутся из установленного состояния
+  (`StateRef::{disable_fire, real_time, team.team_type}`), поэтому `Cancel`
+  возвращает ровно то, что работало.
+* `adopt_universe` применяет `disable_fire`/`real_time` к новой партии
+  (`GameManager_InitGame`, `game_manager.cpp:3025`); типы команд при старте
+  берутся из `LocalSetup::team_types` (экран Players) — как в C++.
+* Дайджест: `snapshot_bytes` содержит `disable_fire`/`real_time`
+  (`game.rs:2830-2833`) и `team_type` (`game.rs:2853`), поэтому установка
+  отладочного тумблера **двигает** CRC по назначению (C++ везёт
+  `real_time`/`disable_fire` в пакете старта партии, `remote.cpp:2469-2471`);
+  гейт `debug` дайджест не трогает.
+
+### 43.4 Гейты и тесты
+
+* `cargo check --workspace` — зелёный.
+* `cargo test -p max_app` — 717 тестов в 39 целях, 0 падений; `cargo test -p
+  max_core` — 836 тестов в 52 целях, 0 падений (B6: 5 unit в `preferences.rs` и
+  5 интеграционных в `tests/preferences.rs`).
+* `qa_run preferences.qa` — PASS (6 кадров); `qa_golden_check` по
+  `max-brh-qa/golden/preferences` — PASS (0.445 % на четырёх кадрах — прежний
+  дрейф ниже порога 1 %; кадры нового прогона байт-в-байт равны прогону до
+  изменения).
+* `check_render_readonly.py` — PASS; `check_comments_language.py` — PASS.
+
+### 43.5 Осознанные расхождения
+
+* `disable_fire` в C++ читается «живьём» при каждом использовании, здесь
+  ставится при закрытии диалога: диалог модальный (тики партии стоят), в игре
+  это неотличимо.
+* `TEAM_TYPE_ELIMINATED` (4) недостижим из диалога — диапазон оракула 0–3.
+* Секция не входит в `.qa`-сценарий: драйвер не читает `preferences.ini`, поэтому
+  гейт включается только в интерактивном запуске; покрытие — unit- и
+  интеграционные тесты, включая отрисовку панели.

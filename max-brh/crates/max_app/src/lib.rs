@@ -930,6 +930,14 @@ impl<D: Dispatcher> App<D> {
     pub fn adopt_universe(&mut self, universe: GameUniverse<D>) {
         self.universe = universe;
         self.universe.set_enemy_halt(self.preferences.enemy_halt);
+        // `GameManager_InitGame` reads the debug settings when a match starts
+        // (`game_manager.cpp:3024-3027`: `real_time`; `disable_fire` is read live by
+        // C++, so its persisted value applies from the first step as well). Team
+        // control slots are not copied here: they are the setup screen's
+        // (`LocalSetup::team_types`), which already built this world.
+        self.universe
+            .set_disable_fire(self.preferences.disable_fire);
+        self.universe.set_real_time(self.preferences.real_time);
         self.universe_events = self.universe.subscribe();
         self.turn_events = self.universe.subscribe();
         self.ticks = 0;
