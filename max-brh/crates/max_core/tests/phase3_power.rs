@@ -142,8 +142,11 @@ fn deficit_shuts_down_research_then_greenhouse_then_comm_tower() {
         "the running generator is switched off first, then the consumer"
     );
     let message = outcome.message.expect("message");
+    // The oracle names the missing resource of a switched-off producer:
+    // `ComposeIndustryMessage(unit, _(cdcc), _(b9d9), _(acbe))` with `acbe` = "fuel"
+    // (`production_manager.cpp:164-186`).
     assert!(
-        message.contains("More power needed, Power Generator turned off."),
+        message.contains("More fuel needed, Power Generator turned off."),
         "{message:?}"
     );
     assert!(
@@ -499,5 +502,8 @@ fn power_deficit_digests_are_reproducible() {
             .expect("mine"),
     );
     let totals: EnergyTotals = first.snapshot().complex_totals(TeamId::RED, complex);
-    assert_eq!(totals, first.snapshot().complex_totals(TeamId::RED, complex));
+    assert_eq!(
+        totals,
+        first.snapshot().complex_totals(TeamId::RED, complex)
+    );
 }

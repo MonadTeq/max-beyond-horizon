@@ -63,13 +63,14 @@
 //!   (`production_manager.cpp:308-330/465-479/792-804`): «Adjustments made:»,
 //!   «More power needed, X turned off.», «Cannot turn X on, power needed.».
 //!
-//! Difference from C++ (documented in `visual-1to1-status.md` §42): the exact
-//! arithmetic of `OptimizePowerProduction` (formulas with `count`) is replaced
-//! by a deterministic choice equivalent in observed balance:
-//! "stations → generators". The fuel redistribution of `OptimizeCargoProduction`
-//! is performed by [`crate::alloc::optimize_cargo_production`]; the port keeps
-//! its "a resource never goes negative" rule, so a producer whose fuel cannot be
-//! covered by reallocation is still not turned on.
+//! The plan arithmetic of `OptimizePowerProduction` (the formulas with `count`,
+//! including the residual-deficit stage) is ported by
+//! [`plan_power_production`]; the only divergence is the `uint16_t` overflow
+//! quirk of C++ on a large power surplus (see that function). The fuel
+//! redistribution of `OptimizeCargoProduction` is performed by
+//! [`crate::alloc::optimize_cargo_production`]; the port keeps its "a resource
+//! never goes negative" rule, so a producer whose fuel cannot be covered by
+//! reallocation is still not turned on.
 
 use crate::alloc::{cargo_get_inventory, update_resources_total, MiningKind};
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
@@ -399,16 +400,78 @@ fn without_producers(state: &GameState, units: &[UnitId], totals: EnergyTotals) 
 /// bound keeps the optimizer deterministic on a pathological fixture.
 const POWER_REDISTRIBUTION_ROUNDS: usize = 4;
 
+/// How many `POWERSTN`/`POWGEN` the plan wants — the arithmetic of
+/// `ProductionManager::OptimizePowerProduction` (`production_manager.cpp:481-549`).
+///
+/// The first stage (`:494-517`) picks stations and generators for the deficit.
+/// The second stage (`:519-540`) is essential and was missing in the port: when
+/// the generators cannot cover the residual (in particular when one station is
+/// the only producer and the demand is 1 or 2, i.e. smaller than a station's 6
+/// power), one more station is switched on. Without it the plan stayed at zero
+/// stations for such a demand, so an enabled station was switched off and a
+/// demand that a station with a full fuel reserve could serve was treated as
+/// unservable (manual defect "consumption ignores the storage reserve").
+///
+/// Divergence from C++: `power_station_active` is `uint16_t` there, so a large
+/// power surplus wraps the negative first-stage result and keeps every station
+/// on; the port clamps the demand at zero and switches surplus producers off
+/// (the QA-approved behavior described in the module header).
+fn plan_power_production(
+    demand: i32,
+    station_count: usize,
+    generator_count: usize,
+) -> (usize, usize) {
+    const STATION_POWER: i32 = 6;
+    const STATION_FUEL: i32 = 6;
+    const GENERATOR_POWER: i32 = 1;
+    const GENERATOR_FUEL: i32 = 2;
+
+    let demand = demand.max(0);
+
+    // `(power + power_station_power_consumption_rate - count) / ...`
+    // with `count = (generator_power * station_fuel) / generator_fuel = 3`.
+    let count = (GENERATOR_POWER * STATION_FUEL) / GENERATOR_FUEL;
+    let mut power = demand;
+    let mut stations = ((power + STATION_POWER - count) / STATION_POWER).max(0) as usize;
+    stations = stations.min(station_count);
+
+    power = (power - stations as i32 * STATION_POWER).max(0);
+
+    // `(power + generator_power - 1) / generator_power`.
+    let mut generators = ((power + GENERATOR_POWER - 1) / GENERATOR_POWER).max(0) as usize;
+    generators = generators.min(generator_count);
+
+    power -= generators as i32 * GENERATOR_POWER;
+
+    if power > 0 {
+        let spare = station_count - stations;
+        let extra = ((power + STATION_POWER - 1) / STATION_POWER).min(spare as i32);
+
+        stations += extra.max(0) as usize;
+
+        power = (demand - stations as i32 * STATION_POWER).max(0);
+
+        generators = ((power + GENERATOR_POWER - 1) / GENERATOR_POWER).max(0) as usize;
+        generators = generators.min(generator_count);
+    }
+
+    (stations, generators)
+}
+
 /// Port of `OptimizePowerProduction`/`OptimizePowerConsumption`
 /// (`production_manager.cpp:481-562`, `production_manager.cpp:830-901`): choose
 /// how many `POWERSTN`/`POWGEN` should run, redistribute mining for their fuel,
 /// and apply the orders.
 ///
 /// C++ first computes the target `power_station_active`/`power_generator_active`
-/// with formulas involving `count`, then `UpdateUnitPowerConsumption` adjusts the orders.
-/// The port makes the same "stations before generators" choice (a station gives 6
-/// power for 6 fuel, a generator — 1 for 2), but without intermediate arithmetic:
-/// the observed balance and orders match in working scenarios (see the header).
+/// with formulas involving `count` (ported by [`plan_power_production`]), then
+/// `UpdateUnitPowerConsumption` adjusts the orders. The demand and the fuel
+/// budget come from [`complex_totals`], which is the C++ `total`:
+/// `Cargo_GetInventory` (the **storage reserve**) plus `Cargo_GetNetProduction`
+/// (the complex's **current per-turn production**). Availability is therefore
+/// "reserve + production", not production alone — a producer that can be fed
+/// from a storage building is switched on even when its own mining cannot cover
+/// the rate.
 ///
 /// # Automatic fuel redistribution
 ///
@@ -468,12 +531,8 @@ fn settle_producers(
 
         demand = (-baseline.power).max(0);
 
-        // C++ station selection formula: `(power + station_rate - count) / station_rate`
-        // with `count = (generator_power * station_fuel) / generator_fuel = 3`.
-        stations_on = stations.len().min(((demand + 3) / 6) as usize);
-        generators_on = generators
-            .len()
-            .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
+        (stations_on, generators_on) =
+            plan_power_production(demand, stations.len(), generators.len());
 
         fuel_budget = baseline.fuel.max(0);
         cost = stations_on as i32 * 6 + generators_on as i32 * 2;
@@ -509,10 +568,8 @@ fn settle_producers(
         let baseline = without_producers(state, units, totals);
 
         demand = (-baseline.power).max(0);
-        stations_on = stations.len().min(((demand + 3) / 6) as usize);
-        generators_on = generators
-            .len()
-            .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
+        (stations_on, generators_on) =
+            plan_power_production(demand, stations.len(), generators.len());
         fuel_budget = baseline.fuel.max(0);
         cost = stations_on as i32 * 6 + generators_on as i32 * 2;
     }
@@ -594,9 +651,12 @@ fn set_producer_order(
         });
     } else {
         let _ = state.set_order(id, UnitOrder::PowerOff, UnitOrderState::Init);
+        // `ComposeIndustryMessage(unit, _(cdcc), _(b9d9), _(acbe))` — the material
+        // of a switched-off producer is **fuel** (`production_manager.cpp:164-186`,
+        // `acbe` = "fuel"): the plan could not pay for its fuel rate.
         adjustments.push(Adjustment::PowerOff {
             unit: id,
-            shortage: Shortage::Power,
+            shortage: Shortage::Fuel,
         });
     }
 }
@@ -725,14 +785,26 @@ pub(crate) fn optimize_complex(
         // `ValidateIndustry(selected, true)` — the selected/proposed factory
         // is stopped first (C++ `production_manager.cpp:877`).
         let selected_factory = selected.or(proposal).filter(|id| {
-            state
-                .unit(*id)
-                .is_some_and(|unit| is_building_factory(unit) && !paused.iter().any(|(p, _)| p == id))
+            state.unit(*id).is_some_and(|unit| {
+                is_building_factory(unit) && !paused.iter().any(|(p, _)| p == id)
+            })
         });
 
         if let Some(id) = selected_factory {
-            if matches!(shortage, Shortage::Raw | Shortage::Power | Shortage::Workers) {
-                pause_factory(state, &mut paused, &mut adjustments, &mut totals, team, complex, id, shortage);
+            if matches!(
+                shortage,
+                Shortage::Raw | Shortage::Power | Shortage::Workers
+            ) {
+                pause_factory(
+                    state,
+                    &mut paused,
+                    &mut adjustments,
+                    &mut totals,
+                    team,
+                    complex,
+                    id,
+                    shortage,
+                );
                 continue;
             }
         }
@@ -896,10 +968,7 @@ fn pause_factory(
     }
 
     paused.push((id, shortage));
-    adjustments.push(Adjustment::Paused {
-        unit: id,
-        shortage,
-    });
+    adjustments.push(Adjustment::Paused { unit: id, shortage });
     *totals = complex_totals(state, team, complex);
 }
 
@@ -969,10 +1038,20 @@ fn compose_message(
         }
 
         if is_selected || cannot_turn_on {
-            lines.push(format!(
-                "Cannot turn {name} on, {} needed.",
-                shortage.material()
-            ));
+            if turned_on {
+                // `_(cfb8)`/`_(5fd6)`: "Cannot turn %s off, other buildings need %s."
+                // — the selected producer/HABITAT is switched on because the complex
+                // consumes its power (workers), not because it is itself short.
+                lines.push(format!(
+                    "Cannot turn {name} off, other buildings need {}.",
+                    shortage.material()
+                ));
+            } else {
+                lines.push(format!(
+                    "Cannot turn {name} on, {} needed.",
+                    shortage.material()
+                ));
+            }
         } else if turned_on {
             lines.push(format!(
                 "More {} needed, {name} turned on.",
@@ -1127,11 +1206,26 @@ mod tests {
     fn shortage_build_error_covers_every_shortage() {
         use crate::production::BuildError;
 
-        assert_eq!(shortage_build_error(Shortage::Raw), BuildError::NotEnoughMaterials);
-        assert_eq!(shortage_build_error(Shortage::Power), BuildError::NotEnoughPower);
-        assert_eq!(shortage_build_error(Shortage::Workers), BuildError::NotEnoughWorkers);
-        assert_eq!(shortage_build_error(Shortage::Fuel), BuildError::NotEnoughFuel);
-        assert_eq!(shortage_build_error(Shortage::Gold), BuildError::NotEnoughGold);
+        assert_eq!(
+            shortage_build_error(Shortage::Raw),
+            BuildError::NotEnoughMaterials
+        );
+        assert_eq!(
+            shortage_build_error(Shortage::Power),
+            BuildError::NotEnoughPower
+        );
+        assert_eq!(
+            shortage_build_error(Shortage::Workers),
+            BuildError::NotEnoughWorkers
+        );
+        assert_eq!(
+            shortage_build_error(Shortage::Fuel),
+            BuildError::NotEnoughFuel
+        );
+        assert_eq!(
+            shortage_build_error(Shortage::Gold),
+            BuildError::NotEnoughGold
+        );
     }
 
     #[test]
@@ -1163,7 +1257,10 @@ mod tests {
         );
 
         // Message names (`ResourceManager_GetUnit(type).GetSingularName()`).
-        assert_eq!(industry_unit_name(UnitType::ResearchCentre), "Research Center");
+        assert_eq!(
+            industry_unit_name(UnitType::ResearchCentre),
+            "Research Center"
+        );
         assert_eq!(industry_unit_name(UnitType::EcoSphere), "Greenhouse");
         assert_eq!(industry_unit_name(UnitType::GoldRefinery), "Comm Tower");
         assert_eq!(industry_unit_name(UnitType::Tank), "building");
@@ -1189,15 +1286,208 @@ mod tests {
             "POWGEN with 1 fuel cannot cover its rate"
         );
         assert!(
-            outcome
-                .message
-                .as_deref()
-                .is_some_and(|message| message.contains("Cannot turn Power Generator on, fuel needed.")),
+            outcome.message.as_deref().is_some_and(
+                |message| message.contains("Cannot turn Power Generator on, fuel needed.")
+            ),
             "message: {:?}",
             outcome.message
         );
         // With no producer left the mine becomes the last consumer to switch off.
         assert_eq!(state.unit(mine).unwrap().orders, UnitOrder::PowerOff);
+    }
+
+    /// Regression: demand 1 (a single mine) with a `POWERSTN` and a fuel reserve.
+    /// C++ plans the station through the second stage of
+    /// `OptimizePowerProduction` (`production_manager.cpp:519-540`); the port
+    /// used to plan zero stations for a demand below 3, turn the running station
+    /// off and report "fuel needed" despite the reserve.
+    #[test]
+    fn a_running_power_station_keeps_working_from_the_fuel_reserve() {
+        let mut state = state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let station = spawn(&mut state, UnitType::PowerStation, Point::new(8, 10));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 12));
+
+        state.unit_mut(fuel).unwrap().storage = 40;
+
+        let complex = state.unit(mine).unwrap().complex.unwrap();
+        assert_eq!(state.unit(station).unwrap().complex, Some(complex));
+
+        // The station is running (`ORDER_POWER_ON`) and the mine demands 1 power.
+        state.unit_mut(station).unwrap().orders = UnitOrder::PowerOn;
+        state.unit_mut(station).unwrap().state = UnitOrderState::ExecutingOrder;
+        state.unit_mut(mine).unwrap().orders = UnitOrder::PowerOn;
+        state.unit_mut(mine).unwrap().state = UnitOrderState::ExecutingOrder;
+
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, true);
+
+        assert_eq!(
+            state.unit(station).unwrap().orders,
+            UnitOrder::PowerOn,
+            "the fuel reserve (40) covers the station rate (6): {outcome:?}"
+        );
+        assert_eq!(state.unit(mine).unwrap().orders, UnitOrder::PowerOn);
+        assert!(outcome.powered_off.is_empty(), "{outcome:?}");
+        assert_eq!(outcome.message, None, "{outcome:?}");
+        assert!(!outcome.unresolved, "{outcome:?}");
+        assert_eq!(
+            outcome.totals.fuel, 34,
+            "the storage reserve paid the station rate (40 - 6)"
+        );
+    }
+
+    /// The same reserve turns a **switched-off** station on, as C++ does.
+    #[test]
+    fn a_switched_off_power_station_starts_from_the_fuel_reserve() {
+        let mut state = state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let station = spawn(&mut state, UnitType::PowerStation, Point::new(8, 10));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 12));
+
+        state.unit_mut(fuel).unwrap().storage = 40;
+        state.unit_mut(station).unwrap().orders = UnitOrder::PowerOff;
+        state.unit_mut(station).unwrap().state = UnitOrderState::ExecutingOrder;
+        state.unit_mut(mine).unwrap().orders = UnitOrder::PowerOn;
+        state.unit_mut(mine).unwrap().state = UnitOrderState::ExecutingOrder;
+
+        let complex = state.unit(mine).unwrap().complex.unwrap();
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+
+        assert_eq!(
+            state.unit(station).unwrap().orders,
+            UnitOrder::PowerOn,
+            "the station is the only producer and the reserve pays for it: {outcome:?}"
+        );
+        assert!(outcome.powered_on.contains(&station), "{outcome:?}");
+        assert_eq!(state.unit(mine).unwrap().orders, UnitOrder::PowerOn);
+        assert!(!outcome.unresolved, "{outcome:?}");
+    }
+
+    /// Fuel is also available from the complex's **current production**: the
+    /// station rate is paid by the mine's fuel mining even without a storage
+    /// building (C++ `total.fuel` = inventory + `Cargo_GetNetProduction`).
+    #[test]
+    fn a_power_station_runs_on_the_current_fuel_production() {
+        let mut state = state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let station = spawn(&mut state, UnitType::PowerStation, Point::new(8, 10));
+
+        // 8 fuel per turn from the mine: more than the station rate (6).
+        state.unit_mut(mine).unwrap().fuel_mining = 8;
+        state.unit_mut(mine).unwrap().orders = UnitOrder::PowerOn;
+        state.unit_mut(mine).unwrap().state = UnitOrderState::ExecutingOrder;
+        state.unit_mut(station).unwrap().orders = UnitOrder::PowerOff;
+        state.unit_mut(station).unwrap().state = UnitOrderState::ExecutingOrder;
+
+        let complex = state.unit(mine).unwrap().complex.unwrap();
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, None, None, false);
+
+        assert_eq!(
+            state.unit(station).unwrap().orders,
+            UnitOrder::PowerOn,
+            "the per-turn fuel production covers the station: {outcome:?}"
+        );
+        assert!(!outcome.unresolved, "{outcome:?}");
+        assert_eq!(
+            outcome.totals.fuel, 2,
+            "8 fuel mined this turn minus the station rate 6"
+        );
+    }
+
+    /// The selected unit gets the "other buildings need …" form when the optimizer
+    /// switches it **on** because the complex consumes its power: `_(cfb8)` with
+    /// `_(07d7)` (`ComposeIndustryMessage`, `production_manager.cpp:308-330`,
+    /// `UpdateUnitPowerConsumption` `:164-186`).
+    #[test]
+    fn a_selected_producer_turned_on_names_the_demand() {
+        let mut state = state();
+        let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+        let station = spawn(&mut state, UnitType::PowerStation, Point::new(8, 10));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 12));
+
+        state.unit_mut(fuel).unwrap().storage = 40;
+        state.unit_mut(station).unwrap().orders = UnitOrder::PowerOff;
+        state.unit_mut(station).unwrap().state = UnitOrderState::ExecutingOrder;
+        state.unit_mut(mine).unwrap().orders = UnitOrder::PowerOn;
+        state.unit_mut(mine).unwrap().state = UnitOrderState::ExecutingOrder;
+
+        let complex = state.unit(mine).unwrap().complex.unwrap();
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, Some(station), None, true);
+
+        assert!(outcome.powered_on.contains(&station), "{outcome:?}");
+        assert_eq!(
+            outcome.message.as_deref(),
+            Some("Cannot turn Power Station off, other buildings need power."),
+            "{outcome:?}"
+        );
+    }
+
+    /// The same for `HABITAT` on a worker shortage — `_(5fd6)` with `_(ed57)`.
+    #[test]
+    fn a_selected_habitat_turned_on_names_the_workers() {
+        let mut state = state();
+        let factory = spawn(&mut state, UnitType::TrainingHall, Point::new(12, 11));
+        let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(12, 13));
+        let generator = spawn(&mut state, UnitType::PowerGenerator, Point::new(14, 11));
+        let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(14, 12));
+        let habitat = spawn(&mut state, UnitType::Habitat, Point::new(11, 12));
+
+        state.unit_mut(dump).unwrap().storage = 20;
+        state.unit_mut(fuel).unwrap().storage = 50;
+        state.unit_mut(habitat).unwrap().orders = UnitOrder::PowerOff;
+        state.unit_mut(habitat).unwrap().state = UnitOrderState::ExecutingOrder;
+        {
+            let unit = state.unit_mut(factory).unwrap();
+            unit.orders = UnitOrder::Build;
+            unit.state = UnitOrderState::Init;
+            unit.build_time = 2;
+            unit.build_rate = 1;
+            unit.build_list = vec![UnitType::Infantry];
+        }
+
+        let complex = state.unit(factory).unwrap().complex.unwrap();
+        let _ = generator;
+        let outcome = optimize_complex(&mut state, TeamId::RED, complex, Some(habitat), None, true);
+
+        assert!(outcome.powered_on.contains(&habitat), "{outcome:?}");
+        assert!(
+            outcome.message.as_deref().is_some_and(|message| message
+                .contains("Cannot turn Habitat off, other buildings need workers.")),
+            "{outcome:?}"
+        );
+    }
+
+    /// The plan arithmetic of `OptimizePowerProduction` (`production_manager.cpp:481-549`),
+    /// including the second stage (`:519-540`).
+    #[test]
+    fn producer_plan_follows_optimize_power_production() {
+        // No deficit: nothing has to run.
+        assert_eq!(plan_power_production(0, 2, 2), (0, 0));
+
+        // A station is the only producer. Demand 1 or 2 is below its 6 power and
+        // the first-stage formula yields zero stations; the second stage covers
+        // the residual with one station (demand 3 is the first-stage boundary).
+        assert_eq!(plan_power_production(1, 1, 0), (1, 0));
+        assert_eq!(plan_power_production(2, 1, 0), (1, 0));
+        assert_eq!(plan_power_production(3, 1, 0), (1, 0));
+
+        // A generator covers a small deficit exactly: `(demand + 3) / 6 = 0`,
+        // then one generator per power unit.
+        assert_eq!(plan_power_production(1, 1, 1), (0, 1));
+
+        // The generator covers 1 of 2, the residual 1 brings the station in and
+        // the station output covers the whole demand, so the generator goes out.
+        assert_eq!(plan_power_production(2, 1, 1), (1, 0));
+
+        // One station covers 6; a seventh unit of demand needs a second one.
+        assert_eq!(plan_power_production(6, 2, 0), (1, 0));
+        assert_eq!(plan_power_production(7, 2, 0), (2, 0));
+
+        // Generators fill the deficit the single station leaves.
+        assert_eq!(plan_power_production(8, 1, 3), (1, 2));
+
+        // Nothing can cover it all: the plan uses every available producer.
+        assert_eq!(plan_power_production(13, 2, 0), (2, 0));
     }
 
     #[test]

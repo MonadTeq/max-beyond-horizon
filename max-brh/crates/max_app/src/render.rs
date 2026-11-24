@@ -253,10 +253,7 @@ fn team_building_at(
 /// `EAST_BOTTOM`; left `(gx-1, gy)` — `WEST_TOP`, left-below
 /// `(gx-1, gy+1)` — `WEST_BOTTOM`. 1×1 buildings (`POWGEN`) have only
 /// `NORTH_LEFT`/`SOUTH_LEFT`/`EAST_TOP`/`WEST_TOP`.
-pub fn connector_mask_for(
-    state: StateRef<'_>,
-    unit: &max_core::unit::UnitInfo,
-) -> u16 {
+pub fn connector_mask_for(state: StateRef<'_>, unit: &max_core::unit::UnitInfo) -> u16 {
     use max_core::enums::{
         CONNECTOR_EAST_BOTTOM, CONNECTOR_EAST_TOP, CONNECTOR_NORTH_LEFT, CONNECTOR_NORTH_RIGHT,
         CONNECTOR_SOUTH_LEFT, CONNECTOR_SOUTH_RIGHT, CONNECTOR_WEST_BOTTOM, CONNECTOR_WEST_TOP,
@@ -307,10 +304,7 @@ pub fn connector_mask_for(
 /// The stored mask — from the V70 save/simulation (`UnitInfo::connectors`,
 /// [`max_core::complex::update_connectors`]); the computed one — [`connector_mask_for`]
 /// (in case the state was loaded without recomputing connectors).
-pub fn drawn_connector_mask(
-    state: StateRef<'_>,
-    unit: &max_core::unit::UnitInfo,
-) -> u16 {
+pub fn drawn_connector_mask(state: StateRef<'_>, unit: &max_core::unit::UnitInfo) -> u16 {
     unit.connectors | connector_mask_for(state, unit)
 }
 
@@ -486,7 +480,11 @@ pub fn firing_turret_frame_index(
 
     let shift = if special {
         // Initial `PrepareFire` counter: 3 × 5 for ANTIAIR, 3 × 2 for the others.
-        let initial = if unit.unit_type == UnitType::AntiAir { 15 } else { 6 };
+        let initial = if unit.unit_type == UnitType::AntiAir {
+            15
+        } else {
+            6
+        };
 
         if initial % 2 == 1 {
             // ANTIAIR: 15 → 14 (even) toggles to firing+8.
@@ -614,7 +612,9 @@ pub fn unit_frame_index_with_animation(
     // the effect unit's `image_index`, and `UnitInfo::Render` draws exactly
     // `GetImageIndex()`. Explosions have no phases/rotations — the frame is taken directly.
     if unit.flags & unit_flags::EXPLODING != 0 {
-        return usize::try_from(unit.image_index.max(0)).unwrap_or(0).min(last);
+        return usize::try_from(unit.image_index.max(0))
+            .unwrap_or(0)
+            .min(last);
     }
 
     let mut index = unit_frame_index_for_angle(unit, image_base, image_count, angle);
@@ -736,7 +736,15 @@ pub fn draw_unit_sprites(
     anchor: (i32, i32),
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
-    draw_unit_sprites_with_base(assets, unit, presentation, unit.image_base, frame, anchor, zoom)
+    draw_unit_sprites_with_base(
+        assets,
+        unit,
+        presentation,
+        unit.image_base,
+        frame,
+        anchor,
+        zoom,
+    )
 }
 
 /// [`draw_unit_sprites`] with an explicit body frame base (clan/save/degree of
@@ -1179,7 +1187,18 @@ impl<D: Dispatcher> App<D> {
             return;
         };
 
-        crate::panels::draw_status_message(frame, area, &palette, hint);
+        // The snow tilesets are `SNOW_1..SNOW_6` (`World::GetMessageBoxNotice/
+        // WarningTintParameters`, `world.cpp:1003-1026`).
+        let snow = (self.config().planet as usize) < 6;
+
+        crate::panels::draw_status_message(
+            frame,
+            area,
+            &palette,
+            hint,
+            self.hud().hint_style,
+            snow,
+        );
     }
 
     /// Frame in the 1:1 window: `FRAMEPIC` + the map in the map area.
@@ -1206,7 +1225,8 @@ impl<D: Dispatcher> App<D> {
                 stats.map_tiles = assets.terrain.render_into(&mut map, &viewport);
             }
             _ => {
-                stats.map_tiles = render_map_into(&mut map, &self.state_ref().map(), &viewport, &style);
+                stats.map_tiles =
+                    render_map_into(&mut map, &self.state_ref().map(), &viewport, &style);
             }
         }
 
@@ -1368,7 +1388,11 @@ impl<D: Dispatcher> App<D> {
                     .and_then(|assets| assets.menu.as_ref().map(|menu| menu.palette))
             });
 
-        menu.draw(frame, self.assets().and_then(|a| a.self_destruct.as_ref()), fallback);
+        menu.draw(
+            frame,
+            self.assets().and_then(|a| a.self_destruct.as_ref()),
+            fallback,
+        );
     }
 
     /// Draws the pause dialog (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
@@ -1417,8 +1441,7 @@ impl<D: Dispatcher> App<D> {
             return;
         };
 
-        stats.overlay_pixels +=
-            crate::overlays::draw_grid(frame, self, viewport, &palette, false);
+        stats.overlay_pixels += crate::overlays::draw_grid(frame, self, viewport, &palette, false);
     }
 
     /// 3×3 button overlays (`DrawMap_RenderUnitDisplays`,
@@ -1434,7 +1457,8 @@ impl<D: Dispatcher> App<D> {
             return;
         };
 
-        stats.overlay_pixels += crate::overlays::draw_unit_overlays(frame, self, viewport, &palette);
+        stats.overlay_pixels +=
+            crate::overlays::draw_unit_overlays(frame, self, viewport, &palette);
         stats.overlay_pixels += crate::overlays::draw_range_scan(frame, self, viewport, &palette);
     }
 
@@ -1816,7 +1840,8 @@ pub fn build_marker_cells(
         for _ in 0..limit {
             position += max_core::geo::DIRECTION_OFFSETS[direction];
 
-            if state.is_accessible(unit.unit_type,
+            if state.is_accessible(
+                unit.unit_type,
                 state.player_team(),
                 position,
                 max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
@@ -1934,7 +1959,11 @@ mod tests {
         use max_core::geo::Point;
 
         let mut presentation = UnitPresentation::new();
-        assert_eq!(shadow_render_offset(&presentation), (0, 0), "shadow under the hull");
+        assert_eq!(
+            shadow_render_offset(&presentation),
+            (0, 0),
+            "shadow under the hull"
+        );
 
         // `UnitInfo::Redraw` for `MOBILE_AIR_UNIT | HOVERING`.
         presentation.shadow_offset = Point::new(-64, -64);
@@ -2053,9 +2082,13 @@ mod tests {
         let mut app = App::new(AppConfig::default());
         app.universe = max_core::universe::GameUniverse::default();
 
-        let own = app.universe.spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
+        let own = app
+            .universe
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(55, 55), 0)
             .expect("свой танк");
-        let enemy = app.universe.spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
+        let enemy = app
+            .universe
+            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(56, 55), 0)
             .expect("чужой танк");
 
         assert!(app

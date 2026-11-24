@@ -186,8 +186,7 @@ fn power_deficit_powers_off_research_center_before_the_mine() {
     }
 
     // Demand: mine 1 + RESEARCH 1 = 2; the generator gives 1 → deficit 1.
-    let outcome =
-        state.optimize_complex(TeamId::RED, complex, None, None, true);
+    let outcome = state.optimize_complex(TeamId::RED, complex, None, None, true);
 
     assert_eq!(
         state.snapshot().unit(research).expect("research").orders,
@@ -223,8 +222,7 @@ fn power_deficit_powers_off_the_mine_when_no_other_consumer_is_left() {
     // so its own consumption 1 > 0. C++ `OptimizeMiningIndustry`
     // turns the mine off (`production_manager.cpp:729-774`).
     let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::Init);
-    let outcome =
-        state.optimize_complex(TeamId::RED, complex, None, None, true);
+    let outcome = state.optimize_complex(TeamId::RED, complex, None, None, true);
 
     assert_eq!(
         state.snapshot().unit(mine).expect("mine").orders,
@@ -297,10 +295,57 @@ fn generators_are_switched_on_and_off_automatically() {
     );
 }
 
+/// Regression for the manual defect "consumption ignores the storage reserve":
+/// a `POWERSTN` is the only producer of the complex, the demand is 1 (a mine),
+/// and the fuel sits in the connected `FDUMP`. The second stage of
+/// `OptimizePowerProduction` (`production_manager.cpp:519-540`) plans the
+/// station on; the old plan formula yielded zero stations for such a demand and
+/// switched the running station off.
+#[test]
+fn power_station_runs_from_the_storage_reserve_across_a_turn() {
+    let mut state = state();
+    let mine = spawn(&mut state, UnitType::MiningStation, Point::new(10, 10));
+    let station = spawn(&mut state, UnitType::PowerStation, Point::new(8, 10));
+    let fuel = spawn(&mut state, UnitType::FuelStorage, Point::new(8, 12));
+    state.unit_mut(fuel).expect("fuel").storage = 40;
+
+    let complex = state
+        .snapshot()
+        .unit(mine)
+        .expect("mine")
+        .complex
+        .expect("complex");
+    assert_eq!(
+        state.snapshot().unit(station).expect("station").complex,
+        Some(complex),
+        "the station shares the mine's complex"
+    );
+
+    // The station is running and the mine demands 1 power.
+    let _ = state.set_order(station, UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
+    let _ = state.set_order(mine, UnitOrder::PowerOn, UnitOrderState::ExecutingOrder);
+
+    // A full economy turn: `Access_UpdateResourcesTotal` → `OptimizeComplexes`.
+    state.manage_economy(TeamId::RED);
+
+    assert_eq!(
+        state.snapshot().unit(station).expect("station").orders,
+        UnitOrder::PowerOn,
+        "the station stays on: the FDUMP reserve pays its rate"
+    );
+    assert_eq!(
+        state.snapshot().unit(mine).expect("mine").orders,
+        UnitOrder::PowerOn
+    );
+
+    // The turn ends with 40 - 6 = 34 fuel in the dump (`update_production`
+    // distributes the complex stock; the station rate is charged).
+    assert_eq!(state.snapshot().unit(fuel).expect("fuel").storage, 34);
+}
+
 // ---------------------------------------------------------------------------
 // 3. Pause of an already running construction and the message
 // ---------------------------------------------------------------------------
-
 #[test]
 fn running_build_pauses_on_power_loss_and_resumes() {
     let mut state = state();
@@ -418,10 +463,7 @@ fn energy_state_is_part_of_snapshot_and_crc() {
         on.snapshot().snapshot_bytes(),
         same.snapshot().snapshot_bytes()
     );
-    assert_eq!(
-        on.snapshot().state_digest(),
-        same.snapshot().state_digest()
-    );
+    assert_eq!(on.snapshot().state_digest(), same.snapshot().state_digest());
 }
 
 #[test]

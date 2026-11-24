@@ -34,8 +34,8 @@ use crate::buffer::{Rgba, RgbaBuffer};
 pub mod gnw;
 
 pub use gnw::{
-    draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed, draw_text_gnw_shadowed,
-    GnwFont, GnwFontError, GnwFontId, GnwGlyph,
+    draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed, draw_text_gnw_outlined,
+    draw_text_gnw_shadowed, GnwFont, GnwFontError, GnwFontId, GnwGlyph,
 };
 
 /// Width of one glyph in pixels.

@@ -1010,39 +1010,69 @@ impl App {
             self.hud.set_hint(message);
         }
 
+        // The first shortage of the turn also goes to the top message window as a
+        // `MESSAGE_BOX_WARNING` (white text on the red tint, `MESSAGE_BOX_WARNING`,
+        // `message_manager.cpp:50-54`): it names exactly what is missing for the
+        // disabled building/construction.
+        let mut warning: Option<String> = None;
+
         for event in &production {
             let name = crate::buildmenu::unit_name(event.unit_type);
 
-            match event.kind {
+            let shortage = match event.kind {
                 max_core::ProductionEventKind::Spawned => {
-                    self.hud.push_log(format!("{name} ready"))
+                    self.hud.push_log(format!("{name} ready"));
+                    None
                 }
                 max_core::ProductionEventKind::BuildingDone => {
-                    self.hud.push_log(format!("{name} built"))
+                    self.hud.push_log(format!("{name} built"));
+                    None
                 }
-                max_core::ProductionEventKind::PausedNoMaterials => self
-                    .hud
-                    .push_log("Production paused: not enough raw materials"),
-                max_core::ProductionEventKind::PausedNoResources => self
-                    .hud
-                    .push_log("Production paused: not enough raw materials"),
+                max_core::ProductionEventKind::PausedNoMaterials
+                | max_core::ProductionEventKind::PausedNoResources => {
+                    self.hud
+                        .push_log("Production paused: not enough raw materials");
+                    Some("raw materials")
+                }
                 max_core::ProductionEventKind::PausedNoPower => {
-                    self.hud.push_log("Production paused: not enough power")
+                    self.hud.push_log("Production paused: not enough power");
+                    Some("power")
                 }
                 max_core::ProductionEventKind::PausedNoFuel => {
-                    self.hud.push_log("Production paused: not enough fuel")
+                    self.hud.push_log("Production paused: not enough fuel");
+                    Some("fuel")
                 }
                 max_core::ProductionEventKind::PausedNoWorkers => {
-                    self.hud.push_log("Production paused: not enough workers")
+                    self.hud.push_log("Production paused: not enough workers");
+                    Some("workers")
                 }
                 max_core::ProductionEventKind::PausedNoGold => {
-                    self.hud.push_log("Production paused: not enough gold")
+                    self.hud.push_log("Production paused: not enough gold");
+                    Some("gold")
                 }
-                max_core::ProductionEventKind::NoSpawnCell => self
-                    .hud
-                    .push_log("Production: no free cell near the factory"),
-                max_core::ProductionEventKind::RubbleCleared => self.hud.push_log("Rubble cleared"),
+                max_core::ProductionEventKind::NoSpawnCell => {
+                    self.hud
+                        .push_log("Production: no free cell near the factory");
+                    None
+                }
+                max_core::ProductionEventKind::RubbleCleared => {
+                    self.hud.push_log("Rubble cleared");
+                    None
+                }
+            };
+
+            if let Some(missing) = shortage {
+                // `ComposeIndustryMessage`/`DrawResourceMessage` wording
+                // (`_(b441)` + `_(b215)`): what is missing and which building stopped.
+                warning.get_or_insert_with(|| {
+                    format!("Adjustments made:\nMore {missing} needed, {name} turned off.")
+                });
             }
+        }
+
+        if let Some(warning) = warning {
+            self.hud
+                .set_hint_styled(warning, crate::panels::MessageBoxStyle::Warning);
         }
 
         for event in self.universe.take_research_events() {
@@ -1099,7 +1129,8 @@ impl App {
         // is re-established after the turn change: `clear_interaction`
         // removes `hint` together with the selection.
         if let Some(message) = self.state_ref().industry_message().map(str::to_owned) {
-            self.hud.set_hint(message);
+            self.hud
+                .set_hint_styled(message, crate::panels::MessageBoxStyle::Notice);
         }
         // The command popup belongs to the previous selection
         // (`GameManager_DeinitPopupButtons` on the turn change).
@@ -1169,7 +1200,8 @@ impl App {
         // The message lives in the state until the end of the round and is re-established
         // on entering the human turn (the turn change clears `hint`).
         if let Some(message) = self.state_ref().industry_message().map(str::to_owned) {
-            self.hud.set_hint(message);
+            self.hud
+                .set_hint_styled(message, crate::panels::MessageBoxStyle::Notice);
         }
 
         {

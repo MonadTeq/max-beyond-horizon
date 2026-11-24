@@ -38,6 +38,16 @@
 //! * `Text_TextLine` draws the shadow/outline to the right and down: for every pixel
 //!   of the text `(x+1, y+1)` is painted with `outline` if there is text there too, otherwise with
 //!   `shadow`. This reproduces [`draw_text_gnw_shadowed`].
+//!
+//! # Fill and outline (`Text_Blit`)
+//!
+//! The original paints the shifted outline/shadow copy **first** and the glyph fill
+//! **on top of it** (`text.cpp:492-496` draws the `GNW_TEXT_OUTLINE` copy, then
+//! `:521-523` writes the fill colour), so the fill always wins and stays complete.
+//! [`draw_text_gnw_shadowed`] follows the same order: the back layer (outline/shadow)
+//! is painted first, the fill last. With the opposite order the outline colour ate the
+//! diagonal pixels of the fill; two-pixel-wide stems of `FONT1` lost their second
+//! column and the text looked hollow/outline-only instead of filled.
 
 use std::sync::OnceLock;
 
@@ -175,7 +185,10 @@ impl std::fmt::Display for GnwFontError {
                 "глиф {glyph}: ширина {width}, смещение {offset} (ожидалось {expected})"
             ),
             Self::Truncated { needed, len } => {
-                write!(f, "битмапы шрифта GNW выходят за файл: нужно {needed}, есть {len}")
+                write!(
+                    f,
+                    "битмапы шрифта GNW выходят за файл: нужно {needed}, есть {len}"
+                )
             }
         }
     }
@@ -408,6 +421,10 @@ pub fn draw_text_gnw(
 /// `outline` if there is text there too, otherwise `shadow`. The traversal order is bottom
 /// to top, so an already repainted pixel no longer counts as text (as
 /// in C++, where the loop reads and writes one buffer).
+///
+/// The back layer is painted first and the glyph fill last, exactly like
+/// `Text_Blit` (outline copy at `text.cpp:492-496`, fill at `:521-523`): the fill is
+/// never eaten by the outline, so the glyphs stay solid (not hollow).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_gnw_shadowed(
     buffer: &mut RgbaBuffer,
@@ -452,6 +469,9 @@ pub fn draw_text_gnw_shadowed(
         pen_x += i32::from(glyph.width);
     }
 
+    // 0 — nothing, 2 — outline, 3 — shadow: the back layer, painted under the fill.
+    let mut back = vec![0u8; stride * height.max(1) as usize];
+
     for row in (0..height - 1).rev() {
         for column in 0..width - 1 {
             let index = row as usize * stride + column as usize;
@@ -462,29 +482,53 @@ pub fn draw_text_gnw_shadowed(
 
             let target = index + stride + 1;
 
-            mask[target] = if mask[target] == 1 { 2 } else { 3 };
+            back[target] = if mask[target] == 1 { 2 } else { 3 };
         }
     }
 
+    // The back layer first (outline/shadow), the glyph fill on top — the composition
+    // of `Text_Blit` with `GNW_TEXT_OUTLINE` (`text.cpp:492-523`). The fill must not
+    // be replaced by the outline colour: otherwise a two-pixel stem keeps only one
+    // column of fill and the text looks hollow.
     for row in 0..height {
         for column in 0..width {
-            let value = mask[row as usize * stride + column as usize];
-
-            if value == 0 {
-                continue;
-            }
-
-            let color = match value {
-                1 => base,
+            let color = match back[row as usize * stride + column as usize] {
                 2 => outline,
-                _ => shadow,
+                3 => shadow,
+                _ => continue,
             };
 
             buffer.set(x + column, y + row, color);
         }
     }
 
+    for row in 0..height {
+        for column in 0..width {
+            if mask[row as usize * stride + column as usize] != 1 {
+                continue;
+            }
+
+            buffer.set(x + column, y + row, base);
+        }
+    }
+
     font.text_width(text)
+}
+
+/// `Text_Blit` with the `GNW_TEXT_OUTLINE` flag (`text.cpp:492-523`): a one-pixel
+/// copy of the text shifted down and right in `outline`, then the glyph fill in
+/// `base` on top of it (`Color_RGB2Color(0)` — black — is the outline in C++).
+pub fn draw_text_gnw_outlined(
+    buffer: &mut RgbaBuffer,
+    x: i32,
+    y: i32,
+    font: &GnwFont,
+    text: &str,
+    base: Rgba,
+    outline: Rgba,
+) -> i32 {
+    draw_text_gnw(buffer, x + 1, y + 1, font, text, outline);
+    draw_text_gnw(buffer, x, y, font, text, base)
 }
 
 /// Draws one line centered in the rectangle (like `Text_TextBox` with
@@ -735,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_text_adds_outline_and_shadow_pixels() {
+    fn shadowed_text_adds_the_back_layer_under_the_fill() {
         let font = GnwFontId::Font5.font();
         let text = "H";
         let width = font.text_width(text) + 2;
@@ -757,14 +801,63 @@ mod tests {
                 .count()
         };
 
-        assert!(count(&shadowed, outline) > 0, "есть обводка");
+        // The outline is painted under the fill (`Text_Blit` order), so it does not
+        // survive on the glyph itself; the shadow and the complete fill do.
+        assert_eq!(count(&shadowed, base), count(&plain, base), "заливка целая");
         assert!(count(&shadowed, shadow) > 0, "есть тень");
-        assert!(count(&shadowed, base) > 0, "есть сам текст");
         assert!(
             count(&shadowed, base) + count(&shadowed, outline) + count(&shadowed, shadow)
                 > count(&plain, base),
             "тень расширяет область текста"
         );
+    }
+
+    /// The fill is painted after the outline (`Text_Blit` order): every ink pixel of
+    /// the glyph keeps the base colour. Regression for the "hollow fonts" defect — the
+    /// outline used to overwrite the diagonal of the fill, so two-pixel stems of
+    /// `FONT1` lost their second column.
+    #[test]
+    fn fill_is_painted_over_the_outline() {
+        let font = GnwFontId::Font1.font();
+        let text = "NAMES";
+        let width = font.text_width(text) + 2;
+        let height = font.height() + 2;
+        let base = Rgba::rgb(200, 200, 200);
+        let outline = Rgba::rgb(10, 20, 30);
+        let shadow = Rgba::rgb(40, 50, 60);
+        let mut plain = RgbaBuffer::new(width as u32, height as u32);
+        let mut shadowed = RgbaBuffer::new(width as u32, height as u32);
+
+        draw_text_gnw(&mut plain, 0, 0, font, text, base);
+        draw_text_gnw_shadowed(&mut shadowed, 0, 0, font, text, base, outline, shadow);
+
+        let mut ink = 0;
+        let mut kept = 0;
+
+        for y in 0..height {
+            for x in 0..width {
+                if plain.get(x, y) != Some(base) {
+                    continue;
+                }
+
+                ink += 1;
+
+                if shadowed.get(x, y) == Some(base) {
+                    kept += 1;
+                }
+            }
+        }
+
+        assert!(ink > 0, "глифы FONT1 содержат заливку");
+        assert_eq!(kept, ink, "каждый пиксель заливки остаётся базовым цветом");
+
+        let shadow_pixels = shadowed
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] == shadow.r && pixel[1] == shadow.g && pixel[2] == shadow.b)
+            .count();
+
+        assert!(shadow_pixels > 0, "тень рисуется под заливкой");
     }
 
     #[test]
@@ -781,8 +874,8 @@ mod tests {
             .collect();
 
         assert!(!painted.is_empty());
-        assert!(painted.iter().all(|&(x, y)| {
-            x >= rect.ulx && x < rect.lrx() && y >= rect.uly && y < rect.lry()
-        }));
+        assert!(painted
+            .iter()
+            .all(|&(x, y)| { x >= rect.ulx && x < rect.lrx() && y >= rect.uly && y < rect.lry() }));
     }
 }

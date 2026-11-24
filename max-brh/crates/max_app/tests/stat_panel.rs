@@ -154,6 +154,70 @@ fn mine_panel_frame_skips_speed_and_empty_rows_tank_keeps_them() {
     assert_eq!(filled(&tank_rows), 4, "танк: Hits/Ammo/Speed/Shots");
 }
 
+/// Pixels that differ between two frames inside `rect`.
+fn changed_pixels(before: &RgbaBuffer, after: &RgbaBuffer, rect: PixelRect) -> usize {
+    let mut count = 0;
+
+    for y in rect.uly..rect.lry() {
+        for x in rect.ulx..rect.lrx() {
+            if before.get(x, y) != after.get(x, y) {
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+/// DEFECT 2 regression: the statistics rows draw the `SI_*`/`EI_*` pip icons after
+/// the 75 px label area (`GameManager_DrawInfoDisplayRowIcons`,
+/// `game_manager.cpp:7290-7367`). The port used to draw only the `current/base` value
+/// and the label — the icon strip stayed the window background.
+#[test]
+fn stat_rows_draw_the_pip_icons() {
+    let Some(mut app) = app() else {
+        return;
+    };
+    let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
+
+    app.select_unit(None);
+    let empty = app.render_frame();
+    let tank = spawn(&mut app, UnitType::Tank, Point::new(24, 22));
+
+    app.select_unit(Some(tank));
+    let frame = app.render_frame();
+
+    // `GameManager_DrawInfoDisplayRow` puts the icons at `buffer[75]`.
+    for rect in [
+        layout::STAT_ROW_1,
+        layout::STAT_ROW_2,
+        layout::STAT_ROW_3,
+        layout::STAT_ROW_4,
+    ] {
+        let strip = PixelRect::new(rect.ulx + 75, rect.uly, rect.width - 75, rect.height);
+
+        assert!(
+            changed_pixels(&empty, &frame, strip) > 0,
+            "ряд {:?}: полоса иконок пуста",
+            rect
+        );
+    }
+
+    // The label area (0…45 px) still holds the `0xA2` text.
+    assert!(
+        text_pixels(
+            &frame,
+            &palette,
+            PixelRect::new(
+                layout::STAT_ROW_1.ulx,
+                layout::STAT_ROW_1.uly,
+                75,
+                layout::STAT_ROW_1.height
+            )
+        ) > 0
+    );
+}
+
 #[test]
 fn training_hall_panel_frame_replaces_speed_with_usage_and_total() {
     let Some(mut app) = app() else {

@@ -40,7 +40,6 @@
 use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
 use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
-use max_core::universe::{Dispatcher, StateRef};
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{
     Command, MovePathData, OrderPayload, Packet08Order, Packet38Move, PayloadP1, PayloadP2,
@@ -49,6 +48,7 @@ use max_core::input::{
 use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS};
+use max_core::universe::{Dispatcher, StateRef};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::map_render::TileStyle;
 use max_render::text::{draw_text_line, GLYPH_HEIGHT, GLYPH_WIDTH};
@@ -429,6 +429,10 @@ pub struct HudState {
     /// UI state: not part of the snapshot/CRC. Lives until a click on the map/selection
     /// change, like `MessageManager_ClearMessageBox` in C++.
     pub hint: Option<String>,
+    /// Background style of [`Self::hint`] — the `MessageBoxStyle` of the C++ call
+    /// (`MESSAGE_BOX_INFO`/`NOTICE`/`WARNING`). UI state, not part of the
+    /// snapshot/CRC.
+    pub hint_style: crate::panels::MessageBoxStyle,
 }
 
 impl Default for HudState {
@@ -456,6 +460,7 @@ impl HudState {
             targeting_mode: false,
             shift_pressed: false,
             hint: None,
+            hint_style: crate::panels::MessageBoxStyle::Info,
         }
     }
 
@@ -493,9 +498,20 @@ impl HudState {
         self.hint = None;
     }
 
-    /// Shows a hint above the map (`MessageManager_DrawMessage`).
+    /// Shows a hint above the map (`MessageManager_DrawMessage`), `MESSAGE_BOX_INFO`.
     pub fn set_hint(&mut self, text: impl Into<String>) {
+        self.set_hint_styled(text, crate::panels::MessageBoxStyle::Info);
+    }
+
+    /// Shows a hint with an explicit `MessageBoxStyle` — the background table of the
+    /// C++ call (`MessageManager_DrawMessage(..., style, ...)`).
+    pub fn set_hint_styled(
+        &mut self,
+        text: impl Into<String>,
+        style: crate::panels::MessageBoxStyle,
+    ) {
         self.hint = Some(text.into());
+        self.hint_style = style;
     }
 
     /// `MessageManager_ClearMessageBox`: removes the hint.
@@ -696,12 +712,7 @@ pub fn build_move_order(state: StateRef<'_>, id: UnitId, destination: Point) -> 
         return None;
     }
 
-    let path = state.find_ground_path(
-        unit,
-        destination,
-        ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-        0,
-    )?;
+    let path = state.find_ground_path(unit, destination, ACCESS_MODIFIER_SAME_CLASS_BLOCKS, 0)?;
 
     if path.steps.is_empty() || path.steps.len() > MAX_PATH_STEPS {
         return None;
@@ -813,7 +824,7 @@ pub fn build_builder_exit_order(
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
-    state.builder_awaiting_exit( id)?;
+    state.builder_awaiting_exit(id)?;
 
     let unit = state.unit(id)?;
 
@@ -871,7 +882,7 @@ pub fn build_builder_exit_click_order(
     id: UnitId,
     destination: Point,
 ) -> Option<Command> {
-    let building_id = state.builder_awaiting_exit( id)?;
+    let building_id = state.builder_awaiting_exit(id)?;
     let building = state.unit(building_id)?;
 
     if !builder_exit_zone_contains(building, destination) {
@@ -1871,10 +1882,12 @@ mod tests {
         let (mut app, _tank, _enemy) = test_app();
         let grid = Point::new(11, 10);
 
-        let slab = app.universe
+        let slab = app
+            .universe
             .spawn_unit(UnitType::LargeSlab, TeamId::RED, grid, 0)
             .expect("slab");
-        let building = app.universe
+        let building = app
+            .universe
             .spawn_unit(UnitType::TrainingHall, TeamId::RED, grid, 0)
             .expect("building");
 
@@ -2255,7 +2268,8 @@ mod tests {
     #[test]
     fn unit_panel_lines_never_show_speed() {
         let (mut app, tank, _enemy) = test_app();
-        let mine = app.universe
+        let mine = app
+            .universe
             .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(16, 10), 0)
             .expect("шахта создана");
 

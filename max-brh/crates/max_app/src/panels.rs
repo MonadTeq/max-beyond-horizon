@@ -34,19 +34,21 @@
 use max_assets::image::SimpleImage;
 use max_core::enums::{UnitOrder, UnitOrderState, UnitType, VictoryType};
 use max_core::game::PLAYER_TEAM_COUNT;
-use max_core::universe::StateRef;
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::{UnitInfo, UnitListKind};
 use max_core::unit_values::{
     ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE,
 };
+use max_core::universe::StateRef;
 use max_core::victory::{
-    cargo_life_consumption_rate, cargo_power_consumption_rate,
-    cargo_type_of, CargoType, NetProduction,
+    cargo_life_consumption_rate, cargo_power_consumption_rate, cargo_type_of, CargoType,
+    NetProduction,
 };
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
-use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFont, GnwFontId};
+use max_render::text::{
+    draw_text_gnw, draw_text_gnw_outlined, draw_text_gnw_shadowed, GnwFont, GnwFontId,
+};
 use max_render::viewport::Viewport;
 
 use crate::assets::Assets;
@@ -162,6 +164,54 @@ impl UiPalette {
         }
 
         Rgba::from_rgb(self.colors[best])
+    }
+
+    /// Message box background for one frame pixel — the style colour tables
+    /// (`MessageManager_MessageBox_BgColorArray`, `message_manager.cpp:50-54`):
+    ///
+    /// * `INFO` — `ResourceManager_DarkeningColorIndexTable` (`world.cpp:499-509`):
+    ///   `c' = max(7, c) * 31 / 63`;
+    /// * `NOTICE` — `Color_GenerateIntensityTable2` (`color.cpp:167-200`) with
+    ///   `(63, 63, 63)` and `(63, 0, 0)` on snow;
+    /// * `WARNING` — `Color_GenerateIntensityTable3` (`color.cpp:202-220`) with
+    ///   `(63, 0, 0)` and factor `31` (`63` on snow).
+    ///
+    /// The C++ tables are indexed by palette index; a frame pixel already holds the
+    /// palette RGB, so applying the formula directly and snapping to the nearest
+    /// palette colour (`Color_MapColor`) is equivalent.
+    pub fn message_box_color(&self, style: MessageBoxStyle, snow: bool, color: Rgba) -> Rgba {
+        let r = i32::from(color.r);
+        let g = i32::from(color.g);
+        let b = i32::from(color.b);
+
+        let (red, green, blue) = match style {
+            MessageBoxStyle::Info => (
+                (r.max(7) * 31) / 63,
+                (g.max(7) * 31) / 63,
+                (b.max(7) * 31) / 63,
+            ),
+            MessageBoxStyle::Notice => {
+                let (r_level, g_level, b_level) = if snow { (63, 0, 0) } else { (63, 63, 63) };
+                let max_level = r_level.max(g_level).max(b_level).max(1);
+                let max_color = (r.max(g).max(b) + max_level) / 2;
+
+                (
+                    (max_color * r_level) / max_level,
+                    (max_color * g_level) / max_level,
+                    (max_color * b_level) / max_level,
+                )
+            }
+            MessageBoxStyle::Warning => {
+                let factor = if snow { 63 } else { 31 };
+                let tint = |channel: i32, level: i32| (channel.max(level / 4) * level) / factor;
+
+                (tint(r, 63), tint(g, 0), tint(b, 0))
+            }
+        };
+
+        let clamp = |value: i32| value.clamp(0, 255) as u8;
+
+        self.map_color([clamp(red), clamp(green), clamp(blue)])
     }
 
     /// Palette color by index as `[r, g, b]`.
@@ -436,7 +486,9 @@ impl PanelButton {
             Self::Next => (10, 2),
             Self::Done | Self::Reports | Self::Chat => (0, 3),
             Self::Colors | Self::Range | Self::Names => (2, 4),
-            Self::Survey | Self::Status | Self::Hits | Self::Ammo | Self::Scan | Self::Grid => (2, 2),
+            Self::Survey | Self::Status | Self::Hits | Self::Ammo | Self::Scan | Self::Grid => {
+                (2, 2)
+            }
             _ => (0, 0),
         }
     }
@@ -599,6 +651,59 @@ impl StatusIcons {
     }
 }
 
+/// Pips and icons of the statistics rows — `GameManager_DrawInfoDisplayRowIcons`
+/// (`game_manager.cpp:7290-7367`) with the `SI_*`/`EI_*` resources.
+///
+/// Every row repeats `base` small icon images (`SI_*`, the "full" pip) and switches to
+/// the paired `EI_*` image (`icon + 1` in C++) for the consumed part of the row. The
+/// images are 4-19 px wide; five pips form a column block, further pips wrap into the
+/// next block to the right (`i / 5`, `i % 5`).
+#[derive(Debug, Clone, Default)]
+pub struct StatIcons {
+    images: std::collections::BTreeMap<&'static str, SimpleImage>,
+}
+
+impl StatIcons {
+    /// All row icons of the UI-level statistics panel (`resourcetable.hpp:658-687`:
+    /// `SI_HITSB`…`EI_WORK`; `SI_x + 1 = EI_x`).
+    const NAMES: [&'static str; 22] = [
+        "SI_HITSB", "EI_HITSB", "SI_HITSY", "EI_HITSY", "SI_HITSR", "EI_HITSR", "SI_AMMO",
+        "EI_AMMO", "SI_RAW", "EI_RAW", "SI_FUEL", "EI_FUEL", "SI_GOLD", "EI_GOLD", "SI_SPEED",
+        "EI_SPEED", "SI_SHOTS", "EI_SHOTS", "SI_POWER", "EI_POWER", "SI_WORK", "EI_WORK",
+    ];
+
+    /// Loads the icons from `MAX.RES`; missing ones are simply skipped.
+    pub fn load(max_res: &max_assets::ResArchive) -> Self {
+        let mut images = std::collections::BTreeMap::new();
+
+        for name in Self::NAMES {
+            let Ok(bytes) = max_res.read(name) else {
+                continue;
+            };
+
+            if let Ok(image) = SimpleImage::decode(bytes) {
+                images.insert(name, image);
+            }
+        }
+
+        Self { images }
+    }
+
+    /// The `(full, empty)` pair of a row icon.
+    fn pair(
+        &self,
+        normal: &'static str,
+        empty: &'static str,
+    ) -> Option<(&SimpleImage, &SimpleImage)> {
+        Some((self.images.get(normal)?, self.images.get(empty)?))
+    }
+
+    /// Whether at least one pair is available.
+    pub fn is_empty(&self) -> bool {
+        self.images.len() < 2
+    }
+}
+
 /// The "released/pressed" picture pair.
 #[derive(Debug, Clone)]
 pub struct ButtonPair {
@@ -674,6 +779,8 @@ pub struct Panels {
     aux: Vec<(SimpleImage, PixelRect)>,
     /// `STATUS` overlay icons (`IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`).
     pub status_icons: StatusIcons,
+    /// Statistics row pips (`SI_*`/`EI_*`, `GameManager_DrawInfoDisplayRowIcons`).
+    pub stat_icons: StatIcons,
 }
 
 impl Panels {
@@ -750,6 +857,7 @@ impl Panels {
                 speed: simple("IL_SPEED"),
                 shots: simple("IL_SHOTS"),
             },
+            stat_icons: StatIcons::load(max_res),
         })
     }
 
@@ -955,7 +1063,7 @@ impl Panels {
 
         // Portrait and statistics.
         painted += self.draw_portrait(frame, app, assets, palette);
-        painted += draw_stats(frame, state, app.selected_unit(), palette);
+        painted += draw_stats(frame, state, app.selected_unit(), palette, &self.stat_icons);
 
         // Bottom row: coordinates and the unit description.
         painted += self.blit(
@@ -1052,14 +1160,19 @@ impl Panels {
                 for x in 0..width {
                     let index = frame_pixels.pixels[y * frame_pixels.width + x];
 
-                    frame.set(area.ulx + x as i32, area.uly + y as i32, palette.rgba(index));
+                    frame.set(
+                        area.ulx + x as i32,
+                        area.uly + y as i32,
+                        palette.rgba(index),
+                    );
                 }
             }
 
             painted += (width * height) as u32;
         } else {
             // Fallback: no FLC (22 types) or the file did not load — sprite ×2.
-            let mut portrait = RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
+            let mut portrait =
+                RgbaBuffer::filled(area.width as u32, area.height as u32, Rgba::BLACK);
             let anchor = (area.width / 2, area.height / 2);
 
             let image_base = crate::render::image_base_for(
@@ -1343,8 +1456,13 @@ pub enum StatLabel {
     Hits,
     /// Row 2 for armed units — `_(5027)`.
     Ammo,
-    /// Row 2 for storages/transport — `_(1274)`.
+    /// Row 2 for storages/transport — `_(1274)`; raw-material storage,
+    /// icon `SI_RAW`.
     Cargo,
+    /// Row 2 for a fuel storage — `_(1274)`, icon `SI_FUEL`.
+    CargoFuel,
+    /// Row 2 for a gold storage — `_(1274)`, icon `SI_GOLD`.
+    CargoGold,
     /// Row 3 for mobile units — `_(c372)`.
     Speed,
     /// Row 4 — `_(2bce)`.
@@ -1368,7 +1486,7 @@ impl StatLabel {
         match self {
             Self::Hits => "Hits",
             Self::Ammo => "Ammo",
-            Self::Cargo => "Cargo",
+            Self::Cargo | Self::CargoFuel | Self::CargoGold => "Cargo",
             Self::Speed => "Speed",
             Self::Shots => "Shots",
             Self::Usage => "Usage",
@@ -1380,11 +1498,55 @@ impl StatLabel {
     }
 }
 
+/// Icon family of a statistics row — the `SI_*`/`EI_*` pair repeated after the label
+/// (`GameManager_DrawInfoDisplayRowIcons`, `game_manager.cpp:7290`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatIcon {
+    /// `SI_HITSB`; red/yellow variants are chosen by the row colour.
+    Hits,
+    /// `SI_AMMO`.
+    Ammo,
+    /// `SI_RAW`.
+    Raw,
+    /// `SI_FUEL`.
+    Fuel,
+    /// `SI_GOLD`.
+    Gold,
+    /// `SI_SPEED`.
+    Speed,
+    /// `SI_SHOTS`.
+    Shots,
+    /// `SI_POWER` (`DrawInfoDisplayType2`).
+    Power,
+    /// `SI_WORK` (`DrawInfoDisplayType1/3`).
+    Work,
+}
+
+impl StatIcon {
+    /// `(full, empty)` resource names — C++ `icon` / `icon + 1`
+    /// (`resourcetable.hpp:658-687`).
+    const fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Hits => ("SI_HITSB", "EI_HITSB"),
+            Self::Ammo => ("SI_AMMO", "EI_AMMO"),
+            Self::Raw => ("SI_RAW", "EI_RAW"),
+            Self::Fuel => ("SI_FUEL", "EI_FUEL"),
+            Self::Gold => ("SI_GOLD", "EI_GOLD"),
+            Self::Speed => ("SI_SPEED", "EI_SPEED"),
+            Self::Shots => ("SI_SHOTS", "EI_SHOTS"),
+            Self::Power => ("SI_POWER", "EI_POWER"),
+            Self::Work => ("SI_WORK", "EI_WORK"),
+        }
+    }
+}
+
 /// One drawn statistics row (`GameManager_DrawInfoDisplayRow`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatRow {
     /// Label (the left box 45…75 px).
     pub label: StatLabel,
+    /// Pips after the label (75 px onwards) — `icon` of the C++ call.
+    pub icon: StatIcon,
     /// Current value (`current_value` after `std::min(current, base)`).
     pub current: i32,
     /// Base (`base_value`); the row is drawn only if `base != 0`.
@@ -1466,7 +1628,10 @@ pub fn builder_status_message(state: StateRef<'_>, unit: &UnitInfo) -> Option<St
     let name = crate::buildmenu::unit_name(unit_type);
     let build_rate = i32::from(unit.build_rate.max(1));
 
-    if matches!(unit.orders, UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2) {
+    if matches!(
+        unit.orders,
+        UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
+    ) {
         return Some(format!(
             "Was building {name}, with {} turns to completion.",
             unit.build_time
@@ -1480,19 +1645,42 @@ pub fn builder_status_message(state: StateRef<'_>, unit: &UnitInfo) -> Option<St
     ))
 }
 
-/// Message window above the map — `MessageManager_DrawMessage` +
-/// `MessageManager_DrawMessageBox` (`message_manager.cpp:144/206`).
+/// `MessageBoxStyle` (`message_manager.hpp:37`, `MESSAGE_BOX_STYLE_COUNT`):
+/// which background colour table the message box uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MessageBoxStyle {
+    /// `MESSAGE_BOX_INFO` — `ResourceManager_DarkeningColorIndexTable`.
+    #[default]
+    Info,
+    /// `MESSAGE_BOX_NOTICE` — `Color_GenerateIntensityTable2`
+    /// (`message_manager.cpp:92`): neutral grey, red on the snow tilesets.
+    Notice,
+    /// `MESSAGE_BOX_WARNING` — `Color_GenerateIntensityTable3`
+    /// (`message_manager.cpp:88`): red, the tileset only changes the factor.
+    Warning,
+}
+
+/// `MessageManager_DrawMessage` + `MessageManager_DrawMessageBox`
+/// (`message_manager.cpp:144/206`).
 ///
-/// Background — the `MESSAGE_BOX_INFO` darkening table (`ResourceManager_
-/// DarkeningColorIndexTable`: `max(7, c/4)*31/63` and the nearest palette color),
-/// text — `Font5` in color `0xFF` with an outline/shadow. Rectangle: `(area.ulx,
-/// area.uly + 10)`, width = the longest line + 20, height = `20 + 10 *
-/// lines.
+/// Background — the style table (`MessageManager_MessageBox_BgColorArray`,
+/// `message_manager.cpp:50-54`): `INFO` darkens, `NOTICE`/`WARNING` tint the pixels
+/// under the box (the box is transparent over the map, not an opaque fill). Text —
+/// `Font5` in `0xFF` with `GNW_TEXT_OUTLINE` (`MessageManager_DrawMessageBoxText`,
+/// `message_manager.cpp:98-122`): a black copy shifted by one pixel and the white
+/// fill on top. Rectangle: `(area.ulx, area.uly + 10)`, width = the longest line + 20,
+/// height = `20 + 10 * lines`.
+///
+/// `snow` — the tileset is one of `SNOW_1..SNOW_6` (`World::
+/// GetMessageBoxNoticeTintParameters`/`GetMessageBoxWarningTintParameters`,
+/// `world.cpp:1003-1026`).
 pub fn draw_status_message(
     frame: &mut RgbaBuffer,
     area: PixelRect,
     palette: &UiPalette,
     text: &str,
+    style: MessageBoxStyle,
+    snow: bool,
 ) -> u32 {
     if text.is_empty() || area.width <= 0 {
         return 0;
@@ -1546,8 +1734,7 @@ pub fn draw_status_message(
             let mapped = match cache.get(&key) {
                 Some(mapped) => *mapped,
                 None => {
-                    let dark = color.darken(1);
-                    let mapped = palette.map_color([dark.r, dark.g, dark.b]);
+                    let mapped = palette.message_box_color(style, snow, color);
                     cache.insert(key, mapped);
                     mapped
                 }
@@ -1564,15 +1751,16 @@ pub fn draw_status_message(
             continue;
         }
 
-        let drawn = draw_text_gnw_shadowed(
+        // `MessageManager_DrawMessageBoxText`: `Text_Blit` with `GNW_TEXT_OUTLINE`
+        // (`color = 0xFF`): the black copy at (+1, +1) first, the white fill on top.
+        let drawn = draw_text_gnw_outlined(
             frame,
             rect.ulx + 10,
             rect.uly + 10 + 10 * index as i32,
             font,
             line,
             palette.rgba(0xFF),
-            Rgba::BLACK,
-            Rgba::BLACK,
+            palette.rgba(0),
         );
 
         painted += drawn.max(0) as u32;
@@ -1580,15 +1768,48 @@ pub fn draw_status_message(
     painted
 }
 
+/// Icon family of a label when it is unambiguous (`Hits`/`Ammo`/`Cargo`/`Speed`/
+/// `Shots`); `Usage`/`Total`/`Teams`/`Power` get the family of the row from the
+/// display type ([`make_row_icon`]).
+const fn default_icon(label: StatLabel) -> StatIcon {
+    match label {
+        StatLabel::Hits => StatIcon::Hits,
+        StatLabel::Ammo => StatIcon::Ammo,
+        StatLabel::Cargo => StatIcon::Raw,
+        StatLabel::CargoFuel => StatIcon::Fuel,
+        StatLabel::CargoGold => StatIcon::Gold,
+        StatLabel::Speed => StatIcon::Speed,
+        StatLabel::Shots => StatIcon::Shots,
+        StatLabel::Usage
+        | StatLabel::Power
+        | StatLabel::Teams
+        | StatLabel::Total
+        | StatLabel::Points => StatIcon::Work,
+    }
+}
+
 /// C++ line: `if (base_value && factor)` — otherwise `DrawInfoDisplayRow`
 /// draws nothing, and the row remains empty (`FRAMEPIC` background).
 fn make_row(label: StatLabel, current: i32, base: i32, factor: i32) -> Option<StatRow> {
+    make_row_icon(default_icon(label), label, current, base, factor)
+}
+
+/// [`make_row`] with an explicit icon family (`DrawInfoDisplayType1/2` share the
+/// `Usage`/`Total` labels but use `SI_WORK` and `SI_POWER` respectively).
+fn make_row_icon(
+    icon: StatIcon,
+    label: StatLabel,
+    current: i32,
+    base: i32,
+    factor: i32,
+) -> Option<StatRow> {
     if base == 0 || factor == 0 {
         return None;
     }
 
     Some(StatRow {
         label,
+        icon,
         current: current.min(base),
         base,
         factor,
@@ -1612,9 +1833,9 @@ fn net_production_of(state: StateRef<'_>, unit: &UnitInfo) -> NetProduction {
 
         simulated.orders = unit.prior_orders;
 
-        state.cargo_get_net_production( &simulated, false)
+        state.cargo_get_net_production(&simulated, false)
     } else {
-        state.cargo_get_net_production( unit, false)
+        state.cargo_get_net_production(unit, false)
     }
 }
 
@@ -1635,7 +1856,7 @@ fn power_rows(
         return;
     }
 
-    let cargo = state.cargo_get_net_production( unit, false);
+    let cargo = state.cargo_get_net_production(unit, false);
     let current_power_need = cargo.power;
 
     if power_need >= 0 {
@@ -1643,14 +1864,26 @@ fn power_rows(
         assign_row(
             rows,
             1,
-            make_row(StatLabel::Usage, -current_power_need, power_need, 1),
+            make_row_icon(
+                StatIcon::Power,
+                StatLabel::Usage,
+                -current_power_need,
+                power_need,
+                1,
+            ),
         );
     } else {
         // `_(848e)` «Power»: how much power the unit produces.
         assign_row(
             rows,
             1,
-            make_row(StatLabel::Power, current_power_need, -power_need, 1),
+            make_row_icon(
+                StatIcon::Power,
+                StatLabel::Power,
+                current_power_need,
+                -power_need,
+                1,
+            ),
         );
     }
 
@@ -1689,18 +1922,36 @@ fn power_rows(
         assign_row(
             rows,
             2,
-            make_row(StatLabel::Total, current_value, base_value, 1),
+            make_row_icon(
+                StatIcon::Power,
+                StatLabel::Total,
+                current_value,
+                base_value,
+                1,
+            ),
         );
     } else {
         assign_row(
             rows,
             2,
-            make_row(StatLabel::Total, current_power_need, power_need_total, 1),
+            make_row_icon(
+                StatIcon::Power,
+                StatLabel::Total,
+                current_power_need,
+                power_need_total,
+                1,
+            ),
         );
         assign_row(
             rows,
             3,
-            make_row(StatLabel::Usage, current_value, base_value, 1),
+            make_row_icon(
+                StatIcon::Power,
+                StatLabel::Usage,
+                current_value,
+                base_value,
+                1,
+            ),
         );
     }
 }
@@ -1719,7 +1970,7 @@ fn life_rows(
         return;
     }
 
-    let cargo = state.cargo_get_net_production( unit, false);
+    let cargo = state.cargo_get_net_production(unit, false);
     let current_life_need = cargo.life;
 
     if life_need >= 0 {
@@ -1923,7 +2174,11 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
         }
 
         rows[1] = make_row(
-            StatLabel::Cargo,
+            match cargo_type {
+                CargoType::Fuel => StatLabel::CargoFuel,
+                CargoType::Gold => StatLabel::CargoGold,
+                _ => StatLabel::Cargo,
+            },
             i32::from(unit.storage),
             storage_value,
             scaling_factor,
@@ -1978,8 +2233,15 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
 }
 
 /// One drawn row (`GameManager_DrawInfoDisplayRow`): the `current/base` value
-/// in the threshold color and the label `0xA2`, font `GNW_TEXT_FONT_2`.
-fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette: &UiPalette) {
+/// in the threshold color, the label `0xA2` and the pip icons after the 75 px
+/// label area, font `GNW_TEXT_FONT_2`.
+fn draw_stat_row(
+    frame: &mut RgbaBuffer,
+    row: PixelRect,
+    stat: &StatRow,
+    palette: &UiPalette,
+    icons: &StatIcons,
+) {
     let font = GnwFontId::Font2.font();
     let value_rect = PixelRect::new(row.ulx, row.uly, 45, row.height);
 
@@ -1998,6 +2260,124 @@ fn draw_stat_row(frame: &mut RgbaBuffer, row: PixelRect, stat: &StatRow, palette
         stat.label.caption(),
         palette.rgba(TEXT),
     );
+    draw_stat_row_icons(frame, row, stat, palette, icons);
+}
+
+/// `GameManager_DrawInfoDisplayRowIcons` (`game_manager.cpp:7290-7367`): `base`
+/// scaled pips starting at 75 px, `current` of them in the "full" image and the rest
+/// in the "empty" one (C++ `icon + 1`), five icons per column block.
+///
+/// The visible pip size is picked by the remaining width (`factor`), the scale of the
+/// row (`factor` of the C++ call, e.g. 4 for hits) caps the number of pips at
+/// 25 (`20` for fuel/gold).
+fn draw_stat_row_icons(
+    frame: &mut RgbaBuffer,
+    row: PixelRect,
+    stat: &StatRow,
+    palette: &UiPalette,
+    icons: &StatIcons,
+) {
+    let mut factor = stat.factor.max(1);
+    let base = stat.base.max(0);
+    let current = stat.current.clamp(0, base);
+
+    // `size = (icon == SI_FUEL || icon == SI_GOLD) ? 20 : 25;`
+    let size = match stat.icon {
+        StatIcon::Fuel | StatIcon::Gold => 20,
+        _ => 25,
+    };
+
+    if (factor + base - 1) / factor > size {
+        factor = (size + base - 1) / size;
+    }
+
+    let current_scaled = (factor + current - 1) / factor;
+    let base_scaled = (factor + base - 1) / factor;
+
+    // Hits change colour with the value (`SI_HITSR`/`SI_HITSY`).
+    let (normal, empty) = stat.icon.names();
+    let (normal, empty) = if stat.icon == StatIcon::Hits {
+        match stat.color() {
+            RED => ("SI_HITSR", "EI_HITSR"),
+            YELLOW => ("SI_HITSY", "EI_HITSY"),
+            _ => (normal, empty),
+        }
+    } else {
+        (normal, empty)
+    };
+
+    let Some((full, used)) = icons.pair(normal, empty) else {
+        return;
+    };
+
+    let height = row.height;
+    let icon_width = full.width as i32;
+    let icon_height = full.height as i32;
+    let mut width = row.width - 75;
+
+    // `if (base_value > 5) height = (18 - image->height) / 4; else 0;`
+    let height_offset = if base_scaled > 5 {
+        ((height - 1) - icon_height) / 4
+    } else {
+        0
+    };
+    let origin_y = row.uly + (((height - 1) - height_offset * 4) - icon_height) / 2;
+    let origin_x = row.ulx + 75;
+
+    // `base_value_scaled = (base_value + 4) / 5` — the number of icon columns.
+    let blocks = (base_scaled + 4) / 5;
+    let diff = base_scaled - (blocks - 1) * 5;
+    width -= icon_width * blocks;
+
+    let width_offset = blocks * 4 - (5 - diff);
+    let (pip_width, pip_offset) = if width_offset != 0 {
+        if width >= width_offset {
+            ((width / width_offset).min(icon_width), 0)
+        } else {
+            (
+                1,
+                (blocks + (width_offset - width) - 2) / (blocks - 1).max(1),
+            )
+        }
+    } else {
+        (icon_width, 0)
+    };
+
+    let pitch = icon_width + pip_width * 4 - pip_offset;
+
+    let mut image = full;
+    let mut remaining = current_scaled;
+
+    for index in 0..base_scaled {
+        let icon_index = index % 5;
+        let px = origin_x + pitch * (index / 5) + pip_width * icon_index;
+        let py = origin_y + icon_index * height_offset;
+
+        blit_icon(frame, palette, image, px, py);
+
+        remaining -= 1;
+
+        if remaining == 0 {
+            image = used;
+        }
+    }
+}
+
+/// Transparent blit of a row pip (`UnitStats_DrawImage`, `unitstats.cpp:82`).
+fn blit_icon(frame: &mut RgbaBuffer, palette: &UiPalette, image: &SimpleImage, ulx: i32, uly: i32) {
+    for y in 0..image.height as u32 {
+        for x in 0..image.width as u32 {
+            let Some(index) = image.pixel(x, y) else {
+                continue;
+            };
+
+            if index == image.transparent {
+                continue;
+            }
+
+            frame.set(ulx + x as i32, uly + y as i32, palette.rgba(index));
+        }
+    }
 }
 
 /// Four statistics lines of the selected unit ([`rows_for`]).
@@ -2008,6 +2388,7 @@ fn draw_stats(
     state: StateRef<'_>,
     selected: Option<&UnitInfo>,
     palette: &UiPalette,
+    icons: &StatIcons,
 ) -> u32 {
     let Some(unit) = selected else {
         return 0;
@@ -2023,7 +2404,7 @@ fn draw_stats(
 
     for (rect, row) in rects.iter().zip(rows.iter()) {
         if let Some(row) = row {
-            draw_stat_row(frame, *rect, row, palette);
+            draw_stat_row(frame, *rect, row, palette, icons);
         }
     }
 
@@ -2472,7 +2853,11 @@ mod tests {
     }
 
     /// "Ink" bounds of the color `color` inside the rectangle (inclusive).
-    fn ink_bounds(frame: &RgbaBuffer, rect: PixelRect, color: Rgba) -> Option<(i32, i32, i32, i32)> {
+    fn ink_bounds(
+        frame: &RgbaBuffer,
+        rect: PixelRect,
+        color: Rgba,
+    ) -> Option<(i32, i32, i32, i32)> {
         let mut bounds: Option<(i32, i32, i32, i32)> = None;
 
         for y in rect.uly..rect.lry() {
@@ -3133,11 +3518,110 @@ mod tests {
         );
     }
 
+    /// The three `MessageBoxStyle` background tables (`MessageManager_
+    /// MessageBox_BgColorArray`): info darkens, warning tints red, notice is neutral
+    /// on a normal tileset and red on snow.
+    #[test]
+    fn message_box_styles_follow_the_cpp_colour_tables() {
+        let mut colors = [[0u8; 3]; 256];
+        let entries = [
+            [0, 0, 0],
+            [255, 0, 0],
+            [100, 100, 100],
+            [50, 50, 50],
+            [25, 25, 25],
+            [255, 255, 255],
+            [200, 0, 0],
+            [64, 0, 0],
+            [81, 81, 81],
+            [40, 40, 40],
+        ];
+
+        colors[..entries.len()].copy_from_slice(&entries);
+
+        let palette = UiPalette::from_colors(colors);
+        let gray = Rgba::rgb(100, 100, 100);
+
+        // `max(7, c) * 31 / 63` → 49 → the nearest palette entry is (50, 50, 50).
+        assert_eq!(
+            palette.message_box_color(MessageBoxStyle::Info, false, gray),
+            Rgba::rgb(50, 50, 50)
+        );
+
+        // `(max(c, 63/4) * 63) / 31` → (203, 0, 0) → (200, 0, 0).
+        let warning = palette.message_box_color(MessageBoxStyle::Warning, false, gray);
+        assert!(
+            warning.r > warning.g && warning.g == warning.b,
+            "{warning:?}"
+        );
+
+        // `GenerateIntensityTable2`: neutral grey on green/desert/crater.
+        let notice = palette.message_box_color(MessageBoxStyle::Notice, false, gray);
+        assert!(notice.r == notice.g && notice.g == notice.b, "{notice:?}");
+
+        // …and red on the snow tilesets.
+        let snow = palette.message_box_color(MessageBoxStyle::Notice, true, gray);
+        assert!(snow.r > snow.g && snow.g == snow.b, "{snow:?}");
+    }
+
+    /// The message window paints its whole rectangle with the style table and the
+    /// text in white with a black outline (`MessageManager_DrawMessageBox`).
+    #[test]
+    fn warning_message_box_paints_a_red_tint_behind_white_text() {
+        let mut colors = [[0u8; 3]; 256];
+        let entries = [
+            [0, 0, 0],
+            [255, 255, 255],
+            [100, 100, 100],
+            [49, 49, 49],
+            [203, 0, 0],
+            [203, 0, 0],
+            [81, 81, 81],
+            [40, 40, 40],
+        ];
+
+        colors[..entries.len()].copy_from_slice(&entries);
+        // `MessageManager_DrawMessageBoxText` draws in palette index `0xFF`.
+        colors[0xFF] = [255, 255, 255];
+
+        let palette = UiPalette::from_colors(colors);
+        let background = Rgba::rgb(100, 100, 100);
+        let mut frame = RgbaBuffer::filled(160, 60, background);
+
+        draw_status_message(
+            &mut frame,
+            PixelRect::new(0, 0, 160, 60),
+            &palette,
+            "HX",
+            MessageBoxStyle::Warning,
+            false,
+        );
+
+        // The box starts at `(area.ulx, area.uly + 10)`; its corner is the tinted
+        // background, not the untouched map pixel.
+        let corner = frame.get(0, 10).expect("пиксель окна");
+        assert_eq!(
+            corner,
+            palette.message_box_color(MessageBoxStyle::Warning, false, background)
+        );
+        assert!(corner.r > corner.g + corner.b, "красный фон: {corner:?}");
+
+        // `Text_Blit` with `GNW_TEXT_OUTLINE`: the white fill over the black copy.
+        let white = frame
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] == 255 && pixel[1] == 255 && pixel[2] == 255)
+            .count();
+
+        assert!(white > 0, "белый текст поверх красного фона");
+    }
+
     /// Colors — the `GameManager_DrawInfoDisplayRow` thresholds (1/4 and 1/2 of the base).
     #[test]
     fn stat_row_colors_follow_the_cpp_thresholds() {
         let row = |current, base, factor| StatRow {
             label: StatLabel::Hits,
+            icon: StatIcon::Hits,
             current,
             base,
             factor,
