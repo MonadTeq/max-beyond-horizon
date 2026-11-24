@@ -235,6 +235,8 @@ pub enum SessionCommand {
     /// Used for repeats of a barrier that is already tracked: the tracker keeps
     /// exactly one entry per barrier instead of one per retransmit.
     SendUntracked(Packet),
+    /// Send an already encoded transport frame (packets 55/56) on channel 1.
+    SendFrame(Vec<u8>),
     /// Stop retransmitting tracked barriers (e.g. the turn completed).
     ClearBarriers,
     /// Disconnect and stop the task.
@@ -555,6 +557,11 @@ impl Session {
                                 let _ = events.send(SessionEvent::Error(error)).await;
                             }
                         }
+                        Some(SessionCommand::SendFrame(frame)) => {
+                            if let Err(error) = self.send_frame_bytes(&frame) {
+                                let _ = events.send(SessionEvent::Error(error)).await;
+                            }
+                        }
                         Some(SessionCommand::ClearBarriers) => self.barrier.clear(),
                         Some(SessionCommand::Disconnect) | None => {
                             self.host.disconnect_later(self.peer, 0);
@@ -641,6 +648,14 @@ impl Session {
         let bytes = packet.encode()?;
         debug_assert!(bytes.len() <= MAX_PACKET_SIZE);
         self.host.send(self.peer, CHANNEL_APPL, &bytes)?;
+        self.host.flush();
+        Ok(())
+    }
+
+    /// Sends an already encoded transport frame (packets 55/56).
+    fn send_frame_bytes(&mut self, frame: &[u8]) -> Result<(), SessionError> {
+        debug_assert!(frame.len() <= MAX_PACKET_SIZE);
+        self.host.send(self.peer, CHANNEL_APPL, frame)?;
         self.host.flush();
         Ok(())
     }
@@ -811,6 +826,25 @@ impl SessionHandle {
         packet.encode()?;
         self.commands
             .send(SessionCommand::SendUntracked(packet))
+            .await
+            .map_err(|_| SessionError::Closed)
+    }
+
+    /// Sends an already encoded **transport** frame (takeover 56/55) on
+    /// channel 1.
+    ///
+    /// Like the host side, transport frames are outside the [`Packet`] model:
+    /// packet 56 carries the takeover negotiation and is never routed through a
+    /// `Dispatcher` (`PLAN-host-mode.md` §5 guardrails).
+    pub async fn send_frame(&self, frame: Vec<u8>) -> Result<(), SessionError> {
+        if frame.len() > MAX_PACKET_SIZE {
+            return Err(SessionError::Wire(WireError::PacketTooLarge {
+                size: frame.len(),
+                max: MAX_PACKET_SIZE,
+            }));
+        }
+        self.commands
+            .send(SessionCommand::SendFrame(frame))
             .await
             .map_err(|_| SessionError::Closed)
     }

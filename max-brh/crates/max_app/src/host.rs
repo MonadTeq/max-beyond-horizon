@@ -1,5 +1,5 @@
 //! Server-side lobby authority and host player of the P2P host mode
-//! (`PLAN-host-mode.md` §5 H2–H3).
+//! (`PLAN-host-mode.md` §5 H2–H4).
 //!
 //! The host is the session authority of the star topology: guests connect to its
 //! ENet server ([`max_net::host`], H1) and the server lobby below is ported from
@@ -37,9 +37,11 @@
 //!   node list; addressing uses the ENet peer id);
 //! * the lobby is a pure state machine ([`HostLobby`], unit-tested without a
 //!   socket) plus a thin async pump ([`run_host_lobby`]);
-//! * [`SessionPolicy`] is parsed here but acts only from H4 (heartbeat/quorum);
-//!   H2 records it in the report and transmits it to guests with the settings
-//!   block unchanged (the wire carries no policy field yet — that is H4 scope).
+//! * [`SessionPolicy`] is parsed here and enforced by
+//!   [`crate::net::p2p::P2pTransport`] (H4): `Pause` is the default,
+//!   `EliminateAfter { ticks }` counts numbered heartbeat ticks and emits the
+//!   deterministic `PlayerEliminated { team, sequence }` event. The heartbeat
+//!   carries the policy to the guests, so no packet-30 field changes.
 //!
 //! # Gate H2
 //!
@@ -113,15 +115,15 @@ pub const HOST_LOBBY_EVENT_WAIT: Duration = Duration::from_millis(50);
 pub const HOST_START_LINGER: Duration = Duration::from_millis(500);
 /// `EliminateAfter` tick count used by the `--host-policy eliminate` shorthand.
 ///
-/// The plan makes elimination tick-based (never seconds); H4 owns the timer, H2
-/// only records the configured policy.
+/// The plan makes elimination tick-based (never seconds); the timer is enforced
+/// by [`crate::net::p2p::P2pTransport`] on numbered heartbeat ticks.
 pub const DEFAULT_ELIMINATION_TICKS: u32 = 30;
 
 /// Session policy of a host game (`PLAN-host-mode.md` §4, §6.1).
 ///
 /// `Pause` (default) freezes the match while a guest is silent; `EliminateAfter`
-/// removes the team after a deterministic number of ticks. H4 implements the
-/// timer and the `PlayerEliminated` event; H2 stores the choice in the report.
+/// removes the team after a deterministic number of **session ticks**
+/// (`ticks_without_heartbeat`, carried by the numbered host heartbeat).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SessionPolicy {
     /// Wait for the silent guest (deterministic default, like a dedicated server).
@@ -243,7 +245,7 @@ pub struct HostLobbyConfig {
     pub host_team: u8,
     /// READY threshold including the host (`--min-players`).
     pub min_players: usize,
-    /// Session policy (recorded; enforced from H4).
+    /// Session policy (recorded by the lobby; enforced by the H4 transport).
     pub policy: SessionPolicy,
     /// Settings block advertised in packet 30.
     pub settings: LobbyGameSettings,
@@ -935,6 +937,13 @@ pub struct HostRunOptions {
     pub lobby_timeout: Duration,
     /// How many turns the host plays; `0` — until the match ends (`--turns`).
     pub max_turns: u32,
+    /// How long a guest may hear nothing from the host before it declares the
+    /// host failed (H4 migration, `PLAN-host-mode.md` §4, §6.2).
+    ///
+    /// Validated in `5..=300 s` and advertised to every guest in the heartbeat.
+    pub host_timeout: Duration,
+    /// Host heartbeat publishing period (numbered transport heartbeats).
+    pub heartbeat: Duration,
 }
 
 impl Default for HostRunOptions {
@@ -949,6 +958,8 @@ impl Default for HostRunOptions {
             session: HostSessionSettings::default(),
             lobby_timeout: DEFAULT_HOST_LOBBY_TIMEOUT,
             max_turns: 0,
+            host_timeout: max_net::DEFAULT_HOST_TIMEOUT,
+            heartbeat: DEFAULT_HEARTBEAT_PERIOD,
         }
     }
 }
@@ -968,6 +979,13 @@ pub struct HostGameReport {
     pub barrier_timeouts: u32,
     /// Turns whose packet-45 CRC did not match every guest (`0` — no desync).
     pub desyncs: u32,
+    /// H4 `host_timeout` detections (a guest fell silent for the whole window).
+    pub host_timeouts: u32,
+    /// H4 host migrations that completed a takeover (the host is normally the
+    /// initial authority; a non-zero value means this client once took over).
+    pub migrations: u32,
+    /// Host-authoritative team eliminations applied (`TeamEliminated`).
+    pub eliminations: u32,
     /// Barrier packets the host FSM emitted (gate (b)).
     pub sent: PacketHistogram,
     /// Barrier packets the transport delivered to the host (gate (b)).
@@ -1014,6 +1032,12 @@ pub struct HostLobbyReport {
 /// the other guests (H1 copy-forward) and is submitted to the host's own
 /// simulation.
 pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<HostRunReport> {
+    max_net::validate_host_timeout(options.host_timeout)
+        .context("host: host_timeout должен быть в диапазоне 5..=300 с")?;
+    if options.heartbeat.is_zero() {
+        bail!("host: период heartbeat должен быть больше нуля");
+    }
+
     let hashes = handshake_data_hashes(config).context("host: data_hash для TP 00")?;
     let data_hash = *hashes
         .first()
@@ -1025,7 +1049,10 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
         game_version: DEFAULT_GAME_VERSION,
         data_hash,
         max_peers: DEFAULT_MAX_PEERS,
-        heartbeat: DEFAULT_HEARTBEAT_PERIOD,
+        // H4 numbers every heartbeat itself (session_tick), so the ENet
+        // transport must not repeat a stale frame.
+        heartbeat: Duration::ZERO,
+        host_timeout: options.host_timeout,
     };
     let mut host = HostHandle::bind(host_config).with_context(|| {
         format!(
@@ -1061,11 +1088,10 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
 
     tracing::info!("{}", report.lobby.summary());
 
-    // H3: the host is a player too — the same world, the same barrier FSM, the
-    // same packets as a guest; only the transport (`HostHandle`) differs.
-    let game = run_host_game(&mut host, config, &report.lobby, options).await;
-    host.shutdown().await;
-    let game = game?;
+    // H3/H4: the host is a player too — the same world, the same barrier FSM,
+    // the same packets as a guest; the transport is the H4 authority wrapper
+    // (heartbeat 55, quorum gate, `TeamEliminated`).
+    let game = run_host_game(host, config, &report.lobby, options).await?;
 
     Ok(HostRunReport {
         lobby: report.lobby,
@@ -1077,7 +1103,7 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
     })
 }
 
-/// Plays the host's own team through the generic lockstep driver (H3).
+/// Plays the host's own team through the generic lockstep driver (H3/H4).
 ///
 /// The world is initialized from the same [`LobbyInfo`] the guests receive in
 /// packet 30 ([`App::initialize_game`]), so the host's simulation starts from
@@ -1085,7 +1111,7 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
 /// `team_nodes`; every other occupied slot is a `Remote` team the barrier FSM
 /// waits for.
 async fn run_host_game(
-    host: &mut HostHandle,
+    host: HostHandle,
     config: &AppConfig,
     lobby: &LobbyInfo,
     options: &HostRunOptions,
@@ -1102,22 +1128,37 @@ async fn run_host_game(
 
     let network = NetworkOptions {
         max_turns: options.max_turns,
+        host_timeout: options.host_timeout,
         ..NetworkOptions::default()
     };
     // The host is headless (H3): no SDL window, so no frame sink.
     let mut sink: Option<&mut dyn FrameSink> = None;
 
+    let roster =
+        crate::net::p2p::P2pRoster::new(lobby.player_node, lobby.host_node, lobby.team_nodes);
+    let mut io = crate::net::p2p::P2pTransport::host(
+        host,
+        roster,
+        local_team,
+        options.policy,
+        options.host_timeout,
+        options.heartbeat,
+    );
+
     tracing::info!(
-        "host: игровой цикл за команду {} (turns={}, пиров={})",
+        "host: игровой цикл за команду {} (turns={}, пиров={}, host_timeout={:?}, policy={})",
         local_team.0,
         options.max_turns,
         game.universe
             .dispatcher()
             .remote_teams(&game.universe)
-            .count()
+            .count(),
+        options.host_timeout,
+        options.policy
     );
 
-    let stats = game.run_game_loop(host, &network, &mut sink).await?;
+    let stats = game.run_game_loop(&mut io, &network, &mut sink).await?;
+    io.shutdown().await;
     let digest = game.digest();
 
     Ok(HostGameReport {
@@ -1127,6 +1168,9 @@ async fn run_host_game(
         turns_finished: stats.turns_finished,
         barrier_timeouts: stats.barrier_timeouts,
         desyncs: stats.desyncs,
+        host_timeouts: stats.host_timeouts,
+        migrations: stats.migrations,
+        eliminations: stats.eliminations,
         sent: stats.sent,
         received: stats.received,
         digest,

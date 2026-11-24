@@ -40,6 +40,13 @@
 //! copy-forward: a guest's frame is forwarded to the other guests before the
 //! host driver sees it, and the host submits it to its own simulation.
 //!
+//! H4 adds [`p2p::P2pTransport`] on top of that surface: numbered heartbeats
+//! (packet 55), `host_timeout` detection, deterministic `min(player_node)`
+//! election, the packet-56 takeover with lockstep validation, resume-54 after a
+//! migration, the quorum gate before a barrier closes, and host-authoritative
+//! `TeamEliminated`/`PlayerEliminated` under [`crate::host::SessionPolicy`].
+//! The barrier FSM and the packet counters stay untouched.
+//!
 //! # Barriers
 //!
 //! The arbiter server does not echo the client's barriers: a barrier is complete when **each
@@ -95,6 +102,7 @@
 //! `TP 03` (`Version`, `SessionTicket`) does not start the fallback.
 
 pub mod dispatcher;
+pub(crate) mod p2p;
 
 use std::time::Duration;
 
@@ -178,6 +186,12 @@ pub struct NetworkOptions {
     /// runs ticks/frames and keeps the turn open until **End Turn** is pressed or
     /// `N` seconds expire.
     pub turn_wait: Duration,
+    /// How long a guest may hear nothing from the host before it declares the
+    /// host failed and starts the H4 migration (`PLAN-host-mode.md` §4, §6.2).
+    ///
+    /// The value is validated in `5..=300 s`; the host advertises its own value
+    /// in every heartbeat and the guest adopts it.
+    pub host_timeout: Duration,
 }
 
 impl Default for NetworkOptions {
@@ -193,6 +207,7 @@ impl Default for NetworkOptions {
             reconnect: ReconnectPolicy::default(),
             join_retry: JoinRetryPolicy::default(),
             turn_wait: Duration::ZERO,
+            host_timeout: max_net::DEFAULT_HOST_TIMEOUT,
         }
     }
 }
@@ -976,6 +991,12 @@ pub struct NetworkReport {
     pub desyncs: u32,
     /// How many times the transport was restored after a disconnect.
     pub reconnects: u32,
+    /// H4 `host_timeout` detections (the host authority went silent).
+    pub host_timeouts: u32,
+    /// H4 host migrations that completed a takeover (epoch advanced).
+    pub migrations: u32,
+    /// Host-authoritative team eliminations applied in this run (H4).
+    pub eliminations: u32,
     /// How many reconnect attempts were made in total.
     pub reconnect_attempts: u32,
     /// The transport was restored, but the match could not be continued (e.g.
@@ -1366,11 +1387,36 @@ pub async fn run_network_with_sink(
             .map(|settings| settings.world_name.clone())
     );
 
-    // H3: the game loop is transport-agnostic (`I: HostIo`); a guest drives it
-    // through its ENet session with the reconnect policy.
-    let mut io = SessionIo::new(handle, session_config, options.reconnect);
-    let stats = game.run_game_loop(&mut io, options, &mut sink).await?;
-    io.shutdown().await;
+    // H3/H4: the game loop is transport-agnostic (`I: HostIo`).
+    //
+    // A direct P2P guest (`--connect <host:port>`) runs the H4 transport with
+    // host-failure detection, deterministic election, takeover and quorum; the
+    // Horizon server path keeps the plain session with its reconnect policy.
+    let stats = match options.endpoint.clone() {
+        Some(endpoint) => {
+            let roster = p2p::P2pRoster::new(lobby.player_node, lobby.host_node, lobby.team_nodes);
+            let session_io = SessionIo::new(handle, session_config.clone(), options.reconnect);
+            let mut io = p2p::P2pTransport::guest(
+                session_io,
+                session_config,
+                endpoint,
+                roster,
+                local_team,
+                crate::host::SessionPolicy::default(),
+                options.host_timeout,
+                options.reconnect,
+            );
+            let stats = game.run_game_loop(&mut io, options, &mut sink).await?;
+            io.shutdown().await;
+            stats
+        }
+        None => {
+            let mut io = SessionIo::new(handle, session_config, options.reconnect);
+            let stats = game.run_game_loop(&mut io, options, &mut sink).await?;
+            io.shutdown().await;
+            stats
+        }
+    };
 
     if stats.reconnect_pending_state {
         tracing::warn!(
@@ -1391,6 +1437,9 @@ pub async fn run_network_with_sink(
         barrier_timeouts: stats.barrier_timeouts,
         desyncs: stats.desyncs,
         reconnects: stats.reconnects,
+        host_timeouts: stats.host_timeouts,
+        migrations: stats.migrations,
+        eliminations: stats.eliminations,
         reconnect_attempts: stats.reconnect_attempts,
         reconnect_pending_state: stats.reconnect_pending_state,
         data_hash: data_hash.to_hex(),
@@ -1619,6 +1668,18 @@ pub(crate) enum IoEvent {
     Control,
     /// No event within the wait.
     Idle,
+    /// A host heartbeat (packet 55) with the eliminations it carries (H4).
+    Heartbeat {
+        /// Decoded transport heartbeat.
+        heartbeat: max_net::HostHeartbeat,
+        /// Teams the authority eliminated at this tick (reported exactly once).
+        eliminated: Vec<p2p::TeamEliminated>,
+    },
+    /// Host-authoritative elimination (`TeamEliminated`, H4).
+    TeamEliminated(p2p::TeamEliminated),
+    /// The host authority was silent longer than `host_timeout` (H4): the
+    /// transport drives takeover/reconnect, the match is frozen meanwhile.
+    HostTimeout,
 }
 
 /// What a transport does after [`IoEvent::Disconnected`].
@@ -1628,16 +1689,22 @@ pub(crate) enum DisconnectOutcome {
     Restored {
         /// Number of the successful attempt.
         attempts: u32,
+        /// Whether the restoration was an H4 host migration (takeover) rather
+        /// than an ordinary ENet reconnect.
+        migrated: bool,
     },
     /// Every reconnect attempt failed.
     Exhausted {
         /// Number of attempts made.
         attempts: u32,
+        /// Whether a takeover was attempted (no quorum ⇒ the match stays
+        /// paused).
+        migrated: bool,
     },
     /// `ReconnectPolicy::attempts == 0`.
     Disabled,
     /// The transport has no session to restore (host): the match keeps waiting
-    /// for the peer; the H4 session policy owns the pause/elimination decision.
+    /// for the peer; the session policy owns the pause/elimination decision.
     Ignored,
 }
 
@@ -1676,6 +1743,20 @@ pub(crate) trait HostIo {
 
     /// Reaction to a lost link (the guest reconnects, the host keeps playing).
     async fn on_disconnect(&mut self) -> Result<DisconnectOutcome>;
+
+    /// Reports the current lockstep position to transports that negotiate a
+    /// takeover (H4). The default is a no-op: a plain session/host has no
+    /// migration state.
+    fn note_lockstep(&mut self, _position: p2p::LockstepPosition) {}
+
+    /// Whether the host may close the current barrier
+    /// (`reachable_peers + 1 >= quorum`, `PLAN-host-mode.md` §4).
+    ///
+    /// The default allows the barrier: only the P2P transport has a roster and
+    /// a quorum; the barrier FSM itself is untouched.
+    fn quorum_allows_barrier(&self) -> bool {
+        true
+    }
 }
 
 /// Guest side of [`HostIo`]: one ENet session to the host (or the server).
@@ -1707,6 +1788,14 @@ impl SessionIo {
     /// Disconnects and waits for the session task to finish.
     pub(crate) async fn shutdown(self) {
         self.handle.shutdown().await;
+    }
+
+    /// Sends an already encoded transport frame (takeover 56).
+    pub(crate) async fn send_frame(&mut self, frame: Vec<u8>) -> Result<()> {
+        self.handle
+            .send_frame(frame)
+            .await
+            .map_err(anyhow::Error::from)
     }
 }
 
@@ -1758,12 +1847,14 @@ impl HostIo for SessionIo {
 
     async fn on_disconnect(&mut self) -> Result<DisconnectOutcome> {
         match reconnect_session(&mut self.handle, &self.session_config, self.reconnect).await {
-            ReconnectOutcome::Restored { attempts, .. } => {
-                Ok(DisconnectOutcome::Restored { attempts })
-            }
-            ReconnectOutcome::Exhausted { attempts } => {
-                Ok(DisconnectOutcome::Exhausted { attempts })
-            }
+            ReconnectOutcome::Restored { attempts, .. } => Ok(DisconnectOutcome::Restored {
+                attempts,
+                migrated: false,
+            }),
+            ReconnectOutcome::Exhausted { attempts } => Ok(DisconnectOutcome::Exhausted {
+                attempts,
+                migrated: false,
+            }),
             ReconnectOutcome::Disabled => Ok(DisconnectOutcome::Disabled),
         }
     }
@@ -1781,6 +1872,12 @@ pub(crate) struct GameLoopStats {
     pub(crate) reconnect_attempts: u32,
     /// Successful transport restorations and match continuations.
     pub(crate) reconnects: u32,
+    /// H4 host-failure detections (`host_timeout` exceeded).
+    pub(crate) host_timeouts: u32,
+    /// H4 host migrations that reached a quorum (`Takeover` completed).
+    pub(crate) migrations: u32,
+    /// Host-authoritative team eliminations applied to the simulation.
+    pub(crate) eliminations: u32,
     /// The transport was restored, but the match state could not be restored
     /// (currently `false` after a successful resume-54; the field is kept for the report).
     pub(crate) reconnect_pending_state: bool,
@@ -1841,6 +1938,25 @@ impl App<NetworkDispatcher> {
         let index = self.universe.step_crc_barrier(team);
         let checksum = self.universe.snapshot().state_checksum();
         self.universe.dispatcher_mut().record_crc(index, checksum)
+    }
+
+    /// H4: read-only lockstep position of the local client at `phase`.
+    ///
+    /// The values are the same counters the barrier FSM exchanged
+    /// (`Remote_FrameSyncCounter`/`Remote_TurnIndices`/`Remote_StateSyncIndex`/
+    /// `Remote_NextTurnIndices` of the own team), which is exactly what a
+    /// takeover must compare before letting the survivors resume.
+    fn lockstep_position(&self, phase: BarrierPhase) -> p2p::LockstepPosition {
+        let local = self.universe.dispatcher().local_team().0 as usize;
+        let state = self.universe.snapshot();
+        p2p::LockstepPosition {
+            turn_counter: state.turn_counter(),
+            phase: p2p::phase_tag(phase),
+            begin: state.frame_sync_counter()[local],
+            end: state.turn_indices()[local],
+            sync: self.universe.dispatcher().sync_index(),
+            crc: state.next_turn_indices()[local],
+        }
     }
 
     /// Whether the current barrier phase is complete (all peers reported).
@@ -2073,12 +2189,19 @@ impl App<NetworkDispatcher> {
         packets: Vec<Packet>,
     ) -> Result<WaitOutcome> {
         let mut pending = BarrierPending::new(packets, Instant::now());
+        // H4: publish the lockstep position before waiting, so a takeover
+        // proposal is validated against the barrier the client is really at.
+        let position = self.lockstep_position(phase);
+        io.note_lockstep(position);
 
         loop {
             if !self.pump_events(io, stats, options).await? {
                 return Ok(WaitOutcome::Stopped);
             }
-            if self.barrier_reached() {
+            // H4 quorum gate: the barrier is closed only when the authority can
+            // still reach a quorum (`reachable_peers + 1 >= quorum`). The FSM
+            // itself is untouched — the gate is a transport predicate.
+            if self.barrier_reached() && io.quorum_allows_barrier() {
                 return Ok(WaitOutcome::Reached);
             }
 
@@ -2382,18 +2505,34 @@ impl App<NetworkDispatcher> {
                 // A disconnect does not end the run silently: first an automatic
                 // ENet connect + TP 00 per ReconnectPolicy, then resume-54 and
                 // continuation of the barriers. The host (H3) has no session to
-                // restore: a lost guest link keeps the match waiting (H4 owns the
-                // session policy).
-                IoEvent::Disconnected => {
-                    stats.disconnects = stats.disconnects.saturating_add(1);
-                    // Guest: the server closed the ENet session; host: a guest
-                    // left (the outcome below decides what happens next).
-                    tracing::warn!("транспорт: соединение потеряно");
+                // restore: a lost guest link keeps the match waiting (the H4
+                // session policy owns the pause/elimination decision).
+                //
+                // H4: a host silent for `host_timeout` is the same path — the
+                // P2P transport elects the successor, negotiates the takeover
+                // (packet 56) and reports `Restored` for the resume-54.
+                IoEvent::Disconnected | IoEvent::HostTimeout => {
+                    let host_timeout = matches!(event, IoEvent::HostTimeout);
+                    if host_timeout {
+                        stats.host_timeouts = stats.host_timeouts.saturating_add(1);
+                        tracing::warn!(
+                            "транспорт: хост молчит {:?} — миграция (H4)",
+                            options.host_timeout
+                        );
+                    } else {
+                        stats.disconnects = stats.disconnects.saturating_add(1);
+                        // Guest: the server closed the ENet session; host: a guest
+                        // left (the outcome below decides what happens next).
+                        tracing::warn!("транспорт: соединение потеряно");
+                    }
                     match io.on_disconnect().await? {
-                        DisconnectOutcome::Restored { attempts } => {
+                        DisconnectOutcome::Restored { attempts, migrated } => {
                             stats.reconnect_attempts =
                                 stats.reconnect_attempts.saturating_add(attempts);
                             stats.reconnects = stats.reconnects.saturating_add(1);
+                            if migrated {
+                                stats.migrations = stats.migrations.saturating_add(1);
+                            }
                             stats.reconnect_pending_state = false;
 
                             // We do not reset the state: lockstep barriers prevent
@@ -2409,20 +2548,24 @@ impl App<NetworkDispatcher> {
                                 .context("reconnect: публикация своего 54 после TP00")?;
 
                             tracing::warn!(
-                                "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}); \
-                                 партия продолжена, отправлен resume-54 команды {} (index {}, {} пакет(ов))",
+                                "reconnect: транспорт восстановлен (ENet+TP00, попыток {attempts}, \
+                                 миграция={migrated}); партия продолжена, отправлен resume-54 \
+                                 команды {} (index {}, {} пакет(ов))",
                                 self.universe.dispatcher().local_team().0,
                                 self.universe.dispatcher().sync_index(),
                                 packets.len()
                             );
                         }
-                        DisconnectOutcome::Exhausted { attempts } => {
+                        DisconnectOutcome::Exhausted { attempts, migrated } => {
                             stats.reconnect_attempts =
                                 stats.reconnect_attempts.saturating_add(attempts);
+                            if migrated {
+                                stats.migrations = stats.migrations.saturating_add(1);
+                            }
                             stats.reconnect_pending_state = true;
                             tracing::error!(
                                 "reconnect: переподключение не удалось за {attempts} попыт(ок) — \
-                                 прогон завершён"
+                                 прогон завершён (миграция={migrated})"
                             );
                             return Ok(false);
                         }
@@ -2433,8 +2576,7 @@ impl App<NetworkDispatcher> {
                         }
                         DisconnectOutcome::Ignored => {
                             tracing::warn!(
-                                "транспорт потерял пира; матч продолжается \
-                                 (политика сессии — H4)"
+                                "транспорт потерял пира; матч продолжается, решение — SessionPolicy"
                             );
                         }
                     }
@@ -2465,6 +2607,29 @@ impl App<NetworkDispatcher> {
                 self.handle_incoming_packet(packet)?;
             }
             IoEvent::HandshakeOk => {}
+            // H4: apply the host-authoritative eliminations of this heartbeat.
+            IoEvent::Heartbeat {
+                heartbeat,
+                eliminated,
+            } => {
+                tracing::trace!(
+                    "H4: heartbeat epoch={} tick={} turn={} phase={}",
+                    heartbeat.host_epoch,
+                    heartbeat.session_tick,
+                    heartbeat.turn_counter,
+                    heartbeat.phase
+                );
+                for elimination in eliminated {
+                    if self.apply_team_eliminated(elimination.team, elimination.sequence()) {
+                        stats.eliminations = stats.eliminations.saturating_add(1);
+                    }
+                }
+            }
+            IoEvent::TeamEliminated(elimination) => {
+                if self.apply_team_eliminated(elimination.team, elimination.sequence()) {
+                    stats.eliminations = stats.eliminations.saturating_add(1);
+                }
+            }
             IoEvent::BarrierDue { attempt } => {
                 tracing::debug!("барьер сессии: повтор #{attempt}");
             }
@@ -2485,10 +2650,31 @@ impl App<NetworkDispatcher> {
             IoEvent::Malformed { error } => {
                 tracing::warn!("битый пакет: {error}");
             }
+            IoEvent::HostTimeout => {
+                tracing::warn!("хост молчит дольше host_timeout");
+            }
             IoEvent::Idle | IoEvent::Closed | IoEvent::Control => {}
         }
 
         Ok(true)
+    }
+
+    /// H4: applies a host-authoritative elimination to the simulation.
+    ///
+    /// Every client reaches this point with the same `sequence` (the
+    /// heartbeat tick), so the mutation is deterministic and part of
+    /// `snapshot_bytes`/CRC.
+    fn apply_team_eliminated(&mut self, team: TeamId, sequence: u32) -> bool {
+        if self.universe.eliminate_team(team, sequence) {
+            tracing::warn!(
+                "H4: команда {} устранена (sequence {}); барьеры больше её не ждут",
+                team.0,
+                sequence
+            );
+            true
+        } else {
+            false
+        }
     }
 
     /// Feeds one incoming APPL packet into the facade (the former packet arms).

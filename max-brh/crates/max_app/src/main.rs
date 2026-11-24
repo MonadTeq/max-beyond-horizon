@@ -54,7 +54,7 @@ use max_app::ui::{
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
 use max_core::setup::ResourceLevel;
-use max_net::DEFAULT_HOST_PORT;
+use max_net::{DEFAULT_HEARTBEAT_PERIOD, DEFAULT_HOST_PORT};
 #[cfg(feature = "sdl")]
 use max_render::sdl_window::{WindowInput, WindowKey};
 
@@ -96,6 +96,10 @@ struct Cli {
     min_players: Option<u32>,
     /// `--host-policy` session policy.
     host_policy: Option<SessionPolicy>,
+    /// `--host-timeout` (5..=300 s): host-failure detection window (H4).
+    host_timeout: Option<Duration>,
+    /// `--host-heartbeat-ms` publishing period of numbered heartbeats (H4).
+    host_heartbeat_ms: Option<u32>,
     sdl: bool,
     out: Option<PathBuf>,
     seed: Option<u32>,
@@ -144,6 +148,8 @@ impl Cli {
             host_port: None,
             min_players: None,
             host_policy: None,
+            host_timeout: None,
+            host_heartbeat_ms: None,
             sdl: false,
             out: None,
             seed: None,
@@ -207,6 +213,20 @@ impl Cli {
                     cli.host_policy = Some(SessionPolicy::parse(&value).ok_or_else(|| {
                         anyhow!("--host-policy: ожидалось pause|eliminate, получено {value}")
                     })?);
+                }
+                "--host-timeout" => {
+                    let value = parse_u32(&mut args, "--host-timeout")?;
+                    let timeout = Duration::from_secs(u64::from(value));
+                    max_net::validate_host_timeout(timeout)
+                        .map_err(|_| anyhow!("--host-timeout должен быть 5..=300 с, получено {value}"))?;
+                    cli.host_timeout = Some(timeout);
+                }
+                "--host-heartbeat-ms" => {
+                    let value = parse_u32(&mut args, "--host-heartbeat-ms")?;
+                    if value == 0 || value > 60_000 {
+                        bail!("--host-heartbeat-ms должен быть 1..=60000, получено {value}");
+                    }
+                    cli.host_heartbeat_ms = Some(value);
                 }
                 "--ui" => {
                     cli.mode = Mode::Ui;
@@ -355,9 +375,10 @@ impl Cli {
             && (cli.listen.is_some()
                 || cli.host_port.is_some()
                 || cli.min_players.is_some()
-                || cli.host_policy.is_some())
+                || cli.host_policy.is_some()
+                || cli.host_heartbeat_ms.is_some())
         {
-            bail!("--listen/--host-port/--min-players/--host-policy требуют --host");
+            bail!("--listen/--host-port/--min-players/--host-policy/--host-heartbeat-ms требуют --host");
         }
         if let Some(min_players) = cli.min_players {
             if !(1..=4).contains(&min_players) {
@@ -639,6 +660,7 @@ async fn run_connect(cli: &Cli) -> Result<()> {
         reconnect,
         join_retry: join_retry_policy(cli),
         turn_wait: Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
+        host_timeout: cli.host_timeout.unwrap_or(max_net::DEFAULT_HOST_TIMEOUT),
         ..NetworkOptions::default()
     };
 
@@ -680,6 +702,11 @@ async fn run_host(cli: &Cli) -> Result<()> {
         },
         lobby_timeout: DEFAULT_HOST_LOBBY_TIMEOUT,
         max_turns: cli.turns.unwrap_or(0),
+        host_timeout: cli.host_timeout.unwrap_or(max_net::DEFAULT_HOST_TIMEOUT),
+        heartbeat: Duration::from_millis(u64::from(
+            cli.host_heartbeat_ms
+                .unwrap_or(DEFAULT_HEARTBEAT_PERIOD.as_millis() as u32),
+        )),
     };
 
     println!(

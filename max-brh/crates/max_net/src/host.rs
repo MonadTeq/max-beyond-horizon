@@ -84,6 +84,34 @@ pub const DEFAULT_HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
 pub const HOST_HEARTBEAT_PACKET_NUMBER: u8 = 55;
 /// Wire type byte of the host heartbeat (`0x87`).
 pub const HOST_HEARTBEAT_TYPE: u8 = TRANSPORT_APPL_PACKET_ID + HOST_HEARTBEAT_PACKET_NUMBER;
+/// APPL number of the takeover negotiation (`0x50 + 56` on the wire).
+pub const HOST_TAKEOVER_PACKET_NUMBER: u8 = 56;
+/// Wire type byte of the takeover negotiation (`0x88`).
+pub const HOST_TAKEOVER_TYPE: u8 = TRANSPORT_APPL_PACKET_ID + HOST_TAKEOVER_PACKET_NUMBER;
+/// Default `host_timeout` (`PLAN-host-mode.md` §6.2): a guest that hears no
+/// heartbeat for this long considers the host failed.
+pub const DEFAULT_HOST_TIMEOUT: Duration = Duration::from_secs(90);
+/// Minimum accepted `host_timeout`.
+pub const HOST_TIMEOUT_MIN: Duration = Duration::from_secs(5);
+/// Maximum accepted `host_timeout`.
+pub const HOST_TIMEOUT_MAX: Duration = Duration::from_secs(300);
+/// Maximum roster entries a takeover frame may carry (the four team slots).
+pub const TAKEOVER_MAX_ROSTER: usize = 4;
+
+/// Rejects a `host_timeout` outside [`HOST_TIMEOUT_MIN`]..=[`HOST_TIMEOUT_MAX`].
+///
+/// `host_timeout` is deliberately **not** the `elimination_timeout`
+/// (`PLAN-host-mode.md` §6.2): losing the host means a pause/migration, losing a
+/// guest means a `SessionPolicy` decision.
+pub fn validate_host_timeout(timeout: Duration) -> Result<(), HostError> {
+    if (HOST_TIMEOUT_MIN..=HOST_TIMEOUT_MAX).contains(&timeout) {
+        Ok(())
+    } else {
+        Err(HostError::Config(
+            "host_timeout must be within 5..=300 seconds",
+        ))
+    }
+}
 /// ENet service cadence of the accept loop (C++ `ServiceTickPeriod`, 10 ms).
 const HOST_SERVICE_TICK: Duration = Duration::from_millis(10);
 /// Depth of the command channel ([`HostHandle`] → session task).
@@ -92,8 +120,8 @@ const HOST_COMMAND_QUEUE: usize = 64;
 const HOST_EVENT_QUEUE: usize = 256;
 /// How long [`HostHandle::shutdown`] waits for the session task to end.
 const HOST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
-/// Wire size of an encoded [`HostHeartbeat`] (type + body).
-const HOST_HEARTBEAT_WIRE_LEN: usize = 1 + 4 + 4 + 1 + 4;
+/// Wire size of an encoded [`HostHeartbeat`] (type + body): 64 bytes.
+const HOST_HEARTBEAT_WIRE_LEN: usize = 64;
 
 /// Identity of a connected peer inside one [`HostSession`].
 ///
@@ -153,6 +181,9 @@ pub struct HostConfig {
     /// Heartbeat repeat period; [`Duration::ZERO`] disables the repeat (a
     /// published heartbeat is then broadcast once).
     pub heartbeat: Duration,
+    /// How long a guest may hear nothing from the host before it declares the
+    /// host failed (H4 migration, `PLAN-host-mode.md` §4).
+    pub host_timeout: Duration,
 }
 
 impl Default for HostConfig {
@@ -167,6 +198,7 @@ impl Default for HostConfig {
             },
             max_peers: DEFAULT_MAX_PEERS,
             heartbeat: DEFAULT_HEARTBEAT_PERIOD,
+            host_timeout: DEFAULT_HOST_TIMEOUT,
         }
     }
 }
@@ -182,6 +214,7 @@ impl HostConfig {
             data_hash,
             max_peers: DEFAULT_MAX_PEERS,
             heartbeat: DEFAULT_HEARTBEAT_PERIOD,
+            host_timeout: DEFAULT_HOST_TIMEOUT,
         }
     }
 
@@ -192,29 +225,93 @@ impl HostConfig {
                 "max_peers must be within 1..=PEER_COUNT (32)",
             ));
         }
+        validate_host_timeout(self.host_timeout)?;
         Ok(())
     }
 }
 
-/// Transport heartbeat, APPL packet 55 (`PLAN-host-mode.md` §3, §5 H1).
+/// Session policy carried by the heartbeat and the takeover frame
+/// (`PLAN-host-mode.md` §4, §6.1).
+///
+/// This is the transport projection of the application-level `SessionPolicy`
+/// (`max_app::host`): `Pause` is the deterministic default, `EliminateAfter`
+/// removes a silent team after a number of **session ticks**
+/// (`ticks_without_heartbeat`), never seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HostSessionPolicy {
+    /// Wait for the silent guest.
+    #[default]
+    Pause,
+    /// Eliminate the team after `ticks` silent session ticks.
+    EliminateAfter {
+        /// Tick budget before elimination.
+        ticks: u32,
+    },
+}
+
+impl HostSessionPolicy {
+    /// Wire tag (`0` — pause, `1` — eliminate).
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Pause => 0,
+            Self::EliminateAfter { .. } => 1,
+        }
+    }
+
+    /// Tick budget (`0` for `Pause`).
+    pub const fn ticks(self) -> u32 {
+        match self {
+            Self::Pause => 0,
+            Self::EliminateAfter { ticks } => ticks,
+        }
+    }
+
+    /// Decodes the tag/tick pair; an unknown tag is `Pause`, a zero tick budget
+    /// is clamped to one (an elimination tick always exists).
+    pub const fn from_wire(tag: u8, ticks: u32) -> Self {
+        match tag {
+            1 => Self::EliminateAfter {
+                ticks: if ticks == 0 { 1 } else { ticks },
+            },
+            _ => Self::Pause,
+        }
+    }
+}
+
+/// Transport heartbeat, APPL packet 55 (`PLAN-host-mode.md` §3, §5 H1/H4).
 ///
 /// This is **not** a [`Packet`] variant: it is host-to-guest transport data
 /// used by the migration/quorum layer (H4), so it never reaches
 /// `Dispatcher::route`.
 ///
-/// Wire layout (all little-endian, 14 bytes, type byte included):
+/// The numbered `session_tick` and the per-team `last_seen`/`eliminated_tick`
+/// fields make elimination drift-independent: every client derives the same
+/// elimination tick from the same heartbeat, no matter when (or in which order)
+/// it receives it.
+///
+/// Wire layout (all little-endian, 64 bytes, type byte included):
 ///
 /// | offset | field | type |
 /// |---|---|---|
 /// | 0 | type | `u8` = [`HOST_HEARTBEAT_TYPE`] (`0x87`) |
 /// | 1 | `host_epoch` | `u32` |
-/// | 5 | `turn_counter` | `i32` (mirrors `GameManager_TurnCounter`) |
-/// | 9 | `phase` | `u8` (opaque host FSM phase tag) |
-/// | 10 | `reachable` | `u32` (bitmask of reachable player nodes) |
+/// | 5 | `session_tick` | `u32` (monotonic host heartbeat number) |
+/// | 9 | `turn_counter` | `i32` (mirrors `GameManager_TurnCounter`) |
+/// | 13 | `phase` | `u8` (opaque host barrier-FSM phase tag) |
+/// | 14 | `reachable` | `u32` (bitmask of reachable player nodes) |
+/// | 18 | `last_seen` | `[u32; 4]` (per team slot: last heard session tick) |
+/// | 34 | `policy_tag` | `u8` |
+/// | 35 | `policy_ticks` | `u32` |
+/// | 39 | `host_timeout_ms` | `u32` |
+/// | 43 | `quorum` | `u8` |
+/// | 44 | `eliminated` | `u32` (bitmask of eliminated team slots) |
+/// | 48 | `eliminated_tick` | `[u32; 4]` (per team slot: tick of elimination) |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostHeartbeat {
     /// Monotonic host epoch (bumped on takeover, H4).
     pub host_epoch: u32,
+    /// Monotonic heartbeat number of this authority (starts at 1).
+    pub session_tick: u32,
     /// Host turn counter at the moment of the heartbeat.
     pub turn_counter: i32,
     /// Host barrier-FSM phase; opaque to the transport.
@@ -223,6 +320,18 @@ pub struct HostHeartbeat {
     /// `n`). The transport only carries the value; the host driver fills it
     /// from its roster.
     pub reachable: u32,
+    /// Per team slot: the last `session_tick` at which that team was heard.
+    pub last_seen: [u32; TAKEOVER_MAX_ROSTER],
+    /// Session policy of the match.
+    pub policy: HostSessionPolicy,
+    /// `host_timeout` the host asks guests to use.
+    pub host_timeout_ms: u32,
+    /// `quorum` of the session (`floor(N/2)+1`, `PLAN-host-mode.md` §4).
+    pub quorum: u8,
+    /// Bitmask of eliminated team slots.
+    pub eliminated: u32,
+    /// Per team slot: the tick at which it was eliminated (`0` — never).
+    pub eliminated_tick: [u32; TAKEOVER_MAX_ROSTER],
 }
 
 impl HostHeartbeat {
@@ -231,9 +340,21 @@ impl HostHeartbeat {
         let mut w = Writer::with_capacity(HOST_HEARTBEAT_WIRE_LEN);
         w.write_u8(HOST_HEARTBEAT_TYPE);
         w.write_u32(self.host_epoch);
+        w.write_u32(self.session_tick);
         w.write_i32(self.turn_counter);
         w.write_u8(self.phase);
         w.write_u32(self.reachable);
+        for tick in self.last_seen {
+            w.write_u32(tick);
+        }
+        w.write_u8(self.policy.tag());
+        w.write_u32(self.policy.ticks());
+        w.write_u32(self.host_timeout_ms);
+        w.write_u8(self.quorum);
+        w.write_u32(self.eliminated);
+        for tick in self.eliminated_tick {
+            w.write_u32(tick);
+        }
         w.finish()
     }
 
@@ -245,14 +366,247 @@ impl HostHeartbeat {
         if type_byte != HOST_HEARTBEAT_TYPE {
             return Err(WireError::UnknownPacket(type_byte));
         }
-        let heartbeat = Self {
-            host_epoch: r.read_u32()?,
-            turn_counter: r.read_i32()?,
-            phase: r.read_u8()?,
-            reachable: r.read_u32()?,
+        Self::decode_body(&mut r)
+    }
+
+    /// Decodes the body that follows the type byte (already consumed).
+    ///
+    /// This is the shape a guest sees inside a
+    /// [`Packet::Unknown`](crate::wire::Packet::Unknown) frame: the session
+    /// codec strips the type byte before the application inspects the payload.
+    pub fn decode_body(r: &mut Reader<'_>) -> Result<Self, WireError> {
+        let host_epoch = r.read_u32()?;
+        let session_tick = r.read_u32()?;
+        let turn_counter = r.read_i32()?;
+        let phase = r.read_u8()?;
+        let reachable = r.read_u32()?;
+        let mut last_seen = [0u32; TAKEOVER_MAX_ROSTER];
+        for slot in &mut last_seen {
+            *slot = r.read_u32()?;
+        }
+        let policy_tag = r.read_u8()?;
+        let policy_ticks = r.read_u32()?;
+        let host_timeout_ms = r.read_u32()?;
+        let quorum = r.read_u8()?;
+        let eliminated = r.read_u32()?;
+        let mut eliminated_tick = [0u32; TAKEOVER_MAX_ROSTER];
+        for slot in &mut eliminated_tick {
+            *slot = r.read_u32()?;
+        }
+        if !r.is_empty() {
+            return Err(WireError::TrailingBytes(r.remaining()));
+        }
+        Ok(Self {
+            host_epoch,
+            session_tick,
+            turn_counter,
+            phase,
+            reachable,
+            last_seen,
+            policy: HostSessionPolicy::from_wire(policy_tag, policy_ticks),
+            host_timeout_ms,
+            quorum,
+            eliminated,
+            eliminated_tick,
+        })
+    }
+
+    /// Decodes the payload of a `Packet::Unknown { kind: 55, .. }`.
+    pub fn decode_payload(payload: &[u8]) -> Result<Self, WireError> {
+        let mut r = Reader::new(payload);
+        Self::decode_body(&mut r)
+    }
+}
+
+/// Kind of a transport takeover frame (packet 56).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TakeoverKind {
+    /// The successor offers its epoch and lockstep position.
+    #[default]
+    Proposal,
+    /// A survivor agrees that its position matches (`TakeoverAck`).
+    Accept,
+    /// A survivor refuses: its lockstep position does not match.
+    Reject,
+    /// The new authority resumes the match for every accepted survivor.
+    Resume,
+}
+
+impl TakeoverKind {
+    /// Wire tag.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Proposal => 0,
+            Self::Accept => 1,
+            Self::Reject => 2,
+            Self::Resume => 3,
+        }
+    }
+
+    /// Decodes a wire tag (`None` — unknown).
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Proposal),
+            1 => Some(Self::Accept),
+            2 => Some(Self::Reject),
+            3 => Some(Self::Resume),
+            _ => None,
+        }
+    }
+}
+
+/// Barrier counters carried by a takeover: the lockstep position of the
+/// sender (`Remote_FrameSyncCounter`/`Remote_TurnIndices`/`Remote_StateSyncIndex`/
+/// `Remote_NextTurnIndices`, own team).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TakeoverCounters {
+    /// Packet 00 counter.
+    pub begin: u8,
+    /// Packet 52 counter.
+    pub end: u8,
+    /// Packet 54 index.
+    pub sync: u8,
+    /// Packet 45 index.
+    pub crc: u8,
+}
+
+/// One roster entry of a takeover proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TakeoverRosterEntry {
+    /// Player node id (`entity_id`).
+    pub node: u16,
+    /// Team slot 0..=3.
+    pub team_slot: u8,
+    /// Whether the node is reachable from the proposer.
+    pub reachable: bool,
+}
+
+/// Transport takeover frame (APPL packet 56, `PLAN-host-mode.md` §3).
+///
+/// The frame is **transport only**: it never reaches `Dispatcher::route`. A
+/// `Proposal` carries the new epoch, the lockstep position and the roster;
+/// `Accept`/`Reject` carry the survivor's own position; `Resume` releases the
+/// accepted survivors after the quorum is reached.
+///
+/// Wire layout (all little-endian):
+///
+/// | type `0x88` | kind `u8` | epoch `u32` | `turn_counter i32` | `phase u8` |
+/// | `begin u8` | `end u8` | `sync u8` | `crc u8` | `node u16` | `len u8` |
+/// | `(node u16, team_slot u8, reachable u8)` × len |
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Takeover {
+    /// Frame kind.
+    pub kind: TakeoverKind,
+    /// Proposed authority epoch (`old + 1`).
+    pub epoch: u32,
+    /// Lockstep turn counter of the sender.
+    pub turn_counter: i32,
+    /// Barrier phase tag of the sender.
+    pub phase: u8,
+    /// Barrier counters of the sender.
+    pub counters: TakeoverCounters,
+    /// Sender player node.
+    pub node: u16,
+    /// Full roster (only a `Proposal` needs it; empty otherwise).
+    pub roster: Vec<TakeoverRosterEntry>,
+}
+
+impl Takeover {
+    /// Encodes the complete APPL frame (type byte included).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut w = Writer::with_capacity(32 + self.roster.len() * 4);
+        w.write_u8(HOST_TAKEOVER_TYPE);
+        self.encode_body(&mut w);
+        w.finish()
+    }
+
+    /// Body of the frame (type byte already written/consumed).
+    pub fn encode_body(&self, w: &mut Writer) {
+        w.write_u8(self.kind.tag());
+        w.write_u32(self.epoch);
+        w.write_i32(self.turn_counter);
+        w.write_u8(self.phase);
+        w.write_u8(self.counters.begin);
+        w.write_u8(self.counters.end);
+        w.write_u8(self.counters.sync);
+        w.write_u8(self.counters.crc);
+        w.write_u16(self.node);
+        let len = self.roster.len().min(TAKEOVER_MAX_ROSTER);
+        w.write_u8(len as u8);
+        for entry in self.roster.iter().take(len) {
+            w.write_u16(entry.node);
+            w.write_u8(entry.team_slot);
+            w.write_u8(u8::from(entry.reachable));
+        }
+    }
+
+    /// Encodes the body into a fresh buffer (for `Packet::Unknown`).
+    pub fn encode_payload(&self) -> Vec<u8> {
+        let mut w = Writer::with_capacity(24 + self.roster.len() * 4);
+        self.encode_body(&mut w);
+        w.finish()
+    }
+
+    /// Decodes a complete frame (type byte included).
+    pub fn decode(frame: &[u8]) -> Result<Self, WireError> {
+        let mut r = Reader::new(frame);
+        let type_byte = r.read_u8()?;
+        if type_byte != HOST_TAKEOVER_TYPE {
+            return Err(WireError::UnknownPacket(type_byte));
+        }
+        Self::decode_body(&mut r)
+    }
+
+    /// Decodes the payload of `Packet::Unknown { kind: 56, .. }`.
+    pub fn decode_payload(payload: &[u8]) -> Result<Self, WireError> {
+        let mut r = Reader::new(payload);
+        Self::decode_body(&mut r)
+    }
+
+    /// Decodes the frame body (after the type byte).
+    pub fn decode_body(r: &mut Reader<'_>) -> Result<Self, WireError> {
+        let tag = r.read_u8()?;
+        let kind = TakeoverKind::from_tag(tag).ok_or(WireError::InvalidValue {
+            kind: "takeover kind",
+            value: u32::from(tag),
+        })?;
+        let epoch = r.read_u32()?;
+        let turn_counter = r.read_i32()?;
+        let phase = r.read_u8()?;
+        let counters = TakeoverCounters {
+            begin: r.read_u8()?,
+            end: r.read_u8()?,
+            sync: r.read_u8()?,
+            crc: r.read_u8()?,
         };
-        r.finish()?;
-        Ok(heartbeat)
+        let node = r.read_u16()?;
+        let len = usize::from(r.read_u8()?);
+        if len > TAKEOVER_MAX_ROSTER {
+            return Err(WireError::InvalidValue {
+                kind: "takeover roster",
+                value: len as u32,
+            });
+        }
+        let mut roster = Vec::with_capacity(len);
+        for _ in 0..len {
+            roster.push(TakeoverRosterEntry {
+                node: r.read_u16()?,
+                team_slot: r.read_u8()?,
+                reachable: r.read_u8()? != 0,
+            });
+        }
+        if !r.is_empty() {
+            return Err(WireError::TrailingBytes(r.remaining()));
+        }
+        Ok(Self {
+            kind,
+            epoch,
+            turn_counter,
+            phase,
+            counters,
+            node,
+            roster,
+        })
     }
 }
 
@@ -770,6 +1124,32 @@ impl HostHandle {
             .map_err(|_| HostError::Closed)
     }
 
+    /// Sends an already encoded **transport** frame (takeover 56, heartbeat
+    /// 55, …) to one peer or to every verified peer.
+    ///
+    /// Unlike [`HostHandle::send`] the frame is not wrapped into a
+    /// [`Packet`]: packets 55/56 are transport-only and never reach
+    /// `Dispatcher::route` (`PLAN-host-mode.md` §5 guardrails).
+    pub async fn send_frame(
+        &self,
+        to: impl Into<Recipient>,
+        frame: Vec<u8>,
+    ) -> Result<(), HostError> {
+        if frame.len() > crate::wire::MAX_PACKET_SIZE {
+            return Err(HostError::Wire(WireError::PacketTooLarge {
+                size: frame.len(),
+                max: crate::wire::MAX_PACKET_SIZE,
+            }));
+        }
+        self.commands
+            .send(HostCommand::Send {
+                to: to.into(),
+                frame,
+            })
+            .await
+            .map_err(|_| HostError::Closed)
+    }
+
     /// Flushes queued ENet packets (sends also flush; this is for the driver's
     /// own batching points).
     pub async fn flush(&self) -> Result<(), HostError> {
@@ -858,6 +1238,7 @@ mod tests {
             data_hash: data_hash(),
             max_peers: DEFAULT_MAX_PEERS,
             heartbeat,
+            host_timeout: DEFAULT_HOST_TIMEOUT,
         };
         HostHandle::bind(config).expect("bind host")
     }
@@ -1367,17 +1748,39 @@ mod tests {
 
         let heartbeat = HostHeartbeat {
             host_epoch: 3,
+            session_tick: 9,
             turn_counter: 7,
             phase: 2,
             reachable: 0b101,
+            last_seen: [9, 8, 7, 6],
+            policy: HostSessionPolicy::EliminateAfter { ticks: 12 },
+            host_timeout_ms: 5_000,
+            quorum: 2,
+            eliminated: 0b0100,
+            eliminated_tick: [0, 0, 5, 0],
         };
         let frame = heartbeat.encode();
-        assert_eq!(
-            frame,
-            [0x87, 3, 0, 0, 0, 7, 0, 0, 0, 2, 5, 0, 0, 0],
-            "type, epoch u32, turn i32, phase u8, reachable u32 — all LE"
-        );
+        assert_eq!(frame.len(), 64, "type + 63 body bytes");
+        assert_eq!(frame[0], 0x87);
+        // Little-endian fixed positions of the scalar fields.
+        assert_eq!(&frame[1..5], &3u32.to_le_bytes()); // host_epoch
+        assert_eq!(&frame[5..9], &9u32.to_le_bytes()); // session_tick
+        assert_eq!(&frame[9..13], &7i32.to_le_bytes()); // turn_counter
+        assert_eq!(frame[13], 2); // phase
+        assert_eq!(&frame[14..18], &0b101u32.to_le_bytes()); // reachable
+        assert_eq!(&frame[18..22], &9u32.to_le_bytes()); // last_seen[0]
+        assert_eq!(frame[34], 1); // policy tag: eliminate
+        assert_eq!(&frame[35..39], &12u32.to_le_bytes()); // policy ticks
+        assert_eq!(&frame[39..43], &5_000u32.to_le_bytes()); // host_timeout
+        assert_eq!(frame[43], 2); // quorum
+        assert_eq!(&frame[44..48], &0b0100u32.to_le_bytes()); // eliminated
+        assert_eq!(&frame[48..52], &0u32.to_le_bytes()); // eliminated_tick[0]
+        assert_eq!(&frame[56..60], &5u32.to_le_bytes()); // eliminated_tick[2]
         assert_eq!(HostHeartbeat::decode(&frame).expect("decode"), heartbeat);
+        assert_eq!(
+            HostHeartbeat::decode_payload(&frame[1..]).expect("payload decode"),
+            heartbeat
+        );
 
         let mut wrong_type = frame.clone();
         wrong_type[0] = 0x86;
@@ -1393,6 +1796,107 @@ mod tests {
         assert!(HostHeartbeat::decode(&trailing).is_err(), "trailing bytes");
     }
 
+    /// `host_timeout` is validated in the 5..=300 s range and is independent
+    /// of the heartbeat repeat period.
+    #[test]
+    fn host_timeout_is_validated_and_separate_from_the_heartbeat() {
+        assert_eq!(DEFAULT_HOST_TIMEOUT, Duration::from_secs(90));
+        assert_eq!(HOST_TIMEOUT_MIN, Duration::from_secs(5));
+        assert_eq!(HOST_TIMEOUT_MAX, Duration::from_secs(300));
+
+        for valid in [
+            Duration::from_secs(5),
+            Duration::from_secs(90),
+            Duration::from_secs(300),
+        ] {
+            assert!(validate_host_timeout(valid).is_ok(), "{valid:?}");
+        }
+        for invalid in [
+            Duration::ZERO,
+            Duration::from_secs(4),
+            Duration::from_secs(301),
+        ] {
+            assert!(
+                matches!(validate_host_timeout(invalid), Err(HostError::Config(_))),
+                "{invalid:?} must be rejected"
+            );
+        }
+
+        // The range is enforced on `HostSession::bind`, not only by the CLI.
+        let mut config = HostConfig::new(Ipv4Addr::LOCALHOST, 0, data_hash());
+        config.host_timeout = Duration::from_secs(2);
+        assert!(matches!(
+            HostSession::bind(config),
+            Err(HostError::Config(_))
+        ));
+    }
+
+    /// Packet 56 round-trips a proposal with the full roster and a bare ack.
+    #[test]
+    fn takeover_frame_is_packet_56_and_round_trips() {
+        assert_eq!(HOST_TAKEOVER_PACKET_NUMBER, 56);
+        assert_eq!(HOST_TAKEOVER_TYPE, 0x88);
+        assert_eq!(HOST_TAKEOVER_TYPE, TRANSPORT_APPL_PACKET_ID + 56);
+
+        let proposal = Takeover {
+            kind: TakeoverKind::Proposal,
+            epoch: 2,
+            turn_counter: 5,
+            phase: 3,
+            counters: TakeoverCounters {
+                begin: 5,
+                end: 5,
+                sync: 5,
+                crc: 4,
+            },
+            node: 11,
+            roster: vec![
+                TakeoverRosterEntry {
+                    node: 10,
+                    team_slot: 0,
+                    reachable: false,
+                },
+                TakeoverRosterEntry {
+                    node: 11,
+                    team_slot: 1,
+                    reachable: true,
+                },
+                TakeoverRosterEntry {
+                    node: 12,
+                    team_slot: 2,
+                    reachable: true,
+                },
+            ],
+        };
+        let frame = proposal.encode();
+        assert_eq!(frame[0], HOST_TAKEOVER_TYPE);
+        assert_eq!(Takeover::decode(&frame).expect("decode"), proposal);
+        assert_eq!(
+            Takeover::decode_payload(&proposal.encode_payload()).expect("payload"),
+            proposal
+        );
+
+        let ack = Takeover {
+            kind: TakeoverKind::Accept,
+            roster: Vec::new(),
+            ..proposal.clone()
+        };
+        assert_eq!(Takeover::decode(&ack.encode()).expect("ack"), ack);
+
+        // Unknown kind, too large roster and trailing bytes are rejected.
+        let mut bad = proposal.encode_payload();
+        bad[0] = 9;
+        assert!(Takeover::decode_payload(&bad).is_err());
+
+        let mut oversized = proposal.encode_payload();
+        oversized[16] = 5; // roster length > TAKEOVER_MAX_ROSTER
+        assert!(Takeover::decode_payload(&oversized).is_err());
+
+        let mut trailing = ack.encode();
+        trailing.push(0);
+        assert!(Takeover::decode(&trailing).is_err(), "trailing bytes");
+    }
+
     /// The published heartbeat reaches guests immediately and is repeated on
     /// the configured period; a late joiner receives the current one.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1405,9 +1909,16 @@ mod tests {
 
         let heartbeat = HostHeartbeat {
             host_epoch: 1,
+            session_tick: 1,
             turn_counter: 0,
             phase: 1,
             reachable: 0b1,
+            last_seen: [0; TAKEOVER_MAX_ROSTER],
+            policy: HostSessionPolicy::Pause,
+            host_timeout_ms: 90_000,
+            quorum: 2,
+            eliminated: 0,
+            eliminated_tick: [0; TAKEOVER_MAX_ROSTER],
         };
         host.publish_heartbeat(heartbeat)
             .await

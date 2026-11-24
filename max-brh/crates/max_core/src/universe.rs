@@ -261,6 +261,18 @@ pub enum GameEvent {
     Industry(String),
     /// In-game chat (packet 18).
     Chat(TeamId, String),
+    /// A team was eliminated by the host session policy
+    /// (`PLAN-host-mode.md` §4, H4).
+    ///
+    /// `sequence` is the deterministic elimination tick carried by the host
+    /// heartbeat — never a wall-clock stamp, so every client records the same
+    /// value.
+    PlayerEliminated {
+        /// Eliminated team.
+        team: TeamId,
+        /// Deterministic elimination tick (`ticks_without_heartbeat`).
+        sequence: u32,
+    },
     /// A command was rejected — full context is kept (owner decision 7).
     CommandRejected {
         /// The command.
@@ -1465,6 +1477,28 @@ impl<D: Dispatcher> GameUniverse<D> {
     /// The whole team-economy table, mutable (setup/test writer).
     pub fn team_units_table_mut(&mut self) -> &mut [TeamUnits; TEAM_SLOTS] {
         &mut self.state.team_units
+    }
+
+    /// Host-authoritative team elimination (`PLAN-host-mode.md` §4, H4).
+    ///
+    /// Sets the slot to [`TeamKind::Eliminated`] — the barrier FSM's
+    /// `remote_teams` filter and the victory ranking then stop waiting for it —
+    /// and emits the deterministic [`GameEvent::PlayerEliminated`] report.
+    ///
+    /// The mutation is applied by every client at the same lockstep point and
+    /// with the same `sequence` (the host heartbeat tick), so it is part of the
+    /// deterministic state (`snapshot_bytes`). Returns `false` for an empty or
+    /// already eliminated slot.
+    pub fn eliminate_team(&mut self, team: TeamId, sequence: u32) -> bool {
+        let Some(info) = self.team_mut(team) else {
+            return false;
+        };
+        if info.team_type == TeamKind::None || info.team_type == TeamKind::Eliminated {
+            return false;
+        }
+        info.team_type = TeamKind::Eliminated;
+        self.bus.push(GameEvent::PlayerEliminated { team, sequence });
+        true
     }
 
     /// `GameManager_PlayerTeam` (`game.rs:270`) — setup write.

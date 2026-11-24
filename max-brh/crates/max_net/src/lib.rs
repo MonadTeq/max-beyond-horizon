@@ -61,9 +61,12 @@ pub use horizon::{
     PROTOCOL_VERSION as HORIZON_PROTOCOL_VERSION,
 };
 pub use host::{
-    HostConfig, HostError, HostEvent, HostEventKind, HostHandle, HostHeartbeat, HostSession,
-    PeerId, Recipient, DEFAULT_HEARTBEAT_PERIOD, DEFAULT_HOST_PORT, DEFAULT_MAX_PEERS,
-    HOST_HEARTBEAT_PACKET_NUMBER, HOST_HEARTBEAT_TYPE,
+    validate_host_timeout, HostConfig, HostError, HostEvent, HostEventKind, HostHandle,
+    HostHeartbeat, HostSession, HostSessionPolicy, PeerId, Recipient, Takeover, TakeoverCounters,
+    TakeoverKind, TakeoverRosterEntry, DEFAULT_HEARTBEAT_PERIOD, DEFAULT_HOST_PORT,
+    DEFAULT_HOST_TIMEOUT, DEFAULT_MAX_PEERS, HOST_HEARTBEAT_PACKET_NUMBER, HOST_HEARTBEAT_TYPE,
+    HOST_TAKEOVER_PACKET_NUMBER, HOST_TAKEOVER_TYPE, HOST_TIMEOUT_MAX, HOST_TIMEOUT_MIN,
+    TAKEOVER_MAX_ROSTER,
 };
 pub use protocol::{GameListing, JoinRequest, LobbyEvent};
 pub use session::{
