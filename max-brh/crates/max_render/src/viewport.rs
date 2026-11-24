@@ -350,7 +350,17 @@ impl Viewport {
     /// partly covered by the game UI (panels, End Turn), and a unit that reached
     /// the edge of the map visually slid out of the grid. The port closes the
     /// grid at the last buffer row/column, so the lines cover the whole playable
-    /// viewport (`max-brh-qa/plans/defects-manual-1.2.md`, defect 4).
+    /// viewport (`max-brh-qa/plans/defects-manual-1.2.md`, defect 7).
+    ///
+    /// The closing is needed on **all four** sides, not only the right/bottom one:
+    /// the camera origin is not cell-aligned in general (`scroll_by_screen` /
+    /// `center_on_world` move it by arbitrary pixels), so the first cell boundary
+    /// lies *inside* the map window and the border strip of the adjacent cells
+    /// (`0..first_boundary`) had no line at the window edge. The UI panels abut the
+    /// map on every side, which made those border cells look cut off. Closing the
+    /// walk at `0` and `width - 1` / `height - 1` makes the grid cover the whole
+    /// playable area at any camera position and zoom (defect 7 of the manual run
+    /// 1.2, second pass).
     ///
     /// The returned positions are ascending and inside `0..width` / `0..height`.
     pub fn grid_lines(&self, width: i32, height: i32) -> GridLines {
@@ -379,8 +389,17 @@ impl Viewport {
             }
         }
 
-        // Close the playable area: the last cell boundary lies beyond the buffer
-        // when the window is an exact multiple of the cell size (7×64 = 448).
+        // Close the playable viewport on all four sides: the top/left window edge
+        // is a partial cell whenever the camera origin is not cell-aligned, and
+        // the bottom/right one lies one pixel past an exact 7×64 buffer.
+        if lines.xs.first().copied() != Some(0) {
+            lines.xs.insert(0, 0);
+        }
+
+        if lines.ys.first().copied() != Some(0) {
+            lines.ys.insert(0, 0);
+        }
+
         if lines.xs.last().copied() != Some(width - 1) {
             lines.xs.push(width - 1);
         }
@@ -637,6 +656,16 @@ mod tests {
                 Viewport::with_center(width as u32, height as u32, (3584, 3584), zoom);
             let lines = viewport.grid_lines(width, height);
 
+            assert_eq!(
+                lines.xs.first(),
+                Some(&0),
+                "zoom {zoom}: left edge is closed"
+            );
+            assert_eq!(
+                lines.ys.first(),
+                Some(&0),
+                "zoom {zoom}: top edge is closed"
+            );
             assert!(
                 lines.xs.last() == Some(&(width - 1)),
                 "zoom {zoom}: right edge is closed"
@@ -658,6 +687,35 @@ mod tests {
             assert!(lines.xs.windows(2).all(|pair| pair[0] < pair[1]));
             assert!(lines.ys.windows(2).all(|pair| pair[0] < pair[1]));
         }
+    }
+
+    /// Defect 7, second pass: when the camera is **not** cell-aligned, the first
+    /// cell boundary lies inside the map window. The previous fix closed only the
+    /// right/bottom edges, so the outer strip of the left/top border cells had no
+    /// line against the abutting UI panel and looked cut off. All four window
+    /// edges must be closed (`grid_lines`), with the interior boundaries kept.
+    #[test]
+    fn grid_lines_close_all_four_edges_for_a_non_aligned_camera() {
+        // Map pixel 3520 is the first cell boundary at screen x = 12:
+        // origin = 3732 - 224 = 3508, 3508 / 64 = 54.8125.
+        let viewport = Viewport::with_center(448, 448, (3732, 3732), 64);
+        let lines = viewport.grid_lines(448, 448);
+
+        assert_eq!(lines.xs.first(), Some(&0), "left window edge is closed");
+        assert_eq!(lines.ys.first(), Some(&0), "top window edge is closed");
+        assert_eq!(lines.xs.last(), Some(&447), "right window edge is closed");
+        assert_eq!(lines.ys.last(), Some(&447), "bottom window edge is closed");
+        assert_eq!(
+            &lines.xs[1..4],
+            &[12, 76, 140],
+            "interior cell boundaries are preserved after the closing edge"
+        );
+        assert_eq!(&lines.ys[1..4], &[12, 76, 140]);
+        assert_eq!(
+            lines.xs.len(),
+            9,
+            "closing edge + 7 boundaries + closing edge"
+        );
     }
 
     #[test]

@@ -1127,6 +1127,116 @@ mod tests {
         assert_eq!(unit.fuel_mining_max, 0);
     }
 
+    /// `UnitsManager_DeployUnit` (`units_manager.cpp:2403-2410`, `2452-2454`):
+    /// **every** new mine — including one built mid-game by a builder — starts
+    /// `ORDER_POWER_ON` and pre-allocated by `UnitsManager_SetInitialMining`.
+    ///
+    /// The spawn path is checked directly (no explicit `set_initial_mining` call):
+    /// a mine that joins a complex through connectors must already be ON and
+    /// mining, otherwise it stays at 0/0/0 forever (`spawn_unit` used to skip the
+    /// C++ call, which only the landing flow repeated by hand).
+    #[test]
+    fn spawned_mining_station_is_powered_and_pre_allocated() {
+        let mut state = land_state(&[TeamId::RED]);
+        let id = state
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
+            .expect("mining station");
+
+        let unit = state.unit(id).expect("mining station");
+        assert_eq!(unit.orders, UnitOrder::PowerOn);
+        assert_eq!(unit.state, UnitOrderState::Init);
+        assert!(unit.complex.is_some(), "the mine joins a complex");
+        // Rich 2×2 cell: 2 fuel for the generator first, then all remaining
+        // capacity to raw materials (32 available), then extra fuel, then gold.
+        assert_eq!(
+            (
+                unit.raw_mining,
+                unit.fuel_mining,
+                unit.gold_mining,
+                unit.total_mining
+            ),
+            (14, 2, 0, 16)
+        );
+        let complex = unit.complex;
+
+        // A storage built next to the mine connects the two into one complex;
+        // the connection must not reset the mine's ON status or allocation.
+        let dump = state
+            .spawn_unit(
+                UnitType::MaterialStorage,
+                TeamId::RED,
+                Point::new(22, 20),
+                0,
+            )
+            .expect("material storage");
+        assert_eq!(state.unit(dump).expect("dump").complex, complex);
+        let unit = state.unit(id).expect("mining station");
+        assert_eq!(unit.orders, UnitOrder::PowerOn);
+        assert_eq!(
+            (
+                unit.raw_mining,
+                unit.fuel_mining,
+                unit.gold_mining,
+                unit.total_mining
+            ),
+            (14, 2, 0, 16),
+            "connecting to the complex keeps the default split"
+        );
+    }
+
+    /// Priority of the default split (`units_manager.cpp:1496-1510`): the
+    /// generator's fuel share, then **raw materials to the cell maximum**, then
+    /// the remaining capacity to fuel, then gold.
+    #[test]
+    fn spawned_mining_station_prioritizes_raw_then_fuel_then_gold() {
+        let mut state = land_state(&[TeamId::RED]);
+
+        // Only the 2×2 footprint is surveyed (`SURVEY_RADIUS = 1`): 3 raw,
+        // 4 fuel and 16 gold available.
+        for x in 20..=21 {
+            for y in 20..=21 {
+                state
+                    .map
+                    .resources
+                    .set(x, y, ResourceMapEntry::new(0, None, 0));
+            }
+        }
+        state
+            .map
+            .resources
+            .set(20, 20, ResourceMapEntry::new(3, Some(ResourceKind::Raw), 0));
+        state.map.resources.set(
+            20,
+            21,
+            ResourceMapEntry::new(4, Some(ResourceKind::Fuel), 0),
+        );
+        state.map.resources.set(
+            21,
+            20,
+            ResourceMapEntry::new(16, Some(ResourceKind::Gold), 0),
+        );
+
+        let id = state
+            .spawn_unit(UnitType::MiningStation, TeamId::RED, Point::new(20, 20), 0)
+            .expect("mining station");
+
+        let unit = state.unit(id).expect("mining station");
+        assert_eq!(
+            (
+                unit.raw_mining_max,
+                unit.fuel_mining_max,
+                unit.gold_mining_max
+            ),
+            (3, 4, 16)
+        );
+        // fuel baseline 2, raw 3 (all of the cell), extra fuel 2, gold 9.
+        assert_eq!(
+            (unit.raw_mining, unit.fuel_mining, unit.gold_mining),
+            (3, 4, 9)
+        );
+        assert_eq!(unit.total_mining, 16);
+    }
+
     /// The derelict `ALIEN` slot is not a playing team: deployment rejects it
     /// without touching the state or the RNG stream (boundary slot).
     #[test]

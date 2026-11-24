@@ -39,7 +39,12 @@ const FACTORY_CRCS: (u16, u16, u16) = (0x1DE6, 0x25CF, 0x9F84);
 const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xE313, 0xCE5B);
 /// Pinned digests of the research scenario (A.5: upgrades + powered centre, 4
 /// rounds).
-const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x0CA2, 0xADC0);
+///
+/// Repinned after the `UnitsManager_SetInitialMining` port (`spawn_unit` now
+/// pre-allocates every mine, so the scenario's mine contributes its fuel
+/// production from the first turn); the `state_checksum` is unchanged because
+/// packet 45 does not carry the mining counters.
+const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x6407, 0x38C5);
 /// Pinned digests of the reconnaissance scenario (A.6: scout exploring, 8
 /// rounds).
 const RECON_CRCS: (u16, u16, u16) = (0x5387, 0x603B, 0xFD64);

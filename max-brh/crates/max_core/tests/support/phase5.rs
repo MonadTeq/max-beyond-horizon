@@ -292,7 +292,13 @@ pub fn add_research_lab(universe: &mut GameUniverse, site: Point) -> UnitId {
         let unit = universe.unit_mut(mine).expect("mine");
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
+        // `spawn_unit` already applies `UnitsManager_SetInitialMining`; the
+        // scenario needs a fixed 10-fuel split, so the whole counter set is
+        // written consistently (`total_mining` = raw + fuel + gold).
+        unit.raw_mining = 0;
         unit.fuel_mining = 10;
+        unit.gold_mining = 0;
+        unit.total_mining = 10;
     }
 
     let centre = spawn(

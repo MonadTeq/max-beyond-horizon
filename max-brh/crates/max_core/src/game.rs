@@ -1500,6 +1500,22 @@ impl GameState {
         };
         // `Hash_UnitHash.PushBack(unit)` — bucket by `id % hash_size`.
         self.unit_hash.push_at(u32::from(id.0), slot as u16);
+
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2452-2454`): a newly
+        // deployed `MININGST` gets `UnitsManager_SetInitialMining` before it is
+        // placed on the map (`SetPosition`/hash insert). The call is what gives a
+        // mine that is built mid-game — or that joins an existing complex through
+        // connectors — its default extraction split: the generator's fuel share
+        // first, then raw materials up to the cell maximum, then extra fuel, then
+        // gold, all within the 16-unit mining capacity (`units_manager.cpp:1484`).
+        // Without it a constructed mine was `POWER_ON` but mined 0/0/0 forever.
+        // The landing flow (`deploy.rs`) calls it again; the function is idempotent
+        // (C++ calls it from `DeployUnit` there too). The unit-id hash is already
+        // populated, so `unit_mut(id)` finds the fresh slot.
+        if unit_type == UnitType::MiningStation {
+            crate::deploy::set_initial_mining(self, id, grid);
+        }
+
         // `Hash_MapHash.Add` (`units_manager.cpp`): the cell (for 2×2 structures —
         // three more cells).
         self.map_hash

@@ -1067,6 +1067,13 @@ mod tests {
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
         unit.complex = Some(complex);
+        // `spawn_unit` applies `UnitsManager_SetInitialMining` (C++ `DeployUnit`),
+        // so the mine starts pre-allocated. The dialog tests need a neutral
+        // 0/0/0 split to check the absolute bar/arrow mechanics.
+        unit.raw_mining = 0;
+        unit.fuel_mining = 0;
+        unit.gold_mining = 0;
+        unit.total_mining = 0;
         state.write_unit(id, unit);
 
         (state, id, complex)

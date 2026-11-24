@@ -361,8 +361,13 @@ fn dump_capacities_match_cpp_attribute_storage() {
     );
     let fdump = spawn_in_complex(&mut state, UnitType::FuelStorage, Point::new(22, 20), None);
     let goldsm = spawn_in_complex(&mut state, UnitType::GoldVault, Point::new(24, 20), None);
+    // The mine's own buffer is a storage too: `MAX.RES:ATTRIBS` record
+    // `MINING_STATION`, column `Strg` = 25 (Klei `SC_ATTRI`
+    // `MININGST.Storage capacity` = 25). `Cargo_GetCargoCapacity`
+    // (`cargo.cpp:50`) returns it for the mine's `CARGO_TYPE_RAW`.
+    let mine = spawn_in_complex(&mut state, UnitType::MiningStation, Point::new(28, 20), None);
 
-    for (id, expected) in [(adump, 50), (fdump, 50), (goldsm, 50)] {
+    for (id, expected) in [(adump, 50), (fdump, 50), (goldsm, 50), (mine, 25)] {
         let unit = state.snapshot().unit(id).expect("dump");
         assert_eq!(
             unit.base_values
@@ -372,6 +377,12 @@ fn dump_capacities_match_cpp_attribute_storage() {
             unit.unit_type
         );
     }
+
+    // The mine's 25 units are raw cargo, exactly as `Cargo_GetCargoCapacity`
+    // maps `ATTRIB_STORAGE` through `CargoType::Raw` for `MININGST`.
+    let mine_unit = state.snapshot().unit(mine).expect("mine");
+    let capacity = max_core::cargo_get_cargo_capacity(mine_unit);
+    assert_eq!((capacity.raw, capacity.fuel, capacity.gold), (25, 0, 0));
 }
 
 #[test]

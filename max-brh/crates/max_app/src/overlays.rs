@@ -687,11 +687,13 @@ pub fn draw_range_scan<D: Dispatcher>(
 ///   left border of each cell in the color of its surface.
 ///
 /// The screen positions come from [`max_render::viewport::Viewport::grid_lines`],
-/// which closes the grid at the last buffer row/column: the 7×7 map window is an
-/// exact multiple of the 64-pixel cell, so its last boundary would fall one pixel
-/// past the map buffer and the outer cells of the playable area stayed without a
-/// border (defect 4 of the manual run 1.2 — a unit at the map edge visually slid
-/// out of the grid, into the panels that overlap the border cells).
+/// which closes the grid on **all four** map-window edges. The 7×7 map window is an
+/// exact multiple of the 64-pixel cell, so its last boundary falls one pixel past
+/// the map buffer; and because the camera origin is not cell-aligned in general,
+/// the first boundary lies inside the window. Without the left/top closing lines
+/// the border strip of the outer cells stayed outside the grid, and the panels
+/// that abut the map made those cells look cut off (defect 7 of the manual run 1.2,
+/// second pass).
 pub fn draw_grid<D: Dispatcher>(
     frame: &mut RgbaBuffer,
     app: &App<D>,
@@ -751,6 +753,27 @@ pub fn draw_grid<D: Dispatcher>(
                     painted += 1;
                 }
             }
+        }
+    }
+
+    // Closing left/top edges of the playable viewport. When the camera origin is
+    // not cell-aligned the first cell boundary lies inside the map window, so the
+    // outer strip of the border cells had no line at the window edge (defect 7).
+    for y in 0..height {
+        let (grid_x, grid_y) = viewport.screen_to_grid(0, y);
+        let color = grid_color(palette, state.map().surface_at(grid_x, grid_y));
+
+        if frame.set(0, y, color) {
+            painted += 1;
+        }
+    }
+
+    for x in 0..width {
+        let (grid_x, grid_y) = viewport.screen_to_grid(x, 0);
+        let color = grid_color(palette, state.map().surface_at(grid_x, grid_y));
+
+        if frame.set(x, 0, color) {
+            painted += 1;
         }
     }
 
