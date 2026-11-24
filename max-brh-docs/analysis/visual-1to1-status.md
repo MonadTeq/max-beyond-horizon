@@ -5149,3 +5149,118 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 чужой клан). Решение: константа остаётся `false`, вопрос закрыт документацией
 и тестом-замком. Если владельцу нужна **синтетическая** анимация дрели (не из
 оригинала) — это отдельное продуктовое решение; в текущей реализации её нет.
+
+---
+
+## 45. C3/C4/D2: MVE-аудио и субтитры, форматы 0x06/0x10, музыка — **сделано** (2026-11-24)
+
+Три независимых подшага; каждый падает безопасно и видимо, не блокируя остальные.
+
+### 45.1 C3 — аудио-дорожка и субтитры `INTROSUB`
+
+* **Аудио.** `max_assets::mve` декодирует дорожку вместе с кадрами:
+  `ALLOC_AUDIO_BUFFERS` (0x03) задаёт формат (каналы/частота/биты/дельта-сжатие),
+  `AUDIO_FRAME` (0x08) и `SILENCE_FRAME` (0x09) несут по одному кадру звука,
+  `SYNCH_AUDIO` (0x04) — маркер синхронизации. Декомпрессия — точный порт
+  `sndDecompM16`/`sndDecompS16` (`snd_8to16`), выбор дорожки — `rm_track_bit &
+  opcode->mask` (`movie_run(..., track, ...)`). `MveInfo::audio` — формат,
+  `MveDecoder::take_audio()` — PCM16-чанки, `decoder_with_track(n)` — язык.
+* **Субтитры.** `max_app::subtitles` читает `INTROSUB` из `MAX.RES` (тело —
+  ASCIIZ-имя JSON-файла рядом с `MAX.RES`, `moviesubtitle.cpp:74-100`), разбирает
+  `{"subtitle": {"<lang>": [{start, end, caption}]}}` с фолбэком `en-US`, ищет
+  реплику как оракул (`upper_bound` по `start`, `end` исключающий). Если ресурса
+  нет — sidecar `<mve>.json` (раскладка ассетов порта, `maxint.json`).
+  Рендер — `MovieSubtitle::RenderSubtitle`: GNW-шрифт 5, две строки по
+  `FindBestSplitPoint`, центр по X, 90 % высоты видео, отступ 16 px снизу, белый
+  текст с чёрной обводкой 8 направлений; рисуется внутри letterbox-прямоугольника.
+* **Интеграция.** `IntroScreen::with_media(path, subtitles)`; `main.rs` дренирует
+  `take_audio()` после каждого `advance` и ставит чанки в `AudioPlayer::play_pcm`
+  (gain — `movie_level/100`, выключатель — `disable_movie`); при уходе с экрана
+  голос останавливается. Формат/битрейт и число реплик выводятся в статус-строке
+  меню, ошибки — в лог.
+
+### 45.2 C4 — форматы MVE 0x06 и 0x10
+
+* Оракул различает три опкода видео: 0x06 → `nfDecomp`, 0x10 → `nfDecompChg`,
+  0x11 → `nfPkDecomp` (`mvelib32.c`, enum `MVE_OPCODE_DECOMP_VIDEO0/1/2`).
+  В порте Klei `nfDecomp`/`nfDecompChg` — заглушки `\todo`, а данные M.A.X.
+  (MAXINT/MAXMVE1/MAXMVE2) содержат только 0x11; поэтому реализация 0x06/0x10
+  следует документированному контракту Interplay/FFmpeg, а 0x11 остаётся
+  бит-в-бит прежним (эталонные хеши кадров 0/50/100 не изменились).
+* **0x06**: сырые блоки 8×8 (64 индекса на блок), без карты декодирования.
+* **0x10**: карта изменений (0x0E) — 1 бит на блок, блоки с нулевым битом
+  копируются из предыдущего кадра (после `nfAdvance` он в `prv`), изменённые
+  декодируются тем же блочным кодеком по карте 2 (0x0F). Двойная буферизация —
+  по `flags & 1`, как в 0x11.
+* Формат кадра теперь хранится в `FrameSpec`/`MveInfo::video_formats`
+  (`MveInfo::video_format` = формат первого кадра), поэтому смешанные контейнеры
+  декодируются по формату кадра, а не файла.
+* Новые ошибки `MissingChangeMap`/`BadChangeMap`; короткий поток/карта —
+  ошибка значения, без паники.
+
+### 45.3 D2 — музыка
+
+* `max_app::music::MusicDirector` — презентационный слой: меню `MAIN_MSC`
+  (`main.cpp:43`), в партии — планетный трек `world/6 + SNOW_MSC` с shuffle по
+  плейлисту `MAIN_MSC..BKG9_MSC` (`game_manager.cpp:1967/3422`,
+  `SoundManager::UpdateMusic`), победа/поражение — `WINR_MSC`/`LOSE_MSC`
+  (`menu.cpp:476/479`). Ротация — детерминированный xorshift, **не** RNG
+  симуляции.
+* **Через GameEvent.** Директор получает только `&[GameEvent]` из отдельного
+  курсора `App::take_music_events()` (`EventStream`, owner decision 6) и никогда
+  не видит `GameState`/`GameUniverse`: реакция на матч — `GameEvent::Turn`, исход —
+  `TurnNotice.status` (`WinLossState::Won/Lost` локальной команды).
+  `EventStream` не входит в `snapshot_bytes`/CRC.
+* Файлы `*.MSC` — обычные PCM16 WAV (stereo 22050 Hz, `WAV_HDR`-проверка
+  `wav.rs`, 13 файлов рядом с `MAX.RES`: MAIN, BKG1–6, SNOW/CRTR/GREN/DSRT,
+  WINR, LOSE; `BKG7..9` в розничных данных нет — тишина, а не падение). Ссылки
+  `MAX.RES` (`MAIN_MSC` → `main_msc.msc`) собираются вместе со `.spw`.
+* `disable_music` останавливает трек, `music_level` — отдельная громкость (не
+  зависит от `FX`); всё — `Preferences::music_enabled/music_volume`.
+* `AudioPlayer`: индексация `.msc`, `play_music/stop_music/set_music_volume`,
+  `music_playing`, стриминговый голос для кино-чанков (`play_pcm/stop_pcm`,
+  `RodioBackend`: отдельные sink'и музыки и кино); без `sound`-фичи или без
+  устройства — no-op, игра работает.
+
+### 45.4 Fallback (условие владельца №1, №5)
+
+* Нет `maxint.mve` → прежняя заглушка `MLOGO`/`MAINPIC`; нет аудио в MVE → пустой
+  `take_audio`, экран играет; нет `INTROSUB`/JSON → `SubtitleError` в лог и в
+  статус-строку меню; нет `*.MSC` → `MusicDirector` пишет видимую диагностику
+  (`messages()`/`last_error()`), музыка не запрашивается.
+* `main.rs` печатает `UI: субтитры: …`, `UI: музыка: …`, `UI: <note>` и кладёт
+  сводку в `UiContext::media_status` (статус-строка меню). QA-прогон без данных —
+  тот же путь, без паники (`tests/media_presentation.rs`).
+
+### 45.5 Не в CRC (условие владельца №2) и независимость (№3, №4)
+
+* `tests/media_presentation.rs`: `snapshot_bytes`/`state_digest` совпадают
+  (а) у `App` с загруженными ассетами и без них, (б) у двух одинаковых партий,
+  где одна крутит интро (видео+аудио+субтитры) и музыкальный директор, читающий
+  события. `tests/music.rs`: `App` с дренированным музыкальным курсором и
+  контрольный `App` без дренажа дают одинаковые байты.
+* C3/C4 живут в `max_assets`/`intro`, D2 — в `max_app::music`/`audio`;
+  независимы: провал любого слоя — диагностика, а не блокировка других.
+
+### 45.6 Гейты и тесты
+
+* `cargo check --workspace` — зелёный; `cargo check -p max_app --features sound` —
+  зелёный.
+* `cargo test -p max_assets -p max_core -p max_app` — **99 наборов, 1654 теста,
+  0 падений** (в т.ч. `mve` 11, `intro` 6, `music` 5+5, `subtitles` 5,
+  `media_presentation` 3).
+* `qa_run visual-screens.qa` + `qa_golden_check` — **PASS** (17 кадров, `intro`/
+  `intro-logo` — 0 пикселей дрейфа).
+* `check_render_readonly.py` — PASS (6 модулей, 0 мутабельных ссылок);
+  `check_comments_language.py` — PASS.
+* Валидация — без коммита (по ТЗ сессии).
+
+### 45.7 Оговорка по 0x06/0x10
+
+В данных M.A.X. нет ни одного кадра 0x06/0x10, поэтому проверить их
+бит-в-бит по оракулу невозможно (в C++-порте это заглушки). Реализация и
+тесты (`decodes_raw_video_data_06`, `decodes_change_map_video_data_10`,
+`video_data_10_without_change_map_is_an_error`,
+`video_data_10_with_a_short_change_map_is_an_error`,
+`truncated_raw_video_is_an_error_without_a_panic`) фиксируют контракт формата;
+при появлении реального контейнера 0x06/0x10 нужна сверка кадров с эталоном.

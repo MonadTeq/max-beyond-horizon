@@ -73,6 +73,36 @@ pub trait AudioBackend: fmt::Debug {
         self.play_scaled(clip, mode, 1.0)
     }
 
+    /// Queues a short PCM chunk (MVE movie audio) without dropping what is queued.
+    ///
+    /// The default implementation forwards it to [`AudioBackend::play_scaled`]; a real
+    /// backend keeps one streaming voice so that consecutive movie frames are gapless.
+    fn play_pcm(&mut self, clip: Arc<WavClip>, gain: f32) -> Result<(), String> {
+        self.play_scaled(clip, PlayMode::Once, gain)
+    }
+
+    /// Stops the movie audio voice.
+    fn stop_pcm(&mut self) {}
+
+    /// Starts a music track (`D2`), replacing the current one.
+    ///
+    /// The gain is `music_level / 100`; music has its own volume and is not affected by
+    /// [`AudioBackend::set_volume`] (effects).
+    fn play_music(&mut self, clip: Arc<WavClip>, gain: f32) -> Result<(), String> {
+        self.play_scaled(clip, PlayMode::Once, gain)
+    }
+
+    /// Stops the music track (the effects keep playing).
+    fn stop_music(&mut self) {}
+
+    /// Music volume 0.0..=1.0, independent of the effects volume.
+    fn set_music_volume(&mut self, _volume: f32) {}
+
+    /// Whether a music track is still sounding (the director rotates tracks by this).
+    fn music_playing(&self) -> bool {
+        false
+    }
+
     /// Queues the clip with additional gain `gain` (0..1+).
     ///
     /// Needed for unit sounds: `SC_UNITS` sets the volume per effect
@@ -118,10 +148,19 @@ pub struct AudioPlayer {
     sound_dir: Option<PathBuf>,
     /// lowercase file name → real path (FS case does not matter).
     files: HashMap<String, PathBuf>,
-    /// uppercase resource tag → lowercase `.spw` name.
+    /// uppercase resource tag → lowercase `.spw`/`.wav`/`.msc` name.
     references: BTreeMap<String, String>,
     /// lowercase file name → decoded clip.
     cache: HashMap<String, Arc<WavClip>>,
+    /// Music clips by file name (preloaded or decoded once; the `*.MSC` files are tens
+    /// of megabytes, so they are not kept in [`Self::cache`] together with the effects).
+    music_cache: HashMap<String, Arc<WavClip>>,
+    /// Currently requested music file (for diagnostics/tests).
+    music_name: Option<String>,
+    /// A music track was queued (the backend decides whether it is still sounding).
+    music_started: bool,
+    /// Music volume (`music_level / 100`), independent of the effects volume.
+    music_volume: f32,
     errors: Vec<String>,
     last_error: Option<String>,
     enabled: bool,
@@ -143,6 +182,10 @@ impl AudioPlayer {
             files: HashMap::new(),
             references: BTreeMap::new(),
             cache: HashMap::new(),
+            music_cache: HashMap::new(),
+            music_name: None,
+            music_started: false,
+            music_volume: 1.0,
             errors: Vec::new(),
             last_error: None,
             enabled: true,
@@ -214,7 +257,7 @@ impl AudioPlayer {
         self.sound_dir.as_deref()
     }
 
-    /// Indexes the sound directory (`*.SPW`/`*.WAV`, case does not matter).
+    /// Indexes the sound directory (`*.SPW`/`*.WAV`/`*.MSC`, case does not matter).
     ///
     /// Returns `true` if at least one file was found. A missing directory is
     /// not an error: the client will simply be left without sound.
@@ -226,7 +269,9 @@ impl AudioPlayer {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let is_sound = path.extension().is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case("spw") || extension.eq_ignore_ascii_case("wav")
+                    extension.eq_ignore_ascii_case("spw")
+                        || extension.eq_ignore_ascii_case("wav")
+                        || extension.eq_ignore_ascii_case("msc")
                 });
 
                 if !is_sound || !path.is_file() {
@@ -246,10 +291,11 @@ impl AudioPlayer {
         found
     }
 
-    /// Collects `tag → file` references from `MAX.RES` (only `*.spw`).
+    /// Collects `tag → file` references from `MAX.RES` (`*.spw`, `*.wav`, `*.msc`).
     ///
-    /// The body of a reference resource is an ASCIIZ file name (`TANK1` → `"tank1.spw"`); regular
-    /// resources (sprites/maps) are discarded by [`parse_file_ref`].
+    /// The body of a reference resource is an ASCIIZ file name (`TANK1` → `"tank1.spw"`,
+    /// `MAIN_MSC` → `"main_msc.msc"`); regular resources (sprites/maps) are discarded by
+    /// [`parse_file_ref`].
     pub fn attach_res(&mut self, res: &ResArchive) -> usize {
         let mut added = 0;
 
@@ -268,7 +314,10 @@ impl AudioPlayer {
             };
             let file_name = name.to_ascii_lowercase();
 
-            if !file_name.ends_with(".spw") {
+            if !(file_name.ends_with(".spw")
+                || file_name.ends_with(".wav")
+                || file_name.ends_with(".msc"))
+            {
                 continue;
             }
 
@@ -379,6 +428,183 @@ impl AudioPlayer {
         self.backend.stop_all();
     }
 
+    // -----------------------------------------------------------------------
+    // Movie audio (C3)
+    // -----------------------------------------------------------------------
+
+    /// Queues a decoded MVE audio chunk (PCM16, interleaved).
+    ///
+    /// The movie layer hands the chunks over frame by frame; a backend with a streaming
+    /// voice keeps them gapless. The switch/volume is the caller's (`disable_movie`,
+    /// `movie_level`) — the effects flag does not mute the movie (`movie_run` uses its
+    /// own `MVE_sndVolume`). `false` — no chunk was queued (empty) or the backend refused
+    /// (the reason goes to [`Self::errors`]).
+    pub fn play_pcm(
+        &mut self,
+        samples: &[i16],
+        channels: u8,
+        sample_rate: u32,
+        gain: f32,
+    ) -> bool {
+        if samples.is_empty() || channels == 0 || sample_rate == 0 {
+            return false;
+        }
+
+        let clip = Arc::new(WavClip {
+            sample_rate,
+            channels: u16::from(channels),
+            samples: samples.to_vec(),
+        });
+
+        match self.backend.play_pcm(clip, gain.clamp(0.0, 1.0)) {
+            Ok(()) => {
+                self.plays += 1;
+
+                true
+            }
+            Err(error) => {
+                self.push_error(format!("{}: {error}", self.backend.name()));
+
+                false
+            }
+        }
+    }
+
+    /// Stops the movie audio voice (the movie ended / was interrupted).
+    pub fn stop_movie_audio(&mut self) {
+        self.backend.stop_pcm();
+    }
+
+    // -----------------------------------------------------------------------
+    // Music (D2)
+    // -----------------------------------------------------------------------
+
+    /// Puts a music clip into the cache in advance (tests, built-in tracks).
+    pub fn preload_music(&mut self, name: impl AsRef<str>, clip: WavClip) {
+        let key = self.music_key(name.as_ref());
+
+        self.music_cache.insert(key, Arc::new(clip));
+    }
+
+    /// Whether there is a music clip/file for the name.
+    pub fn has_music(&self, name: &str) -> bool {
+        self.resolve_music(name).is_some()
+    }
+
+    /// Currently requested music file name.
+    pub fn music_name(&self) -> Option<&str> {
+        self.music_name.as_deref()
+    }
+
+    /// Whether the backend still has the music track sounding.
+    ///
+    /// The silent backend cannot answer (it has no clock), so the music director only
+    /// rotates tracks when [`Self::is_audible`] is true.
+    pub fn music_playing(&self) -> bool {
+        self.music_started && self.backend.music_playing()
+    }
+
+    /// Plays a music track by tag/name with gain (`music_level / 100`).
+    ///
+    /// Music has its own volume: [`Self::set_volume`] (effects) does not change it. A
+    /// missing file is a diagnostic, never a blocking error.
+    pub fn play_music(&mut self, name: &str, gain: f32) -> bool {
+        self.stop_music();
+
+        let Some(file_name) = self.resolve_music(name) else {
+            self.push_error(format!("музыка {name:?}: нет файла или ссылки"));
+
+            return false;
+        };
+        let Some(clip) = self.music_clip_for(&file_name) else {
+            return false;
+        };
+
+        match self
+            .backend
+            .play_music(clip, gain.clamp(0.0, 1.0) * self.music_volume)
+        {
+            Ok(()) => {
+                self.music_name = Some(file_name);
+                self.music_started = true;
+                self.plays += 1;
+
+                true
+            }
+            Err(error) => {
+                self.push_error(format!("{}: {error}", self.backend.name()));
+
+                false
+            }
+        }
+    }
+
+    /// Stops the music track (the effects keep playing).
+    pub fn stop_music(&mut self) {
+        self.backend.stop_music();
+        self.music_started = false;
+        self.music_name = None;
+    }
+
+    /// Music volume 0.0..=1.0 (`music_level / 100`).
+    pub fn set_music_volume(&mut self, volume: f32) {
+        self.music_volume = volume.clamp(0.0, 1.0);
+        self.backend.set_music_volume(self.music_volume);
+    }
+
+    /// Music volume.
+    pub fn music_volume(&self) -> f32 {
+        self.music_volume
+    }
+
+    /// `tag/name` → lowercase music file name, if a clip/file exists.
+    fn resolve_music(&self, name: &str) -> Option<String> {
+        let key = self.music_key(name);
+
+        if self.music_cache.contains_key(&key) || self.files.contains_key(&key) {
+            Some(key)
+        } else {
+            None
+        }
+    }
+
+    /// Lowercase music file name: a tag with a resource reference resolves to its file,
+    /// otherwise a short name gets the `.msc` extension.
+    fn music_key(&self, name: &str) -> String {
+        let lower = name.to_ascii_lowercase();
+
+        if let Some(reference) = self.references.get(&name.to_ascii_uppercase()) {
+            return reference.clone();
+        }
+
+        if lower.ends_with(".msc") || lower.ends_with(".wav") {
+            lower
+        } else {
+            format!("{lower}.msc")
+        }
+    }
+
+    /// Gets the music clip from the cache or decodes the file.
+    ///
+    /// The `*.MSC` tracks are 14–18 MB WAV files; only preloaded/converted clips stay in
+    /// the cache, the file is read on every track change (one track at a time).
+    fn music_clip_for(&mut self, file_name: &str) -> Option<Arc<WavClip>> {
+        if let Some(clip) = self.music_cache.get(file_name) {
+            return Some(clip.clone());
+        }
+
+        let path = self.files.get(file_name)?.clone();
+
+        match WavClip::open(&path) {
+            Ok(clip) => Some(Arc::new(clip)),
+            Err(error) => {
+                self.push_error(format!("{}: {error}", path.display()));
+
+                None
+            }
+        }
+    }
+
     /// `tag/name` → lowercase file name, if it is in the cache/directory.
     fn resolve(&self, name: &str) -> Option<String> {
         let lower = name.to_ascii_lowercase();
@@ -454,6 +680,9 @@ impl fmt::Debug for AudioPlayer {
             .field("files", &self.files.len())
             .field("references", &self.references.len())
             .field("cache", &self.cache.len())
+            .field("music_cache", &self.music_cache.len())
+            .field("music_name", &self.music_name)
+            .field("music_volume", &self.music_volume)
             .field("enabled", &self.enabled)
             .field("plays", &self.plays)
             .field("errors", &self.errors.len())
@@ -472,20 +701,29 @@ mod rodio_backend {
 
     use super::{AudioBackend, PlayMode, MAX_CONCURRENT_SINKS};
 
-    /// Non-blocking rodio backend: one `Sink` per clip.
+    /// Non-blocking rodio backend: one `Sink` per clip; the movie voice and the music
+    /// track keep their own sinks (gapless chunks, independent volumes).
     pub struct RodioBackend {
         /// Keeps the cpal stream alive; on `Drop` playback stops.
         _stream: OutputStream,
         handle: OutputStreamHandle,
         sinks: Vec<Sink>,
+        /// Streaming voice of the MVE audio track (one sink, chunks are appended).
+        movie_sink: Option<Sink>,
+        /// Current music track (`D2`).
+        music_sink: Option<Sink>,
         volume: f32,
+        music_volume: f32,
     }
 
     impl fmt::Debug for RodioBackend {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.debug_struct("RodioBackend")
                 .field("sinks", &self.sinks.len())
+                .field("movie", &self.movie_sink.is_some())
+                .field("music", &self.music_sink.is_some())
                 .field("volume", &self.volume)
+                .field("music_volume", &self.music_volume)
                 .finish_non_exhaustive()
         }
     }
@@ -500,7 +738,10 @@ mod rodio_backend {
                 _stream: stream,
                 handle,
                 sinks: Vec::new(),
+                movie_sink: None,
+                music_sink: None,
                 volume: 1.0,
+                music_volume: 1.0,
             })
         }
     }
@@ -557,6 +798,69 @@ mod rodio_backend {
             for sink in &self.sinks {
                 sink.set_volume(self.volume);
             }
+        }
+
+        fn play_pcm(&mut self, clip: Arc<WavClip>, gain: f32) -> Result<(), String> {
+            // The movie audio is a stream of ~66 ms chunks: one sink, appended in order,
+            // so consecutive frames do not click and do not fight the effect limit.
+            if self.movie_sink.as_ref().is_none_or(Sink::empty) {
+                let sink = Sink::try_new(&self.handle).map_err(|error| error.to_string())?;
+
+                self.movie_sink = Some(sink);
+            }
+
+            let sink = self.movie_sink.as_mut().expect("movie sink");
+
+            sink.set_volume(gain.clamp(0.0, 1.0));
+            sink.append(SamplesBuffer::new(
+                clip.channels,
+                clip.sample_rate,
+                clip.samples.clone(),
+            ));
+
+            Ok(())
+        }
+
+        fn stop_pcm(&mut self) {
+            if let Some(sink) = self.movie_sink.take() {
+                sink.stop();
+            }
+        }
+
+        fn play_music(&mut self, clip: Arc<WavClip>, gain: f32) -> Result<(), String> {
+            self.stop_music();
+
+            let sink = Sink::try_new(&self.handle).map_err(|error| error.to_string())?;
+
+            sink.append(SamplesBuffer::new(
+                clip.channels,
+                clip.sample_rate,
+                clip.samples.clone(),
+            ));
+            sink.set_volume(self.music_volume * gain.clamp(0.0, 1.0));
+            self.music_sink = Some(sink);
+
+            Ok(())
+        }
+
+        fn stop_music(&mut self) {
+            if let Some(sink) = self.music_sink.take() {
+                sink.stop();
+            }
+        }
+
+        fn set_music_volume(&mut self, volume: f32) {
+            self.music_volume = volume.clamp(0.0, 1.0);
+
+            if let Some(sink) = &self.music_sink {
+                sink.set_volume(self.music_volume);
+            }
+        }
+
+        fn music_playing(&self) -> bool {
+            self.music_sink
+                .as_ref()
+                .is_some_and(|sink| !sink.empty())
         }
     }
 }

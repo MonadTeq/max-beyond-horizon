@@ -16,8 +16,10 @@
 //! - sounds — RIFF/WAVE `*.SPW` (PCM16) next to `MAX.RES` — module [`wav`];
 //! - FLC — Autodesk FLIC animations (`F_*` resources of MAX.RES — references to
 //!   `*.FLC` files next to the archive) — module [`flic`];
-//! - MVE — Interplay video (`INTROFLC` → `maxint.mve`) — module [`mve`];
-//! - SCE/MPS — missions; FON — fonts; MSC — music (not parsed yet).
+//! - MVE — Interplay video (`INTROFLC` → `maxint.mve`): video formats `0x06`/`0x10`/`0x11`
+//!   and the audio track (`ALLOC_AUDIO_BUFFERS`/`AUDIO_FRAME`) — module [`mve`];
+//! - SCE/MPS — missions; FON — fonts; MSC — music, ordinary PCM16 WAV
+//!   (module [`wav`], `D2` of the client).
 //!
 //! The crate parses bytes into structured data; it contains no render specifics.
 //! Format errors are returned as values ([`ResError`], [`WrlError`],
@@ -46,8 +48,10 @@ pub use flic::{
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
 pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};
 pub use mve::{
-    Mve, MveDecoder, MveError, MveInfo, DEFAULT_FRAME_DELAY_US, FILE_HEADER_SIZE, MVE_SIGNATURE,
-    OPCODE_HEADER_SIZE, PALETTE_SIZE as MVE_PALETTE_SIZE, VIDEO_HEADER_SIZE,
+    Mve, MveAudioChunk, MveAudioFormat, MveDecoder, MveError, MveInfo, AUDIO_HEADER_SIZE,
+    AUDIO_TRACKS, DEFAULT_AUDIO_FORMAT, DEFAULT_FRAME_DELAY_US, FILE_HEADER_SIZE,
+    MAX_PENDING_AUDIO_CHUNKS, MVE_SIGNATURE, OPCODE_HEADER_SIZE,
+    PALETTE_SIZE as MVE_PALETTE_SIZE, VIDEO_HEADER_SIZE,
 };
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,

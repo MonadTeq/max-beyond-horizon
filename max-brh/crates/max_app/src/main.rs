@@ -38,6 +38,10 @@ use max_app::host::{
     DEFAULT_MIN_PLAYERS,
 };
 #[cfg(feature = "sdl")]
+use max_app::music::{MusicDirector, MusicScene};
+#[cfg(feature = "sdl")]
+use max_app::subtitles::{SubtitleTrack, DEFAULT_LANGUAGE};
+#[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
 #[cfg(feature = "sdl")]
 use max_app::net::NetworkDispatcher;
@@ -933,6 +937,64 @@ fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
         .context("tokio runtime (UI)")
 }
 
+/// Loads the `Introduction` captions (C3).
+///
+/// The oracle reads the `INTROSUB` resource (an ASCIIZ file name) and opens the JSON
+/// document next to the game data (`moviesubtitle.cpp:74-100`). Game directories without
+/// the resource fall back to `<mve stem>.json` next to `MAX.RES` (the port's asset layout,
+/// e.g. `maxint.json`). Every failure is a note for the status line/log — the movie simply
+/// plays without captions.
+#[cfg(feature = "sdl")]
+fn load_intro_subtitles(
+    assets: &max_app::Assets,
+    data_dir: &std::path::Path,
+    notes: &mut Vec<String>,
+) -> Option<SubtitleTrack> {
+    let mut failure = match SubtitleTrack::load(&assets.max_res, data_dir, DEFAULT_LANGUAGE) {
+        Ok(track) => {
+            println!(
+                "UI: субтитры: {} — {} реплик из {}",
+                track.language(),
+                track.len(),
+                track
+                    .source()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default()
+            );
+
+            return Some(track);
+        }
+        Err(error) => error,
+    };
+
+    // Sidecar next to the movie (the oracle's asset directory layout): `maxint.json`.
+    let sidecar = assets.intro_mve.as_ref().and_then(|path| {
+        let candidate = path.with_extension("json");
+
+        candidate.is_file().then_some(candidate)
+    });
+
+    if let Some(path) = sidecar {
+        match SubtitleTrack::load_file(&path, DEFAULT_LANGUAGE) {
+            Ok(track) => {
+                println!(
+                    "UI: субтитры: {} — {} реплик из {} (файл рядом с MAX.RES)",
+                    track.language(),
+                    track.len(),
+                    path.display()
+                );
+
+                return Some(track);
+            }
+            Err(error) => failure = error,
+        }
+    }
+
+    notes.push(format!("субтитры: {failure} — без субтитров"));
+
+    None
+}
+
 /// SDL UI loop: window events → [`InputEvent`] → [`Screen`] → frame.
 #[cfg(feature = "sdl")]
 fn run_ui(cli: &Cli) -> Result<()> {
@@ -999,6 +1061,45 @@ fn run_ui(cli: &Cli) -> Result<()> {
     if let Some(error) = ctx.audio.errors().first() {
         eprintln!("UI: звук: {error}");
     }
+    // C3/D2: the presentation media layers. Each one is optional — a missing movie,
+    // soundtrack or subtitle file never blocks the game (owner's fallback condition),
+    // but the reason is printed and kept for the menu status line (no silent fallback).
+    let mut media_notes: Vec<String> = Vec::new();
+    let data_dir = config
+        .max_res
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    if let Some(assets) = app.assets() {
+        ctx.intro_subtitles = load_intro_subtitles(assets, &data_dir, &mut media_notes);
+    }
+    if ctx.intro_mve_path.is_none() {
+        media_notes.push("видео: maxint.mve нет рядом с MAX.RES — заглушка".to_string());
+    }
+    let mut music = MusicDirector::new();
+    if ctx.audio.is_audible() {
+        if ctx.audio.has_music(max_app::music::TRACK_MENU) {
+            println!("UI: музыка: *.MSC найдены (disable_music учитывается)");
+        } else {
+            media_notes.push("музыка: файлы *.MSC не найдены — без музыки".to_string());
+        }
+    } else {
+        media_notes.push(format!(
+            "музыка: звуковой выход недоступен ({}) — без музыки",
+            ctx.audio.backend_name()
+        ));
+    }
+    if !media_notes.is_empty() {
+        for note in &media_notes {
+            eprintln!("UI: {note}");
+        }
+
+        // The fallback is visible on the first frame too (the main menu status line),
+        // not only in the console log.
+        ctx.media_status = Some(media_notes.join("; "));
+        ctx.status = media_notes.join("; ");
+    }
+    let mut reported_music_errors = 0usize;
     let mut screen = Screen::MainMenu;
     let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
     let mut mouse: Option<(i32, i32)> = None;
@@ -1251,6 +1352,27 @@ fn run_ui(cli: &Cli) -> Result<()> {
             };
         }
 
+        // C3: the audio track of the `Introduction` movie. The chunks were decoded
+        // together with the frames; queue them in order (the oracle's `sndAdd`), gated by
+        // `disable_movie`/`movie_level`. The screen reports its own load state.
+        if let Screen::Introduction(screen) = &mut screen {
+            let enabled = app.preferences().movie_enabled() && ctx.audio.is_audible();
+            let gain = app.preferences().movie_volume();
+
+            for chunk in screen.take_audio() {
+                if enabled {
+                    ctx.audio.play_pcm(
+                        &chunk.samples,
+                        chunk.channels,
+                        chunk.sample_rate,
+                        gain,
+                    );
+                }
+            }
+        } else {
+            ctx.audio.stop_movie_audio();
+        }
+
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {
             let update = app.local_update(frame_dt);
 
@@ -1335,6 +1457,30 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // the audio layer in the same frame in which it was changed in Preferences.
         ctx.audio.set_enabled(app.sound_enabled());
         ctx.audio.set_volume(app.preferences().sound_volume());
+
+        // D2: the background music follows the screen (`MAIN_MSC` in the menu, the planet
+        // shuffle track in a match) and the facade event stream (win/lose). The director
+        // only sees `GameEvent`s — it can neither read nor mutate the simulation state.
+        let scene = match &screen {
+            Screen::InSession { .. } | Screen::GameOver => MusicScene::InGame,
+            _ => MusicScene::Menu,
+        };
+        music.set_enabled(app.preferences().music_enabled(), &mut ctx.audio);
+        music.set_volume(app.preferences().music_volume(), &mut ctx.audio);
+
+        let events = app.take_music_events();
+        let planet = app.config().planet;
+        let player_team = app.state_ref().player_team();
+        music.sync(scene, &events, player_team, planet, &mut ctx.audio);
+        music.advance_if_finished(&mut ctx.audio, planet);
+
+        if music.messages().len() > reported_music_errors {
+            for message in &music.messages()[reported_music_errors..] {
+                eprintln!("UI: {message}");
+            }
+
+            reported_music_errors = music.messages().len();
+        }
 
         if let Some(request) = pending.take() {
             if runtime.is_none() {

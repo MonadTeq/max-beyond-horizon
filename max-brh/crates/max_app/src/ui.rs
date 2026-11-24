@@ -563,6 +563,12 @@ pub struct UiContext {
     pub audio: AudioPlayer,
     /// Intro video path (`INTROFLC` → `maxint.mve`); `None` — placeholder.
     pub intro_mve_path: Option<std::path::PathBuf>,
+    /// Intro subtitles (`INTROSUB` → JSON next to `MAX.RES`); `None` — no captions.
+    pub intro_subtitles: Option<crate::subtitles::SubtitleTrack>,
+    /// Presentation media diagnostics of the launch (video/audio/subtitles/music):
+    /// shown in the menu status line and printed by the client, so a missing layer is
+    /// visible instead of silent (owner condition).
+    pub media_status: Option<String>,
     /// Current user settings (for the `Setup` dialog).
     pub preferences: Preferences,
 }
@@ -581,6 +587,8 @@ impl UiContext {
             world_dir: std::path::PathBuf::from("max-original"),
             audio: AudioPlayer::new(),
             intro_mve_path: None,
+            intro_subtitles: None,
+            media_status: None,
             preferences: Preferences::default(),
         }
     }
@@ -1402,10 +1410,27 @@ impl Screen {
                 // `Movie_PlayIntro` (`menu.cpp:2666`): the MVE video `INTROFLC`
                 // (file `maxint.mve`). Frame 0 is decoded immediately so that
                 // `shot`/`dt = 0` are deterministic; Esc/click — back to the menu.
-                let screen = intro::IntroScreen::new(ctx.intro_mve_path.clone());
+                // C3: the audio track and the `INTROSUB` captions are optional layers.
+                let screen = intro::IntroScreen::with_media(
+                    ctx.intro_mve_path.clone(),
+                    ctx.intro_subtitles.clone(),
+                );
+                let subtitles = match screen.subtitles() {
+                    Some(track) => format!(", субтитры {} ({} шт.)", track.language(), track.len()),
+                    None => ", субтитров нет".to_string(),
+                };
+                let audio = match screen.audio_format() {
+                    Some(format) => format!(
+                        ", звук {} Гц/{}/{} бит",
+                        format.sample_rate,
+                        if format.channels == 2 { "стерео" } else { "моно" },
+                        format.bits
+                    ),
+                    None => ", без звука".to_string(),
+                };
                 ctx.status = if screen.is_loaded() {
                     format!(
-                        "Introduction: maxint.mve — кадр {} (Esc)",
+                        "Introduction: maxint.mve — кадр {}{subtitles}{audio} (Esc)",
                         screen.frame_index()
                     )
                 } else if let Some(error) = screen.error() {
@@ -1413,6 +1438,9 @@ impl Screen {
                 } else {
                     "Introduction: maxint.mve не найден — Esc returns".to_string()
                 };
+                if let Some(note) = ctx.media_status.clone() {
+                    ctx.status.push_str(&format!("; {note}"));
+                }
                 *self = Self::Introduction(screen);
                 Transition::None
             }

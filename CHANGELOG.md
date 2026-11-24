@@ -2,6 +2,40 @@
 
 ### Добавлено
 
+- **C3/C4/D2 — MVE-аудио и субтитры, форматы 0x06/0x10, музыка (презентация).**
+  Три независимых подшага, каждый с fallback и без влияния на `snapshot_bytes`/CRC.
+  **C3:** `max_assets::mve` декодирует аудио-дорожку (`ALLOC_AUDIO_BUFFERS` 0x03,
+  `AUDIO_FRAME` 0x08, `SILENCE_FRAME` 0x09, `SYNCH_AUDIO` 0x04) точным портом
+  `sndDecompM16`/`sndDecompS16` (`snd_8to16`) с выбором дорожки по
+  `rm_track_bit & mask`; `MveDecoder::take_audio`/`decoder_with_track`, формат —
+  `MveInfo::audio`. `max_app::subtitles` читает `INTROSUB` из `MAX.RES`
+  (ASCIIZ-имя JSON рядом с `MAX.RES`, `moviesubtitle.cpp`) и рисует реплики как
+  `MovieSubtitle::RenderSubtitle` (шрифт 5, две строки, 90 % высоты видео, белый
+  текст с чёрной обводкой); `IntroScreen::with_media` + `take_audio`, `main.rs`
+  ставит чанки в `AudioPlayer::play_pcm` с `movie_level`/`disable_movie`.
+  **C4:** поддержаны все три видео-опкода контейнера: 0x06 (`nfDecomp` — сырые
+  блоки 8×8 без карты), 0x10 (`nfDecompChg` — карта изменений 0x0E + карта кодов
+  0x0F, неизменённые блоки копируются из `prv` после `nfAdvance`), 0x11 остаётся
+  бит-в-бит (эталонные хеши кадров 0/50/100 не изменились); формат — на кадр
+  (`MveInfo::video_formats`), новые ошибки `MissingChangeMap`/`BadChangeMap`.
+  **D2:** `max_app::music::MusicDirector` — меню `MAIN_MSC`, в партии планетный
+  трек `world/6 + SNOW_MSC` с shuffle `MAIN_MSC..BKG9_MSC`, `WINR/LOSE` по
+  `GameEvent::Turn`/`TurnNotice.status`; читает только `&[GameEvent]` из
+  отдельного курсора `App::take_music_events()` (не `GameState`), ротация —
+  собственный xorshift (не RNG симуляции); `disable_music`/`music_level` —
+  `Preferences::music_enabled/music_volume`; `*.MSC` — PCM16 WAV, ссылки из
+  `MAX.RES`; `AudioPlayer` получил `play_music/stop_music/set_music_volume` и
+  стриминговые sink'и кино/музыки в `RodioBackend`. Тесты: `mve` 11 (реальный
+  аудио-трек: 22050 Гц стерео 16-бит дельта, 1469 кадров на чанк; синтетические
+  0x06/0x10), `intro` 6, `music` 5+5, `subtitles` 5, `media_presentation` 3
+  (с/без контента — одинаковые `snapshot_bytes`/`state_digest`; слои не мутируют
+  состояние; отсутствие медиа — видимая диагностика). `cargo check --workspace`
+  и `cargo check -p max_app --features sound` — зелёные; `cargo test -p
+  max_assets -p max_core -p max_app` — 99 наборов / 1654 теста; `qa_run
+  visual-screens.qa` + `qa_golden_check` — PASS (intro/intro-logo — 0 дрейфа);
+  render-readonly и comments-language — PASS. Подробности — §45
+  `max-brh-docs/analysis/visual-1to1-status.md`.
+
 - **C1/C2 — кадры «дрели» шахты и цикл завода: закрыто по оракулу (визуал не
   менялся).** В C++-оракуле (`max-cpp-port`, `711b3de`) нет ни `frames.cpp`, ни
   `MINING_DRILL_FRAMES_ENABLED`; 16 кадров корпуса `MININGST` — это **8 клановых

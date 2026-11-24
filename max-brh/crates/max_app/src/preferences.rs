@@ -770,6 +770,26 @@ impl Preferences {
         !self.disable_voice
     }
 
+    /// Music enabled (`!disable_music`) — C++ `AUDIO_TYPE_MUSIC` (`D2`).
+    pub fn music_enabled(&self) -> bool {
+        !self.disable_music
+    }
+
+    /// Music volume 0.0..=1.0 (`music_level / 100`, `SoundManager::PlayMusic` gain).
+    pub fn music_volume(&self) -> f32 {
+        self.music_level.clamp(0, 100) as f32 / 100.0
+    }
+
+    /// Movie sound enabled (`!disable_movie`) — C++ `movie_run` (`movie_level`).
+    pub fn movie_enabled(&self) -> bool {
+        !self.disable_movie
+    }
+
+    /// Movie sound volume 0.0..=1.0 (`movie_level / 100`, `MVE_sndVolume`).
+    pub fn movie_volume(&self) -> f32 {
+        self.movie_level.clamp(0, 100) as f32 / 100.0
+    }
+
     /// SFX volume 0.0..=1.0 (`fx_sound_level / 100`).
     pub fn sound_volume(&self) -> f32 {
         self.fx_sound_level.clamp(0, 100) as f32 / 100.0

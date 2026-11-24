@@ -56,6 +56,7 @@ pub mod local;
 pub mod mem;
 pub mod menu;
 pub mod mobilize;
+pub mod music;
 pub mod net;
 pub mod overlays;
 pub mod panels;
@@ -73,6 +74,7 @@ pub mod session;
 pub mod setup;
 pub mod sfx;
 pub mod soak;
+pub mod subtitles;
 pub mod transfermenu;
 pub mod ui;
 pub mod unit_names;
@@ -148,6 +150,7 @@ pub use saveload::{
     SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
+pub use subtitles::{SubtitleEntry, SubtitleError, SubtitleTrack};
 pub use transfermenu::{TransferAction, TransferMenu, TransferMenuAssets};
 pub use ui::{
     handle_session_input, planet_cell_at, planet_cell_rect, planet_grid_rect, planet_name,
@@ -580,6 +583,9 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// decision 6): consuming turn notices cannot steal the combat sounds from
     /// [`App::universe_events`].
     turn_events: max_core::universe::EventStream,
+    /// The music layer cursor (D2): its own position in the same event buffer, so the
+    /// background music follows the match without touching the simulation state.
+    music_events: max_core::universe::EventStream,
     assets: Option<Assets>,
     viewport: Viewport,
     ticks: u64,
@@ -858,12 +864,14 @@ impl<D: Dispatcher> App<D> {
         let universe = make_universe();
         let universe_events = universe.subscribe();
         let turn_events = universe.subscribe();
+        let music_events = universe.subscribe();
 
         Self {
             config,
             universe,
             universe_events,
             turn_events,
+            music_events,
             assets: None,
             viewport,
             ticks: 0,
@@ -941,6 +949,7 @@ impl<D: Dispatcher> App<D> {
         self.universe.set_real_time(self.preferences.real_time);
         self.universe_events = self.universe.subscribe();
         self.turn_events = self.universe.subscribe();
+        self.music_events = self.universe.subscribe();
         self.ticks = 0;
         self.applied_commands = 0;
         self.hud.clear();
@@ -2499,6 +2508,18 @@ impl<D: Dispatcher> App<D> {
         }
 
         added
+    }
+
+    /// Takes the facade events for the presentation music layer (D2).
+    ///
+    /// The music director reads [`GameEvent`]s only — it never gets a [`StateRef`] or the
+    /// universe itself, so it cannot mutate the simulation. The cursor is a dedicated
+    /// position in the facade event buffer (owner decision 6): draining it here does not
+    /// steal the combat sounds or the turn notices, and the buffer is not part of
+    /// `snapshot_bytes`/CRC.
+    pub fn take_music_events(&mut self) -> Vec<GameEvent> {
+        // Disjoint field borrows: the music cursor and the facade.
+        self.music_events.drain(&mut self.universe)
     }
 
     /// Takes the combat sounds accumulated since the previous call.

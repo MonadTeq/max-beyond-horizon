@@ -23,19 +23,34 @@
 //! * if there is no data (unit tests without `MAX.RES`), it shows the former
 //!   placeholder with the `MLOGO`/`MAINPIC` background, so the screen is not empty.
 //!
-//! Audio and subtitles (`INTROSUB`, `moviesubtitle.cpp`) are not ported — this is
-//! honestly noted in `max-brh-docs/analysis/visual-1to1-status.md`.
+//! # Audio and subtitles (C3)
+//!
+//! The audio track is decoded by [`max_assets::mve`] together with the frames: the client
+//! drains [`IntroScreen::take_audio`] after every [`IntroScreen::advance`] and queues the
+//! PCM chunks on [`crate::audio::AudioPlayer`] (the same `sndAdd` order as the oracle).
+//! The decoder is track-aware (`movie_run(..., track, ...)`); the English track (0) is
+//! selected, a movie without sound simply yields no chunks.
+//!
+//! Captions come from [`crate::subtitles`] (`INTROSUB` → a JSON document next to
+//! `MAX.RES`) and are drawn like `MovieSubtitle::RenderSubtitle`: GNW font 5, centered at
+//! 90 % of the video height, two lines when the text is wider than half the frame, white
+//! text with a one-pixel black outline. Both layers are optional and never fail the
+//! screen: [`IntroScreen::with_media`] receives `None`/an empty track and the movie still
+//! plays, and the caller reports the reason in its log (fallback is visible).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use max_assets::image::BigImage;
-use max_assets::mve::{Mve, MveDecoder, MveError};
+use max_assets::mve::{Mve, MveAudioChunk, MveDecoder, MveError};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
-use max_render::text::{draw_text_gnw_centered, draw_text_gnw_centered_shadowed, GnwFontId};
+use max_render::text::{
+    draw_text_gnw, draw_text_gnw_centered, draw_text_gnw_centered_shadowed, GnwFont, GnwFontId,
+};
 
 use crate::menu::{draw_big_image, MenuAssets, TEXT};
 use crate::panels::UiPalette;
+use crate::subtitles::SubtitleTrack;
 
 /// Screen title (like the main menu button label).
 pub const INTRO_TITLE: &str = "Introduction";
@@ -190,11 +205,15 @@ fn mve_error_line(error: MveError) -> String {
 pub struct IntroScreen {
     path: Option<PathBuf>,
     state: Arc<Mutex<Playback>>,
+    /// Captions of the movie (`INTROSUB`), `None` — no subtitle data.
+    subtitles: Option<SubtitleTrack>,
 }
 
 impl PartialEq for IntroScreen {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path && Arc::ptr_eq(&self.state, &other.state)
+        self.path == other.path
+            && Arc::ptr_eq(&self.state, &other.state)
+            && self.subtitles == other.subtitles
     }
 }
 
@@ -206,6 +225,15 @@ impl IntroScreen {
     /// `path` — path to `maxint.mve` next to `MAX.RES` (see
     /// [`crate::assets::Assets::intro_mve`]); `None` — placeholder.
     pub fn new(path: Option<PathBuf>) -> Self {
+        Self::with_media(path, None)
+    }
+
+    /// Creates the screen with the optional media layers (C3): captions and audio.
+    ///
+    /// `subtitles` — [`crate::subtitles::SubtitleTrack`] loaded by the caller (the screen
+    /// does not touch `MAX.RES`); `None` — the movie plays without captions. Audio is
+    /// decoded from the container itself and drained by [`Self::take_audio`].
+    pub fn with_media(path: Option<PathBuf>, subtitles: Option<SubtitleTrack>) -> Self {
         let state = Arc::new(Mutex::new(Playback::new()));
 
         if let Some(path) = path.as_deref() {
@@ -215,12 +243,21 @@ impl IntroScreen {
                 .load(path);
         }
 
-        Self { path, state }
+        Self {
+            path,
+            state,
+            subtitles: subtitles.filter(|track| !track.is_empty()),
+        }
     }
 
     /// Path to the opened MVE (for tests/diagnostics).
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Loaded captions (`None` — no subtitle data).
+    pub fn subtitles(&self) -> Option<&SubtitleTrack> {
+        self.subtitles.as_ref()
     }
 
     /// Whether there is a decoded frame (the MVE opened).
@@ -250,6 +287,32 @@ impl IntroScreen {
             .clone()
     }
 
+    /// Audio chunks decoded since the previous call (one per movie frame).
+    ///
+    /// The caller queues them on its own device; the screen itself never plays sound.
+    /// A movie without an audio track returns an empty vector.
+    pub fn take_audio(&mut self) -> Vec<MveAudioChunk> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        match state.decoder.as_mut() {
+            Some(decoder) => decoder.take_audio(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Audio format of the movie (`None` — silent movie/no data).
+    pub fn audio_format(&self) -> Option<max_assets::mve::MveAudioFormat> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        state.decoder.as_ref().and_then(MveDecoder::audio_format)
+    }
+
     /// One video step (`dt` seconds; `dt <= 0` — freeze-frame).
     ///
     /// `true` — the video has ended, the screen should return to the menu.
@@ -268,7 +331,14 @@ impl IntroScreen {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if state.decoder.is_some() && !state.frame.is_empty() {
-            draw_video(frame, &state)
+            let rect = draw_video(frame, &state);
+            let mut painted = rect.map_or(0, |video| (video.width * video.height) as u32);
+
+            if let (Some(rect), Some(track)) = (rect, self.subtitles.as_ref()) {
+                painted = painted.saturating_add(draw_subtitles(frame, &state, rect, track));
+            }
+
+            painted
         } else {
             draw_placeholder(frame, menu)
         }
@@ -278,14 +348,17 @@ impl IntroScreen {
 /// Scales the indexed frame to 640×480 with letterbox, like
 /// `movie_cb_show_frame` + `cscale` (integer nearest-neighbor without
 /// smoothing; the background around the frame is black).
-fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> u32 {
+///
+/// Returns the rectangle the video occupies (`movie_cb_show_frame`'s
+/// `frame_offset_x/y` + `frame_width/height`) — subtitles are positioned inside it.
+fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> Option<PixelRect> {
     frame.fill(Rgba::rgb(0, 0, 0));
 
     let source_width = state.width as i32;
     let source_height = state.height as i32;
 
     if source_width <= 0 || source_height <= 0 {
-        return 0;
+        return None;
     }
 
     let screen_width = frame.width() as i32;
@@ -304,7 +377,6 @@ fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> u32 {
     let offset_y = (screen_height - target_height) / 2;
     let mx = (target_width << 16) / source_width;
     let my = (target_height << 16) / source_height;
-    let mut painted = 0u32;
 
     for source_y in 0..source_height {
         let start_y = (my * source_y) >> 16;
@@ -320,15 +392,139 @@ fn draw_video(frame: &mut RgbaBuffer, state: &Playback) -> u32 {
 
             for y in start_y..end_y {
                 for x in start_x..end_x {
-                    if frame.set(offset_x + x, offset_y + y, rgba) {
-                        painted += 1;
-                    }
+                    frame.set(offset_x + x, offset_y + y, rgba);
                 }
             }
         }
     }
 
+    Some(PixelRect::new(
+        offset_x,
+        offset_y,
+        target_width,
+        target_height,
+    ))
+}
+
+/// Vertical position of the caption block (`SUBTITLE_VERTICAL_POSITION = 0.90`).
+const SUBTITLE_VERTICAL_POSITION: f32 = 0.90;
+/// Distance from the bottom of the video (`SUBTITLE_BOTTOM_PADDING`).
+const SUBTITLE_BOTTOM_PADDING: i32 = 16;
+/// Outline width in pixels (`SUBTITLE_OUTLINE_PADDING`).
+const SUBTITLE_OUTLINE_PADDING: i32 = 2;
+/// Caption text color (`subtitle_text_color`: white).
+const SUBTITLE_TEXT_COLOR: (u8, u8, u8) = (255, 255, 255);
+/// Caption outline color (`subtitle_outline_color`: black).
+const SUBTITLE_OUTLINE_COLOR: (u8, u8, u8) = (0, 0, 0);
+
+/// Draws the caption of the currently shown frame (`MovieSubtitle::RenderSubtitle`).
+///
+/// The text is split into two lines when it is wider than half of the video
+/// (`FindBestSplitPoint`: the space closest to the middle of the string), rendered with
+/// the GNW font 5 (the oracle's `GNW_TEXT_FONT_5`), centered horizontally and at 90 % of
+/// the video height with a one-pixel black outline.
+fn draw_subtitles(
+    frame: &mut RgbaBuffer,
+    state: &Playback,
+    video: PixelRect,
+    track: &SubtitleTrack,
+) -> u32 {
+    // `movie_frame_index`: the caption of the shown frame (0-based).
+    let frame_number = state.frame_index.saturating_sub(1);
+    let Some(caption) = track.caption_for_frame(frame_number) else {
+        return 0;
+    };
+
+    let font = GnwFontId::Font5.font();
+    let text_height = font.height();
+    let (line1, line2) = split_caption(font, caption, video.width / 2);
+    let line1_width = font.text_width(&line1);
+    let line2_width = line2.as_deref().map_or(0, |line| font.text_width(line));
+    let render_width = line1_width.max(line2_width) + SUBTITLE_OUTLINE_PADDING * 2;
+    let lines = if line2.is_some() { 2 } else { 1 };
+    let render_height = text_height * lines + SUBTITLE_OUTLINE_PADDING * 2;
+
+    let mut dst_x = video.ulx + (video.width - render_width) / 2;
+    let mut dst_y = video.uly
+        + (video.height as f32 * SUBTITLE_VERTICAL_POSITION) as i32
+        - render_height / 2;
+
+    if dst_y + render_height > video.uly + video.height - SUBTITLE_BOTTOM_PADDING {
+        dst_y = video.uly + video.height - SUBTITLE_BOTTOM_PADDING - render_height;
+    }
+
+    dst_x = dst_x.max(video.ulx);
+    dst_y = dst_y.max(video.uly);
+
+    let mut painted = 0u32;
+    let outline = Rgba::rgb(
+        SUBTITLE_OUTLINE_COLOR.0,
+        SUBTITLE_OUTLINE_COLOR.1,
+        SUBTITLE_OUTLINE_COLOR.2,
+    );
+    let ink = Rgba::rgb(
+        SUBTITLE_TEXT_COLOR.0,
+        SUBTITLE_TEXT_COLOR.1,
+        SUBTITLE_TEXT_COLOR.2,
+    );
+    let mut lines_to_draw = vec![(line1, line1_width)];
+
+    if let Some(line) = line2 {
+        lines_to_draw.push((line, line2_width));
+    }
+
+    for (index, (line, width)) in lines_to_draw.iter().enumerate() {
+        let x = dst_x + SUBTITLE_OUTLINE_PADDING + (render_width - 2 * SUBTITLE_OUTLINE_PADDING - width) / 2;
+        let y = dst_y + SUBTITLE_OUTLINE_PADDING + index as i32 * text_height;
+
+        // Eight neighbours first — `cv2.offset`-style outline of `moviesubtitle.cpp`.
+        for (dx, dy) in [
+            (-1, -1),
+            (0, -1),
+            (1, -1),
+            (-1, 0),
+            (1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+        ] {
+            draw_text_gnw(frame, x + dx, y + dy, font, line, outline);
+        }
+
+        draw_text_gnw(frame, x, y, font, line, ink);
+        painted = painted.saturating_add(1);
+    }
+
     painted
+}
+
+/// Splits a caption into one or two lines (`FindBestSplitPoint`).
+fn split_caption(font: &GnwFont, caption: &str, max_width: i32) -> (String, Option<String>) {
+    if font.text_width(caption) <= max_width {
+        return (caption.to_string(), None);
+    }
+
+    let target = caption.len() / 2;
+    let mut best: Option<usize> = None;
+    let mut best_distance = usize::MAX;
+
+    for (index, _) in caption.match_indices(' ') {
+        let distance = index.abs_diff(target);
+
+        if distance < best_distance {
+            best_distance = distance;
+            best = Some(index);
+        }
+    }
+
+    match best {
+        Some(index) => (
+            caption[..index].to_string(),
+            Some(caption[index + 1..].to_string()),
+        ),
+        // No space: one clipped line, like the oracle.
+        None => (caption.to_string(), None),
+    }
 }
 
 /// The former placeholder: `MLOGO`/`MAINPIC` background + title and honest text.

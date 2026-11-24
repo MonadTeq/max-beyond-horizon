@@ -13,25 +13,49 @@
 //! inside a record — an opcode stream: u16 size, u8 opcode, u8 version, data.
 //! ```
 //!
+//! # Video formats
+//!
 //! The opcodes needed by the intro are supported: `CREATE_TIMER` (2), `INIT_VIDEO_BUFFERS`
-//! (5), `SET_PALETTE` (12), `SET_DECODING_MAP` (15), `VIDEO_DATA_11` (17),
-//! audio/unknown opcodes are skipped. Video is 8-bit indexed
-//! frames sliced into 8×8 blocks; the decoding map is one nibble per block
-//! (the low nibble is the left block, the high one the right). The block codec is an exact port of
-//! `nfPkDecomp` from `max-cpp-port/src/mvelib32.c` (0x0 — copy of the previous frame,
-//! 0x1 — of the one before, 0x2/0x3 — motion vectors, 0x4/0x5 — copy with a small
+//! (5), `SET_PALETTE` (12), `SET_DECODING_MAP` (15), `VIDEO_DATA_11` (17). Video is 8-bit
+//! indexed frames sliced into 8×8 blocks; the decoding map of `VIDEO_DATA_11` is one nibble
+//! per block (the low nibble is the left block, the high one the right). The block codec is an
+//! exact port of `nfPkDecomp` from `max-cpp-port/src/mvelib32.c` (0x0 — copy of the previous
+//! frame, 0x1 — of the one before, 0x2/0x3 — motion vectors, 0x4/0x5 — copy with a small
 //! shift, 0x7…0xF — patterns of 2/4/16/64 colors, 0x6 does not occur in M.A.X.
 //! resources and is left a no-op, as in FFmpeg). The frame's `flags & 1` flag
 //! toggles double buffering (like `nfAdvance`), so frame N is fully
 //! determined by frames N−1/N−2 — the decoder is deterministic.
 //!
-//! Audio is not decoded: sound opcodes are read and skipped (as is
-//! `sndAdd` without an audio driver). The `INTROSUB` subtitles are not overlaid either —
-//! that is a separate layer, `moviesubtitle.cpp`.
+//! All three video-data opcodes of the container are decoded (C4):
 //!
-//! Verification: `tests/mve_assets.rs` checks the metadata of the real `MAXINT.MVE`
-//! (432×320, 4391 frames, 15 FPS) and the FNV-1a hashes of frames 0/50/100 against a reference
-//! captured by a C harness over the oracle's `nfPkDecomp`.
+//! * `VIDEO_DATA_11` (0x11) — block codes from decoding map 2 (`SET_DECODING_MAP`, 0x0F);
+//!   this is the only format M.A.X. movies use (`maxint.mve`, `maxmve1/2.mve`);
+//! * `VIDEO_DATA_06` (0x06) — `nfDecomp` in the oracle: raw 8×8 blocks, no decoding map
+//!   (64 bytes of indices per block, row by row);
+//! * `VIDEO_DATA_10` (0x10) — `nfDecompChg` in the oracle: decoding map 1 (`0x0E`) is a
+//!   change mask (one bit per 8×8 block), decoding map 2 (`0x0F`) holds the block codes;
+//!   blocks with a clear change bit are kept from the previous frame.
+//!
+//! The oracle (`max-cpp-port/src/mvelib32.c`) dispatches all three opcodes but leaves
+//! `nfDecomp`/`nfDecompChg` as `\todo` stubs, and no M.A.X. resource exercises 0x06/0x10, so
+//! the reconstruction follows the documented Interplay/FFmpeg contract of those two opcodes
+//! (see [`MveInfo::video_formats`] and the `mve` tests with synthetic containers).
+//!
+//! # Audio
+//!
+//! The audio track is decoded into PCM16 chunks instead of being skipped:
+//! `ALLOC_AUDIO_BUFFERS` (3) sets the format (channels/sample rate/bits/delta compression),
+//! `AUDIO_FRAME` (8) and `SILENCE_FRAME` (9) carry one video-frame worth of sound each.
+//! The decompression is an exact port of `sndDecompM16`/`sndDecompS16` (the 8-bit delta
+//! table `snd_8to16`) and the track mask selection matches `rm_track_bit & opcode->mask`.
+//! Decoded chunks are drained with [`MveDecoder::take_audio`]; the layer itself never
+//! touches an output device (the oracle's `sndAdd` without a driver is a no-op as well).
+//! `INTROSUB` subtitles are a separate layer (`max_app::subtitles`, `moviesubtitle.cpp`).
+//!
+//! Verification: the unit tests below check the metadata of the real `MAXINT.MVE`
+//! (432×320, 4391 frames, 15 FPS), the FNV-1a hashes of frames 0/50/100 against a reference
+//! captured by a C harness over the oracle's `nfPkDecomp`, the real audio track
+//! (22050 Hz stereo 16-bit delta, one chunk per frame) and synthetic 0x06/0x10 containers.
 
 use std::fmt;
 use std::path::Path;
@@ -64,12 +88,135 @@ const CHUNK_END: u16 = 5;
 const OP_END_OF_STREAM: u8 = 0x00;
 const OP_END_OF_CHUNK: u8 = 0x01;
 const OP_CREATE_TIMER: u8 = 0x02;
+const OP_ALLOC_AUDIO_BUFFERS: u8 = 0x03;
+const OP_SYNCH_AUDIO: u8 = 0x04;
 const OP_INIT_VIDEO_BUFFERS: u8 = 0x05;
 const OP_VIDEO_DATA_06: u8 = 0x06;
+const OP_AUDIO_FRAME: u8 = 0x08;
+const OP_SILENCE_FRAME: u8 = 0x09;
 const OP_SET_PALETTE: u8 = 0x0C;
-const OP_SET_DECODING_MAP: u8 = 0x0F;
+const OP_SET_DECODING_MAP1: u8 = 0x0E;
+const OP_SET_DECODING_MAP2: u8 = 0x0F;
 const OP_VIDEO_DATA_10: u8 = 0x10;
 const OP_VIDEO_DATA_11: u8 = 0x11;
+
+/// Header of an audio opcode (`AUDIO_FRAME`/`SILENCE_FRAME`): `id`, `mask`, `length`.
+pub const AUDIO_HEADER_SIZE: usize = 6;
+/// Audio tracks of an MVE movie (`Track_English`…`Track_Spanish` in `movie.cpp`).
+pub const AUDIO_TRACKS: u8 = 5;
+/// How many decoded audio chunks the decoder keeps before the consumer drains them.
+///
+/// The frame loop drains them after every decoded frame; the cap only protects a
+/// consumer that never asks for the sound (QA/headless) from unbounded memory.
+pub const MAX_PENDING_AUDIO_CHUNKS: usize = 64;
+/// Default M.A.X. movie soundtrack format, used when the stream has no
+/// `ALLOC_AUDIO_BUFFERS` (the real files have it: stereo, 22050 Hz, 16-bit, delta).
+pub const DEFAULT_AUDIO_FORMAT: MveAudioFormat = MveAudioFormat {
+    channels: 2,
+    sample_rate: 22_050,
+    bits: 16,
+    compressed: true,
+};
+
+// ---------------------------------------------------------------------------
+// Audio
+// ---------------------------------------------------------------------------
+
+/// Audio format of an MVE movie (`ALLOC_AUDIO_BUFFERS` opcode 3).
+///
+/// The oracle passes the same bits to `sndConfigure`: `flags & 1` — stereo,
+/// `flags & 2` — 16 bit, `flags & 4` — delta compression (`snd_comp16`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MveAudioFormat {
+    /// 1 — mono, 2 — stereo.
+    pub channels: u8,
+    /// Sample rate in Hz (22050 in `maxint.mve`).
+    pub sample_rate: u32,
+    /// Bits per sample: 8 or 16.
+    pub bits: u8,
+    /// 16-bit stream is delta-compressed (`sndDecompM16`/`sndDecompS16`).
+    pub compressed: bool,
+}
+
+impl Default for MveAudioFormat {
+    fn default() -> Self {
+        DEFAULT_AUDIO_FORMAT
+    }
+}
+
+impl MveAudioFormat {
+    /// Bytes per output sample.
+    pub fn bytes_per_sample(&self) -> usize {
+        usize::from(self.bits / 8)
+    }
+
+    /// Number of PCM16 samples for `decoded_len` bytes of the stream.
+    pub fn samples_for(&self, decoded_len: usize) -> usize {
+        match self.bits {
+            8 => decoded_len,
+            _ => decoded_len / 2,
+        }
+    }
+}
+
+/// One decoded audio chunk (PCM16, interleaved) — one video frame of the track.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MveAudioChunk {
+    /// Interleaved PCM16 samples (`[L0, R0, L1, R1, …]` for stereo).
+    pub samples: Vec<i16>,
+    /// Number of channels of the track.
+    pub channels: u8,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// The chunk is a `SILENCE_FRAME` (still a chunk: the track keeps its timing).
+    pub silent: bool,
+}
+
+impl MveAudioChunk {
+    /// Number of PCM frames (samples per channel).
+    pub fn frames(&self) -> usize {
+        if self.channels == 0 {
+            0
+        } else {
+            self.samples.len() / usize::from(self.channels)
+        }
+    }
+
+    /// Duration of the chunk in seconds (0 for a broken sample rate).
+    pub fn seconds(&self) -> f32 {
+        if self.sample_rate == 0 {
+            0.0
+        } else {
+            self.frames() as f32 / self.sample_rate as f32
+        }
+    }
+}
+
+/// `snd_8to16` from `mvelib32.c`: the 8-bit delta → 16-bit step table.
+const SND_8TO16: [i16; 256] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42, 43, 47, 51, 56, 61,
+    66, 72, 79, 86, 94, 102, 112, 122, 133, 145, 158, 173,
+    189, 206, 225, 245, 267, 292, 318, 348, 379, 414, 452, 493,
+    538, 587, 640, 699, 763, 832, 908, 991, 1081, 1180, 1288, 1405,
+    1534, 1673, 1826, 1993, 2175, 2373, 2590, 2826, 3084, 3365, 3672, 4008,
+    4373, 4772, 5208, 5683, 6202, 6767, 7385, 8059, 8794, 9597, 10472, 11428,
+    12471, 13609, 14851, 16206, 17685, 19298, 21060, 22981, 25078, 27367, 29864, 32589,
+    -29973, -26728, -23186, -19322, -15105, -10503, -5481, -1, 1, 1, 5481, 10503,
+    15105, 19322, 23186, 26728, 29973, -32589, -29864, -27367, -25078, -22981, -21060, -19298,
+    -17685, -16206, -14851, -13609, -12471, -11428, -10472, -9597, -8794, -8059, -7385, -6767,
+    -6202, -5683, -5208, -4772, -4373, -4008, -3672, -3365, -3084, -2826, -2590, -2373,
+    -2175, -1993, -1826, -1673, -1534, -1405, -1288, -1180, -1081, -991, -908, -832,
+    -763, -699, -640, -587, -538, -493, -452, -414, -379, -348, -318, -292,
+    -267, -245, -225, -206, -189, -173, -158, -145, -133, -122, -112, -102,
+    -94, -86, -79, -72, -66, -61, -56, -51, -47, -43, -42, -41,
+    -40, -39, -38, -37, -36, -35, -34, -33, -32, -31, -30, -29,
+    -28, -27, -26, -25, -24, -23, -22, -21, -20, -19, -18, -17,
+    -16, -15, -14, -13, -12, -11, -10, -9, -8, -7, -6, -5,
+    -4, -3, -2, -1,
+];
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -112,6 +259,11 @@ pub enum MveError {
         /// Frame index.
         frame: usize,
     },
+    /// A `VIDEO_DATA_10` frame has no change map (`SET_DECODING_MAP1`, opcode 0x0E).
+    MissingChangeMap {
+        /// Frame index.
+        frame: usize,
+    },
     /// The frame dimensions/coordinates do not fit into the buffer.
     BadFrameRect {
         /// Frame index.
@@ -127,6 +279,15 @@ pub enum MveError {
     },
     /// The decoding map is shorter than `width*height/2` bytes.
     BadDecodingMap {
+        /// Frame index.
+        frame: usize,
+        /// Minimum required length.
+        needed: usize,
+        /// Actual length.
+        len: usize,
+    },
+    /// The change map (`SET_DECODING_MAP1`) is shorter than `width*height/8` bytes.
+    BadChangeMap {
         /// Frame index.
         frame: usize,
         /// Minimum required length.
@@ -204,6 +365,13 @@ impl fmt::Display for MveError {
                 f,
                 "кадр {frame}: карта декодирования {len} байт (нужно {needed})"
             ),
+            Self::MissingChangeMap { frame } => {
+                write!(f, "кадр {frame}: VIDEO_DATA_10 без карты изменений")
+            }
+            Self::BadChangeMap { frame, needed, len } => write!(
+                f,
+                "кадр {frame}: карта изменений {len} байт (нужно {needed})"
+            ),
             Self::TruncatedVideoHeader { frame, len } => write!(
                 f,
                 "кадр {frame}: видео-опкод {len} байт (нужен заголовок 14)"
@@ -212,7 +380,7 @@ impl fmt::Display for MveError {
                 write!(f, "кадр {frame}: поток блоков обрывается")
             }
             Self::UnsupportedVideoFormat { format } => {
-                write!(f, "формат видео 0x{format:02X} не поддержан (нужен 0x11)")
+                write!(f, "формат видео 0x{format:02X} не поддержан")
             }
             Self::UnsupportedBlock { frame, opcode } => {
                 write!(f, "кадр {frame}: неизвестный код блока {opcode}")
@@ -235,12 +403,21 @@ pub struct MveInfo {
     pub width: u16,
     /// Frame height in pixels (`height_blocks * fqty * 8`).
     pub height: u16,
-    /// Number of video frames (`VIDEO_DATA_11`).
+    /// Number of video frames (all video-data opcodes).
     pub frame_count: usize,
     /// Frame duration in microseconds (`rate * divider`).
     pub frame_delay_us: u32,
-    /// Video format (`0x11` in `maxint.mve`).
+    /// Video format of the first frame (`0x11` in `maxint.mve`).
+    ///
+    /// A container may mix formats; the decoder dispatches per frame, this field
+    /// is the file's passport (C4).
     pub video_format: u8,
+    /// Distinct video formats of the file, in order of appearance.
+    pub video_formats: [u8; 3],
+    /// How many of [`Self::video_formats`] entries are used.
+    pub video_format_count: u8,
+    /// Audio track format (`ALLOC_AUDIO_BUFFERS`), `None` — the movie is silent.
+    pub audio: Option<MveAudioFormat>,
 }
 
 impl MveInfo {
@@ -256,6 +433,16 @@ impl MveInfo {
     /// Frames per second (for logs/tests).
     pub fn frames_per_second(&self) -> f32 {
         1.0 / self.frame_delay_seconds()
+    }
+
+    /// Video formats of the file actually used by frames.
+    pub fn used_video_formats(&self) -> &[u8] {
+        &self.video_formats[..usize::from(self.video_format_count).min(3)]
+    }
+
+    /// Whether the file has an audio track.
+    pub fn has_audio(&self) -> bool {
+        self.audio.is_some()
     }
 }
 
@@ -282,17 +469,40 @@ struct FrameHeader {
 
 #[derive(Debug, Clone, Copy)]
 struct FrameSpec {
+    /// Video-data opcode (`0x06`, `0x10`, `0x11`).
+    format: u8,
+    /// Decoding map 2 (block codes) — `0x10`/`0x11`.
     map_offset: usize,
     map_len: usize,
+    /// Decoding map 1 (change mask, one bit per 8×8 block) — `0x10` only.
+    change_map_offset: usize,
+    change_map_len: usize,
     video_offset: usize,
     video_len: usize,
     header: FrameHeader,
+}
+
+/// One audio opcode (`AUDIO_FRAME`/`SILENCE_FRAME`).
+#[derive(Debug, Clone, Copy)]
+struct AudioSpec {
+    /// Absolute offset of the compressed payload (after the 6-byte header).
+    data_offset: usize,
+    /// Compressed payload length (`opcode size - 6`).
+    data_len: usize,
+    /// Decoded length in bytes from the opcode header (`length`).
+    decoded_len: usize,
+    /// Track mask (`rm_track_bit & mask` selects the language track).
+    mask: u16,
+    /// `SILENCE_FRAME` — the chunk carries no payload.
+    silent: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Event {
     Palette(PaletteUpdate),
     Frame(FrameSpec),
+    AudioFormat(MveAudioFormat),
+    Audio(AudioSpec),
 }
 
 #[derive(Debug)]
@@ -350,8 +560,13 @@ impl Mve {
         let mut height = 0u16;
         let mut frame_count = 0usize;
         let mut frame_delay_us = 0u32;
-        let mut video_format = 0u8;
+        let mut video_formats = [0u8; 3];
+        let mut video_format_count = 0u8;
+        let mut audio: Option<MveAudioFormat> = None;
+        // Decoding map 2 (`SET_DECODING_MAP`, opcode 0x0F): block codes of 0x10/0x11.
         let mut map: Option<(usize, usize)> = None;
+        // Decoding map 1 (`SET_DECODING_MAP1`, opcode 0x0E): change mask of 0x10.
+        let mut change_map: Option<(usize, usize)> = None;
         let mut offset = FILE_HEADER_SIZE;
         let mut end_of_stream = false;
 
@@ -434,6 +649,28 @@ impl Mve {
                             frame_delay_us = rate.saturating_mul(u32::from(divider));
                         }
                     }
+                    OP_ALLOC_AUDIO_BUFFERS => {
+                        // Version 0 and 1 share the first 6 bytes: flags, sample rate.
+                        // `sndConfigure`: bit0 stereo, bit1 16 bit, bit2 delta compression.
+                        if opcode_size >= 6 {
+                            let flags =
+                                u16::from_le_bytes([data[data_start + 2], data[data_start + 3]]);
+                            let sample_rate =
+                                u16::from_le_bytes([data[data_start + 4], data[data_start + 5]]);
+                            let format = MveAudioFormat {
+                                channels: if flags & 0x01 != 0 { 2 } else { 1 },
+                                sample_rate: u32::from(sample_rate),
+                                bits: if flags & 0x02 != 0 { 16 } else { 8 },
+                                compressed: flags & 0x04 != 0,
+                            };
+
+                            audio = Some(format);
+                            events.push(Event::AudioFormat(format));
+                        }
+                    }
+                    OP_SYNCH_AUDIO => {
+                        // The oracle calls `sndSync`: a presentation clock marker only.
+                    }
                     OP_INIT_VIDEO_BUFFERS => {
                         if opcode_size >= 6 {
                             let width_blocks =
@@ -468,8 +705,29 @@ impl Mve {
                             }
                         }
                     }
-                    OP_SET_DECODING_MAP => {
+                    OP_SET_DECODING_MAP1 => {
+                        change_map = Some((data_start, opcode_size));
+                    }
+                    OP_SET_DECODING_MAP2 => {
                         map = Some((data_start, opcode_size));
+                    }
+                    OP_AUDIO_FRAME | OP_SILENCE_FRAME => {
+                        // `MveOpcodeAudioFrame`: id u16, mask u16, length u16, data.
+                        if opcode_size >= AUDIO_HEADER_SIZE {
+                            let mask =
+                                u16::from_le_bytes([data[data_start + 2], data[data_start + 3]]);
+                            let decoded_len =
+                                u16::from_le_bytes([data[data_start + 4], data[data_start + 5]])
+                                    as usize;
+
+                            events.push(Event::Audio(AudioSpec {
+                                data_offset: data_start + AUDIO_HEADER_SIZE,
+                                data_len: opcode_size - AUDIO_HEADER_SIZE,
+                                decoded_len,
+                                mask,
+                                silent: opcode == OP_SILENCE_FRAME,
+                            }));
+                        }
                     }
                     OP_VIDEO_DATA_11 | OP_VIDEO_DATA_10 | OP_VIDEO_DATA_06 => {
                         if opcode_size < VIDEO_HEADER_SIZE {
@@ -479,36 +737,59 @@ impl Mve {
                             });
                         }
 
-                        if opcode != OP_VIDEO_DATA_11 {
-                            video_format = opcode;
-                            // Formats 0x10/0x06 do not occur in M.A.X. resources.
-                            // Remember the frame to report an error during decoding.
-                            let (map_offset, map_len) = map.unwrap_or((data_start, 0));
-                            events.push(Event::Frame(FrameSpec {
-                                map_offset,
-                                map_len,
-                                video_offset: data_start,
-                                video_len: opcode_size,
-                                header: parse_frame_header(&data, data_start),
-                            }));
-                            frame_count += 1;
-                            pos = data_end;
-                            continue;
+                        // `nfDecomp` (0x06) has no decoding map; `nfDecompChg` (0x10) needs
+                        // the change map (0x0E) and the block-code map (0x0F); `nfPkDecomp`
+                        // (0x11) needs the block-code map only.
+                        let (map_offset, map_len, change_map_offset, change_map_len) =
+                            match opcode {
+                                OP_VIDEO_DATA_06 => (data_start, 0, data_start, 0),
+                                OP_VIDEO_DATA_10 => {
+                                    let Some((map_offset, map_len)) = map else {
+                                        return Err(MveError::MissingDecodingMap {
+                                            frame: frame_count,
+                                        });
+                                    };
+                                    let Some((change_offset, change_len)) = change_map else {
+                                        return Err(MveError::MissingChangeMap {
+                                            frame: frame_count,
+                                        });
+                                    };
+
+                                    (map_offset, map_len, change_offset, change_len)
+                                }
+                                _ => {
+                                    let Some((map_offset, map_len)) = map else {
+                                        return Err(MveError::MissingDecodingMap {
+                                            frame: frame_count,
+                                        });
+                                    };
+
+                                    (map_offset, map_len, data_start, 0)
+                                }
+                            };
+
+                        if video_format_count == 0 {
+                            video_formats[0] = opcode;
+                            video_format_count = 1;
+                        } else if !video_formats[..usize::from(video_format_count)]
+                            .contains(&opcode)
+                            && usize::from(video_format_count) < video_formats.len()
+                        {
+                            video_formats[usize::from(video_format_count)] = opcode;
+                            video_format_count += 1;
                         }
 
-                        let Some((map_offset, map_len)) = map else {
-                            return Err(MveError::MissingDecodingMap { frame: frame_count });
-                        };
-
                         events.push(Event::Frame(FrameSpec {
+                            format: opcode,
                             map_offset,
                             map_len,
+                            change_map_offset,
+                            change_map_len,
                             video_offset: data_start,
                             video_len: opcode_size,
                             header: parse_frame_header(&data, data_start),
                         }));
                         frame_count += 1;
-                        video_format = OP_VIDEO_DATA_11;
                     }
                     _ => {}
                 }
@@ -540,7 +821,10 @@ impl Mve {
                     height,
                     frame_count,
                     frame_delay_us,
-                    video_format,
+                    video_format: video_formats[0],
+                    video_formats,
+                    video_format_count,
+                    audio,
                 },
             }),
         })
@@ -554,6 +838,15 @@ impl Mve {
     /// Creates a decoder with zeroed frames and the initial palette
     /// (`movie_init_palette`: all black, index 255 = 50/50/50).
     pub fn decoder(&self) -> MveDecoder {
+        self.decoder_with_track(0)
+    }
+
+    /// Creates a decoder with an audio track selected (`movie_run(..., track, ...)`).
+    ///
+    /// `track` is `1 << track` against the `mask` of an audio frame, exactly like
+    /// `rm_track_bit` in `MVELIB32.c` (`Track_English` = 0 in `movie.cpp`).
+    /// A track without sound in the container stays silent — the video still plays.
+    pub fn decoder_with_track(&self, track: u8) -> MveDecoder {
         let width = usize::from(self.inner.info.width);
         let height = usize::from(self.inner.info.height);
         let mut palette = [[0u8; 3]; PALETTE_SIZE];
@@ -568,6 +861,11 @@ impl Mve {
             prv: vec![0u8; width * height],
             palette,
             finished: false,
+            track: track % AUDIO_TRACKS,
+            audio_format: self.inner.info.audio,
+            pending_audio: Vec::new(),
+            dropped_audio: 0,
+            audio_events_without_format: 0,
         }
     }
 }
@@ -610,6 +908,16 @@ pub struct MveDecoder {
     prv: Vec<u8>,
     palette: [[u8; 3]; PALETTE_SIZE],
     finished: bool,
+    /// Language track (`1 << track` against the audio-frame mask).
+    track: u8,
+    /// Audio format of the current record (`ALLOC_AUDIO_BUFFERS`).
+    audio_format: Option<MveAudioFormat>,
+    /// Decoded audio chunks the consumer has not taken yet.
+    pending_audio: Vec<MveAudioChunk>,
+    /// Audio chunks dropped by the [`MAX_PENDING_AUDIO_CHUNKS`] cap.
+    dropped_audio: usize,
+    /// Audio frames that arrived before any `ALLOC_AUDIO_BUFFERS`.
+    audio_events_without_format: usize,
 }
 
 impl MveDecoder {
@@ -633,7 +941,40 @@ impl MveDecoder {
         self.finished
     }
 
+    /// Selected audio track (`0` — English, as `movie_get_track_for_language`).
+    pub fn track(&self) -> u8 {
+        self.track
+    }
+
+    /// Audio format seen by the decoder so far.
+    pub fn audio_format(&self) -> Option<MveAudioFormat> {
+        self.audio_format
+    }
+
+    /// Decoded audio chunks accumulated since the previous call.
+    ///
+    /// The chunks belong to the video frames decoded since the previous
+    /// [`Self::take_audio`] (one chunk per frame in the M.A.X. movies); the
+    /// caller schedules them on its own clock, the decoder has none.
+    pub fn take_audio(&mut self) -> Vec<MveAudioChunk> {
+        std::mem::take(&mut self.pending_audio)
+    }
+
+    /// Audio chunks dropped because the consumer did not drain them
+    /// (bounded memory; a non-zero value is a presentation diagnostic).
+    pub fn dropped_audio_chunks(&self) -> usize {
+        self.dropped_audio
+    }
+
+    /// Audio frames skipped because the stream had no `ALLOC_AUDIO_BUFFERS`.
+    pub fn audio_events_without_format(&self) -> usize {
+        self.audio_events_without_format
+    }
+
     /// Decodes the next frame. `Ok(None)` — the file has ended.
+    ///
+    /// Audio opcodes met on the way are decoded into [`Self::take_audio`]; they
+    /// never fail the video stream.
     pub fn next_frame(&mut self) -> Result<Option<&[u8]>, MveError> {
         loop {
             if self.event >= self.inner.events.len() {
@@ -648,6 +989,8 @@ impl MveDecoder {
 
             match event {
                 Event::Palette(update) => self.apply_palette(update),
+                Event::AudioFormat(format) => self.audio_format = Some(format),
+                Event::Audio(spec) => self.decode_audio(spec),
                 Event::Frame(frame) => {
                     let inner = Arc::clone(&self.inner);
 
@@ -657,6 +1000,47 @@ impl MveDecoder {
                 }
             }
         }
+    }
+
+    /// Decodes one audio opcode into PCM16 (`sndAdd` without the device).
+    fn decode_audio(&mut self, spec: AudioSpec) {
+        // `if (rm_track_bit & opcode->mask)` — the same gate for sound and silence.
+        if u16::from(1u8 << self.track.min(15)) & spec.mask == 0 {
+            return;
+        }
+
+        let Some(format) = self.audio_format else {
+            self.audio_events_without_format += 1;
+
+            return;
+        };
+
+        let samples = if spec.silent {
+            vec![0i16; format.samples_for(spec.decoded_len)]
+        } else {
+            let data = &self.inner.data;
+            let start = spec.data_offset;
+            let end = start.saturating_add(spec.data_len).min(data.len());
+
+            if start >= data.len() || end < start {
+                return;
+            }
+
+            decode_pcm(format, &data[start..end], spec.decoded_len)
+        };
+
+        if self.pending_audio.len() >= MAX_PENDING_AUDIO_CHUNKS {
+            self.dropped_audio += 1;
+
+            return;
+        }
+
+        self.pending_audio.push(MveAudioChunk {
+            samples,
+            channels: format.channels,
+            sample_rate: format.sample_rate,
+            silent: spec.silent,
+        });
     }
 
     fn apply_palette(&mut self, update: PaletteUpdate) {
@@ -690,9 +1074,12 @@ impl MveDecoder {
         let height = usize::from(info.height);
         let header = frame.header;
 
-        if info.video_format != OP_VIDEO_DATA_11 {
+        if !matches!(
+            frame.format,
+            OP_VIDEO_DATA_06 | OP_VIDEO_DATA_10 | OP_VIDEO_DATA_11
+        ) {
             return Err(MveError::UnsupportedVideoFormat {
-                format: info.video_format,
+                format: frame.format,
             });
         }
 
@@ -722,15 +1109,20 @@ impl MveDecoder {
         }
 
         let map_end = frame.map_offset + frame.map_len;
+        let change_map_end = frame.change_map_offset + frame.change_map_len;
         let video_end = frame.video_offset + frame.video_len;
 
-        if map_end > inner.data.len() || video_end > inner.data.len() {
+        if map_end > inner.data.len()
+            || change_map_end > inner.data.len()
+            || video_end > inner.data.len()
+        {
             return Err(MveError::TruncatedVideo {
                 frame: self.frame_index,
             });
         }
 
         let map = &inner.data[frame.map_offset..map_end];
+        let change_map = &inner.data[frame.change_map_offset..change_map_end];
         let video = &inner.data[frame.video_offset..video_end];
 
         if video.len() < VIDEO_HEADER_SIZE {
@@ -740,53 +1132,295 @@ impl MveDecoder {
             });
         }
 
-        let needed = usize::from(header.width) * usize::from(header.height) / 2;
+        let blocks = usize::from(header.width) * usize::from(header.height);
 
-        if map.len() < needed {
+        if frame.format != OP_VIDEO_DATA_06 && map.len() < blocks / 2 {
             return Err(MveError::BadDecodingMap {
                 frame: self.frame_index,
-                needed,
+                needed: blocks / 2,
                 len: map.len(),
             });
+        }
+
+        if frame.format == OP_VIDEO_DATA_10 {
+            let needed = blocks.div_ceil(8);
+
+            if change_map.len() < needed {
+                return Err(MveError::BadChangeMap {
+                    frame: self.frame_index,
+                    needed,
+                    len: change_map.len(),
+                });
+            }
         }
 
         if header.flags & 0x01 != 0 {
             std::mem::swap(&mut self.cur, &mut self.prv);
         }
 
-        let mut cursor = VideoCursor::new(&video[VIDEO_HEADER_SIZE..], self.frame_index);
-        let mut pattern = PatternScratch::new();
-        let mut map_pos = 0usize;
-
-        for block_y in 0..usize::from(header.height) {
-            for pair in 0..usize::from(header.width) / 2 {
-                let byte = map[map_pos];
-
-                map_pos += 1;
-
-                for (offset, opcode) in [(0usize, byte & 0x0F), (1usize, byte >> 4)] {
-                    let block_x = pair * 2 + offset;
-
-                    decode_block(
-                        opcode,
-                        self.frame_index,
-                        block_x,
-                        block_y,
-                        &header,
-                        width,
-                        &mut self.cur,
-                        &self.prv,
-                        &mut cursor,
-                        &mut pattern,
-                    )?;
-                }
-            }
+        match frame.format {
+            OP_VIDEO_DATA_06 => decode_raw_frame(
+                &video[VIDEO_HEADER_SIZE..],
+                self.frame_index,
+                &header,
+                width,
+                &mut self.cur,
+            )?,
+            OP_VIDEO_DATA_10 => decode_change_frame(
+                map,
+                change_map,
+                &video[VIDEO_HEADER_SIZE..],
+                self.frame_index,
+                &header,
+                width,
+                &mut self.cur,
+                &self.prv,
+            )?,
+            _ => decode_block_frame(
+                map,
+                &video[VIDEO_HEADER_SIZE..],
+                self.frame_index,
+                &header,
+                width,
+                &mut self.cur,
+                &self.prv,
+            )?,
         }
 
         self.frame_index += 1;
 
         Ok(())
     }
+}
+
+/// `VIDEO_DATA_11` — `nfPkDecomp`: block codes from decoding map 2.
+#[allow(clippy::too_many_arguments)]
+fn decode_block_frame(
+    map: &[u8],
+    stream: &[u8],
+    frame: usize,
+    header: &FrameHeader,
+    stride: usize,
+    cur: &mut [u8],
+    prv: &[u8],
+) -> Result<(), MveError> {
+    let mut cursor = VideoCursor::new(stream, frame);
+    let mut pattern = PatternScratch::new();
+    let mut map_pos = 0usize;
+
+    for block_y in 0..usize::from(header.height) {
+        for pair in 0..usize::from(header.width) / 2 {
+            let byte = map[map_pos];
+
+            map_pos += 1;
+
+            for (offset, opcode) in [(0usize, byte & 0x0F), (1usize, byte >> 4)] {
+                let block_x = pair * 2 + offset;
+
+                decode_block(
+                    opcode,
+                    frame,
+                    block_x,
+                    block_y,
+                    header,
+                    stride,
+                    cur,
+                    prv,
+                    &mut cursor,
+                    &mut pattern,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// `VIDEO_DATA_06` — `nfDecomp`: raw 8×8 blocks without a decoding map.
+///
+/// The oracle dispatches the opcode to `nfDecomp` (a `\todo` stub there); the payload is
+/// the literal block stream of the Interplay container: 64 palette indices per block,
+/// row by row, blocks in the same order as the decoding map of `VIDEO_DATA_11`.
+fn decode_raw_frame(
+    stream: &[u8],
+    frame: usize,
+    header: &FrameHeader,
+    stride: usize,
+    cur: &mut [u8],
+) -> Result<(), MveError> {
+    let mut offset = 0usize;
+
+    for block_y in 0..usize::from(header.height) {
+        for block_x in 0..usize::from(header.width) {
+            let dst = block_offset(header, block_x, block_y, stride);
+            let end = offset + 64;
+
+            let Some(block) = stream.get(offset..end) else {
+                return Err(MveError::TruncatedVideo { frame });
+            };
+
+            for row in 0..BLOCK_SIZE {
+                let at = dst + row * stride;
+
+                if at + BLOCK_SIZE <= cur.len() {
+                    cur[at..at + BLOCK_SIZE]
+                        .copy_from_slice(&block[row * BLOCK_SIZE..row * BLOCK_SIZE + BLOCK_SIZE]);
+                }
+            }
+
+            offset = end;
+        }
+    }
+
+    Ok(())
+}
+
+/// `VIDEO_DATA_10` — `nfDecompChg`: only the blocks with a set change bit are decoded.
+///
+/// Decoding map 1 (opcode 0x0E) is the change mask — one bit per 8×8 block in row-major
+/// order, bit 0 of a byte is the earlier block. The block codes come from decoding map 2
+/// (opcode 0x0F), the same nibble-pair layout as `VIDEO_DATA_11` (low nibble — the left
+/// block of the pair). Blocks with a clear bit are copied from the previous frame, exactly
+/// what `nfAdvance` + `nfDecompChg` do in the oracle (the double buffer after the swap
+/// holds the frame before the last one, so the copy source is `prv`).
+#[allow(clippy::too_many_arguments)]
+fn decode_change_frame(
+    map: &[u8],
+    change_map: &[u8],
+    stream: &[u8],
+    frame: usize,
+    header: &FrameHeader,
+    stride: usize,
+    cur: &mut [u8],
+    prv: &[u8],
+) -> Result<(), MveError> {
+    let mut cursor = VideoCursor::new(stream, frame);
+    let mut pattern = PatternScratch::new();
+    let blocks_x = usize::from(header.width);
+
+    for block_y in 0..usize::from(header.height) {
+        for block_x in 0..blocks_x {
+            let block = block_y * blocks_x + block_x;
+
+            if change_map[block / 8] & (1 << (block % 8)) == 0 {
+                // The block did not change: take it from the previous frame. The
+                // double buffer after `nfAdvance` holds the frame *before* the last
+                // one, so the block is copied from `prv` (the last shown frame).
+                let dst = block_offset(header, block_x, block_y, stride);
+
+                copy_block(cur, dst, prv, dst as isize, stride);
+                continue;
+            }
+
+            let pair_byte = map[block_y * blocks_x / 2 + block_x / 2];
+            let opcode = if block_x % 2 == 0 {
+                pair_byte & 0x0F
+            } else {
+                pair_byte >> 4
+            };
+
+            decode_block(
+                opcode,
+                frame,
+                block_x,
+                block_y,
+                header,
+                stride,
+                cur,
+                prv,
+                &mut cursor,
+                &mut pattern,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Decodes the payload of `AUDIO_FRAME` into PCM16 (an exact port of `sndAdd` +
+/// `sndDecompM16`/`sndDecompS16`).
+///
+/// 16-bit delta streams: two initial samples (left, then right for stereo), then one
+/// byte per sample added through the oracle's `snd_8to16` table. Uncompressed 8-bit
+/// PCM is converted to signed 16-bit exactly as miniaudio would play unsigned 8-bit
+/// samples (the oracle hands the raw bytes to the device).
+fn decode_pcm(format: MveAudioFormat, input: &[u8], decoded_len: usize) -> Vec<i16> {
+    let samples = format.samples_for(decoded_len);
+
+    if format.bits == 8 {
+        return input
+            .iter()
+            .map(|&byte| (i16::from(byte) - 128) * 256)
+            .collect();
+    }
+
+    if !format.compressed {
+        return input
+            .chunks_exact(2)
+            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+    }
+
+    let mut out = Vec::with_capacity(samples);
+
+    if format.channels >= 2 {
+        // `sndDecompS16`: left/right alternate, the first two 16-bit values are absolute.
+        if input.len() < 4 {
+            return out;
+        }
+
+        let mut left = i16::from_le_bytes([input[0], input[1]]);
+        let mut right = i16::from_le_bytes([input[2], input[3]]);
+
+        out.push(left);
+        out.push(right);
+
+        let mut index = 4usize;
+
+        while out.len() < samples {
+            let Some(&delta) = input.get(index) else {
+                break;
+            };
+
+            left = left.wrapping_add(SND_8TO16[usize::from(delta)]);
+            out.push(left);
+            index += 1;
+
+            if out.len() >= samples {
+                break;
+            }
+
+            let Some(&delta) = input.get(index) else {
+                break;
+            };
+
+            right = right.wrapping_add(SND_8TO16[usize::from(delta)]);
+            out.push(right);
+            index += 1;
+        }
+    } else {
+        // `sndDecompM16`: one absolute sample, then one delta byte per sample.
+        if input.len() < 2 {
+            return out;
+        }
+
+        let mut left = i16::from_le_bytes([input[0], input[1]]);
+
+        out.push(left);
+
+        for &delta in &input[2..] {
+            if out.len() >= samples {
+                break;
+            }
+
+            left = left.wrapping_add(SND_8TO16[usize::from(delta)]);
+            out.push(left);
+        }
+    }
+
+    out.truncate(samples);
+
+    out
 }
 
 /// Cursor over the compressed block stream of a frame.
@@ -1903,6 +2537,384 @@ mod tests {
 
     fn real_mve_path() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAXINT.MVE")
+    }
+
+    /// One opcode: `u16 size`, `u8 opcode`, `u8 version`, body.
+    fn opcode(opcode: u8, body: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + body.len());
+
+        out.extend_from_slice(&(body.len() as u16).to_le_bytes());
+        out.push(opcode);
+        out.push(0);
+        out.extend_from_slice(body);
+
+        out
+    }
+
+    /// One container record: `u16 size`, `u16 type`, payload.
+    fn chunk(kind: u16, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + payload.len());
+
+        out.extend_from_slice(&(payload.len() as u16).to_le_bytes());
+        out.extend_from_slice(&kind.to_le_bytes());
+        out.extend_from_slice(payload);
+
+        out
+    }
+
+    /// A synthetic container: the real 26-byte header + the given records + END.
+    fn container(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut file = Vec::new();
+
+        file.extend_from_slice(MVE_SIGNATURE);
+        file.push(0);
+        file.extend_from_slice(&0x001Au16.to_le_bytes());
+        file.extend_from_slice(&0x0100u16.to_le_bytes());
+        file.extend_from_slice(&expected_checksum(0x0100).to_le_bytes());
+        assert_eq!(file.len(), FILE_HEADER_SIZE);
+
+        for record in records {
+            file.extend_from_slice(record);
+        }
+
+        file.extend_from_slice(&0u16.to_le_bytes());
+        file.extend_from_slice(&CHUNK_END.to_le_bytes());
+
+        file
+    }
+
+    /// `INIT_VIDEO_BUFFERS`: width/height in 8×8 blocks.
+    fn init_video(width_blocks: u16, height_blocks: u16) -> Vec<u8> {
+        let mut body = Vec::new();
+
+        body.extend_from_slice(&width_blocks.to_le_bytes());
+        body.extend_from_slice(&height_blocks.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes());
+        body.extend_from_slice(&0u16.to_le_bytes());
+
+        opcode(OP_INIT_VIDEO_BUFFERS, &body)
+    }
+
+    /// A video-data opcode with the 14-byte frame header.
+    fn video_frame(opcode_id: u8, width_blocks: u16, height_blocks: u16, flags: u16, data: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+
+        for _ in 0..2 {
+            body.extend_from_slice(&0u16.to_le_bytes());
+        }
+        body.extend_from_slice(&0u16.to_le_bytes()); // x
+        body.extend_from_slice(&0u16.to_le_bytes()); // y
+        body.extend_from_slice(&width_blocks.to_le_bytes());
+        body.extend_from_slice(&height_blocks.to_le_bytes());
+        body.extend_from_slice(&flags.to_le_bytes());
+        body.extend_from_slice(data);
+
+        opcode(opcode_id, &body)
+    }
+
+    #[test]
+    fn decodes_raw_video_data_06() {
+        // 2×1 blocks = 16×8 pixels. `nfDecomp`: 64 raw indices per block.
+        let mut data = vec![0x11u8; 64];
+        data.extend_from_slice(&[0x22u8; 64]);
+
+        let file = container(&[
+            chunk(
+                CHUNK_INIT_VIDEO,
+                &[init_video(2, 1), video_frame(OP_VIDEO_DATA_06, 2, 1, 0, &data)]
+                    .concat(),
+            ),
+        ]);
+
+        let mve = Mve::parse(file).expect("0x06 container");
+        let info = mve.info();
+
+        assert_eq!((info.width, info.height), (16, 8));
+        assert_eq!(info.video_format, OP_VIDEO_DATA_06);
+        assert_eq!(info.used_video_formats(), [OP_VIDEO_DATA_06]);
+        assert_eq!(info.frame_count, 1);
+
+        let mut decoder = mve.decoder();
+        let frame = decoder.next_frame().expect("frame").expect("frame 0");
+
+        assert_eq!(frame.len(), 16 * 8);
+        assert!(frame[..8].iter().all(|&pixel| pixel == 0x11));
+        assert!(frame[8..16].iter().all(|&pixel| pixel == 0x22));
+        assert!(decoder.next_frame().expect("end").is_none());
+    }
+
+    #[test]
+    fn decodes_change_map_video_data_10() {
+        // Frame 0 (`0x11`): both blocks solid, codes 0xE (no stream), colors from data.
+        // Frame 1 (`0x10`, flags 0x01): only block 1 changed, block 0 keeps frame 0.
+        let mut init = init_video(2, 1);
+        let mut map = opcode(OP_SET_DECODING_MAP2, &[0xEE]);
+        let mut change = opcode(OP_SET_DECODING_MAP1, &[0b10]);
+
+        init.append(&mut map);
+        init.append(&mut change);
+
+        let frame0 = video_frame(OP_VIDEO_DATA_11, 2, 1, 0, &[0x11, 0x22]);
+        let frame1 = video_frame(OP_VIDEO_DATA_10, 2, 1, 0x01, &[0x44]);
+
+        let file = container(&[chunk(CHUNK_INIT_VIDEO, &[init].concat()), chunk(CHUNK_VIDEO, &[frame0].concat()), chunk(CHUNK_VIDEO, &[frame1].concat())]);
+
+        let mve = Mve::parse(file).expect("0x10 container");
+        let info = mve.info();
+
+        assert_eq!(info.frame_count, 2);
+        assert_eq!(info.video_format, OP_VIDEO_DATA_11);
+        assert_eq!(
+            info.used_video_formats(),
+            [OP_VIDEO_DATA_11, OP_VIDEO_DATA_10]
+        );
+
+        let mut decoder = mve.decoder();
+        let frame = decoder.next_frame().expect("frame 0").expect("frame 0");
+        assert!(frame[..8].iter().all(|&pixel| pixel == 0x11));
+        assert!(frame[8..16].iter().all(|&pixel| pixel == 0x22));
+
+        let frame = decoder.next_frame().expect("frame 1").expect("frame 1");
+        // Block 0: the change bit is clear — the previous frame is kept.
+        assert!(frame[..8].iter().all(|&pixel| pixel == 0x11));
+        // Block 1: the change bit is set — decoded from the block code map.
+        assert!(frame[8..16].iter().all(|&pixel| pixel == 0x44));
+    }
+
+    #[test]
+    fn video_data_10_without_change_map_is_an_error() {
+        let mut init = init_video(2, 1);
+        let mut map = opcode(OP_SET_DECODING_MAP2, &[0xEE]);
+
+        init.append(&mut map);
+
+        let file = container(&[chunk(
+            CHUNK_INIT_VIDEO,
+            &[init, video_frame(OP_VIDEO_DATA_10, 2, 1, 0, &[0x11])].concat(),
+        )]);
+
+        assert!(matches!(
+            Mve::parse(file),
+            Err(MveError::MissingChangeMap { frame: 0 })
+        ));
+    }
+
+    #[test]
+    fn video_data_10_with_a_short_change_map_is_an_error() {
+        let mut init = init_video(2, 1);
+        let mut map = opcode(OP_SET_DECODING_MAP2, &[0xEE]);
+        let mut change = opcode(OP_SET_DECODING_MAP1, &[]);
+
+        init.append(&mut map);
+        init.append(&mut change);
+
+        let file = container(&[chunk(
+            CHUNK_INIT_VIDEO,
+            &[init, video_frame(OP_VIDEO_DATA_10, 2, 1, 0x01, &[0x11])].concat(),
+        )]);
+        let mve = Mve::parse(file).expect("container");
+
+        assert!(matches!(
+            mve.decoder().next_frame(),
+            Err(MveError::BadChangeMap { frame: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn truncated_raw_video_is_an_error_without_a_panic() {
+        // A 2×1-block frame needs 128 bytes of raw indices; give it 64.
+        let file = container(&[chunk(
+            CHUNK_INIT_VIDEO,
+            &[
+                init_video(2, 1),
+                video_frame(OP_VIDEO_DATA_06, 2, 1, 0, &[0x33u8; 64]),
+            ]
+            .concat(),
+        )]);
+        let mve = Mve::parse(file).expect("container");
+
+        assert!(matches!(
+            mve.decoder().next_frame(),
+            Err(MveError::TruncatedVideo { frame: 0 })
+        ));
+    }
+
+    /// `ALLOC_AUDIO_BUFFERS` (version 1): unused u16, flags u16, rate u16, min size u32.
+    fn alloc_audio(flags: u16, sample_rate: u16) -> Vec<u8> {
+        let mut body = Vec::new();
+
+        body.extend_from_slice(&0u16.to_le_bytes());
+        body.extend_from_slice(&flags.to_le_bytes());
+        body.extend_from_slice(&sample_rate.to_le_bytes());
+        body.extend_from_slice(&88200u32.to_le_bytes());
+
+        opcode(OP_ALLOC_AUDIO_BUFFERS, &body)
+    }
+
+    fn audio_frame(mask: u16, decoded_len: u16, data: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+
+        body.extend_from_slice(&0u16.to_le_bytes());
+        body.extend_from_slice(&mask.to_le_bytes());
+        body.extend_from_slice(&decoded_len.to_le_bytes());
+        body.extend_from_slice(data);
+
+        opcode(OP_AUDIO_FRAME, &body)
+    }
+
+    fn silence_frame(mask: u16, decoded_len: u16) -> Vec<u8> {
+        let mut body = Vec::new();
+
+        body.extend_from_slice(&0u16.to_le_bytes());
+        body.extend_from_slice(&mask.to_le_bytes());
+        body.extend_from_slice(&decoded_len.to_le_bytes());
+
+        opcode(OP_SILENCE_FRAME, &body)
+    }
+
+    #[test]
+    fn decodes_compressed_stereo_audio_and_the_track_mask() {
+        // flags: stereo | 16 bit | delta compression.
+        let flags = 0x07;
+        // 6 samples (3 stereo frames): initial L=-2, R=1, then deltas 1,2,3,4.
+        let mut data = Vec::new();
+        data.extend_from_slice(&(-2i16).to_le_bytes());
+        data.extend_from_slice(&1i16.to_le_bytes());
+        data.extend_from_slice(&[1u8, 2, 3, 4]);
+
+        let audio = chunk(
+            CHUNK_AUDIO_ONLY,
+            &[
+                alloc_audio(flags, 22_050),
+                audio_frame(1, 12, &data),
+                // Another track of the same movie: `mask` bit 1, ignored by track 0.
+                audio_frame(2, 4, &[7, 0, 9, 0]),
+                silence_frame(1, 4),
+            ]
+            .concat(),
+        );
+        let video = chunk(
+            CHUNK_VIDEO,
+            &[init_video(1, 1), video_frame(OP_VIDEO_DATA_06, 1, 1, 0, &[0u8; 64])].concat(),
+        );
+        let file = container(&[audio, video]);
+        let mve = Mve::parse(file).expect("audio container");
+        let info = mve.info();
+
+        assert_eq!(
+            info.audio,
+            Some(MveAudioFormat {
+                channels: 2,
+                sample_rate: 22_050,
+                bits: 16,
+                compressed: true,
+            })
+        );
+
+        let mut decoder = mve.decoder();
+        assert!(decoder.next_frame().expect("frame").is_some());
+
+        let chunks = decoder.take_audio();
+        assert_eq!(chunks.len(), 2, "track 0: audio + silence");
+        assert_eq!(chunks[0].samples, vec![-2, 1, -1, 3, 2, 7]);
+        assert_eq!(chunks[0].channels, 2);
+        assert_eq!(chunks[0].frames(), 3);
+        assert!((chunks[0].seconds() - 3.0 / 22_050.0).abs() < 1e-9);
+        assert!(!chunks[0].silent);
+        assert_eq!(chunks[1].samples, vec![0, 0]);
+        assert!(chunks[1].silent);
+        assert!(decoder.take_audio().is_empty());
+
+        // Track 1 decodes the second stream and skips the first one.
+        let mut other = mve.decoder_with_track(1);
+        assert!(other.next_frame().expect("frame").is_some());
+
+        let chunks = other.take_audio();
+        assert_eq!(chunks.len(), 1);
+        // The same compressed stereo format: two absolute samples, no deltas.
+        assert_eq!(chunks[0].samples, vec![7, 9]);
+    }
+
+    #[test]
+    fn audio_frame_before_the_format_is_skipped_without_a_panic() {
+        let audio = chunk(CHUNK_AUDIO_ONLY, &audio_frame(1, 4, &[1, 2, 3, 4]));
+        let video = chunk(
+            CHUNK_VIDEO,
+            &[init_video(1, 1), video_frame(OP_VIDEO_DATA_06, 1, 1, 0, &[0u8; 64])].concat(),
+        );
+        let mve = Mve::parse(container(&[audio, video])).expect("container");
+        let mut decoder = mve.decoder();
+
+        assert!(decoder.next_frame().expect("frame").is_some());
+        assert!(decoder.take_audio().is_empty());
+        assert_eq!(decoder.audio_events_without_format(), 1);
+    }
+
+    #[test]
+    fn real_maxint_audio_track_matches_the_oracle_decoder() {
+        let path = real_mve_path();
+
+        if !path.is_file() {
+            return;
+        }
+
+        let mve = Mve::open(&path).expect("MAXINT.MVE");
+        let info = mve.info();
+        let format = info.audio.expect("ALLOC_AUDIO_BUFFERS: the intro has a track");
+
+        assert_eq!(format.channels, 2);
+        assert_eq!(format.sample_rate, 22_050);
+        assert_eq!(format.bits, 16);
+        assert!(format.compressed);
+
+        let mut decoder = mve.decoder_with_track(0);
+        assert!(decoder.next_frame().expect("frame 0").is_some());
+
+        // The container starts with 14 audio-only records (the lead-in of the first
+        // scene) and then one audio record per video frame: the oracle feeds all of
+        // them before the first `SHOW_VIDEO_FRAME`, and so does the decoder.
+        let chunks = decoder.take_audio();
+        assert_eq!(chunks.len(), 15, "lead-in + the chunk of frame 0");
+
+        let chunk = &chunks[0];
+        // The first frame: `length` = 5876 bytes → 2938 PCM16 samples → 1469 stereo frames.
+        assert_eq!(chunk.samples.len(), 2938);
+        assert_eq!(chunk.frames(), 1469);
+        assert!((chunk.seconds() - 1469.0 / 22_050.0).abs() < 1e-6);
+        // `sndDecompS16`: initial samples from the stream, then `snd_8to16` deltas.
+        assert_eq!(&chunk.samples[..4], &[-2, 1, 10, 4]);
+
+        // The whole track: one audio chunk per video frame, drained frame by frame.
+        let mut decoder = mve.decoder();
+        let mut decoded = 0usize;
+        let mut chunks_total = 0usize;
+        let mut total_frames = 0usize;
+
+        while let Some(_frame) = decoder.next_frame().expect("frame") {
+            let chunks = decoder.take_audio();
+
+            assert!(!chunks.is_empty(), "frame {decoded} has no audio chunk");
+            chunks_total += chunks.len();
+
+            for chunk in chunks {
+                total_frames += chunk.frames();
+            }
+
+            decoded += 1;
+
+            if decoded == 50 {
+                break;
+            }
+        }
+
+        assert_eq!(decoded, 50);
+        // Lead-in (14 chunks) + one per frame: 64 chunks of ~1469 stereo frames.
+        assert_eq!(chunks_total, 64);
+        assert!(
+            (63 * 1469..=65 * 1490).contains(&total_frames),
+            "audio frames {total_frames}"
+        );
+        assert_eq!(decoder.dropped_audio_chunks(), 0);
     }
 
     #[test]
