@@ -28,6 +28,68 @@
 //! * **Stage B:** `GameState` becomes private, the barrier FSM (`NetworkDispatcher`)
 //!   moves in, the temporary accesses disappear.
 //!
+//! # Channels and consumers (SDL/UI Stage A, A3)
+//!
+//! Canonical contract of the facade, mirroring §3 A3 of the plan
+//! (`max-brh-docs/development/sdl-ui-integration.md`).
+//!
+//! `GameState` is **not** re-exported: it stays `pub(crate)` in [`crate::game`],
+//! and the only public entry into the simulation is this facade plus the read-only
+//! [`StateRef`]. The facade exposes exactly **two** documented channels, and every
+//! consumer picks one of them:
+//!
+//! 1. **Lockstep channel** — the command channel of a match, local or networked:
+//!    * [`GameUniverse::submit`] — the single point of change: routes a command and
+//!      queues it;
+//!    * [`GameUniverse::tick`] — one simulation step; the queued commands are
+//!      applied here, strictly in receive order;
+//!    * [`GameUniverse::drain_outgoing`] — takes the transport DTOs planned by the
+//!      last tick (plus the broadcast commands queued by `submit`);
+//!    * [`GameUniverse::submit_remote`] — feeds a DTO that arrived from a peer (a
+//!      replayed command is queued for the next tick; a barrier consent and an
+//!      authoritative state sync are applied immediately).
+//!
+//!    Reading is separate and immutable: [`GameUniverse::snapshot`],
+//!    [`GameUniverse::delta_since`], [`GameUniverse::subscribe`].
+//!
+//! 2. **Local machine** — the sequential team-turn machine of a single-player
+//!    match (round entry, load entry, turn close) plus the immediate packet path a
+//!    caller needs to observe before the next tick:
+//!    * [`GameUniverse::begin_local_round`] — enters a fresh round at the first
+//!      playing slot;
+//!    * [`GameUniverse::resume_local_round`] — enters a round loaded from V70 at the
+//!      saved active team, without a second economy pass;
+//!    * [`GameUniverse::end_local_turn`] — closes the current team turn (`06`) and
+//!      advances the machine to the next acting team;
+//!    * [`GameUniverse::tick`] — the same one-step simulation step as above; `tick`
+//!      is the shared clock of both channels;
+//!    * [`GameUniverse::apply_now`] — applies an immediate packet (`06`/`01`,
+//!      barrier consent `00`/`52`/`45`, state sync `54`) right away, for callers
+//!      that must see the effect before the next tick. It is **not** a second
+//!      lockstep API: it does not bump `seq`.
+//!
+//!    The machine runs only when [`Dispatcher::advances_turns`] is `true`
+//!    (statically true for [`LocalDispatcher`]); a network dispatcher returns
+//!    `false` and the barrier FSM owns the turn.
+//!
+//! **Consumer rules** — the reason the channels are named at all:
+//!
+//! * **UI code uses the command channel only**: `submit` for intents, `tick` for
+//!   the clock, `drain_outgoing`/`submit_remote` for the transport, and the
+//!   immutable snapshot/event accessors for drawing. UI code never calls
+//!   `apply_now`, `set_*`, `*_mut` or the local-machine entries: a direct mutation
+//!   is invisible to the peers, so it breaks determinism (the gates of Stage B
+//!   close the remaining call sites).
+//! * **Install code uses the install API only**: the configuration surface
+//!   (`with_setup`, `with_setup_and_dispatcher`, `reset_world`, `spawn_unit`,
+//!   `load_state`, `set_*`, `*_mut`). It never routes commands — a command needs a
+//!   tick and a transport, which a world that is still being built does not have.
+//!   The narrow `install_world`/`adopt_universe` API of Stage C3 replaces this
+//!   surface; the split of responsibilities stays the same.
+//! * There is **no third path**: anything that changes the simulation belongs to
+//!   exactly one of the two channels, and the render layer is kept read-only by
+//!   `max-brh-cicd/scripts/check_render_readonly.py` (Stage A2).
+//!
 //! # Determinism
 //!
 //! `seq`, [`EventBus`] and `outgoing` are **facade** values: they never enter
@@ -1141,9 +1203,18 @@ impl<D: Dispatcher> GameUniverse<D> {
         &mut self.dispatcher
     }
 
-    // — the single point of change —
+    // — lockstep channel (A3): submit → tick → drain_outgoing, plus submit_remote —
+    //
+    // The command channel of any match, local or networked: `submit` queues, `tick`
+    // applies in receive order, `drain_outgoing` hands the DTOs to the transport and
+    // `submit_remote` brings peer DTOs in. UI code writes here and nowhere else;
+    // `apply_now`, `set_*` and `*_mut` are not part of this channel (see the module
+    // docs, "Channels and consumers").
 
     /// Accepts a command: routes it and puts it into the simulation queue.
+    ///
+    /// **Channel:** lockstep (A3) — the command entry of a match. UI code writes
+    /// here; the install API never routes commands.
     ///
     /// `submit` is **not** `apply_command`: the mutation happens in [`Self::tick`]
     /// through `events::apply_pending` → `apply_command`, strictly in receive order
@@ -1177,6 +1248,9 @@ impl<D: Dispatcher> GameUniverse<D> {
     }
 
     /// One simulation step (a step, not a loop; Q23).
+    ///
+    /// **Channel:** shared clock (A3) — the step of the lockstep channel and of the
+    /// local machine alike; it is not a rendering or input entry.
     ///
     /// Phases (ADR §5), all after the simulation itself:
     ///
@@ -1266,11 +1340,17 @@ impl<D: Dispatcher> GameUniverse<D> {
     // — the only contact with the transport —
 
     /// Takes the outgoing DTOs planned by the last [`Self::tick`].
+    ///
+    /// **Channel:** lockstep (A3) — the write half of the transport; the driver
+    /// pairs it with [`Self::submit_remote`].
     pub fn drain_outgoing(&mut self) -> Vec<NetworkCommand> {
         std::mem::take(&mut self.outgoing)
     }
 
     /// Applies a DTO that arrived from a peer.
+    ///
+    /// **Channel:** lockstep (A3) — the read half of the transport; the driver
+    /// pairs it with [`Self::drain_outgoing`].
     ///
     /// * a replayed command is queued (applied at the next tick);
     /// * a barrier-consent packet `00`/`52`/`45` is applied **immediately**
@@ -1726,6 +1806,9 @@ impl<D: Dispatcher> GameUniverse<D> {
 
     /// Applies a command right away — the **FSM channel** (stage C §5).
     ///
+    /// **Channel:** local machine (A3) — the immediate packet entry. UI code never
+    /// calls it: a UI intent goes through [`Self::submit`], so that the peers see it.
+    ///
     /// The barrier FSM and the immediate command paths (`06`/`01`, decision A5)
     /// need the effect before the next `tick`, which the lockstep [`Self::submit`]
     /// cannot give (it only queues). The outcome is observable by the caller —
@@ -2145,10 +2228,21 @@ impl GameUniverse<LocalDispatcher> {
         }
     }
 
-    // — the local team-turn machine (stage A, ADR §1/§4) —
+    // — local-machine channel (A3): begin_local_round / resume_local_round,
+    // end_local_turn, tick and apply_now —
+    //
+    // The sequential team-turn machine of a single-player match, plus the immediate
+    // packet path that must be observable before the next tick (`apply_now` lives in
+    // the dispatcher-generic block above). Every entry is gated by
+    // `Dispatcher::advances_turns`; a network match advances turns through the
+    // barrier FSM instead, and the UI never closes a turn directly.
 
     /// Local End Turn: packet `06` **immediately**, then `enter_end_turn` and one
     /// run of the team-turn machine to the next acting team (ADR §1, §4).
+    ///
+    /// **Channel:** local machine (A3) — the turn close of a single-player match;
+    /// a network dispatcher does not advance turns here (see
+    /// [`Dispatcher::advances_turns`]).
     ///
     /// Together with [`Self::begin_local_round`] (the round entry) this is the only
     /// way the sequential machine advances in a single-player match, and the only
@@ -2181,6 +2275,9 @@ impl GameUniverse<LocalDispatcher> {
     /// Enters a round of the local team-turn machine and advances it to the first
     /// acting team (match start entry, stage-A task §6 item 4).
     ///
+    /// **Channel:** local machine (A3) — the round entry; the UI acts only after the
+    /// machine has produced a [`GameEvent::Turn`].
+    ///
     /// `GameState::begin_round` stays `pub` for configuration scenarios, but
     /// `next_team` is facade-only (stage-A task §6 item 4): the round cursor reset
     /// and the first step therefore belong together here. The state before the call
@@ -2204,6 +2301,9 @@ impl GameUniverse<LocalDispatcher> {
 
     /// Resumes the local team-turn machine after a V70 load —
     /// `GAME_STATE_10_LOAD_GAME` (`game_manager.cpp:458-480`).
+    ///
+    /// **Channel:** local machine (A3) — the load entry; a match loaded from V70
+    /// enters here, not through [`Self::begin_local_round`].
     ///
     /// C++ starts the team-turn loop at `GameManager_ActiveTurnTeam` (the active
     /// team restored by `SaveLoad_Load`, `saveload.cpp:905-910`) and, because the

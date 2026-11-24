@@ -102,12 +102,22 @@ started=$(date +%s)
 # Phase 5.3/A: the max_net → max_core boundary lock. The dependency is allowed only as
 # a read-only projection of the simulation into the wire (five functions + two data imports);
 # any new max_core calls, apply_* or GameState mutations fail here.
-step "0/4 locks: max_net boundary + English code comments"
+# SDL/UI Stage A (A2): the render layer is read-only — the drawing modules must not hold
+# `&mut App`/`&mut GameUniverse` and a drawing function must not move the simulation
+# (`max-brh-docs/development/sdl-ui-integration.md` §3, A2).
+step "0/4 locks: max_net boundary + English code comments + read-only render layer"
 bash "$ROOT/max-brh-cicd/scripts/check_maxnet_boundary.sh"
+PYTHON=""
 if command -v python3 >/dev/null 2>&1; then
-    python3 "$ROOT/max-brh-cicd/scripts/check_comments_language.py"
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+fi
+if [ -n "$PYTHON" ]; then
+    "$PYTHON" "$ROOT/max-brh-cicd/scripts/check_comments_language.py"
+    "$PYTHON" "$ROOT/max-brh-cicd/scripts/check_render_readonly.py"
 else
-    echo "WARN: python3 not found — check_comments_language.py skipped"
+    echo "WARN: python not found — check_comments_language.py and check_render_readonly.py skipped"
 fi
 
 step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
