@@ -283,7 +283,7 @@ fn run_build_cycle(exit: ExitClick) {
     // The player clicks the DRAWN builder — it is in the tape center, the sprite
     // stands at the corner of four cells, not in its `grid`.
     let (click_x, click_y) = builder_sprite_screen(&app, UnitType::TrainingHall, building_unit.grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(click_x, click_y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(click_x, click_y));
 
     assert_eq!(
         app.hud().selected,
@@ -313,10 +313,10 @@ fn run_build_cycle(exit: ExitClick) {
 
     match exit {
         ExitClick::Left => {
-            handle_session_input(&mut app, InputEvent::MouseClick(ring_x, ring_y), false);
+            handle_session_input(&mut app, InputEvent::MouseClick(ring_x, ring_y));
         }
         ExitClick::Right => {
-            handle_session_input(&mut app, InputEvent::RightClick(ring_x, ring_y), false);
+            handle_session_input(&mut app, InputEvent::RightClick(ring_x, ring_y));
         }
     }
 
@@ -483,7 +483,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
         "курсор над клеткой увода — CURSOR_UNIT_NO_GO"
     );
 
-    handle_session_input(&mut app, InputEvent::RightClick(click_x, click_y), false);
+    handle_session_input(&mut app, InputEvent::RightClick(click_x, click_y));
 
     let unit = app.state_ref().unit(builder).expect("builder alive").clone();
     assert_eq!(

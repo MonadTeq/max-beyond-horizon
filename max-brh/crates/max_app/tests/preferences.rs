@@ -104,8 +104,7 @@ fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
     let button = max_app::panels::PanelButton::Preferences.rect();
     let transition = max_app::ui::handle_session_input(
         &mut app,
-        InputEvent::MouseClick(button.ulx + button.width / 2, button.uly + button.height / 2),
-        false,
+        InputEvent::MouseClick(button.ulx + button.width / 2, button.uly + button.height / 2)
     );
     assert_eq!(transition, Transition::None);
     assert!(app.preferences_dialog().is_some(), "диалог Preferences открыт");
@@ -113,7 +112,7 @@ fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
     // While the dialog is open, the panel/map receive no input: a click on the map selects
     // nothing (modality of `OptionsMenu::Run`).
     let selected_before = app.hud().selected;
-    max_app::ui::handle_session_input(&mut app, InputEvent::MouseClick(404, 242), false);
+    max_app::ui::handle_session_input(&mut app, InputEvent::MouseClick(404, 242));
     assert_eq!(app.hud().selected, selected_before);
 
     let effects = app

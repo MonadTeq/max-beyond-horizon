@@ -488,7 +488,7 @@ fn only_the_active_human_controls_their_units() {
     app.viewport_mut()
         .center_on_grid(green_grid.x, green_grid.y);
     let (gx, gy) = chrome_screen_of(&app, green_grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(gx, gy), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(gx, gy));
 
     assert_eq!(app.hud().selected, None, "юнит чужой команды не выделяется");
     assert!(
@@ -504,7 +504,7 @@ fn only_the_active_human_controls_their_units() {
     // not the specific id but the team).
     app.viewport_mut().center_on_grid(red_grid.x, red_grid.y);
     let (rx, ry) = chrome_screen_of(&app, red_grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(rx, ry), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(rx, ry));
 
     let selected = app.hud().selected.expect("свой юнит выделен");
     assert_eq!(
@@ -526,7 +526,7 @@ fn only_the_active_human_controls_their_units() {
 
     if let Some(destination) = free_neighbour(&app, red_grid) {
         let (dx, dy) = chrome_screen_of(&app, destination);
-        handle_session_input(&mut app, InputEvent::RightClick(dx, dy), false);
+        handle_session_input(&mut app, InputEvent::RightClick(dx, dy));
 
         let ordered = app
             .state_ref()
@@ -572,7 +572,7 @@ fn only_the_active_human_controls_their_units() {
     // A click on a RED unit now does not select it (it is foreign to GREEN).
     app.viewport_mut().center_on_grid(red_grid.x, red_grid.y);
     let (rx, ry) = chrome_screen_of(&app, red_grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(rx, ry), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(rx, ry));
     assert_eq!(app.hud().selected, None, "для GREEN юнит RED — чужой");
 }
 
@@ -613,7 +613,7 @@ fn input_is_ignored_during_the_ai_turn() {
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = chrome_screen_of(&app, grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
     assert_eq!(
         app.hud().selected,
@@ -653,7 +653,7 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = chrome_screen_of(&app, grid);
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
     assert_eq!(
         app.hud().selected,
@@ -662,10 +662,10 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
     );
 
     // Enter closes the window (`DialogMenu::ProcessKey`).
-    handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Enter), false);
+    handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Enter));
     assert!(app.local_notice().is_none());
 
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
     let selected = app.hud().selected.expect("после OK ввод работает");
     assert_eq!(
         app.state_ref().unit(selected).map(|unit| unit.team),

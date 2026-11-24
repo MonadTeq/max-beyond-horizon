@@ -165,11 +165,11 @@ fn screen_point(app: &App, grid: Point) -> (i32, i32) {
 }
 
 fn click(app: &mut App, point: (i32, i32)) -> Transition {
-    handle_session_input(app, InputEvent::MouseClick(point.0, point.1), false)
+    handle_session_input(app, InputEvent::MouseClick(point.0, point.1))
 }
 
 fn key(app: &mut App, key: Key) -> Transition {
-    handle_session_input(app, InputEvent::Key(key), false)
+    handle_session_input(app, InputEvent::Key(key))
 }
 
 /// Double click on the unit (selection + repeated click = menu) through input.
@@ -401,7 +401,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
     let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
     assert!(app.build_menu().is_some(), "BuildMenu открылся");
 
-    let ordered = app.build_menu_select(0) && app.commit_build_menu(false).is_some();
+    let ordered = app.build_menu_select(0) && app.commit_build_menu(max_app::SessionChannel::Local).is_some();
     assert!(ordered, "заказ постройки применён");
     // A building for a mobile builder (`MobileBuildMenu::Build`): `Done`
     // opens the site selection (`ORDER_STATE_SELECT_SITE`), the order goes only
@@ -411,7 +411,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
         "после Done открыт режим выбора места"
     );
     assert!(
-        app.confirm_build_site(false).is_some(),
+        app.confirm_build_site(max_app::SessionChannel::Local).is_some(),
         "клетка строителя подтверждена"
     );
     app.flush_orders();

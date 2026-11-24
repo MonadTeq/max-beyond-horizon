@@ -77,7 +77,7 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     let gold_before = app.state_ref().team_units()[TeamId::RED.0 as usize].gold;
 
     assert!(app.upgrade_menu_adjust(0, true), "атака покупается");
-    app.commit_upgrade_menu(false).expect("commit");
+    app.commit_upgrade_menu(max_app::SessionChannel::Local).expect("commit");
 
     let attack_after = app.state_ref().team_units()[TeamId::RED.0 as usize].current_values
         [UnitType::Infantry as usize]
@@ -163,14 +163,14 @@ fn upgrade_menu_is_modal_for_session_input() {
     assert!(app.open_upgrade_menu());
 
     // Esc closes the menu but does not leave the match.
-    let transition = handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+    let transition = handle_session_input(&mut app, InputEvent::Key(Key::Escape));
     assert_eq!(transition, Transition::None);
     assert!(app.upgrade_menu().is_none());
 
     // A click on the map while the menu is open does not change the selection (the menu is modal).
     assert!(app.open_upgrade_menu());
     let selected = app.hud().selected;
-    let transition = handle_session_input(&mut app, InputEvent::MouseClick(300, 300), false);
+    let transition = handle_session_input(&mut app, InputEvent::MouseClick(300, 300));
     assert_eq!(transition, Transition::None);
     assert_eq!(app.hud().selected, selected);
 }

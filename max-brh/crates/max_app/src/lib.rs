@@ -69,6 +69,7 @@ pub mod researchmenu;
 pub mod saveload;
 pub mod scroll;
 pub mod selfdestruct;
+pub mod session;
 pub mod setup;
 pub mod sfx;
 pub mod soak;
@@ -122,7 +123,9 @@ pub use hud::{
     unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
 pub use landing::{LandingAction, LandingScreen};
-pub use local::{LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, LOCAL_TEAM_COUNT};
+pub use local::{
+    LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, SessionChannel, LOCAL_TEAM_COUNT,
+};
 pub use mem::{memory_line, process_memory, ProcessMemory};
 pub use mobilize::Mobilization;
 pub use net::{
@@ -1090,7 +1093,7 @@ impl<D: Dispatcher> App<D> {
     /// `Done` still shows the new values on the same frame; in a network match the
     /// commands are submitted by the session driver (`net::flush_hud_orders`) as a
     /// broadcast.
-    pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
+    pub fn commit_upgrade_menu(&mut self, channel: SessionChannel) -> Option<String> {
         let mut menu = self.upgrade_menu.take()?;
         let changed = menu.commit();
 
@@ -1129,7 +1132,7 @@ impl<D: Dispatcher> App<D> {
             name: self.team_state_name(menu.team),
         }));
 
-        if !online {
+        if channel.is_local() {
             self.flush_orders();
         }
 
@@ -1271,10 +1274,10 @@ impl<D: Dispatcher> App<D> {
     /// (`GameState::set_research_allocation`) on every peer, the owner included.
     /// Closing the screen with released centers still powers them off.
     ///
-    /// `online` mirrors [`Self::commit_upgrade_menu`]: the demo/local path flushes
-    /// the queue immediately (`App::flush_orders`), the network driver submits it
-    /// as a broadcast (`net::flush_hud_orders`).
-    pub fn commit_research_menu(&mut self, online: bool) -> Option<String> {
+    /// `channel` mirrors [`Self::commit_upgrade_menu`]: a local match flushes the
+    /// queue immediately (`App::flush_orders`), a lockstep session leaves it for the
+    /// session driver, which submits it as a broadcast (`net::flush_hud_orders`).
+    pub fn commit_research_menu(&mut self, channel: SessionChannel) -> Option<String> {
         let mut menu = self.research_menu.take()?;
         let target = menu.commit();
         let total: u32 = target.iter().sum();
@@ -1312,7 +1315,7 @@ impl<D: Dispatcher> App<D> {
             name: self.team_state_name(team),
         }));
 
-        if !online {
+        if channel.is_local() {
             self.flush_orders();
         }
 

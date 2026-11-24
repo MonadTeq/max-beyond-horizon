@@ -1792,8 +1792,52 @@ mod tests {
     }
 
     /// Screen point of the cell center.
-    fn screen_of(app: &App, grid: Point) -> (i32, i32) {
+    fn screen_of<D: Dispatcher>(app: &App<D>, grid: Point) -> (i32, i32) {
         tile_center(app.viewport(), grid)
+    }
+
+    /// The same world as [`test_app`], on a lockstep application.
+    ///
+    /// SDL/UI Stage C2: the immediate/queued behaviour is the dispatcher
+    /// capability, not an argument, so the queued-order tests build an
+    /// `App<NetworkDispatcher>` (`SessionChannel::Lockstep`) instead of passing
+    /// `online = true` to [`handle_session_input`].
+    fn network_test_app() -> (App<crate::net::NetworkDispatcher>, UnitId, UnitId) {
+        let mut app = App::<crate::net::NetworkDispatcher>::new_network(
+            AppConfig::default().with_screen(512, 384),
+            TeamId::RED,
+            max_core::enums::PlayMode::TurnBased,
+        );
+
+        let (tank, enemy) = {
+            let universe = &mut app.universe;
+            if let Some(info) = universe.team_mut(TeamId::RED) {
+                info.team_type = TeamKind::Player;
+            }
+            if let Some(info) = universe.team_mut(TeamId::BLUE) {
+                info.team_type = TeamKind::Computer;
+            }
+            if let Some(units) = universe.team_units_mut(TeamId::RED) {
+                *units = TeamUnits::with_clan(TeamClan::Random);
+                units.set_gold(1500);
+            }
+            if let Some(units) = universe.team_units_mut(TeamId::BLUE) {
+                *units = TeamUnits::with_clan(TeamClan::Random);
+            }
+
+            let tank = universe
+                .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
+                .expect("tank spawned");
+            let enemy = universe
+                .spawn_unit(UnitType::Tank, TeamId::BLUE, Point::new(14, 10), 0)
+                .expect("enemy spawned");
+
+            (tank, enemy)
+        };
+
+        app.viewport_mut().center_on_grid(12, 10);
+
+        (app, tank, enemy)
     }
 
     #[test]
@@ -1948,7 +1992,7 @@ mod tests {
         let (mut app, tank, enemy) = test_app();
 
         let (x, y) = screen_of(&app, Point::new(10, 10));
-        let transition = handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+        let transition = handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
         assert_eq!(transition, Transition::None);
         assert_eq!(app.hud().selected, Some(tank));
@@ -1961,7 +2005,7 @@ mod tests {
 
         // A click on an enemy with an own unit selected — an attack order (08).
         let (ex, ey) = screen_of(&app, Point::new(14, 10));
-        handle_session_input(&mut app, InputEvent::MouseClick(ex, ey), false);
+        handle_session_input(&mut app, InputEvent::MouseClick(ex, ey));
 
         // Demo mode applied the packet locally via `apply_command`.
         let unit = app.state_ref().unit(tank).expect("tank");
@@ -1980,11 +2024,11 @@ mod tests {
         let (mut app, tank, _enemy) = test_app();
         let (x, y) = screen_of(&app, Point::new(10, 10));
 
-        handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+        handle_session_input(&mut app, InputEvent::MouseClick(x, y));
         assert_eq!(app.hud().selected, Some(tank));
 
         // A right click on any unit — cancel (like Esc).
-        handle_session_input(&mut app, InputEvent::RightClick(x, y), false);
+        handle_session_input(&mut app, InputEvent::RightClick(x, y));
 
         assert_eq!(app.hud().selected, None);
         assert_eq!(app.hud().preview, None);
@@ -2092,26 +2136,27 @@ mod tests {
     }
 
     #[test]
-    fn right_click_on_a_free_cell_queues_a_move_in_online_mode() {
-        let (mut app, tank, _enemy) = test_app();
+    fn right_click_on_a_free_cell_queues_a_move_in_a_lockstep_session() {
+        let (mut app, tank, _enemy) = network_test_app();
         let (x, y) = screen_of(&app, Point::new(10, 10));
 
-        handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+        handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
         let (mx, my) = screen_of(&app, Point::new(11, 10));
-        handle_session_input(&mut app, InputEvent::RightClick(mx, my), true);
+        handle_session_input(&mut app, InputEvent::RightClick(mx, my));
 
         assert_eq!(
             app.hud().pending.len(),
             1,
-            "онлайн-режим копит приказ для сессии"
+            "the lockstep session queues the order for the session driver"
         );
         assert!(matches!(&app.hud().pending[0], Command::Move(_)));
         assert_eq!(
             app.hud().preview.as_ref().map(|preview| preview.to),
             Some(Point::new(11, 10))
         );
-        // Locally the order is not applied yet — the network loop will do it.
+        // Not applied in the producing frame — the session driver submits it and the
+        // simulation applies it on the next tick.
         assert_eq!(
             app.state_ref().unit(tank).expect("tank").orders,
             UnitOrder::Await
@@ -2128,10 +2173,10 @@ mod tests {
         let (mut app, tank, _enemy) = test_app();
         let (x, y) = screen_of(&app, Point::new(10, 10));
 
-        handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+        handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
         let (mx, my) = screen_of(&app, Point::new(13, 10));
-        handle_session_input(&mut app, InputEvent::RightClick(mx, my), false);
+        handle_session_input(&mut app, InputEvent::RightClick(mx, my));
 
         let unit = app.state_ref().unit(tank).expect("tank");
 
@@ -2231,17 +2276,17 @@ mod tests {
         let (mut app, tank, _enemy) = test_app();
         let (x, y) = screen_of(&app, Point::new(10, 10));
 
-        handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+        handle_session_input(&mut app, InputEvent::MouseClick(x, y));
         assert_eq!(app.hud().selected, Some(tank));
 
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape)),
             Transition::None
         );
         assert_eq!(app.hud().selected, None);
         // A second Esc — exit the session.
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape)),
             Transition::LeaveSession
         );
     }
@@ -2337,31 +2382,23 @@ mod tests {
 
         // Enter opens the input line.
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter)),
             Transition::None
         );
         assert!(app.hud().chat.is_active());
 
         for character in "Helo".chars() {
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Char(character)),
-                false,
-            );
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char(character)));
         }
-        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Backspace), false);
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Backspace));
         for character in "lo".chars() {
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Char(character)),
-                false,
-            );
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char(character)));
         }
         assert_eq!(app.hud().chat.message(), "Hello");
 
         // Enter sends: in demo mode — immediately via apply_command.
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter)),
             Transition::None
         );
         assert!(!app.hud().chat.is_active());
@@ -2383,25 +2420,21 @@ mod tests {
     }
 
     #[test]
-    fn online_chat_is_queued_as_packet_18_for_the_session() {
-        let (mut app, _tank, _enemy) = test_app();
+    fn lockstep_chat_is_queued_as_packet_18_for_the_session() {
+        let (mut app, _tank, _enemy) = network_test_app();
 
         // T also opens the input line.
-        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('T')), true);
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('T')));
         assert!(app.hud().chat.is_active());
 
         for character in "gg".chars() {
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Char(character)),
-                true,
-            );
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char(character)));
         }
-        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter), true);
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Enter));
 
         assert!(
             app.state_ref().chat_log().is_empty(),
-            "локальное применение делает net::flush_hud_orders"
+            "the lockstep session leaves the packet to net::flush_hud_orders"
         );
 
         let outgoing = app.take_outgoing_orders();
@@ -2426,17 +2459,13 @@ mod tests {
     fn escape_cancels_chat_without_leaving_the_session() {
         let (mut app, _tank, _enemy) = test_app();
 
-        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('t')), false);
+        handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char('t')));
         for character in "no".chars() {
-            handle_session_input(
-                &mut app,
-                InputEvent::Key(crate::ui::Key::Char(character)),
-                false,
-            );
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Char(character)));
         }
 
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape)),
             Transition::None,
             "Esc в чате не выходит из сессии"
         );
@@ -2451,7 +2480,7 @@ mod tests {
 
         // The next Esc — the usual session behavior already.
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape), false),
+            handle_session_input(&mut app, InputEvent::Key(crate::ui::Key::Escape)),
             Transition::LeaveSession
         );
     }

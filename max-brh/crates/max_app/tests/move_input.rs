@@ -411,7 +411,7 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
     let grid = app.state_ref().unit(surveyor).expect("Surveyor").grid;
     let (x, y) = screen_point(&app, grid);
 
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
     assert_eq!(
         app.hud().selected,
         Some(surveyor),
@@ -445,7 +445,7 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
     let destination = destination.expect("рядом есть проходимая клетка");
     let (rx, ry) = screen_point(&app, destination);
 
-    handle_session_input(&mut app, InputEvent::RightClick(rx, ry), false);
+    handle_session_input(&mut app, InputEvent::RightClick(rx, ry));
 
     let preview = app.hud().preview.as_ref().expect("RMB строит предпросмотр");
     assert!(!preview.is_empty(), "маршрут не пуст");
@@ -617,7 +617,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     // LMB on the Surveyor cell: the camera is already on the mine (`focus_player`), the click
     // arrives in the same coordinate system as the window.
     let (x, y) = screen_point(&app, start);
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
     assert_eq!(app.hud().selected, Some(surveyor));
 
     // An adjacent passable cell without units — the RMB target.
@@ -642,7 +642,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     let destination = destination.expect("рядом есть проходимая клетка");
 
     let (rx, ry) = screen_point(&app, destination);
-    handle_session_input(&mut app, InputEvent::RightClick(rx, ry), false);
+    handle_session_input(&mut app, InputEvent::RightClick(rx, ry));
 
     let preview = app.hud().preview.as_ref().expect("RMB строит предпросмотр");
     assert_eq!(preview.to, destination);
@@ -715,7 +715,7 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         end_turn.ulx + end_turn.width / 2,
         end_turn.uly + end_turn.height / 2,
     );
-    handle_session_input(&mut app, InputEvent::MouseClick(button.0, button.1), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(button.0, button.1));
 
     assert_ne!(
         app.local().map(|local| local.phase),
@@ -757,6 +757,6 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
 
     // The unit really stands on the target: LMB on this cell selects it.
     let (x, y) = screen_point(&app, destination);
-    handle_session_input(&mut app, InputEvent::MouseClick(x, y), false);
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
     assert_eq!(app.hud().selected, Some(surveyor));
 }

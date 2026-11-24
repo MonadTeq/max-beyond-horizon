@@ -297,6 +297,13 @@ pub const JOIN_RETRY_BACKOFF: [Duration; 6] = [
     Duration::from_secs(11),
 ];
 
+/// Frame delta handed to the shared session step of a lockstep match.
+///
+/// The simulation does not depend on it (one tick per frame, as
+/// `GameManager_ProcessTick`); the frame uses it for the visible unit movement and
+/// the camera, exactly as before the step was extracted (SDL/UI Stage C1).
+const SESSION_FRAME_DT: f32 = 1.0 / 60.0;
+
 /// Retry policy of the first connection to the session (`Create game → Join → start`).
 ///
 /// `attempts` — **total** attempts (`0` is treated as one attempt without
@@ -974,9 +981,19 @@ async fn reconnect_session(
 /// [`crate::hud::HudState`] (outside `GameState`), and the assembled packets
 /// `38`/`08`/`18` are taken and sent by [`App::flush_hud_orders`] /
 /// [`App::broadcast_outgoing`].
+///
+/// SDL/UI Stage C1: the sink is split into the two hooks of the shared session step
+/// ([`crate::session::SessionFrame`]): input polling and drawing. The step — and
+/// therefore `poll input → order → tick → render` — is the same for a guest and for
+/// the host; only the sink (a window, a QA frame, `None` for a headless host)
+/// differs.
 pub trait FrameSink {
-    /// Show a frame of the current state; `false` — exit the loop.
-    fn frame(&mut self, app: &mut App<NetworkDispatcher>) -> bool;
+    /// Phase 1 of the session step: polls this frame's input and feeds it to the
+    /// session input (`ui::handle_session_input`). `false` — leave the session.
+    fn poll_input(&mut self, app: &mut App<NetworkDispatcher>) -> bool;
+
+    /// Phase 4 of the session step: draws the frame. `false` — the window is gone.
+    fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool;
 
     /// First-connection status (retry/fallback `data_hash`).
     ///
@@ -985,6 +1002,31 @@ pub trait FrameSink {
     /// so the headless smoke and test sinks change nothing.
     fn join_status(&mut self, _message: &str) -> bool {
         true
+    }
+}
+
+/// Adapter from the public [`FrameSink`] to the dispatcher-generic session frame
+/// ([`crate::session::SessionFrame`]).
+///
+/// A headless run (the host and a headless guest) has no sink: the adapter then
+/// behaves like [`crate::session::HeadlessFrame`].
+struct SinkFrame<'a, 'b> {
+    sink: &'a mut Option<&'b mut dyn FrameSink>,
+}
+
+impl crate::session::SessionFrame<NetworkDispatcher> for SinkFrame<'_, '_> {
+    fn poll_input(&mut self, app: &mut App<NetworkDispatcher>, _dt: f32) -> bool {
+        match self.sink.as_deref_mut() {
+            Some(sink) => sink.poll_input(app),
+            None => true,
+        }
+    }
+
+    fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
+        match self.sink.as_deref_mut() {
+            Some(sink) => sink.render(app),
+            None => true,
+        }
     }
 }
 
@@ -2177,7 +2219,12 @@ impl App<NetworkDispatcher> {
     /// them locally and extends the facade outgoing, and [`App::broadcast_outgoing`]
     /// drains and sends them. `06`/`01` stay immediate (`apply_now` +
     /// `send_untracked`).
-    fn flush_hud_orders(&mut self) {
+    ///
+    /// It is phase 2 of the shared session step (SDL/UI Stage C1/C2,
+    /// [`crate::local::SessionLocal::session_orders`] of a lockstep session): the
+    /// step calls it before the tick, so the frame's orders are queued for the
+    /// broadcast of the same frame.
+    pub(crate) fn flush_hud_orders(&mut self) {
         for command in self.take_outgoing_orders() {
             let kind = format!("{:?}", command.kind());
             self.submit(command);
@@ -2401,22 +2448,27 @@ impl App<NetworkDispatcher> {
                     }
                     PumpOutcome::Continue => {}
                 }
-                self.tick();
+                // The single session step (SDL/UI Stage C1): `poll input → order →
+                // tick → render`. The guest and the host run exactly this step; only
+                // the frame differs (a window/QA frame or the headless one). The
+                // dispatcher capability routes the orders: `session_orders` submits
+                // this frame's `hud.pending` (SDL/UI Stage C2), the tick queues them
+                // for the facade and the broadcast below sends them.
+                let outcome = {
+                    let mut frame = SinkFrame { sink: &mut *sink };
+                    crate::session::session_step(self, SESSION_FRAME_DT, &mut frame)
+                };
+
+                // Transport bookkeeping of the frame (not one of the four phases):
+                // the commands the order stage submitted go out first, then packet 01
+                // paces the peers.
                 self.broadcast_outgoing(io).await?;
                 self.send_frame_barrier(io, &mut frame_counter).await?;
 
-                if let Some(sink) = sink.as_deref_mut() {
-                    if !sink.frame(self) {
-                        tracing::info!("окно закрыто — завершаем сессию");
-                        return Ok(stats);
-                    }
+                if matches!(outcome, crate::session::StepOutcome::Leave) {
+                    tracing::info!("окно закрыто — завершаем сессию");
+                    return Ok(stats);
                 }
-
-                // The orders collected by input in this frame (38 — movement, 08 —
-                // attack, 18 — chat) go into the facade queue; the next iteration's
-                // `broadcast_outgoing` drains and sends them (§4.4, gate b). `06`/`01`
-                // stay immediate (`apply_now` + `send_untracked`, A5).
-                self.flush_hud_orders();
 
                 let end_requested = self.hud_mut().take_end_turn_request();
                 if end_requested {

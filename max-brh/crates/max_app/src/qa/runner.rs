@@ -1411,7 +1411,7 @@ impl QaRunner {
                     return Err("build done: меню не открыто".to_string());
                 }
 
-                let line = app.commit_build_menu(false);
+                let line = app.commit_build_menu(crate::SessionChannel::Local);
 
                 if app.build_menu().is_some() {
                     return Err(format!(
@@ -1427,7 +1427,7 @@ impl QaRunner {
                     return Err("build path: меню не открыто".to_string());
                 }
 
-                let line = app.commit_build_menu_path(false);
+                let line = app.commit_build_menu_path(crate::SessionChannel::Local);
 
                 if app.build_menu().is_some() {
                     return Err(format!(
@@ -1635,7 +1635,7 @@ impl QaRunner {
                 if app.upgrade_menu().is_none() {
                     return Err("upgrade done: меню не открыто".to_string());
                 }
-                app.commit_upgrade_menu(false)
+                app.commit_upgrade_menu(crate::SessionChannel::Local)
                     .unwrap_or_else(|| "изменения зафиксированы".to_string())
             }
             UpgradeCommand::Cancel => {
@@ -1721,7 +1721,7 @@ impl QaRunner {
                 }
                 // QA drives an offline (demo/local) match: the packet-09 command is
                 // flushed immediately, like `upgrade done`.
-                app.commit_research_menu(false)
+                app.commit_research_menu(crate::SessionChannel::Local)
                     .unwrap_or_else(|| "распределение применено".to_string())
             }
             ResearchCommand::Cancel => {
@@ -2299,7 +2299,7 @@ impl QaRunner {
     /// Sends an event to the current screen and executes the transition.
     fn send(&mut self, event: InputEvent) -> Result<Flow, String> {
         if matches!(self.screen, Screen::InSession { .. }) {
-            return match handle_session_input(&mut self.app, event, false) {
+            return match handle_session_input(&mut self.app, event) {
                 Transition::None => Ok(Flow::Continue),
                 Transition::LeaveSession => {
                     self.screen = Screen::MainMenu;

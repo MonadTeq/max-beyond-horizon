@@ -808,8 +808,7 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
 
     let transition = max_app::ui::handle_session_input(
         &mut app,
-        max_app::ui::InputEvent::MouseClick(x, y),
-        false,
+        max_app::ui::InputEvent::MouseClick(x, y)
     );
 
     assert_eq!(transition, max_app::ui::Transition::None);
@@ -840,11 +839,19 @@ fn chrome_end_turn_click_is_a_button_not_a_map_click() {
         "End Turn заходит на карту, но клик принадлежит кнопке"
     );
 
-    max_app::ui::handle_session_input(&mut app, max_app::ui::InputEvent::MouseClick(x, y), true);
+    // SDL/UI Stage C2: `handle_session_input` takes no online flag — a local
+    // application (this fixture) uses the immediate channel, so the click closes the
+    // turn through `App::end_turn` instead of setting the lockstep request flag.
+    max_app::ui::handle_session_input(&mut app, max_app::ui::InputEvent::MouseClick(x, y));
 
     assert!(
-        app.hud().end_turn_requested,
-        "клик по End Turn ставит запрос закрытия хода"
+        app.hud()
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.starts_with("End Turn")),
+        "the click was handled by the End Turn button: {:?}",
+        app.hud().log.lines()
     );
     assert_eq!(app.hud().selected, None, "клик не ушёл в карту");
 }
@@ -1075,8 +1082,7 @@ fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
             max_app::ui::InputEvent::MouseClick(
                 rect.ulx + rect.width / 2,
                 rect.uly + rect.height / 2,
-            ),
-            false,
+            )
         );
     };
 

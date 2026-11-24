@@ -40,9 +40,10 @@
 //! [`crate::hud::HudState`], not in `GameState`), so selecting a unit does not
 //! get into the snapshot/CRC. Orders (`38`/`08`) are assembled by
 //! [`crate::hud::build_move_order`]/[`crate::hud::build_attack_order`] and put
-//! into `App::hud().pending`: in a network session they are sent by `net.rs`
-//! (`flush_hud_orders`), in demo mode (`online = false`) they are applied
-//! locally via `events::apply_command`.
+//! into `App::hud().pending`; the session channel decides what happens next
+//! (SDL/UI Stage C2, [`crate::local::SessionChannel`]): a local match applies them
+//! through `apply_now` and ticks them in the same frame, a lockstep match leaves
+//! them in the queue for `net::flush_hud_orders` → `submit`.
 
 use std::fmt;
 
@@ -1795,14 +1796,11 @@ impl Screen {
 /// `Command::Chat` (packet **18**), **Esc** closes the input without sending. While
 /// the line is open, the mouse and other keys are ignored.
 ///
-/// `online = true` — orders and chat accumulate in `App::hud().pending` and go to
-/// the session (`net::flush_hud_orders`); `false` — demo mode, commands are applied
-/// immediately via `max_core::events::apply_command` ([`App::flush_orders`]).
-pub fn handle_session_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+/// The immediate/queued difference is not an argument (SDL/UI Stage C2): it is the
+/// session capability [`crate::local::SessionLocal::session_channel`], derived from
+/// the dispatcher — a local match applies through `apply_now` and ticks in the same
+/// frame, a lockstep match queues for `net::flush_hud_orders` → `submit`.
+pub fn handle_session_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -1867,7 +1865,7 @@ where
     // over everything, including the command menu (`GameManager_DeinitPopupButtons`
     // is called before opening).
     if app.self_destruct().is_some() {
-        return session_self_destruct_input(app, event, online);
+        return session_self_destruct_input(app, event);
     }
 
     // `Preferences` (`OptionsMenu::Run`, `PREFSPIC`) — a modal dialog: the map and
@@ -1878,28 +1876,28 @@ where
 
     // Research screen (P7) — modal, like `ResearchMenu::Run`.
     if app.research_menu().is_some() {
-        return session_research_menu_input(app, event, online);
+        return session_research_menu_input(app, event);
     }
 
     // Mine extraction allocation (C++ `AllocMenu`, window `ALLOCFRM`) —
     // a modal dialog: the map/panels receive no input.
     if app.alloc_menu().is_some() {
-        return session_alloc_menu_input(app, event, online);
+        return session_alloc_menu_input(app, event);
     }
 
     // X-FER (C++ `TransferMenu`, window `XFERPIC`) — a modal quantity window:
     // `GameManager_DisableMainMenu` around `TransferMenu::Run`.
     if app.transfer_menu().is_some() {
-        return session_transfer_menu_input(app, event, online);
+        return session_transfer_menu_input(app, event);
     }
 
     if app.build_menu().is_some() {
-        return session_build_menu_input(app, event, online);
+        return session_build_menu_input(app, event);
     }
 
     // Purchasable upgrades screen (P6) — modal, like `UpgradeMenu::Run`.
     if app.upgrade_menu().is_some() {
-        return session_upgrade_menu_input(app, event, online);
+        return session_upgrade_menu_input(app, event);
     }
 
     // The V70 save/load window (P3) is modal too: while it is open,
@@ -1912,7 +1910,7 @@ where
     // while it is open, the map/panels/chat receive no orders, and a click outside the menu
     // or Esc closes it (like `GameManager_DeinitPopupButtons`).
     if app.unit_menu().is_some() {
-        return session_unit_menu_input(app, event, online);
+        return session_unit_menu_input(app, event);
     }
 
     // While the computer moves/a transition runs, orders and selection are impossible:
@@ -1925,7 +1923,7 @@ where
     // is ignored so that a click during typing does not give an order.
     if app.hud().chat.is_active() {
         return match event {
-            InputEvent::Key(key) => session_chat_key(app, key, online),
+            InputEvent::Key(key) => session_chat_key(app, key),
             _ => Transition::None,
         };
     }
@@ -1936,7 +1934,7 @@ where
     // remain enabled at this time, so clicks outside the map go
     // the usual way (`None`). Modal screens and the chat above take precedence.
     if app.build_site().is_some() && !blocked {
-        if let Some(transition) = session_build_site_input(app, event, online, chrome) {
+        if let Some(transition) = session_build_site_input(app, event, chrome) {
             return transition;
         }
     }
@@ -1969,11 +1967,11 @@ where
                 if blocked && panels::panel_button_at(x, y).is_none() {
                     return Transition::None;
                 }
-                session_chrome_left_click(app, x, y, online)
+                session_chrome_left_click(app, x, y)
             } else if blocked {
                 Transition::None
             } else {
-                session_left_click(app, width, height, x, y, online)
+                session_left_click(app, width, height, x, y)
             }
         }
         InputEvent::RightClick(x, y) => {
@@ -1981,9 +1979,9 @@ where
                 return Transition::None;
             }
             if chrome {
-                session_chrome_right_click(app, x, y, online)
+                session_chrome_right_click(app, x, y)
             } else {
-                session_right_click(app, x, y, online)
+                session_right_click(app, x, y)
             }
         }
         InputEvent::Key(Key::Char('p' | 'P')) if app.local_active() => {
@@ -2017,9 +2015,7 @@ where
             let label = "Power toggled";
             app.hud_mut().pending.push(command);
             app.hud_mut().push_log(label);
-            if !online {
-                apply_pending_orders(app);
-            }
+            apply_session_orders(app);
             Transition::None
         }
         // `U` — upgrades screen (`UpgradeMenu`): the `buy upg` item of the command menu
@@ -2074,11 +2070,11 @@ where
         // unavailable (packet 16 is not ported) — `App::open_*_menu` writes
         // the explanation to the log.
         InputEvent::Key(Key::Char('s' | 'S')) if !blocked => {
-            app.open_save_menu(online);
+            app.open_save_menu(app.session_channel());
             Transition::None
         }
         InputEvent::Key(Key::Char('l' | 'L')) if !blocked => {
-            app.open_load_menu(online);
+            app.open_load_menu(app.session_channel());
             Transition::None
         }
         InputEvent::Key(_) => Transition::None,
@@ -2090,11 +2086,7 @@ where
 /// The window is modal: `Arm`/`Enter` starts the `SLFDOPN1..6` animation, after it
 /// `OK`/`Enter` gives `ORDER_EXPLODE`, `Esc`/`Cancel` closes without an order
 /// (C++ `UnitsManager_SelfDestructMenu` returns `false`).
-fn session_self_destruct_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_self_destruct_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2121,9 +2113,7 @@ where
             // `SLFDOK` sfx `NDONE0` (`units_manager.cpp:254`).
             app.play_sfx(Sfx::Done);
 
-            if !online {
-                apply_pending_orders(app);
-            }
+            apply_session_orders(app);
             let name = unit
                 .and_then(|unit| app.state_ref().unit(unit))
                 .map(unit_label)
@@ -2159,11 +2149,7 @@ where
 /// (`GameManager_ProcessPopupMenuInput`) invoke the item handler
 /// (`App::activate_unit_menu_item`). Arrows and Enter do not work in the C++ menu —
 /// neither here (they go to `MenuEvent::None`).
-fn session_unit_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_unit_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2185,9 +2171,7 @@ where
             if let Some(line) = app.activate_unit_menu_item(index) {
                 app.hud_mut().push_log(line);
 
-                if !online {
-                    apply_pending_orders(app);
-                }
+                apply_session_orders(app);
             }
         }
     }
@@ -2202,11 +2186,7 @@ where
 /// the window — the values are already applied by clicks (`UpdateRawAllocation`), and on exit
 /// C++ broadcasts `Remote_SendNetPacket_11` → `ORDER_NEW_ALLOCATE` (08/P5) to
 /// each mine of the complex ([`App::queue_alloc_orders`]).
-fn session_alloc_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_alloc_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2226,7 +2206,7 @@ where
             if let Some(line) = app.close_alloc_menu() {
                 app.hud_mut().push_log(line);
             }
-            if queued > 0 && !online {
+            if queued > 0 && app.session_channel().is_local() {
                 apply_pending_orders(app);
             }
         }
@@ -2241,11 +2221,7 @@ where
 /// `Done`/`Enter` gives `ORDER_TRANSFER` (08/**P3**, `transfer_cargo`),
 /// `Esc`/`Cancel` closes without an order, `?` opens `TRANSFER_SETUP`
 /// over the window (in C++ `HelpMenu_Menu` returns to `TransferMenu`).
-fn session_transfer_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_transfer_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2270,7 +2246,7 @@ where
 
                 // Offline the order is executed immediately (like the other orders from
                 // the menu); in the network it goes as packet 08/P3.
-                if queued && !online {
+                if queued && app.session_channel().is_local() {
                     apply_pending_orders(app);
                 }
             }
@@ -2335,11 +2311,7 @@ where
 /// `Done`/Enter — `Build()`: the order goes as `Command::Order` with `PayloadP4`
 /// (packet 08) — applied locally immediately, in the network it goes to the HUD queue.
 /// `Cancel`/Esc — close without an order.
-fn session_build_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_build_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2347,7 +2319,7 @@ where
 
     match action {
         Some(crate::buildmenu::BuildMenuAction::Commit) => {
-            if let Some(line) = app.commit_build_menu(online) {
+            if let Some(line) = app.commit_build_menu(app.session_channel()) {
                 app.hud_mut().push_log(line);
             }
             // `UnitsManager_Popup_OnClick_Build` → `GameManager_AutoSelectNext`
@@ -2356,7 +2328,7 @@ where
             app.auto_select_after_order();
         }
         Some(crate::buildmenu::BuildMenuAction::PathBuild) => {
-            if let Some(line) = app.commit_build_menu_path(online) {
+            if let Some(line) = app.commit_build_menu_path(app.session_channel()) {
                 app.hud_mut().push_log(line);
             }
             app.auto_select_after_order();
@@ -2388,7 +2360,6 @@ where
 fn session_build_site_input<D: Dispatcher>(
     app: &mut App<D>,
     event: InputEvent,
-    online: bool,
     chrome: bool,
 ) -> Option<Transition>
 where
@@ -2440,7 +2411,7 @@ where
                 // `V_M049`, then `UnitsManager_StartBuild`.
                 app.play_sfx(Sfx::Done);
                 app.play_sfx(Sfx::BuildSitePlaced);
-                app.confirm_build_site(online)
+                app.confirm_build_site(app.session_channel())
             } else {
                 // C++: `CURSOR_UNIT_NO_GO` → `GameManager_ManagePlayerAction` —
                 // the selection is canceled entirely.
@@ -2452,9 +2423,7 @@ where
             if let Some(line) = line {
                 app.hud_mut().push_log(line);
             }
-            if !online {
-                apply_pending_orders(app);
-            }
+            apply_session_orders(app);
 
             Some(Transition::None)
         }
@@ -2485,11 +2454,7 @@ where
 /// `TeamUnits` (packets 10 in the network), gold is debited. `Cancel`/Esc — close
 /// without changes (C++ `UpgradeMenu::Run` returns `false`). `Help` —
 /// `UPGRADES_SETUP` over the screen (`HelpMenu_Menu`).
-fn session_upgrade_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_upgrade_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2497,7 +2462,7 @@ where
 
     match action {
         Some(crate::upgrademenu::UpgradeAction::Commit) => {
-            if let Some(line) = app.commit_upgrade_menu(online) {
+            if let Some(line) = app.commit_upgrade_menu(app.session_channel()) {
                 app.hud_mut().push_log(line);
             }
         }
@@ -2628,11 +2593,7 @@ where
 /// ([`max_app::App::commit_research_menu`]) — a broadcast command applied by the
 /// simulation (`events::apply_packet_09`), not a direct facade write. `Cancel`/`Esc` —
 /// close without changes. `Help` — `RESEARCH_SETUP`.
-fn session_research_menu_input<D: Dispatcher>(
-    app: &mut App<D>,
-    event: InputEvent,
-    online: bool,
-) -> Transition
+fn session_research_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2640,7 +2601,7 @@ where
 
     match action {
         Some(ResearchAction::Done) => {
-            if let Some(line) = app.commit_research_menu(online) {
+            if let Some(line) = app.commit_research_menu(app.session_channel()) {
                 app.hud_mut().push_log(line);
             }
         }
@@ -2669,7 +2630,7 @@ where
 ///
 /// The other keys (arrows/Tab) are ignored in the chat so as not to
 /// accidentally open a menu/order.
-fn session_chat_key<D: Dispatcher>(app: &mut App<D>, key: Key, online: bool) -> Transition
+fn session_chat_key<D: Dispatcher>(app: &mut App<D>, key: Key) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2680,7 +2641,7 @@ where
         Key::Backspace => {
             app.hud_mut().chat.backspace();
         }
-        Key::Enter => return submit_chat(app, online),
+        Key::Enter => return submit_chat(app),
         Key::Escape => {
             app.hud_mut().chat.close();
             app.hud_mut().push_log("Chat cancelled");
@@ -2703,7 +2664,7 @@ where
 ///
 /// An empty line is not sent (like `Remote_SendNetPacket_18`, which
 /// returns on `message[0] == '\0'`), the input is simply closed.
-fn submit_chat<D: Dispatcher>(app: &mut App<D>, online: bool) -> Transition
+fn submit_chat<D: Dispatcher>(app: &mut App<D>) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2717,7 +2678,9 @@ where
 
     app.hud_mut().push_log(line);
 
-    if online {
+    // SDL/UI Stage C2: the channel decides — a lockstep match queues packet 18 for
+    // `net::flush_hud_orders`, a local match applies it in this frame.
+    if app.session_channel().is_lockstep() {
         app.hud_mut().pending.push(command);
     } else {
         // B2 audit — the same command-channel flush as `App::flush_orders`: the
@@ -2736,7 +2699,6 @@ fn session_left_click<D: Dispatcher>(
     height: u32,
     x: i32,
     y: i32,
-    online: bool,
 ) -> Transition
 where
     App<D>: SessionLocal,
@@ -2744,7 +2706,7 @@ where
     if let Some(button) = hud::hud_button_at(width, height, x, y) {
         return match button {
             HudButton::EndTurn => {
-                session_end_turn(app, online);
+                session_end_turn(app);
                 Transition::None
             }
             HudButton::Menu => Transition::LeaveSession,
@@ -2761,7 +2723,7 @@ where
 
     let viewport = *app.viewport();
 
-    session_map_left_click(app, &viewport, x, y, online)
+    session_map_left_click(app, &viewport, x, y)
 }
 
 /// Left button with 1:1 chrome: panels → minimap → map.
@@ -2769,17 +2731,12 @@ where
 /// The window screen coordinates are converted into map area coordinates
 /// ([`panels::screen_to_map`]) before `screen_to_grid` — otherwise the click drifts by
 /// (180,18) (risk 4 in `max-brh-docs/visual-1to1-status.md`).
-fn session_chrome_left_click<D: Dispatcher>(
-    app: &mut App<D>,
-    x: i32,
-    y: i32,
-    online: bool,
-) -> Transition
+fn session_chrome_left_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
 where
     App<D>: SessionLocal,
 {
     if let Some(button) = panels::panel_button_at(x, y) {
-        return session_panel_button(app, button, x, online);
+        return session_panel_button(app, button, x);
     }
 
     // Minimap: 112×112 world cells in the window (15,356). In 2x mode the click
@@ -2808,16 +2765,11 @@ where
     };
     let viewport = app.map_viewport();
 
-    session_map_left_click(app, &viewport, map_x, map_y, online)
+    session_map_left_click(app, &viewport, map_x, map_y)
 }
 
 /// 1:1 panel button: End Turn, toggles, zoom, minimap, menu.
-fn session_panel_button<D: Dispatcher>(
-    app: &mut App<D>,
-    button: PanelButton,
-    x: i32,
-    online: bool,
-) -> Transition
+fn session_panel_button<D: Dispatcher>(app: &mut App<D>, button: PanelButton, x: i32) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2826,7 +2778,7 @@ where
 
     match button {
         PanelButton::EndTurn => {
-            session_end_turn(app, online);
+            session_end_turn(app);
             return Transition::None;
         }
         PanelButton::Center => {
@@ -2886,7 +2838,7 @@ where
         }
         PanelButton::Files => {
             // `GameManager_MenuClickFileButton` (`Alt+F`) — the V70 window.
-            app.open_save_menu(online);
+            app.open_save_menu(app.session_channel());
             return Transition::None;
         }
         PanelButton::Play
@@ -2929,7 +2881,6 @@ fn session_map_left_click<D: Dispatcher>(
     viewport: &Viewport,
     x: i32,
     y: i32,
-    online: bool,
 ) -> Transition
 where
     App<D>: SessionLocal,
@@ -2970,9 +2921,7 @@ where
                     exit_cell.x, exit_cell.y
                 ));
 
-                if !online {
-                    apply_pending_orders(app);
-                }
+                apply_session_orders(app);
 
                 return Transition::None;
             }
@@ -3005,9 +2954,7 @@ where
                             app.hud_mut().pending.push(command);
                             app.hud_mut()
                                 .push_log(format!("Attack ground: ({}, {})", grid.0, grid.1));
-                            if !online {
-                                apply_pending_orders(app);
-                            }
+                            apply_session_orders(app);
                             return Transition::None;
                         }
                         None => {
@@ -3081,9 +3028,7 @@ where
                             Sfx::Reload
                         });
                         app.hud_mut().push_log(format!("{label}: приказ отдан"));
-                        if !online {
-                            apply_pending_orders(app);
-                        }
+                        apply_session_orders(app);
                         return Transition::None;
                     }
                     Ok(None) => {}
@@ -3119,9 +3064,7 @@ where
                             app.hud_mut().pending.push(command);
                             app.hud_mut()
                                 .push_log(format!("load: погрузка ({label}) — приказ отдан"));
-                            if !online {
-                                apply_pending_orders(app);
-                            }
+                            apply_session_orders(app);
                             return Transition::None;
                         }
                         Ok(None) => {}
@@ -3145,9 +3088,7 @@ where
                     app.hud_mut().enter_mode = false;
                     app.hud_mut()
                         .push_log(format!("Enter: move to unit ({label})"));
-                    if !online {
-                        apply_pending_orders(app);
-                    }
+                    apply_session_orders(app);
                     return Transition::None;
                 }
             }
@@ -3218,9 +3159,7 @@ where
                 app.play_sfx(Sfx::Click);
                 app.hud_mut()
                     .push_log(format!("{label}: действие назначено"));
-                if !online {
-                    apply_pending_orders(app);
-                }
+                apply_session_orders(app);
                 return Transition::None;
             }
             Ok(None) => {
@@ -3241,9 +3180,7 @@ where
             app.hud_mut().preview = None;
             app.hud_mut().pending.push(command);
             app.hud_mut().push_log(format!("Attack: {label}"));
-            if !online {
-                apply_pending_orders(app);
-            }
+            apply_session_orders(app);
         }
         None => app.hud_mut().push_log("Cannot attack this unit"),
     }
@@ -3274,22 +3211,17 @@ where
 }
 
 /// Right button without chrome.
-fn session_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32, online: bool) -> Transition
+fn session_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
 where
     App<D>: SessionLocal,
 {
     let viewport = *app.viewport();
 
-    session_map_right_click(app, &viewport, x, y, online)
+    session_map_right_click(app, &viewport, x, y)
 }
 
 /// Right button with chrome: first the panels (they give no order), then the map.
-fn session_chrome_right_click<D: Dispatcher>(
-    app: &mut App<D>,
-    x: i32,
-    y: i32,
-    online: bool,
-) -> Transition
+fn session_chrome_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -3301,7 +3233,7 @@ where
     };
     let viewport = app.map_viewport();
 
-    session_map_right_click(app, &viewport, map_x, map_y, online)
+    session_map_right_click(app, &viewport, map_x, map_y)
 }
 
 /// Right click on the map: cancel on a unit, otherwise a move order to the cell.
@@ -3310,7 +3242,6 @@ fn session_map_right_click<D: Dispatcher>(
     viewport: &Viewport,
     x: i32,
     y: i32,
-    online: bool,
 ) -> Transition
 where
     App<D>: SessionLocal,
@@ -3388,9 +3319,7 @@ where
             );
         }
 
-        if !online {
-            apply_pending_orders(app);
-        }
+        apply_session_orders(app);
 
         return Transition::None;
     }
@@ -3412,9 +3341,7 @@ where
                     destination.x, destination.y
                 ));
 
-                if !online {
-                    apply_pending_orders(app);
-                }
+                apply_session_orders(app);
             }
             None => {
                 app.hud_mut().push_log("Air move refused");
@@ -3457,9 +3384,7 @@ where
             );
         }
 
-        if !online {
-            apply_pending_orders(app);
-        }
+        apply_session_orders(app);
 
         return Transition::None;
     }
@@ -3508,9 +3433,7 @@ where
                 );
             }
 
-            if !online {
-                apply_pending_orders(app);
-            }
+            apply_session_orders(app);
         }
         None => {
             if debug {
@@ -3528,15 +3451,15 @@ where
     Transition::None
 }
 
-/// End Turn: in a local match — the AI turn, in the network — a flag for the game loop
-/// (`06`+`52` there), in demo — a local pass of [`App::end_turn`].
-fn session_end_turn<D: Dispatcher>(app: &mut App<D>, online: bool)
+/// End Turn: in a local match — the AI turn, in a lockstep session — a flag for the
+/// game loop (`06`+`52` there), in demo — a local pass of [`App::end_turn`].
+fn session_end_turn<D: Dispatcher>(app: &mut App<D>)
 where
     App<D>: SessionLocal,
 {
     if app.local_active() {
         app.local_end_turn();
-    } else if online {
+    } else if app.session_channel().is_lockstep() {
         app.hud_mut().request_end_turn();
         app.hud_mut().push_log("End Turn requested");
     } else {
@@ -3544,7 +3467,21 @@ where
     }
 }
 
-/// Applies the accumulated orders locally (demo mode) and writes about it to the log.
+/// Applies this frame's orders through the session capability (SDL/UI Stage C2).
+///
+/// A local match applies them now (`apply_now`) and ticks them in the same frame; a
+/// lockstep match leaves them in [`crate::hud::HudState::pending`] for the session
+/// driver (`net::flush_hud_orders` → `submit`).
+fn apply_session_orders<D: Dispatcher>(app: &mut App<D>)
+where
+    App<D>: SessionLocal,
+{
+    if app.session_channel().is_local() {
+        apply_pending_orders(app);
+    }
+}
+
+/// Applies the accumulated orders locally (local match/demo) and logs it.
 fn apply_pending_orders<D: Dispatcher>(app: &mut App<D>)
 where
     App<D>: SessionLocal,
@@ -5027,19 +4964,19 @@ mod tests {
 
         // The `R` key does not open the menu again (already open).
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(Key::Char('r')), false),
+            handle_session_input(&mut app, InputEvent::Key(Key::Char('r'))),
             Transition::None
         );
 
         // `←`/`→` and `Done` through the same input path as the player.
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(Key::Down), false),
+            handle_session_input(&mut app, InputEvent::Key(Key::Down)),
             Transition::None
         );
-        handle_session_input(&mut app, InputEvent::Key(Key::Left), false);
-        handle_session_input(&mut app, InputEvent::Key(Key::Right), false);
+        handle_session_input(&mut app, InputEvent::Key(Key::Left));
+        handle_session_input(&mut app, InputEvent::Key(Key::Right));
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::Key(Key::Enter), false),
+            handle_session_input(&mut app, InputEvent::Key(Key::Enter)),
             Transition::None
         );
         assert!(app.research_menu().is_none());
@@ -5075,7 +5012,7 @@ mod tests {
 
         // A click on the `FILES` panel — the `FILES_BUTTON` entry (17..83, 4..20).
         assert_eq!(
-            handle_session_input(&mut app, InputEvent::MouseClick(50, 12), false),
+            handle_session_input(&mut app, InputEvent::MouseClick(50, 12)),
             Transition::None
         );
         assert_eq!(
@@ -5084,12 +5021,12 @@ mod tests {
         );
 
         // `Esc` closes the window and returns to the mode (C++ `HelpMenu::Run`).
-        handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+        handle_session_input(&mut app, InputEvent::Key(Key::Escape));
         assert!(app.help_screen().is_none());
         assert!(app.help_mode().is_some());
 
         // A second `Esc` disables the mode.
-        handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+        handle_session_input(&mut app, InputEvent::Key(Key::Escape));
         assert!(app.help_mode().is_none());
     }
 

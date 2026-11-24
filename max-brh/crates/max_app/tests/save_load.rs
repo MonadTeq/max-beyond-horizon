@@ -293,17 +293,17 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
         .expect("локальная партия стартует");
     run_until_player_turn(&mut app, 2_000);
 
-    assert!(!app.open_save_menu(true), "в сети сохранение недоступно");
-    assert!(app.open_save_menu(false), "в локальной партии — доступно");
+    assert!(!app.open_save_menu(max_app::SessionChannel::Lockstep), "в сети сохранение недоступно");
+    assert!(app.open_save_menu(max_app::SessionChannel::Local), "в локальной партии — доступно");
     assert!(app.save_load().is_some());
 
     // Input goes to the window: Esc closes it, the match state does not change.
     let turn = app.state_ref().turn_counter();
-    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Escape));
     assert!(app.save_load().is_none(), "Esc закрывает окно");
     assert_eq!(app.state_ref().turn_counter(), turn, "Esc не двигает партию");
 
-    assert!(app.open_load_menu(false));
+    assert!(app.open_load_menu(max_app::SessionChannel::Local));
     assert_eq!(
         app.save_load().map(|menu| menu.mode),
         Some(SaveLoadMode::Load)

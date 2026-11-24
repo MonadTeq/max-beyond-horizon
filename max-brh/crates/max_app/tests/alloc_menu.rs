@@ -97,11 +97,11 @@ fn mining_station(app: &App) -> UnitId {
 }
 
 fn click(app: &mut App, point: (i32, i32)) -> Transition {
-    handle_session_input(app, InputEvent::MouseClick(point.0, point.1), false)
+    handle_session_input(app, InputEvent::MouseClick(point.0, point.1))
 }
 
 fn key(app: &mut App, key: Key) -> Transition {
-    handle_session_input(app, InputEvent::Key(key), false)
+    handle_session_input(app, InputEvent::Key(key))
 }
 
 /// Selects the mine and opens the command menu with a repeated click.

@@ -1158,7 +1158,24 @@ impl App {
         paused
     }
 
-    /// One frame of the local match: simulation tick, timer, AI turns.
+    /// One frame of the local match: the shared session step with the local clock.
+    ///
+    /// SDL/UI Stage C1: a local match runs the same `poll input → order → tick →
+    /// render` skeleton as the lockstep driver ([`crate::session::session_step`]).
+    /// The SDL screen owns the frame around this call (`run_ui` polls the window
+    /// input before — menus and the session share one event queue — and draws
+    /// after), so the step runs with the headless frame; the order stage is
+    /// [`SessionLocal::session_orders`] and the clock is [`Self::local_clock`].
+    /// The return value is the local-match report of the clock.
+    pub fn local_update(&mut self, dt: f32) -> LocalUpdate {
+        match crate::session::session_step(self, dt, &mut crate::session::HeadlessFrame) {
+            crate::session::StepOutcome::Continue(update) => update,
+            // A headless frame never asks to leave; kept exhaustive for the step.
+            crate::session::StepOutcome::Leave => LocalUpdate::default(),
+        }
+    }
+
+    /// The clock of a local session — phase 3 of the shared session step.
     ///
     /// `dt` — seconds since the last frame (the turn timer and the visible unit movement).
     /// Simulation determinism does not depend on `dt`: ticks go one per frame,
@@ -1167,7 +1184,7 @@ impl App {
     /// While the turn-transition window is open (M-HS), the simulation does not tick (in C++
     /// the loop sits in `DialogMenu::Run()`), but the visual route of the already moved units
     /// finishes — otherwise movement would break on the turn change.
-    pub fn local_update(&mut self, dt: f32) -> LocalUpdate {
+    fn local_clock(&mut self, dt: f32) -> LocalUpdate {
         let mut update = LocalUpdate::default();
 
         let Some(local) = self.local.as_ref() else {
@@ -1796,6 +1813,39 @@ impl App {
     }
 }
 
+/// Command channel of a session — the dispatcher capability (SDL/UI Stage C2).
+///
+/// The channel is a property of the dispatcher, not a per-call flag: the session
+/// input, the menus and the build screens ask the application for it instead of
+/// carrying an `online`/`offline` argument (`Dispatcher::advances_turns` decides).
+///
+/// * [`Self::Local`] — `LocalDispatcher` (`advances_turns = true`): the order is
+///   applied through `apply_now` and is ticked in the same frame; save/load are
+///   available;
+/// * [`Self::Lockstep`] — `NetworkDispatcher` (`advances_turns = false`): the order
+///   stays in [`crate::hud::HudState::pending`] until the session driver drains it
+///   (`net::flush_hud_orders` → `submit`) and the simulation applies it on a tick;
+///   save/load are unavailable (packet 16 is not ported).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionChannel {
+    /// A local match: immediate application (`apply_now` + the same frame's tick).
+    Local,
+    /// A lockstep match: queued for the session driver (`hud.pending` → `submit`).
+    Lockstep,
+}
+
+impl SessionChannel {
+    /// The order is applied in the frame that produced it (`apply_now`).
+    pub const fn is_local(self) -> bool {
+        matches!(self, Self::Local)
+    }
+
+    /// The order is queued for the session driver (`hud.pending` → `submit`).
+    pub const fn is_lockstep(self) -> bool {
+        matches!(self, Self::Lockstep)
+    }
+}
+
 /// Local-match operations the shared session input/render path reads (stage C §4.2).
 ///
 /// The session input and the session frame are generic over the dispatcher because
@@ -1804,6 +1854,10 @@ impl App {
 /// `end_local_turn`) on `App<LocalDispatcher>`, so it is reached through this
 /// trait; a network application has no `LocalGame` and answers exactly what the
 /// inherent methods answer for `App::local == None`.
+///
+/// SDL/UI Stage C (C1/C2): the trait also carries the three phases of the single
+/// session step ([`crate::session::session_step`]), so the step has no
+/// online/offline switch — the dispatcher decides.
 pub trait SessionLocal {
     fn local_notice(&self) -> Option<&TurnNotice>;
     fn local_input_blocked(&self) -> bool;
@@ -1811,6 +1865,22 @@ pub trait SessionLocal {
     fn local_toggle_pause(&mut self) -> bool;
     fn local_end_turn(&mut self);
     fn load_game_slot(&mut self, slot: i32) -> Result<std::path::PathBuf, String>;
+
+    /// The command channel of this session (C2) — the dispatcher capability.
+    fn session_channel(&self) -> SessionChannel;
+
+    /// Phase 2 of [`crate::session::session_step`]: route this frame's orders
+    /// through the session channel.
+    ///
+    /// A local match applies them (`apply_now`); a lockstep match hands the queue
+    /// to the session driver (`net::flush_hud_orders` → `submit`).
+    fn session_orders(&mut self);
+
+    /// Phase 3 of [`crate::session::session_step`]: one clock step of the session.
+    ///
+    /// The local match runs its phase machine (AI turns, timers); a lockstep match
+    /// runs exactly one [`crate::App::tick`].
+    fn session_tick(&mut self, dt: f32) -> LocalUpdate;
 }
 
 impl SessionLocal for App<max_core::universe::LocalDispatcher> {
@@ -1839,6 +1909,23 @@ impl SessionLocal for App<max_core::universe::LocalDispatcher> {
     fn load_game_slot(&mut self, slot: i32) -> Result<std::path::PathBuf, String> {
         self.load_game_slot(slot)
     }
+
+    /// `LocalDispatcher::advances_turns = true`: orders apply in the frame and are
+    /// ticked right away.
+    fn session_channel(&self) -> SessionChannel {
+        SessionChannel::Local
+    }
+
+    /// The local handlers already applied every order through `apply_now` in the
+    /// frame that produced it; the step drains a leftover queue so the frame's
+    /// tick sees every command (`flush_orders` is the same immediate channel).
+    fn session_orders(&mut self) {
+        let _ = self.flush_orders();
+    }
+
+    fn session_tick(&mut self, dt: f32) -> LocalUpdate {
+        self.local_clock(dt)
+    }
 }
 
 impl SessionLocal for App<crate::net::NetworkDispatcher> {
@@ -1862,5 +1949,24 @@ impl SessionLocal for App<crate::net::NetworkDispatcher> {
 
     fn load_game_slot(&mut self, _slot: i32) -> Result<std::path::PathBuf, String> {
         Err("Load requires a local game (Single Player or Hot Seat)".to_string())
+    }
+
+    /// `NetworkDispatcher::advances_turns = false`: orders queue for the driver.
+    fn session_channel(&self) -> SessionChannel {
+        SessionChannel::Lockstep
+    }
+
+    /// Hands the orders collected by the input of this frame to the facade
+    /// (`submit(Broadcast)`); the following tick queues them and the driver
+    /// broadcasts the outgoing DTOs.
+    fn session_orders(&mut self) {
+        self.flush_hud_orders();
+    }
+
+    /// One simulation tick — `GameManager_ProcessTick` of the lockstep driver.
+    fn session_tick(&mut self, _dt: f32) -> LocalUpdate {
+        let _ = self.tick();
+
+        LocalUpdate::default()
     }
 }

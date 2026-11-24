@@ -863,7 +863,12 @@ struct WindowSink {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for WindowSink {
-    fn frame(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
+    /// The window-only sink has no input: `--connect --sdl` without the HUD.
+    fn poll_input(&mut self, _app: &mut App<NetworkDispatcher>) -> bool {
+        true
+    }
+
+    fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
         let buffer = app.render_frame();
 
@@ -1147,7 +1152,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
             // orders 38/08, End Turn/Menu buttons. In the menu — the screen machine.
             let in_session = matches!(screen, Screen::InSession { .. });
             let transition = if in_session {
-                handle_session_input(&mut app, input, false)
+                handle_session_input(&mut app, input)
             } else {
                 screen.handle_input(&mut ctx, input)
             };
@@ -1515,10 +1520,14 @@ fn run_ui_session(
 
 /// Session frames: input (mouse/keys) → HUD, map + HUD → window.
 ///
-/// Input is handled by [`handle_session_input`]: a click on an own unit — selection,
-/// RMB — a move order (packet 38), a click on an enemy — attack (08), the buttons
-/// End Turn/Menu. The network loop collects and sends the accumulated orders itself
-/// (`net::flush_hud_orders`), so `online = true` is enough here.
+/// The two hooks are the phases of the shared session step (SDL/UI Stage C1):
+/// [`max_app::net::FrameSink::poll_input`] and
+/// [`max_app::net::FrameSink::render`], run by `net::run_game_loop` around the one
+/// tick. Input is handled by [`handle_session_input`]: a click on an own unit —
+/// selection, RMB — a move order (packet 38), a click on an enemy — attack (08),
+/// the buttons End Turn/Menu. The session channel decides what happens to the
+/// orders (SDL/UI Stage C2): the network loop collects them itself
+/// (`net::flush_hud_orders`) — no `online` flag is passed.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
     window: &'a mut max_render::SdlWindow,
@@ -1532,7 +1541,7 @@ struct UiSessionSink<'a> {
 
 #[cfg(feature = "sdl")]
 impl max_app::net::FrameSink for UiSessionSink<'_> {
-    fn frame(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
+    fn poll_input(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
 
         // 1. This frame's input → HUD (selection, orders, buttons).
@@ -1556,7 +1565,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
                 );
             }
 
-            match handle_session_input(app, input, true) {
+            match handle_session_input(app, input) {
                 Transition::None => {}
                 Transition::LeaveSession | Transition::Quit => leave = true,
                 Transition::ApplyPreferences(preferences) => {
@@ -1574,10 +1583,14 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         // Preferences active in any match (including network):
         // edge scrolling (`click_scroll`/`quick_scroll`) and the camera following
         // the selection (`follow_unit`). Auto-selection (`auto_select`) is enabled
-        // in `App::tick`, which the network loop runs.
+        // in `App::tick`, which the session step runs.
         app.update_scroll(1.0 / 60.0);
         app.follow_selected_unit();
 
+        true
+    }
+
+    fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         // 2. Frame: map + HUD over it.
         self.status = format!(
             "IN SESSION · {} · tick={} turn={} · LMB select · RMB move · Esc cancel",

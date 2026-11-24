@@ -21,7 +21,7 @@
 //! next tick. [`end_local_turn_and_submit_06_are_distinguishable`] keeps the two
 //! paths distinguishable, as the stage-A gate required.
 
-use max_app::App;
+use max_app::{App, SessionChannel};
 use max_app::AppConfig;
 use max_core::enums::{ResearchTopic, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::{command_move_linear, command_order_p1, payload_p1_for, ApplyOutcome};
@@ -406,7 +406,7 @@ fn economy_app() -> App {
 }
 
 /// Runs `UpgradeMenu::Done` through the UI: buy one attack upgrade of `Infantry`.
-fn commit_upgrade_ui(app: &mut App, online: bool) -> Vec<Command> {
+fn commit_upgrade_ui(app: &mut App, channel: SessionChannel) -> Vec<Command> {
     assert!(app.open_upgrade_menu(), "upgrades screen opens");
     let index = app
         .upgrade_menu()
@@ -417,7 +417,7 @@ fn commit_upgrade_ui(app: &mut App, online: bool) -> Vec<Command> {
         .expect("Infantry is listed");
     assert!(app.upgrade_menu_select(index));
     assert!(app.upgrade_menu_adjust(0, true), "attack upgrade is bought");
-    assert!(app.commit_upgrade_menu(online).is_some(), "commit closes the screen");
+    assert!(app.commit_upgrade_menu(channel).is_some(), "commit closes the screen");
 
     app.take_outgoing_orders()
 }
@@ -431,14 +431,14 @@ fn commit_upgrade_ui(app: &mut App, online: bool) -> Vec<Command> {
 fn upgrade_menu_commit_matches_the_broadcast_apply_on_a_peer() {
     // Single player: the UI commit flushes the packet immediately.
     let mut single = economy_app();
-    assert!(commit_upgrade_ui(&mut single, false).is_empty(), "flush empties the queue");
+    assert!(commit_upgrade_ui(&mut single, SessionChannel::Local).is_empty(), "flush empties the queue");
     for _ in 0..TICKS {
         single.tick();
     }
 
     // Network: the same UI actions leave packet 09 (and 10) in the outgoing queue.
     let mut owner = economy_app();
-    let commands = commit_upgrade_ui(&mut owner, true);
+    let commands = commit_upgrade_ui(&mut owner, SessionChannel::Lockstep);
     assert!(
         commands
             .iter()
@@ -502,7 +502,7 @@ fn research_app() -> App {
 
 /// Runs `ResearchMenu::Done` through the UI: move the only center from Attack to
 /// Shots.
-fn commit_research_ui(app: &mut App, online: bool) -> Vec<Command> {
+fn commit_research_ui(app: &mut App, channel: SessionChannel) -> Vec<Command> {
     assert!(app.open_research_menu(), "research screen opens");
     assert!(
         app.research_menu_adjust(ResearchTopic::Attack as usize, false),
@@ -512,7 +512,7 @@ fn commit_research_ui(app: &mut App, online: bool) -> Vec<Command> {
         app.research_menu_adjust(ResearchTopic::Shots as usize, true),
         "Shots takes the center"
     );
-    assert!(app.commit_research_menu(online).is_some(), "Done closes the screen");
+    assert!(app.commit_research_menu(channel).is_some(), "Done closes the screen");
 
     app.take_outgoing_orders()
 }
@@ -523,13 +523,13 @@ fn commit_research_ui(app: &mut App, online: bool) -> Vec<Command> {
 #[test]
 fn research_menu_commit_matches_the_broadcast_apply_on_a_peer() {
     let mut single = research_app();
-    assert!(commit_research_ui(&mut single, false).is_empty());
+    assert!(commit_research_ui(&mut single, SessionChannel::Local).is_empty());
     for _ in 0..TICKS {
         single.tick();
     }
 
     let mut owner = research_app();
-    let commands = commit_research_ui(&mut owner, true);
+    let commands = commit_research_ui(&mut owner, SessionChannel::Lockstep);
     assert!(
         commands
             .iter()

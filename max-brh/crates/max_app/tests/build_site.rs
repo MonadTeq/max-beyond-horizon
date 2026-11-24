@@ -150,7 +150,7 @@ fn open_build_menu(app: &mut App, builder: UnitId) {
 /// `Done`: for a building at a mobile builder the site selection opens.
 fn order_site_selection(app: &mut App, builder: UnitId) -> Point {
     open_build_menu(app, builder);
-    let line = app.commit_build_menu(false).expect("Done обработан");
+    let line = app.commit_build_menu(max_app::SessionChannel::Local).expect("Done обработан");
     assert!(app.build_site().is_some(), "выбор места открыт ({line})");
     assert!(
         app.state_ref().unit(builder).expect("строитель").orders == UnitOrder::Await,
@@ -164,21 +164,21 @@ fn order_site_selection(app: &mut App, builder: UnitId) -> Point {
 fn move_cursor(app: &mut App, grid: Point) -> Transition {
     let (x, y) = screen_point(app, grid);
 
-    handle_session_input(app, InputEvent::MouseMove(x, y), false)
+    handle_session_input(app, InputEvent::MouseMove(x, y))
 }
 
 /// A click on a cell (LMB — confirmation, invalid — cancel as in C++).
 fn click_cell(app: &mut App, grid: Point) -> Transition {
     let (x, y) = screen_point(app, grid);
 
-    handle_session_input(app, InputEvent::MouseClick(x, y), false)
+    handle_session_input(app, InputEvent::MouseClick(x, y))
 }
 
 /// Opens `BuildMenu` with the `B` key — a shortcut (`ui.rs`).
 fn open_build_menu_via_key(app: &mut App, builder: UnitId) {
     app.hud_mut().select(Some(builder));
 
-    handle_session_input(app, InputEvent::Key(max_app::ui::Key::Char('b')), false);
+    handle_session_input(app, InputEvent::Key(max_app::ui::Key::Char('b')));
 
     assert!(app.build_menu().is_some(), "B открывает BuildMenu");
     assert!(app.unit_menu().is_none(), "попап не открывался");
@@ -194,8 +194,8 @@ fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
     let grid = app.state_ref().unit(builder).expect("строитель").grid;
     let (x, y) = screen_point(app, grid);
 
-    let _ = handle_session_input(app, InputEvent::MouseMove(x, y), false);
-    let _ = handle_session_input(app, InputEvent::MouseClick(x, y), false);
+    let _ = handle_session_input(app, InputEvent::MouseMove(x, y));
+    let _ = handle_session_input(app, InputEvent::MouseClick(x, y));
 
     assert!(app.unit_menu().is_some(), "попап юнита открыт");
 
@@ -210,8 +210,7 @@ fn open_build_menu_via_popup(app: &mut App, builder: UnitId) {
 
     let _ = handle_session_input(
         app,
-        InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2),
-        false,
+        InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
     );
 
     assert!(app.unit_menu().is_none(), "попап закрылся после Build");
@@ -236,7 +235,7 @@ fn order_site_selection_via(app: &mut App, builder: UnitId, popup: bool) -> Poin
         "выбран Training Hall"
     );
 
-    let line = app.commit_build_menu(false).expect("Done обработан");
+    let line = app.commit_build_menu(max_app::SessionChannel::Local).expect("Done обработан");
     assert!(app.build_site().is_some(), "выбор места открыт ({line})");
     assert!(
         app.state_ref().unit(builder).expect("строитель").orders == UnitOrder::Await,
@@ -317,7 +316,7 @@ fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
     );
 
     // Esc — cancel without an order (the order does not go, there is no site in the world).
-    let _ = handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Escape), false);
+    let _ = handle_session_input(&mut app, InputEvent::Key(max_app::ui::Key::Escape));
 
     assert!(app.build_site().is_none(), "режим закрыт");
     assert_eq!(

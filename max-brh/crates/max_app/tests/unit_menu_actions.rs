@@ -466,7 +466,7 @@ fn alt_p_opens_pause_dialog_and_resumes() {
     }
 
     assert!(matches!(
-        handle_session_input(&mut app, InputEvent::Key(Key::Alt('P')), false),
+        handle_session_input(&mut app, InputEvent::Key(Key::Alt('P'))),
         Transition::None
     ));
     assert!(app.pause_dialog().is_some(), "Alt+P открывает диалог");
@@ -479,8 +479,7 @@ fn alt_p_opens_pause_dialog_and_resumes() {
     let ok = app.pause_dialog().expect("диалог").ok_rect();
     handle_session_input(
         &mut app,
-        InputEvent::MouseClick(ok.ulx + 2, ok.uly + 2),
-        false,
+        InputEvent::MouseClick(ok.ulx + 2, ok.uly + 2)
     );
     assert!(app.pause_dialog().is_none());
     assert!(!app.local().map(|local| local.paused).unwrap_or(true));
@@ -504,22 +503,21 @@ fn ui_events_queue_cpp_sounds() {
 
     app.take_sounds();
     // A click on the map — `KCARG0` (`game_manager.cpp:6711`).
-    let _ = handle_session_input(&mut app, InputEvent::MouseClick(300, 200), false);
+    let _ = handle_session_input(&mut app, InputEvent::MouseClick(300, 200));
     assert_eq!(app.take_sounds(), vec![Sfx::Click]);
 
     // A panel button — `MBUTT0`.
     let zoom = max_render::layout::ZOOM_PLUS;
     let _ = handle_session_input(
         &mut app,
-        InputEvent::MouseClick(zoom.ulx + 2, zoom.uly + 2),
-        false,
+        InputEvent::MouseClick(zoom.ulx + 2, zoom.uly + 2)
     );
     assert_eq!(app.take_sounds(), vec![Sfx::Button]);
 
     // Pause: `Alt+P` (MBUTT0) and `Esc` (NCANC0).
-    let _ = handle_session_input(&mut app, InputEvent::Key(Key::Alt('p')), false);
+    let _ = handle_session_input(&mut app, InputEvent::Key(Key::Alt('p')));
     assert_eq!(app.take_sounds(), vec![Sfx::Button]);
-    let _ = handle_session_input(&mut app, InputEvent::Key(Key::Escape), false);
+    let _ = handle_session_input(&mut app, InputEvent::Key(Key::Escape));
     assert_eq!(app.take_sounds(), vec![Sfx::Cancel]);
 
     // Voices are disabled by `disable_voice`, effects — by `disable_fx`.

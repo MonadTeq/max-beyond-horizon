@@ -83,6 +83,7 @@ use max_render::buffer::RgbaBuffer;
 use max_render::viewport::Viewport;
 
 use crate::cursor::CursorId;
+use crate::local::SessionChannel;
 
 /// Builder sprite shift per one `PositionInTape` tick
 /// (`OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)`, `unitinfo.cpp:4478`).
@@ -485,7 +486,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
     ///
     /// Returns a log line; `None` — no mode. An invalid cell
     /// cancels the selection, as in C++ (`CURSOR_UNIT_NO_GO` → `ManagePlayerAction`).
-    pub fn confirm_build_site(&mut self, online: bool) -> Option<String> {
+    pub fn confirm_build_site(&mut self, channel: SessionChannel) -> Option<String> {
         let (valid, anchor) = {
             let site = self.build_site.as_ref()?;
 
@@ -508,7 +509,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             site.build_rate,
         )?;
 
-        if online {
+        if channel.is_lockstep() {
             self.hud.pending.push(command);
         } else {
             // B2/B3 audit: the command channel — the `ORDER_BUILD` command is the

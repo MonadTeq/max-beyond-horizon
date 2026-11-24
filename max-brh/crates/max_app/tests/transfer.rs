@@ -94,11 +94,11 @@ fn unit_of_type(app: &App, unit_type: UnitType) -> UnitId {
 }
 
 fn click(app: &mut App, point: (i32, i32)) -> Transition {
-    handle_session_input(app, InputEvent::MouseClick(point.0, point.1), false)
+    handle_session_input(app, InputEvent::MouseClick(point.0, point.1))
 }
 
 fn key(app: &mut App, key: Key) -> Transition {
-    handle_session_input(app, InputEvent::Key(key), false)
+    handle_session_input(app, InputEvent::Key(key))
 }
 
 fn frame_point(app: &mut App, id: UnitId) -> (i32, i32) {
@@ -318,8 +318,7 @@ fn xfer_help_opens_transfer_setup() {
     // A click on the `TRANSFERER` element (335..371, 177..213) opens the entry.
     let _ = max_app::ui::handle_session_input(
         &mut app,
-        max_app::ui::InputEvent::MouseClick(353, 195),
-        false,
+        max_app::ui::InputEvent::MouseClick(353, 195)
     );
     assert_eq!(
         app.help_screen().and_then(|help| help.entry_name()),

@@ -47,6 +47,7 @@ use max_render::buffer::{PixelRect, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
 
 use crate::assets::Assets;
+use crate::local::SessionChannel;
 use crate::menu::{draw_image_button, MenuButtonPair};
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
@@ -826,10 +827,11 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
 
     /// Opens the save window (`File` button, `Alt+F` in C++).
     ///
-    /// In a network session returns `false` and writes the explanation to the log: in
-    /// the original saving broadcasts packet 16, which does not exist in our protocol.
-    pub fn open_save_menu(&mut self, online: bool) -> bool {
-        if online {
+    /// In a lockstep session returns `false` and writes the explanation to the log:
+    /// in the original saving broadcasts packet 16, which does not exist in our
+    /// protocol. The channel is the session capability (SDL/UI Stage C2).
+    pub fn open_save_menu(&mut self, channel: SessionChannel) -> bool {
+        if channel.is_lockstep() {
             self.hud
                 .push_log("Save is not available in a network game (packet 16 is not ported)");
             return false;
@@ -858,8 +860,8 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// Opens the load window (C++ `Alt+L`).
     ///
     /// In the network loading is forbidden in the original too (`saveloadmenu.cpp:461`).
-    pub fn open_load_menu(&mut self, online: bool) -> bool {
-        if online {
+    pub fn open_load_menu(&mut self, channel: SessionChannel) -> bool {
+        if channel.is_lockstep() {
             self.hud
                 .push_log("Load is not available in a network game");
             return false;

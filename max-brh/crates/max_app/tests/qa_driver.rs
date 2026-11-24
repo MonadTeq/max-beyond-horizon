@@ -517,7 +517,7 @@ impl ManualPlay {
         self.recorder.record(event, self.context());
 
         if matches!(self.screen, Screen::InSession { .. }) {
-            match handle_session_input(&mut self.app, event, false) {
+            match handle_session_input(&mut self.app, event) {
                 Transition::None => {}
                 Transition::LeaveSession => {
                     self.screen = Screen::MainMenu;

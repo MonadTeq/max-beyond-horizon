@@ -87,6 +87,7 @@ use max_core::unit::UnitId;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
 
+use crate::local::SessionChannel;
 use crate::menu::MenuButtonPair;
 use crate::mobilize::{center_y, draw_icon, draw_text_right, team_lut};
 use crate::panels::UiPalette;
@@ -1407,18 +1408,18 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// the site selection mode opens (`ORDER_STATE_SELECT_SITE`), the site is placed by
     /// [`crate::App::confirm_build_site`] on LMB. A factory (and the engineer's
     /// non-buildings) go the former way — straight into the queue.
-    pub fn commit_build_menu(&mut self, online: bool) -> Option<String> {
-        self.commit_build_menu_with(online, false)
+    pub fn commit_build_menu(&mut self, channel: SessionChannel) -> Option<String> {
+        self.commit_build_menu_with(channel, false)
     }
 
     /// `Build()` with the `event_click_path_build` flag (`Path` for the engineer):
     /// `force_path` opens the site selection also for the 1×1 build.
-    pub fn commit_build_menu_path(&mut self, online: bool) -> Option<String> {
-        self.commit_build_menu_with(online, true)
+    pub fn commit_build_menu_path(&mut self, channel: SessionChannel) -> Option<String> {
+        self.commit_build_menu_with(channel, true)
     }
 
     /// The common path `MobileBuildMenu::Build`/`AbstractBuildMenu::Build`.
-    pub fn commit_build_menu_with(&mut self, online: bool, force_path: bool) -> Option<String> {
+    pub fn commit_build_menu_with(&mut self, channel: SessionChannel, force_path: bool) -> Option<String> {
         let mut menu = self.build_menu.take()?;
 
         // `UnitsManager_IssueBuildOrder`: there must be a passable 2×2
@@ -1455,7 +1456,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
 
         match command {
             Some(command) => {
-                if online {
+                if channel.is_lockstep() {
                     self.hud.pending.push(command);
                 } else {
                     // B2/B3 audit: the command channel — the `ORDER_BUILD` command is
