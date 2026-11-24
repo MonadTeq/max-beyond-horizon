@@ -2180,6 +2180,93 @@ impl<D: Dispatcher> GameUniverse<D> {
         crate::production::ProductionManager::new(&mut self.state, team)
     }
 
+    // — local-machine channel (A3): closing a turn through the sequential machine —
+    //
+    // The turn close lives in the dispatcher-generic block, not in the
+    // `LocalDispatcher` block, so that the demo (non-local, non-network) path of
+    // the application reaches the *same* facade operation as a local match: the
+    // owner decision for SDL/UI Stage B (B1) is `end_local_turn`, never a queued
+    // `06` — a queued `06` is applied inside the next `tick` and enters `EndTurn`
+    // again. The `Dispatcher::advances_turns` gate keeps a network dispatcher out
+    // (fail-closed), exactly as before the method moved here.
+
+    /// Local End Turn: packet `06` **immediately**, then `enter_end_turn` and one
+    /// run of the team-turn machine to the next acting team (ADR §1, §4).
+    ///
+    /// **Channel:** local machine (A3) — the turn close of a single-player match;
+    /// a network dispatcher does not advance turns here (see
+    /// [`Dispatcher::advances_turns`]).
+    ///
+    /// Together with [`Self::begin_local_round`] (the round entry) this is the only
+    /// way the sequential machine advances in a single-player match, and the only
+    /// trigger of a turn close. `06` is applied right away (not queued): in the
+    /// simultaneous mode the round is closed by `are_teams_finished_turn`, which
+    /// needs a synchronous `finished_turn` (stage-A task §5 item 5). Every machine
+    /// step is emitted as [`GameEvent::Turn`] with the pre-transition peek data
+    /// ([`TurnNotice`]).
+    ///
+    /// Returns `true` when the machine finished the match
+    /// ([`TurnEvent::GameOver`]); `false` — the next acting team started, or the
+    /// dispatcher does not advance turns. The value is the application's `over`
+    /// flag; it does not change the state.
+    pub fn end_local_turn(&mut self, team: TeamId) -> bool {
+        if !self.dispatcher.advances_turns() {
+            return false;
+        }
+
+        // `GameManager_RefreshOrders` → `Remote_SendNetPacket_06`: the turn of the
+        // team is over, applied synchronously (as `local.rs` did before, ADR §4).
+        let _ = events::apply_command(&mut self.state, &events::command_finished_turn(team));
+        // The sequential loop closes every team turn through `GAME_STATE_9_END_TURN`
+        // (`finish_turn` requires the phase; `06` itself sets it only in `TurnBased`).
+        self.state.enter_end_turn();
+        let over = self.run_turn_machine();
+        // The turn transition is an observable state change (ADR §1.3): bump the
+        // facade version once per atomic facade operation.
+        self.seq += 1;
+        over
+    }
+
+    /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or
+    /// the match is over; `RoundClosed` continues into the next round (ADR §4).
+    ///
+    /// Returns `true` for [`TurnEvent::GameOver`].
+    ///
+    /// The peek values are taken **before** each step, as the application did in
+    /// `local.rs:790-804`:
+    ///
+    /// * `previous_player_team` — `GameManager_PlayerTeam` before `next_team`
+    ///   switches it for a human team;
+    /// * `status` — `WinLoss_EvaluateStatus` before `finish_turn`, only when the
+    ///   step is the closing one (`upcoming_team().is_none()`), and only reported
+    ///   on [`TurnEvent::GameOver`] (ADR §3).
+    fn run_turn_machine(&mut self) -> bool {
+        loop {
+            let previous_player_team = self.state.player_team;
+            let closing = self.state.upcoming_team().is_none();
+            let status =
+                closing.then(|| victory::evaluate_status(&self.state, self.state.turn_counter));
+
+            let event = self.state.next_team();
+
+            self.bus.push(GameEvent::Turn(TurnNotice {
+                event,
+                previous_player_team,
+                status: if event == TurnEvent::GameOver {
+                    status
+                } else {
+                    None
+                },
+            }));
+
+            match event {
+                TurnEvent::Human(_) | TurnEvent::Computer(_) => return false,
+                TurnEvent::GameOver => return true,
+                TurnEvent::RoundClosed => {}
+            }
+        }
+    }
+
     // — internals —
 
     /// The barrier counters right after the rules phase.
@@ -2229,48 +2316,15 @@ impl GameUniverse<LocalDispatcher> {
     }
 
     // — local-machine channel (A3): begin_local_round / resume_local_round,
-    // end_local_turn, tick and apply_now —
+    // tick and apply_now —
     //
     // The sequential team-turn machine of a single-player match, plus the immediate
     // packet path that must be observable before the next tick (`apply_now` lives in
     // the dispatcher-generic block above). Every entry is gated by
     // `Dispatcher::advances_turns`; a network match advances turns through the
     // barrier FSM instead, and the UI never closes a turn directly.
-
-    /// Local End Turn: packet `06` **immediately**, then `enter_end_turn` and one
-    /// run of the team-turn machine to the next acting team (ADR §1, §4).
-    ///
-    /// **Channel:** local machine (A3) — the turn close of a single-player match;
-    /// a network dispatcher does not advance turns here (see
-    /// [`Dispatcher::advances_turns`]).
-    ///
-    /// Together with [`Self::begin_local_round`] (the round entry) this is the only
-    /// way the sequential machine advances in a single-player match, and the only
-    /// trigger of a turn close. `06` is applied right away (not queued): in the
-    /// simultaneous mode the round is closed by `are_teams_finished_turn`, which
-    /// needs a synchronous `finished_turn` (stage-A task §5 item 5). Every machine
-    /// step is emitted as [`GameEvent::Turn`] with the pre-transition peek data
-    /// ([`TurnNotice`]).
-    ///
-    /// The dispatcher policy gates the machine: it runs only when
-    /// [`Dispatcher::advances_turns`] is `true` (statically true for
-    /// [`LocalDispatcher`]; a network dispatcher returns `false`).
-    pub fn end_local_turn(&mut self, team: TeamId) {
-        if !self.dispatcher.advances_turns() {
-            return;
-        }
-
-        // `GameManager_RefreshOrders` → `Remote_SendNetPacket_06`: the turn of the
-        // team is over, applied synchronously (as `local.rs` did before, ADR §4).
-        let _ = events::apply_command(&mut self.state, &events::command_finished_turn(team));
-        // The sequential loop closes every team turn through `GAME_STATE_9_END_TURN`
-        // (`finish_turn` requires the phase; `06` itself sets it only in `TurnBased`).
-        self.state.enter_end_turn();
-        self.run_turn_machine();
-        // The turn transition is an observable state change (ADR §1.3): bump the
-        // facade version once per atomic facade operation.
-        self.seq += 1;
-    }
+    // `end_local_turn` itself is dispatcher-generic (SDL/UI Stage B, B1): the demo
+    // path must close a turn through the same facade operation as a local match.
 
     /// Enters a round of the local team-turn machine and advances it to the first
     /// acting team (match start entry, stage-A task §6 item 4).
@@ -2344,43 +2398,6 @@ impl GameUniverse<LocalDispatcher> {
         // facade version once per atomic facade operation.
         self.seq += 1;
         true
-    }
-
-    /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or
-    /// the match is over; `RoundClosed` continues into the next round (ADR §4).
-    ///
-    /// The peek values are taken **before** each step, as the application did in
-    /// `local.rs:790-804`:
-    ///
-    /// * `previous_player_team` — `GameManager_PlayerTeam` before `next_team`
-    ///   switches it for a human team;
-    /// * `status` — `WinLoss_EvaluateStatus` before `finish_turn`, only when the
-    ///   step is the closing one (`upcoming_team().is_none()`), and only reported
-    ///   on [`TurnEvent::GameOver`] (ADR §3).
-    fn run_turn_machine(&mut self) {
-        loop {
-            let previous_player_team = self.state.player_team;
-            let closing = self.state.upcoming_team().is_none();
-            let status =
-                closing.then(|| victory::evaluate_status(&self.state, self.state.turn_counter));
-
-            let event = self.state.next_team();
-
-            self.bus.push(GameEvent::Turn(TurnNotice {
-                event,
-                previous_player_team,
-                status: if event == TurnEvent::GameOver {
-                    status
-                } else {
-                    None
-                },
-            }));
-
-            match event {
-                TurnEvent::Human(_) | TurnEvent::Computer(_) | TurnEvent::GameOver => return,
-                TurnEvent::RoundClosed => {}
-            }
-        }
     }
 }
 

@@ -145,6 +145,31 @@ pub enum AllocAction {
 /// that C++ computes in the `AllocMenu` constructor (`GetCargoMining`,
 /// `GetCargoMinable`, `GetCargoInfo`) and maintains incrementally in
 /// `Update*Allocation`; `balance` — `cargo_2` from `DrawCargoBars`.
+///
+/// # B2 audit — the one remaining menu family outside the command channel
+///
+/// SDL/UI Stage B (B2) asks for "menu commits → `Command` in `hud.pending`". This
+/// dialog cannot be converted without a protocol/core change, and the reason is
+/// recorded here and at each writer:
+///
+/// * the *per-click* effect must be visible **before the next tick** — the dialog
+///   itself reads the complex stock and the mine distribution back on the next
+///   click (`Update*Allocation` → `Balance`), so a queued command would make the
+///   next click compute on stale numbers;
+/// * packet **11** carries only the six `Complex` totals (`Command::ComplexOrder`,
+///   `apply_packet_11`), packet **08/P5** only the four mining fields per mine
+///   (`queue_alloc_orders` builds those on close). `AllocMenu_Balance`
+///   (`GameUniverse::allocation_balance`) additionally *normalizes the distribution
+///   over the mines of the complex* and has no packet at all;
+/// * C++ mutates the same fields directly and broadcasts 11 once, on `Run` exit
+///   (`allocmenu.cpp:790-792`).
+///
+/// These writers are therefore **facade local-machine calls** (`optimize_allocation`,
+/// `reduce_production_allocation`, `allocation_balance`, `complex_mut`), not UI
+/// writes: the dialog drives the allocator exactly as C++ does, and the broadcast
+/// side stays the 08/P5 command queue. Closing it needs an allocator command (a
+/// planning API in `max_core::alloc` + a command carrier) — an Architecture
+/// decision, not a Stage B UI refactor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AllocMenu {
     /// The mine from whose menu the dialog was opened.

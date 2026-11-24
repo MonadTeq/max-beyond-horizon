@@ -1884,6 +1884,14 @@ impl<D: Dispatcher> crate::App<D> {
     /// * `enemy_halt` — `Access_UpdateMapStatus` reads the setting on every
     ///   unit step (`access.cpp:830`), so the state field is updated
     ///   immediately.
+    ///
+    /// B2 audit — `set_enemy_halt` is a **preference install**, not a UI
+    /// simulation mutation: the flag is not part of `GameState::snapshot_bytes`
+    /// (the snapshot carries `network_game`/`settings_effects`/`disable_fire`/
+    /// `real_time` only), it is a local rules switch read by `Access_UpdateMapStatus`
+    /// on every step, and C++ has no packet for it. `Preferences` is outside the
+    /// snapshot by design (`sdl-ui-integration.md` §4, "debug-Preferences — чисто
+    /// UI-настройки, вне снапшота").
     fn sync_preferences_to_game(&mut self) {
         let enemy_halt = self.preferences.enemy_halt;
         self.universe.set_enemy_halt(enemy_halt);

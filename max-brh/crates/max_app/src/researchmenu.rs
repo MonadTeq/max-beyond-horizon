@@ -304,6 +304,15 @@ impl ResearchMenu {
     ///
     /// Returns the actual allocation (C++ may also turn centers off
     /// if the target has fewer slots than enabled centers).
+    ///
+    /// **B2 audit — documented exception (protocol gap).** This is one of the two
+    /// UI writes that stayed on the facade writer
+    /// (`GameUniverse::set_research_allocation`) instead of the command channel:
+    /// C++ sends packet **09** (`researchmenu.cpp:558-560`,
+    /// `Remote_SendNetPacket_09`), and the Rust protocol has no packet 09
+    /// (`max-brh-docs/architecture/client/protocol.md` §8.4), so there is no
+    /// `Command` that carries `research_topics[].allocation`. Closing this path
+    /// needs a protocol decision (a team-state command), not a menu refactor.
     pub fn commit<D: max_core::universe::Dispatcher>(
         &mut self,
         state: &mut max_core::universe::GameUniverse<D>,

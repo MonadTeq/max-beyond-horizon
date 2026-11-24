@@ -39,8 +39,7 @@
 
 use max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS;
 use max_core::classification::Environment;
-use max_core::enums::{unit_flags, GameStateType, Surface, UnitOrder, UnitOrderState, UnitType};
-use max_core::events::command_finished_turn;
+use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::universe::{Dispatcher, StateRef};
 use max_core::geo::{PathStep, Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{
@@ -1213,10 +1212,19 @@ impl<D: Dispatcher> App<D> {
         std::mem::take(&mut self.hud.pending)
     }
 
-    /// Applies HUD orders locally (demo mode without the network).
+    /// Flushes the HUD command queue locally (demo mode without the network).
     ///
-    /// Returns the number of applied commands. Each goes through
-    /// `max_core::events::apply_command` — exactly like a packet from the network.
+    /// This is the **command channel** with immediate application: every command
+    /// already sits in [`hud::HudState::pending`] (built by the HUD, the menus or
+    /// the build site), and the demo has no session driver to `submit` it, so it
+    /// goes through the facade's immediate entry
+    /// ([`GameUniverse::apply_now`]) — exactly like a packet from the network.
+    /// Returns the number of applied commands.
+    ///
+    /// SDL/UI Stage B (B3): the immediate application is byte-equivalent to
+    /// `submit` + the next `tick` for every command kind the UI puts here
+    /// (`tests/channel_equivalence.rs`); `06` is not flushed through this method —
+    /// the turn close uses `end_local_turn` (B1).
     pub fn flush_orders(&mut self) -> usize {
         let pending = std::mem::take(&mut self.hud.pending);
         let mut applied = 0;
@@ -1230,22 +1238,24 @@ impl<D: Dispatcher> App<D> {
         applied
     }
 
-    /// End Turn: the same path as the timer in the network loop (`06` + `52`).
+    /// End Turn of a demo (non-local, non-network) match.
     ///
-    /// * packet **06** (`Command::FinishedTurn`) — the team finished the turn;
-    /// * the `EndTurn` phase (in `TurnBased` 06 sets it itself) and
-    ///   [`GameState::finish_turn`] — the analog of closing the 52 barrier.
+    /// SDL/UI Stage B, B1 (owner decision 1): the demo path closes the turn through
+    /// the facade's local-machine entry [`GameUniverse::end_local_turn`] — the same
+    /// atomic operation a local match uses (immediate `06`, `enter_end_turn`, one
+    /// run of the team-turn machine). It is **not** `submit(06)`: a queued `06` is
+    /// applied inside the next `tick` and enters `EndTurn` again, which would shift
+    /// the snapshot by a tick and close the wrong phase (stage-B §5 gate).
     ///
-    /// `true` — the match is over (`check_end_game_conditions`).
+    /// The dispatcher gate inside the facade keeps a network match out of the
+    /// machine (`Dispatcher::advances_turns`); a network match closes its turn
+    /// through the barrier FSM, not through this method.
+    ///
+    /// `true` — the machine finished the match (`check_end_game_conditions` inside
+    /// `finish_turn`); the log line reports it.
     pub fn end_turn(&mut self) -> bool {
         let team = self.state_ref().player_team();
-        let _ = self.apply_immediate(command_finished_turn(team));
-
-        if self.state_ref().game_state() != GameStateType::EndTurn {
-            self.universe.set_game_state(GameStateType::EndTurn);
-        }
-
-        let over = self.universe.finish_turn();
+        let over = self.universe.end_local_turn(team);
         let line = if over {
             "End Turn: game over".to_string()
         } else {
@@ -1733,7 +1743,7 @@ fn draw_unit_panel(buffer: &mut RgbaBuffer, layout: &HudLayout, view: &HudView<'
 mod tests {
     use super::*;
 
-    use max_core::enums::{TeamClan, UnitType};
+    use max_core::enums::{GameStateType, TeamClan, UnitType};
     use max_core::input::Packet18Chat;
     use max_core::team::{TeamKind, TeamUnits};
     use max_net::Packet;
@@ -2140,31 +2150,40 @@ mod tests {
             .any(|line| line.contains("Move")));
     }
 
+    /// SDL/UI Stage B, B1: the demo End Turn is the facade's local-machine
+    /// operation [`max_core::universe::GameUniverse::end_local_turn`] — the same
+    /// one a local match uses (`06` immediately, `enter_end_turn`, the team-turn
+    /// machine), not the former `set_game_state` + `finish_turn` pair.
+    ///
+    /// The round cursor of this fixture was never entered through
+    /// `begin_local_round`, so the machine restarts RED's turn instead of closing
+    /// the round: the turn counter does not advance and the match continues. This
+    /// is the intended B1 behavior (owner decision 1) — the demo no longer closes
+    /// a whole round with one End Turn.
     #[test]
-    fn end_turn_closes_the_turn_like_the_network_timer() {
+    fn end_turn_closes_the_turn_through_the_local_machine() {
         let (mut app, _tank, _enemy) = test_app();
         let before = app.state_ref().turn_counter();
 
         let over = app.end_turn();
 
-        // 06 applied (as `Remote_ReceiveNetPacket_06`), the turn is closed.
-        assert_eq!(app.applied_commands(), 1);
+        // `06` is applied inside the facade (`end_local_turn`), so the application's
+        // own counter does not grow; the machine starts the next acting team.
+        assert!(!over, "дуэль из двух играющих команд продолжается");
+        assert_eq!(app.applied_commands(), 0);
         assert!(app
             .hud()
             .log
             .lines()
             .iter()
             .any(|line| line.contains("End Turn")));
-
-        if over {
-            // `check_end_game_conditions` ended the match: `finish_turn` does not
-            // reset the phase and does not advance the turn counter.
-            assert_eq!(app.state_ref().game_state(), GameStateType::EndTurn);
-            assert_eq!(app.state_ref().turn_counter(), before);
-        } else {
-            assert_eq!(app.state_ref().game_state(), GameStateType::InGame);
-            assert_eq!(app.state_ref().turn_counter(), before + 1);
-        }
+        assert_eq!(app.state_ref().game_state(), GameStateType::InGame);
+        assert_eq!(app.state_ref().active_turn_team(), TeamId::RED);
+        assert_eq!(app.state_ref().turn_counter(), before);
+        assert!(
+            !app.state_ref().teams()[TeamId::RED.0 as usize].finished_turn,
+            "the machine resets `finished_turn` when it starts the team"
+        );
     }
 
     #[test]

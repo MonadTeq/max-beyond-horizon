@@ -943,6 +943,10 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             self.preferences().turn_timer.max(0),
             self.preferences().endturn.max(0),
         );
+        // B2 audit — save/meta install, not a simulation mutation: `save_meta`
+        // holds the V70 header/preferences/camera data written by `SaveLoad_Save`
+        // and is not part of `GameState::snapshot_bytes`; no `Command` exists for
+        // it, and it is written only while assembling a save file.
         let meta = self.universe.save_meta_mut();
         SaveMeta::set_name(&mut meta.save_name, save_name);
         meta.turn_timer = timer_left;

@@ -1200,18 +1200,12 @@ impl App {
 
         match phase {
             LocalPhase::PlayerTurn => {
-                // `GameManager_AutoSelectNext` after an order completes
-                // (`UnitInfo::MoveFinished`): the order snapshot — before the tick.
-                let before = self.selected_order_snapshot();
-                self.universe.tick();
-                // Combat sounds of this tick (`UnitInfo::PrepareFire`/
-                // `StartExplosion`): the queue is taken by `main.rs` (`AudioPlayer`).
-                self.collect_facade_sounds();
-                // `App::tick` counts ticks for diagnostics/the digest; the local
-                // loop ticks right here, so the counter must grow in the window too,
-                // otherwise the `MAX_DEBUG_INPUT` trace shows an eternal `tick 0`.
-                self.ticks += 1;
-                self.auto_select_after_tick(before);
+                // One simulation step through the single application clock
+                // (`App::tick`): the facade tick, the combat sounds of this tick
+                // (`UnitInfo::PrepareFire`/`StartExplosion`) and the
+                // `AutoSelectNext` hook are shared with the network loop (SDL/UI
+                // Stage B, B3 — no inline duplicate of the tick sequence).
+                let _report = self.tick();
                 self.follow_selected_unit();
                 self.update_visual_units(dt);
                 update.ticked = true;
@@ -1235,13 +1229,8 @@ impl App {
                 }
             }
             LocalPhase::AiTurn(team) => {
-                let before = self.selected_order_snapshot();
-                self.universe.tick();
-                // AI combat is heard by the player the same as own (`PlaySfx` in C++ does not
-                // depend on the unit owner) — the frame queue.
-                self.collect_facade_sounds();
-                self.ticks += 1;
-                self.auto_select_after_tick(before);
+                // The same `App::tick` clock as the human turn (B3).
+                let _report = self.tick();
                 self.follow_selected_unit();
                 self.update_visual_units(dt);
                 update.ticked = true;

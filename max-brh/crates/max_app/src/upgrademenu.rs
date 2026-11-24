@@ -547,16 +547,25 @@ impl UpgradeMenu {
         }
     }
 
-    /// `CommitUpgradeChanges`: write the changed types into `TeamUnits`, debit
-    /// gold and `stats_gold_spent_on_upgrades`.
+    /// `CommitUpgradeChanges`: the changed types as packet-**10** records.
     ///
-    /// Returns the list of changed types for packet 10 (network).
-    pub fn commit<D: max_core::universe::Dispatcher>(
-        &mut self,
-        state: &mut max_core::universe::GameUniverse<D>,
-    ) -> Vec<(UnitType, [u16; 13])> {
+    /// SDL/UI Stage B (B2): the menu is read-only with respect to the simulation.
+    /// It used to write `TeamUnits::current_values` itself through `&mut
+    /// GameUniverse`; now it only produces the records, and the application turns
+    /// each of them into `Command::UpgradeUnitType` in `hud.pending` — the command
+    /// channel. `apply_packet_10` applies exactly the same `UpdateVersion` +
+    /// `MarkAsNotInUse` + 13-attribute write (the field order is
+    /// `UPGRADE_PACKET_ATTRIBUTES` on both sides), so the resulting `TeamUnits`
+    /// bytes are unchanged.
+    ///
+    /// The team economy side of `CommitUpgradeChanges` (`SetGold` and
+    /// `stats_gold_spent_on_upgrades += start_gold - gold`) has **no** command
+    /// carrier in the Rust protocol: C++ sends packet 09 (`Remote_SendNetPacket_09`,
+    /// `upgrademenu.cpp:97-101`), which does not exist in the port
+    /// (`max-brh-docs/architecture/client/protocol.md` §8.4). `App::commit_upgrade_menu`
+    /// keeps that write and documents it at the call site.
+    pub fn commit(&mut self) -> Vec<(UnitType, [u16; 13])> {
         let mut changed = Vec::new();
-
 
         for index in 0..UNIT_END as usize {
             if self.actual[index] == self.base[index] {
@@ -565,20 +574,9 @@ impl UpgradeMenu {
             let mut values = self.actual[index];
             values.update_version();
             values.mark_as_not_in_use();
-            if let Some(units) = state.team_units_mut(self.team) {
-                units.current_values[index] = values;
-            }
             if let Ok(unit_type) = UnitType::try_from(index as u16) {
                 changed.push((unit_type, upgrade_packet_values(&values)));
             }
-        }
-
-        if let Some(units) = state.team_units_mut(self.team) {
-            units.gold = self.gold;
-        }
-        let spent = self.start_gold.saturating_sub(self.gold);
-        if let Some(team) = state.team_mut(self.team) {
-            team.stats_gold_spent_on_upgrades = team.stats_gold_spent_on_upgrades.saturating_add(spent);
         }
 
         changed

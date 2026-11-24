@@ -511,6 +511,10 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
         if online {
             self.hud.pending.push(command);
         } else {
+            // B2/B3 audit: the command channel — the `ORDER_BUILD` command is the
+            // only mutation path; the demo applies it immediately because there is
+            // no session driver (`apply_now` ≡ `submit` + `tick`, gate
+            // `tests/channel_equivalence.rs`).
             self.apply_immediate(command);
         }
 

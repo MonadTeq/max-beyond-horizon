@@ -990,6 +990,12 @@ impl<D: Dispatcher> App<D> {
     /// call the facade FSM channel [`GameUniverse::apply_now`] here, and the
     /// diagnostic counter [`App::applied_commands`] keeps counting only the
     /// commands that the application applies itself.
+    ///
+    /// SDL/UI Stage B (B3): this is not a second command API — the argument is
+    /// always a `Command` from the channel (the same one `submit` would queue), and
+    /// `tests/channel_equivalence.rs` proves the byte equivalence with
+    /// `submit` + `tick` for every UI command kind. A command that is *not*
+    /// equivalent (a barrier consent, `06`) must not be routed here.
     fn apply_immediate(&mut self, command: Command) -> ApplyOutcome {
         let outcome = self.universe.apply_now(command);
 
@@ -1073,24 +1079,47 @@ impl<D: Dispatcher> App<D> {
 
     /// Commits the changes (`CommitUpgradeChanges`) and closes the screen.
     ///
-    /// In a local game the changes are already applied to `TeamUnits`; in the network each
-    /// changed type goes as packet **10** (`Command::UpgradeUnitType`).
-    /// Packet 09 (team gold) is absent from the Rust protocol — the limitation is
-    /// documented in `upgrademenu` (module header).
+    /// SDL/UI Stage B (B2): the menu produces packet-**10** records
+    /// ([`upgrademenu::UpgradeMenu::commit`]) and the application turns them into
+    /// `Command::UpgradeUnitType` in [`hud::HudState::pending`] — the command
+    /// channel. In a local/demo match the queue is flushed right away, so `Done`
+    /// still shows the new values on the same frame; in a network match the
+    /// commands are submitted by the session driver (`net::flush_hud_orders`).
+    ///
+    /// **Documented exception (protocol gap):** the team economy side of the C++
+    /// commit — `team_units->SetGold(team_gold)` and
+    /// `stats_gold_spent_on_upgrades += start_gold - team_gold`
+    /// (`upgrademenu.cpp:94-101`) — is carried by packet **09**, which does not
+    /// exist in the Rust protocol (`max-brh-docs/architecture/client/protocol.md`
+    /// §8.4). It therefore stays the direct write below; closing that path needs a
+    /// protocol decision (a team-state command), not a UI change.
     pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.upgrade_menu.take()?;
-        let changed = menu.commit(&mut self.universe);
+        let changed = menu.commit();
 
-        if online {
-            for (unit_type, values) in &changed {
-                self.hud.pending.push(Command::UpgradeUnitType(
-                    max_core::Packet10UpgradeUnitType {
-                        team: menu.team,
-                        unit_type: *unit_type,
-                        values: *values,
-                    },
-                ));
-            }
+        for (unit_type, values) in &changed {
+            self.hud.pending.push(Command::UpgradeUnitType(
+                max_core::Packet10UpgradeUnitType {
+                    team: menu.team,
+                    unit_type: *unit_type,
+                    values: *values,
+                },
+            ));
+        }
+
+        if !online && !changed.is_empty() {
+            self.flush_orders();
+        }
+
+        // Documented protocol gap above: packet 09 is absent, so the team economy
+        // side of `CommitUpgradeChanges` is still a local write.
+        if let Some(units) = self.universe.team_units_mut(menu.team) {
+            units.gold = menu.gold;
+        }
+        let spent = menu.start_gold.saturating_sub(menu.gold);
+        if let Some(team) = self.universe.team_mut(menu.team) {
+            team.stats_gold_spent_on_upgrades =
+                team.stats_gold_spent_on_upgrades.saturating_add(spent);
         }
 
         let gold = self
@@ -1200,6 +1229,12 @@ impl<D: Dispatcher> App<D> {
 
     /// `ResearchMenu_OnClick_Done`: apply the center allocation to
     /// `GameState` (`set_research_allocation`) and close the screen.
+    ///
+    /// **B2 audit — documented exception (protocol gap).** The allocation is not a
+    /// command: C++ broadcasts packet **09** on `Done` (`researchmenu.cpp:558-560`)
+    /// and the Rust protocol has no packet 09, so no `Command` carries
+    /// `research_topics[].allocation` (`protocol.md` §8.4). The facade writer is
+    /// therefore the only path today; see [`researchmenu::ResearchMenu::commit`].
     pub fn commit_research_menu(&mut self) -> Option<String> {
         let mut menu = self.research_menu.take()?;
         let actual = menu.commit(&mut self.universe);
@@ -1406,6 +1441,14 @@ impl<D: Dispatcher> App<D> {
     /// The command menu `allocate` item (`UnitsManager_Popup_OnClick_Allocate`)
     /// calls this. `false` — the unit is not a mine, not own team, disabled or
     /// has no complex.
+    ///
+    /// **B2 audit — documented exception (allocator protocol gap).** The dialog and
+    /// its `alloc_menu_input`/`alloc_menu_set`/`alloc_menu_adjust` writers drive the
+    /// facade allocator calls on every click, because the dialog reads the complex
+    /// stock and the mine distribution back before the next tick and
+    /// `AllocMenu_Balance` (the distribution normalization) has no packet carrier.
+    /// The broadcast side is the 08/P5 queue (`queue_alloc_orders`). Full rationale:
+    /// [`allocmenu::AllocMenu`].
     pub fn open_alloc_menu(&mut self) -> bool {
         let Some(id) = self.hud.selected else {
             return false;
@@ -1572,6 +1615,13 @@ impl<D: Dispatcher> App<D> {
     /// 08/P3, so it is set immediately (as in the original — cancelling the dialog does not
     /// restore the parent). `false` — the window did not open (no
     /// complex/cargo type).
+    ///
+    /// **B2 audit — documented exception (no packet at open).** This is C++-exact
+    /// pre-order staging: the original writes `parent_unit` when the window opens
+    /// and keeps it after `Cancel` — there is no packet for "set the parent" on its
+    /// own, so a command cannot carry it (the same field *does* travel in the P3
+    /// command that `Done` builds). Kept as the documented direct write; removing it
+    /// would change the observable `Cancel` semantics.
     pub fn open_transfer_menu(&mut self, source: UnitId, target: UnitId) -> bool {
         let Some(menu) = transfermenu::TransferMenu::new(self.state_ref(), source, target) else {
             return false;
@@ -1606,6 +1656,13 @@ impl<D: Dispatcher> App<D> {
     /// A zero amount, as in C++, gives no order (the menu simply
     /// closes). Returns a log line and the flag "the order was put into
     /// [`hud::HudState::pending`]».
+    ///
+    /// SDL/UI Stage B (B2): the two fields C++ stages on the unit before
+    /// `Remote_SendNetPacket_08` (`transfer_cargo`, `parent_unit`) are carried **by
+    /// packet 08/P3 itself** ([`transfermenu::transfer_order`] writes both), so the
+    /// order command is the only mutation path here — no `unit_mut` write. Applied
+    /// by [`App::flush_orders`] in a demo match or by the session driver in a
+    /// network one.
     pub fn confirm_transfer(&mut self) -> Option<(String, bool)> {
         let menu = self.transfer_menu.take()?;
         // As in `~TransferMenu`: `EnableMainMenu` → `MenuUnitSelect` resets
@@ -1616,12 +1673,6 @@ impl<D: Dispatcher> App<D> {
 
         if amount == 0 {
             return Some(("x-fer: 0 — приказ не отдан".to_string(), false));
-        }
-
-        // `unit1->transfer_cargo = cargo_transferred` before `SendNetPacket_08`.
-        if let Some(unit) = self.universe.unit_mut(menu.unit) {
-            unit.transfer_cargo = amount;
-            unit.parent_unit = Some(menu.target);
         }
 
         let Some(command) =
@@ -1845,6 +1896,13 @@ impl<D: Dispatcher> App<D> {
                 }
             }
             unitmenu::ItemId::Auto => {
+                // B2 audit — documented exception (no packet carrier): `auto_survey`
+                // is not part of any order payload (P1–P5 carry order/state/parent/
+                // target/cargo/mining/build fields only), so no `Command` can toggle
+                // it. C++ flips the unit flag the same way and does not transmit it
+                // either (`unitinfo.cpp` serializes it only into the V70 save,
+                // `remote.cpp` never touches it): it is the owner's local control
+                // flag for its own surveyor.
                 let Some(unit) = self.universe.unit_mut(unit_id) else {
                     return Some("Auto: юнит исчез".to_string());
                 };
@@ -1944,6 +2002,13 @@ impl<D: Dispatcher> App<D> {
                     .is_some_and(|unit| unit.is_quad());
                 let clearing_time = if rubble_is_building { 4 } else { 1 };
 
+                // B2 audit — documented exception (partial carrier): the rubble
+                // parent is also carried by the 08/P3 order built below
+                // (`p3_order` reads it from the staged unit), but `build_time`
+                // (4 for a building, 1 for other rubble) has no field in that
+                // payload — only P4 has `build_time`, and `clear_order` builds P3
+                // for `ORDER_CLEAR`. The pair is therefore staged before the order,
+                // exactly as in C++; the snapshot bytes are unchanged.
                 if let Some(unit) = self.universe.unit_mut(unit_id) {
                     unit.parent_unit = Some(rubble);
                     unit.build_time = clearing_time;
@@ -2812,7 +2877,14 @@ impl<D: Dispatcher> App<D> {
         Ok(report)
     }
 
-    /// One simulation tick (`GameManager_ProcessTick`).
+    /// One simulation tick (`GameManager_ProcessTick`) — the single application
+    /// clock of the network loop **and** of the local match.
+    ///
+    /// SDL/UI Stage B (B3): the local loop (`local.rs::local_update`) calls this
+    /// method instead of repeating the sequence (`selected_order_snapshot` →
+    /// `universe.tick` → `collect_facade_sounds` → `auto_select_after_tick` →
+    /// `ticks += 1`) inline. The order of the steps is the former inline one, so
+    /// the local frame stays byte-identical.
     ///
     /// It also repeats the UI hook `UnitInfo::MoveFinished` → `AutoSelectNext`
     /// (`auto_select`) for the network loop: selection is local UI state,

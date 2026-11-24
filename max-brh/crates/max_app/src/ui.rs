@@ -2716,6 +2716,9 @@ where
     if online {
         app.hud_mut().pending.push(command);
     } else {
+        // B2 audit — the same command-channel flush as `App::flush_orders`: the
+        // command is already built and applied through `apply_now` only because the
+        // demo has no session driver; it is not a UI mutation of the simulation.
         app.apply_immediate(command);
     }
 
@@ -3192,6 +3195,11 @@ where
         // `GameManager_StealUnit`/`GameManager_DisableUnit`
         // (`game_manager.cpp:4680/4696`): `Randomizer_Generate(101)` goes into
         // packet 08/P3 (`stealth_dice_roll`), so the roll is generated here.
+        //
+        // B2 audit — command-payload generation, not a UI write: the value is
+        // consumed once by the simulation RNG stream exactly as the C++ sender
+        // consumes it, and the roll itself travels in the P3 command below (the
+        // receiver applies `stealth_dice_roll` from the payload, it does not roll).
         let roll = app.universe.generate_rng_i32(101) as u8;
 
         match crate::unitmenu::stealth_mode_click(app.state_ref(), selected, id, cursor, roll) {
