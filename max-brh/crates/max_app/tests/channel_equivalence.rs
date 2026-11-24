@@ -18,22 +18,39 @@
 //! `06` is the one deliberate exception (owner decision 1): the turn close goes
 //! through `GameUniverse::end_local_turn` (immediate `06` + the team-turn machine),
 //! never through `submit(06)` — the queued form enters `EndTurn` again inside the
-//! next tick. [`end_local_turn_and_submit_06_are_distinguishable`] keeps the two
+//! next tick. [`end_local_turn_is_not_the_queued_06`] keeps the two
 //! paths distinguishable, as the stage-A gate required.
+//!
+//! Stage D (`sdl-ui-integration.md` §3: the safety net before C3) extends the gate:
+//!
+//! * the command table must cover **every** UI command kind — `09`, `08/P1–P5`,
+//!   `38`, `41`, `50`, `18`, `10`, `11` — not a sample
+//!   ([`the_gate_covers_every_ui_command_kind`]);
+//! * packet `11` (the `AllocMenu` complex totals) is in the table and is proven to
+//!   reach the complex through both channels
+//!   ([`packet_11_totals_reach_the_complex_through_both_channels`]);
+//! * the local team-turn machine is pinned as deterministic: the same call
+//!   sequence gives the same bytes, digests, `(turn_counter, active team)` trace
+//!   and `Turn` notices, both against a computer and in hot-seat
+//!   ([`the_local_turn_machine_is_deterministic`]).
+
+use std::collections::BTreeSet;
 
 use max_app::{App, SessionChannel};
 use max_app::AppConfig;
 use max_core::enums::{ResearchTopic, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::{command_move_linear, command_order_p1, payload_p1_for, ApplyOutcome};
+use max_core::game::TurnEvent;
 use max_core::geo::Point;
 use max_core::input::{
-    Command, OrderPayload, Packet08Order, Packet09TeamState, Packet10UpgradeUnitType, Packet18Chat,
-    Packet41MoveFinished, Packet50StopUnit, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
+    Command, OrderPayload, Packet08Order, Packet09TeamState, Packet10UpgradeUnitType,
+    Packet11ComplexOrder, Packet18Chat, Packet41MoveFinished, Packet50StopUnit, PacketKind,
+    PayloadP2, PayloadP3, PayloadP4, PayloadP5,
 };
 use max_core::research::upgrade_packet_values;
 use max_core::team::{ResearchTopicInfo, TeamId, TeamKind, TeamUnits};
 use max_core::unit::UnitId;
-use max_core::universe::{GameUniverse, LocalDispatcher};
+use max_core::universe::{GameEvent, GameUniverse, LocalDispatcher, TurnNotice};
 
 /// How many ticks each variant runs after the command (`N + 1` of the gate).
 const TICKS: u32 = 4;
@@ -72,15 +89,27 @@ fn duel() -> (GameUniverse<LocalDispatcher>, UnitId, UnitId) {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(14, 10), 0)
         .expect("GREEN tank");
 
+    // Packet 11 is the *totals* order of an existing complex (`AllocMenu` →
+    // `Complex::WritePacket`), so the fixture needs one: an empty lowest-id
+    // complex of RED. `create_complex` is a pure id/order operation, so the
+    // fixture stays byte-identical across calls (see `fixtures_are_byte_identical`).
+    let complex = universe
+        .team_units_mut(TeamId::RED)
+        .expect("RED economy")
+        .create_complex();
+    assert_eq!(complex.0, 1, "the fixture complex is the lowest free id");
+
     (universe, red, green)
 }
 
 /// Every command kind the UI used to apply through `apply_now`.
 ///
 /// The list mirrors the call sites of the demo path: the HUD order queue
-/// (`38`/`08` P1–P5, `41`, `50`, `18`), the build menu/site (`08` P4) and the
-/// upgrade screen (`10`). A new command kind that reaches `hud.pending` must be
-/// added here: the gate is exhaustive for the UI paths, not a sample.
+/// (`38`/`08` P1–P5, `41`, `50`, `18`), the build menu/site (`08` P4), the
+/// upgrade screen (`10`), the menu commits (`09`) and the `AllocMenu` complex
+/// totals (`11`). A new command kind that reaches `hud.pending` must be added
+/// here: the gate is exhaustive for the UI paths, not a sample —
+/// [`the_gate_covers_every_ui_command_kind`] fails when one disappears.
 fn ui_commands(
     universe: &GameUniverse<LocalDispatcher>,
     red: UnitId,
@@ -225,6 +254,21 @@ fn ui_commands(
             }),
         ),
         (
+            // `AllocMenu` «Run»: the six totals of the selected complex
+            // (`allocmenu.cpp:790-792` → `Complex::WritePacket` → 11).
+            "11 complex order",
+            Command::ComplexOrder(Packet11ComplexOrder {
+                team: TeamId::RED,
+                complex_id: 1,
+                raw: 42,
+                fuel: 43,
+                gold: 44,
+                power: 45,
+                workers: 46,
+                buildings: 47,
+            }),
+        ),
+        (
             "10 upgrade",
             Command::UpgradeUnitType(Packet10UpgradeUnitType {
                 team: TeamId::RED,
@@ -274,6 +318,215 @@ fn fixtures_are_byte_identical() {
         second.snapshot().snapshot_bytes(),
         "the gate fixture must be deterministic, otherwise the comparison is meaningless"
     );
+}
+
+/// The gate is exhaustive for the UI command kinds, not a sample.
+///
+/// `ui_commands` is the single table both equivalence tests walk; if a kind is
+/// dropped from it (or a new one reaches `hud.pending`/`submit` without being
+/// added), the byte-equivalence proof silently stops covering it. The expected
+/// set is the Stage D list: `09`, `08/P1–P5`, `38`, `41`, `50`, `18`, `10`, `11`.
+/// Barriers (`00`/`01`/`45`/`52`) and `06` are outside it by decision — they are
+/// consent/FSM packets, not UI intents (`06` goes through `end_local_turn`).
+#[test]
+fn the_gate_covers_every_ui_command_kind() {
+    let (fixture, red, green) = duel();
+    let commands = ui_commands(&fixture, red, green);
+
+    let covered: BTreeSet<PacketKind> = commands
+        .iter()
+        .map(|(_, command)| command.kind())
+        .collect();
+
+    let expected: BTreeSet<PacketKind> = [
+        PacketKind::OrderUnit,      // 08/P1–P5
+        PacketKind::MoveWithPath,   // 38
+        PacketKind::MoveFinished,   // 41
+        PacketKind::StopUnit,       // 50
+        PacketKind::Chat,           // 18
+        PacketKind::ComplexOrder,   // 11
+        PacketKind::TeamState,      // 09
+        PacketKind::UpgradeUnitType, // 10
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(
+        covered, expected,
+        "the equivalence gate must cover every UI command kind"
+    );
+}
+
+/// Packet 11 is not a vacuous gate entry: the complex totals must really reach
+/// the state through **both** channels (an `Applied` outcome alone would only
+/// prove that the packet was routed, not that the comparison had content).
+#[test]
+fn packet_11_totals_reach_the_complex_through_both_channels() {
+    let totals = (42i16, 43i16, 44i16, 45i16, 46i16, 47i16);
+    let (fixture, red, green) = duel();
+    let commands = ui_commands(&fixture, red, green);
+    let (name, command) = commands
+        .into_iter()
+        .find(|(name, _)| *name == "11 complex order")
+        .expect("the gate lists packet 11");
+
+    // Immediate channel: visible before the first tick.
+    let (mut immediate, _, _) = duel();
+    assert_eq!(
+        immediate.apply_now(command.clone()),
+        ApplyOutcome::Applied,
+        "{name}: the immediate channel applies the totals order"
+    );
+    let complex = immediate
+        .snapshot()
+        .complex(TeamId::RED, 1)
+        .expect("RED complex");
+    assert_eq!(
+        (
+            complex.raw,
+            complex.fuel,
+            complex.gold,
+            complex.power,
+            complex.workers,
+            complex.buildings
+        ),
+        totals,
+        "{name}: the immediate channel writes every complex field"
+    );
+
+    // Lockstep channel: the same totals are applied by the next tick.
+    let (mut queued, _, _) = duel();
+    assert_eq!(
+        queued.submit(command),
+        max_core::universe::SubmitOutcome::Accepted
+    );
+    queued.tick();
+    let complex = queued.snapshot().complex(TeamId::RED, 1).expect("RED complex");
+    assert_eq!(
+        (
+            complex.raw,
+            complex.fuel,
+            complex.gold,
+            complex.power,
+            complex.workers,
+            complex.buildings
+        ),
+        totals,
+        "{name}: the lockstep channel writes every complex field"
+    );
+}
+
+/// The local team-turn machine (`begin_local_round`/`end_local_turn`) is a pure
+/// deterministic function of the state and the call sequence.
+///
+/// The gate drives two identical fixtures through two full rounds (RED and GREEN
+/// close their turns) and compares the canonical bytes, the digest and the
+/// `GameEvent::Turn` notice stream after every step. Both team configurations are
+/// pinned: RED (human) vs GREEN (computer) and the hot-seat pair (two humans, the
+/// «Begin turn» notice path). A difference means the machine picked up a
+/// non-deterministic input (wall clock, iteration order, RNG) — the "turn machine
+/// is deterministic" precondition of Stage D.
+#[test]
+fn the_local_turn_machine_is_deterministic() {
+    fn record(
+        universe: &GameUniverse<LocalDispatcher>,
+        bytes: &mut Vec<Vec<u8>>,
+        digests: &mut Vec<u16>,
+        trace: &mut Vec<(i32, u8)>,
+    ) {
+        let snapshot = universe.snapshot();
+        bytes.push(snapshot.snapshot_bytes());
+        digests.push(snapshot.state_digest());
+        trace.push((snapshot.turn_counter(), snapshot.active_turn_team().0));
+    }
+
+    fn run(hot_seat: bool) -> (Vec<Vec<u8>>, Vec<u16>, Vec<(i32, u8)>, Vec<GameEvent>) {
+        let (mut universe, _, _) = duel();
+        if hot_seat {
+            universe.teams_mut()[TeamId::GREEN.0 as usize].team_type = TeamKind::Player;
+        }
+        let mut events = universe.subscribe();
+        let mut bytes = Vec::new();
+        let mut digests = Vec::new();
+        let mut trace = Vec::new();
+
+        universe.begin_local_round();
+        record(&universe, &mut bytes, &mut digests, &mut trace);
+
+        // Two teams × two rounds: each call closes the turn of the acting team
+        // and advances the machine to the next one (`RoundClosed` on every second).
+        for _ in 0..4 {
+            let acting = universe.snapshot().active_turn_team();
+            universe.end_local_turn(acting);
+            record(&universe, &mut bytes, &mut digests, &mut trace);
+        }
+
+        (bytes, digests, trace, events.drain(&mut universe))
+    }
+
+    for hot_seat in [false, true] {
+        let label = if hot_seat { "hot-seat" } else { "vs computer" };
+
+        let (first_bytes, first_digests, first_trace, first_events) = run(hot_seat);
+        let (second_bytes, second_digests, second_trace, second_events) = run(hot_seat);
+
+        assert_eq!(
+            first_bytes, second_bytes,
+            "{label}: the turn machine must produce byte-identical states on a repeated run"
+        );
+        assert_eq!(
+            first_digests, second_digests,
+            "{label}: the turn machine digest trace must be stable"
+        );
+        assert_eq!(
+            first_trace, second_trace,
+            "{label}: the (turn_counter, active team) trace must be stable"
+        );
+        assert_eq!(
+            first_events, second_events,
+            "{label}: the Turn notice stream must be identical on a repeated run"
+        );
+
+        // The machine sequence itself is pinned: the round entry starts RED at
+        // turn 0 (the fixture's counter), the two teams alternate, and
+        // `turn_counter` advances exactly once per closed round
+        // (RED, GREEN, RED, GREEN, RED → 0, 0, 1, 1, 2).
+        let red = TeamId::RED.0;
+        let green = TeamId::GREEN.0;
+        assert_eq!(
+            first_trace,
+            vec![(0, red), (0, green), (1, red), (1, green), (2, red)],
+            "{label}: the local turn machine trace must be pinned"
+        );
+
+        // Not vacuous: both teams acted and at least one round closed.
+        let notices: Vec<TurnNotice> = first_events
+            .iter()
+            .filter_map(|event| match event {
+                GameEvent::Turn(notice) => Some(*notice),
+                _ => None,
+            })
+            .collect();
+        let acting: BTreeSet<u8> = notices
+            .iter()
+            .filter_map(|notice| match notice.event {
+                TurnEvent::Human(team) | TurnEvent::Computer(team) => Some(team.0),
+                TurnEvent::RoundClosed | TurnEvent::GameOver => None,
+            })
+            .collect();
+
+        assert_eq!(
+            acting.len(),
+            2,
+            "{label}: both duel teams must get a turn: {notices:?}"
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|notice| notice.event == TurnEvent::RoundClosed),
+            "{label}: two full rounds must close a round: {notices:?}"
+        );
+    }
 }
 
 #[test]

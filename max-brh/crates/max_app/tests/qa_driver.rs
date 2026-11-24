@@ -9,7 +9,10 @@
 //! 3. a failed `assert` gives `passed = false` and a text with the line number —
 //!    exactly this turns into exit 1 in `qa_run` in `ci.sh`;
 //! 4. `load <V70>` raises a local match from a real game save;
-//! 5. the PNG codec and the golden frame comparator work without external crates.
+//! 5. the PNG codec and the golden frame comparator work without external crates;
+//! 6. `dt = 0` frames are deterministic: two identical runs produce byte-identical
+//!    PNGs and the `CORNER_FLIC` portrait stays on frame 0 (`qa/runner.rs:2396`),
+//!    so a `shot` does not depend on the number of frames drawn before it.
 
 use std::path::{Path, PathBuf};
 
@@ -302,8 +305,92 @@ fn move_input_script_passes_through_the_real_input_path() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// P7: ResearchMenu + four Help screens (`research-help.qa`) — opening
-/// with the `?`/`Help` buttons, scrolling, `Done`; the center allocation changes
+/// D2 (Stage D): `dt = 0` frames are deterministic.
+///
+/// The QA driver runs the frame with `local_update(0.0)` and `prepare` with
+/// `update_portrait(0.0)` (`qa/runner.rs:2396`), so a `shot` is a pure function of
+/// the simulation state and of the scenario steps: no wall clock, no elapsed
+/// frame count. This test pins both properties:
+///
+/// * two independent runs of the same script produce **byte-identical** PNGs;
+/// * the `CORNER_FLIC` portrait stays on frame 0 after 60 game frames — the shot
+///   does not depend on how many frames were drawn before it.
+#[test]
+fn dt_zero_frames_are_byte_identical_across_runs() {
+    if !has_game_data() {
+        return;
+    }
+
+    // Menu → match with a selected Surveyor (its `SURVEYOR.FLC` portrait is the
+    // animated corner frame), then 60 game frames at `dt = 0`.
+    let script = "\
+menu new_game
+setup done
+setup done
+players 0 human
+players 1 computer
+players 2 none
+players 3 none
+setup done
+mobilize done
+key ENTER
+assert screen=InGame
+click 468 178
+assert selected
+tick 60
+shot after-60
+";
+
+    let dir_a = temp_dir("dt_zero_a");
+    let dir_b = temp_dir("dt_zero_b");
+
+    let mut first = runner(&dir_a);
+    let report_a = first.run(&steps(script), "dt-zero-a");
+    assert!(
+        report_a.passed,
+        "dt = 0 прогон A упал: {:?}\n{}",
+        report_a.failures, report_a.log
+    );
+
+    let portrait = first
+        .app()
+        .portrait()
+        .expect("портрет выделенного Surveyor загружен");
+    assert_eq!(
+        portrait.frame_index(),
+        0,
+        "dt = 0 не двигает кадр портрета (qa/runner.rs:2396)"
+    );
+    assert_eq!(
+        portrait.elapsed(),
+        0.0,
+        "dt = 0 не накапливает время анимации"
+    );
+
+    let mut second = runner(&dir_b);
+    let report_b = second.run(&steps(script), "dt-zero-b");
+    assert!(
+        report_b.passed,
+        "dt = 0 прогон B упал: {:?}\n{}",
+        report_b.failures, report_b.log
+    );
+
+    let path_a = dir_a.join("after-60.png");
+    let path_b = dir_b.join("after-60.png");
+    let frame_a = std::fs::read(&path_a).expect("кадр прогона A");
+    let frame_b = std::fs::read(&path_b).expect("кадр прогона B");
+
+    assert!(!frame_a.is_empty(), "кадр {} пуст", path_a.display());
+    assert_eq!(
+        frame_a, frame_b,
+        "dt = 0: два одинаковых прогона обязаны дать побайтово одинаковый кадр"
+    );
+
+    std::fs::remove_dir_all(dir_a).ok();
+    std::fs::remove_dir_all(dir_b).ok();
+}
+
+/// P7: ResearchMenu + four Help screens (`research-help.qa`) — opening/// with the `?`/`Help` buttons, scrolling, `Done`; the center allocation changes
 /// the allocation and the topic speed on the tick.
 #[test]
 fn research_help_script_passes_through_the_real_input_path() {

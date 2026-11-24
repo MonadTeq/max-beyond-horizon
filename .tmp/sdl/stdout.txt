@@ -1,0 +1,106 @@
+2026-11-24T10:05:23.696014Z  WARN max_app: assets: нет спрайта MASTER (MasterBuilder)
+2026-11-24T10:05:23.696554Z  WARN max_app: assets: нет тени S_SUBMAR: ресурс "S_SUBMAR" не найден в архиве
+2026-11-24T10:05:23.696747Z  WARN max_app: assets: FLC-анимации портретов: загрузилось 70/71 (F_MASTER: нет записи-ссылки в MAX.RES)
+2026-11-24T10:05:23.696936Z  INFO max_app: assets: MAX.RES=1828 PATCHES.RES=84 world=SNOW_1 (D:\dev\max-port-debug\max-original\SNOW_1.WRL) 112x112 sprites=92
+assets: MAX.RES=1828 PATCHES.RES=84 world=SNOW_1 (D:\dev\max-port-debug\max-original\SNOW_1.WRL; 112x112) sprites=92 flics=70
+  sprite COMMTWR    type=GoldRefinery frames=10 shadow=10
+  sprite POWERSTN   type=PowerStation frames=10 shadow=10
+  sprite POWGEN     type=PowerGenerator frames=6 shadow=6
+  sprite BARRACKS   type=Barracks frames=10 shadow=10
+  sprite SHIELDGN   type=MonopoleMine frames=10 shadow=10
+  sprite RADAR      type=Radar frames=20 shadow=20
+  sprite ADUMP      type=MaterialStorage frames=6 shadow=6
+  sprite FDUMP      type=FuelStorage frames=6 shadow=6
+  sprite GOLDSM     type=GoldVault frames=6 shadow=6
+  sprite DEPOT      type=Depot frames=10 shadow=10
+  sprite HANGAR     type=Hangar frames=10 shadow=10
+  sprite DOCK       type=Dock frames=10 shadow=10
+  sprite CNCT_4W    type=Connector frames=6 shadow=6
+  sprite LRGRUBLE   type=LargeRubble frames=2 shadow=2
+  sprite SMLRUBLE   type=SmallRubble frames=5 shadow=5
+  sprite LRGTAPE    type=LargeTape frames=2 shadow=0
+  sprite SMLTAPE    type=SmallTape frames=2 shadow=0
+  sprite LRGSLAB    type=LargeSlab frames=5 shadow=5
+  sprite SMLSLAB    type=SmallSlab frames=1 shadow=1
+  sprite LRGCONES   type=LargeCones frames=1 shadow=1
+  sprite SMLCONES   type=SmallCones frames=1 shadow=1
+  sprite ROAD       type=Road frames=1 shadow=1
+  sprite LANDPAD    type=LandingPad frames=1 shadow=1
+  sprite SHIPYARD   type=Shipyard frames=10 shadow=10
+  sprite LIGHTPLT   type=LightVehiclePlant frames=10 shadow=10
+  sprite LANDPLT    type=HeavyVehiclePlant frames=10 shadow=10
+  sprite SUPRTPLT   type=SupportPlant frames=10 shadow=10
+  sprite AIRPLT     type=AirUnitsPlant frames=10 shadow=10
+  sprite HABITAT    type=Habitat frames=10 shadow=10
+  sprite RESEARCH   type=ResearchCentre frames=10 shadow=10
+  sprite GREENHSE   type=EcoSphere frames=10 shadow=10
+  sprite RECCENTR   type=RecreationCenter frames=10 shadow=10
+  sprite TRAINHAL   type=TrainingHall frames=10 shadow=10
+  sprite WTRPLTFM   type=WaterPlatform frames=1 shadow=1
+  sprite GUNTURRT   type=GunTurret frames=21 shadow=21
+  sprite ANTIAIR    type=AntiAir frames=29 shadow=29
+  sprite ARTYTRRT   type=Artillery frames=21 shadow=21
+  sprite ANTIMSSL   type=MissileLauncher frames=21 shadow=21
+  sprite BLOCK      type=ConcreteBlock frames=6 shadow=6
+  sprite BRIDGE     type=Bridge frames=5 shadow=5
+  sprite MININGST   type=MiningStation frames=24 shadow=24
+  sprite LANDMINE   type=LandMine frames=1 shadow=1
+  sprite SEAMINE    type=SeaMine frames=1 shadow=0
+  sprite LNDEXPLD   type=LandExplosion frames=14 shadow=0
+  sprite AIREXPLD   type=AirExplosion frames=14 shadow=0
+  sprite SEAEXPLD   type=SeaExplosion frames=14 shadow=0
+  sprite BLDEXPLD   type=BuildingExplosion frames=28 shadow=0
+  sprite HITEXPLD   type=HitExplosion frames=5 shadow=0
+  sprite CONSTRCT   type=Constructor frames=40 shadow=40
+  sprite SCOUT      type=Scout frames=32 shadow=32
+  sprite TANK       type=Tank frames=24 shadow=24
+  sprite ARTILLRY   type=AssaultGun frames=16 shadow=16
+  sprite ROCKTLCH   type=RocketLauncher frames=16 shadow=16
+  sprite MISSLLCH   type=MissileCrawler frames=16 shadow=16
+  sprite SP_FLAK    type=MobileAntiAir frames=32 shadow=32
+  sprite MINELAYR   type=MineLayer frames=8 shadow=8
+  sprite SURVEYOR   type=Surveyor frames=16 shadow=16
+  sprite SCANNER    type=Scanner frames=24 shadow=24
+  sprite SPLYTRCK   type=SupplyTruck frames=8 shadow=8
+  sprite GOLDTRCK   type=GoldTruck frames=8 shadow=8
+  sprite ENGINEER   type=Engineer frames=32 shadow=32
+  sprite BULLDOZR   type=Bulldozer frames=16 shadow=16
+  sprite REPAIR     type=RepairUnit frames=8 shadow=8
+  sprite FUELTRCK   type=FuelTruck frames=8 shadow=8
+  sprite CLNTRANS   type=ArmouredPersonnelCarrier frames=16 shadow=16
+  sprite COMMANDO   type=Infiltrator frames=208 shadow=208
+  sprite INFANTRY   type=Infantry frames=200 shadow=200
+  sprite FASTBOAT   type=Escort frames=32 shadow=32
+  sprite CORVETTE   type=Corvette frames=16 shadow=16
+  sprite BATTLSHP   type=Gunboat frames=24 shadow=24
+  sprite SUBMARNE   type=Submarine frames=16 shadow=0
+  sprite SEATRANS   type=SeaTransport frames=8 shadow=8
+  sprite MSSLBOAT   type=MissileCruiser frames=16 shadow=16
+  sprite SEAMNLYR   type=SeaMineLayer frames=8 shadow=8
+  sprite CARGOSHP   type=CargoShip frames=8 shadow=8
+  sprite FIGHTER    type=Fighter frames=16 shadow=16
+  sprite BOMBER     type=Bomber frames=16 shadow=16
+  sprite AIRTRANS   type=AirTransport frames=8 shadow=8
+  sprite AWAC       type=Awac frames=38 shadow=38
+  sprite JUGGRNT    type=Juggernaut frames=16 shadow=16
+  sprite ALNTANK    type=AlienTank frames=24 shadow=24
+  sprite ALNASGUN   type=AlienAssaultGun frames=16 shadow=16
+  sprite ALNPLANE   type=AlienPlane frames=16 shadow=16
+  sprite ROCKET     type=Rocket frames=16 shadow=0
+  sprite TORPEDO    type=Torpedo frames=16 shadow=0
+  sprite ALNMISSL   type=AlienMissile frames=32 shadow=0
+  sprite ALNTBALL   type=AlienTankBall frames=2 shadow=0
+  sprite ALNABALL   type=AlienArtilleryBall frames=2 shadow=0
+  sprite RKTSMOKE   type=RocketSmoke frames=5 shadow=0
+  sprite TRPBUBLE   type=TorpedoBubble frames=3 shadow=0
+  sprite HARVSTER   type=Harvester frames=1 shadow=1
+  sprite WALDO      type=DeadWaldo frames=1 shadow=0
+  warning: нет спрайта MASTER (MasterBuilder)
+  warning: нет тени S_SUBMAR: ресурс "S_SUBMAR" не найден в архиве
+  warning: FLC-анимации портретов: загрузилось 70/71 (F_MASTER: нет записи-ссылки в MAX.RES)
+UI: ассеты загружены — карта рисуется настоящими цветами
+UI: настройки загружены из D:\dev\max-port-debug\max-original\preferences.ini
+UI: звук: backend=noop файлов=272 ссылок=607
+UI: кадр 640x480, окно 640x480 (масштаб 1); меню — мышь/стрелки, Enter; в игре — LMB выбор, RMB движение, клик по врагу — атака, End Turn; Esc — выход
+2026-11-24T10:05:53.848009Z  INFO max_app: new game: planet=Snowcrab seed=0 teams=2 aliens=0 start_units=14 units=14 surface_crc=0xBE81
+2026-11-24T10:05:53.849905Z  INFO max_app::local: local game: planet=Snowcrab teams=2 aliens=0 units=14 player=TeamId(0) humans=[TeamId(0)] ai=[TeamId(1)] mode=SimultaneousMoves hot_seat=false
