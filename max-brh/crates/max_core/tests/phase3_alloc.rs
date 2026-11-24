@@ -254,6 +254,119 @@ fn mining_income_obeys_the_complex_storage_capacity() {
     assert_eq!(capacity.raw, 75);
 }
 
+/// Defect 1 of the manual run 1.2: the storage capacity of the connected mines
+/// is part of the complex's total capacity.
+///
+/// `Complex::GetCargoInfo` (`complex.cpp:136-147`) sums `Cargo_GetCargoCapacity`
+/// over **every** complex member, and `Cargo_GetCargoCapacity`
+/// (`cargo.cpp:50-68`) is generic over the cargo type: a `MININGST` contributes
+/// its `ATTRIB_STORAGE` (25 raw) exactly like an `ADUMP` contributes 50. The port
+/// previously narrowed the aggregation to the storage buildings, so the mine's
+/// buffer was missing from the reserve and a full mine silently lost its output.
+#[test]
+fn connected_mine_storage_is_part_of_the_complex_capacity() {
+    // A lone mine: the complex reserve is the mine buffer alone.
+    let mut state = state();
+    set_resource(&mut state, 20, 20, 16, ResourceKind::Raw);
+    let mine = spawn(&mut state, UnitType::MiningStation, Point::new(20, 20));
+    let complex = state
+        .snapshot()
+        .unit(mine)
+        .expect("mine")
+        .complex
+        .expect("complex");
+
+    let unit = state.snapshot().unit(mine).expect("mine").clone();
+    let mine_storage = max_core::alloc::cargo_get_cargo_capacity(&unit);
+    assert_eq!(mine_storage.raw, 25, "MININGST ATTRIB_STORAGE");
+    assert_eq!(mine_storage.fuel, 0, "the mine carries raw only");
+
+    let (_, capacity) = state.snapshot().get_cargo_info(TeamId::RED, complex);
+    assert_eq!(
+        capacity.raw, 25,
+        "the mine's own buffer is part of the complex raw reserve"
+    );
+
+    // A connected ADUMP adds its own 50 on top of the mine's 25.
+    let dump = spawn(&mut state, UnitType::MaterialStorage, Point::new(22, 20));
+    assert_eq!(
+        state.snapshot().unit(dump).expect("dump").complex,
+        Some(complex)
+    );
+    assert_eq!(
+        state.snapshot().get_cargo_info(TeamId::RED, complex).1.raw,
+        75,
+        "connected mine 25 + ADUMP 50 (C++ Cargo_GetCargoCapacity is generic)"
+    );
+}
+
+/// Defect 2 of the manual run 1.2: `AllocMenu_Optimize` balances the extraction
+/// over **the whole complex**, not over one mine.
+///
+/// The C++ allocator walks `UnitsManager_StationaryUnits` and reallocates every
+/// `MININGST` whose `GetComplex()` matches (`allocmenu.cpp:452-514`); the dialog
+/// opened from a mine has no per-mine scope at all, and `AllocMenu::Balance`
+/// (`:567-582`) reports the sum over the complex. The port previously restricted
+/// the entry points to the dialog's mine, so a second mine of the same complex
+/// could not take the request (and `Balance` showed only one mine's maximum).
+#[test]
+fn allocation_and_balance_span_the_whole_complex() {
+    let (mut state, first, complex) = mining_state();
+
+    // A second mine of the same complex, with 8 raw in its surveyed square. It
+    // stands south of the POWGEN, so `UpdateConnectors` joins it to the complex
+    // on spawn; the stationary list is ordered by `y` (`UnitsManager_*Units`),
+    // so the first mine stays first in the allocation walk.
+    for x in [24, 25] {
+        for y in [22, 23] {
+            set_resource(&mut state, x, y, 2, ResourceKind::Raw);
+        }
+    }
+    let second = spawn(&mut state, UnitType::MiningStation, Point::new(24, 22));
+    {
+        let unit = state.unit_mut(second).expect("second");
+        unit.orders = UnitOrder::PowerOn;
+        unit.state = UnitOrderState::ExecutingOrder;
+        unit.raw_mining = 0;
+        unit.fuel_mining = 0;
+        unit.gold_mining = 0;
+        unit.total_mining = 0;
+        unit.storage = 0;
+    }
+    assert_eq!(
+        state.snapshot().unit(second).expect("second").complex,
+        Some(complex),
+        "the second mine is a member of the same complex"
+    );
+
+    // `AllocMenu::Balance` with the dialog capacity = sum of the mine cells:
+    // 16 (first mine) + 8 (second mine) = 24, not one mine's 16.
+    let shown = state.allocation_balance(TeamId::RED, complex, MiningKind::Raw, 0, 99);
+    assert_eq!(shown, 24, "the balance covers every mine of the complex");
+    // `AllocMenu::Balance` normalizes the extraction back (`AllocMenu_ReduceProduction`).
+    assert_eq!(state.snapshot().unit(first).expect("first").raw_mining, 0);
+    assert_eq!(state.snapshot().unit(second).expect("second").raw_mining, 0);
+
+    // The same for `AllocMenu_Optimize`: the first complex mine is filled to its
+    // cell maximum, the remainder goes to the second mine.
+    let added = state.optimize_allocation(TeamId::RED, complex, MiningKind::Raw, 20);
+    assert_eq!(added, 20, "20 units were allocated across the complex");
+    assert_eq!(
+        state.snapshot().unit(first).expect("first").raw_mining,
+        16,
+        "the first mine of the complex absorbs its 16 raw units"
+    );
+    assert_eq!(
+        state.snapshot().unit(second).expect("second").raw_mining,
+        4,
+        "the rest of the request lands on the second mine"
+    );
+    assert_eq!(
+        state.snapshot().total_mining(TeamId::RED, complex, MiningKind::Raw),
+        20
+    );
+}
+
 // ---------------------------------------------------------------------------
 // D — determinism
 // ---------------------------------------------------------------------------

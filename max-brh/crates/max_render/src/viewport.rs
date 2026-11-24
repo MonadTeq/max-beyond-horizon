@@ -97,6 +97,23 @@ impl Default for Viewport {
     }
 }
 
+/// Screen-space positions of the cell-grid lines: [`Viewport::grid_lines`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GridLines {
+    /// Vertical line positions (buffer columns), ascending.
+    pub xs: Vec<i32>,
+    /// Horizontal line positions (buffer rows), ascending.
+    pub ys: Vec<i32>,
+}
+
+impl GridLines {
+    /// No lines (empty viewport).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.xs.is_empty() && self.ys.is_empty()
+    }
+}
+
 impl Viewport {
     /// Screen `width × height`, center — the center of the map, scale [`DEFAULT_ZOOM`].
     pub fn new(width: u32, height: u32) -> Self {
@@ -313,6 +330,68 @@ impl Viewport {
             .is_some_and(|range| range.contains(grid_x, grid_y))
     }
 
+    /// Screen positions of the cell-grid lines of the current view.
+    ///
+    /// # Oracle
+    ///
+    /// `DrawMap_RenderSimpleGridOverlay` (`drawmap.cpp:922-954`) walks the cells of
+    /// the redrawn rectangle and draws a line at the top-left corner of each cell;
+    /// `DrawMap_RenderComplexGridOverlay` (`:956-996`) does the same per cell in the
+    /// surface color. The lines start at the first cell boundary inside the map
+    /// window (positions are clipped to the pixel bounds).
+    ///
+    /// # Full-viewport coverage
+    ///
+    /// The map window is exactly 7×7 cells of 64 px (`WINDOW_MAIN_MAP`,
+    /// `window_manager.cpp:89`; [`crate::layout::MAIN_MAP`]), so the last cell
+    /// boundary of the window (`448`) lies one pixel past the map buffer
+    /// (`0..=447`). A plain boundary walk therefore left the outer column and row
+    /// of the playable area without a closing grid line — the border cells are
+    /// partly covered by the game UI (panels, End Turn), and a unit that reached
+    /// the edge of the map visually slid out of the grid. The port closes the
+    /// grid at the last buffer row/column, so the lines cover the whole playable
+    /// viewport (`max-brh-qa/plans/defects-manual-1.2.md`, defect 4).
+    ///
+    /// The returned positions are ascending and inside `0..width` / `0..height`.
+    pub fn grid_lines(&self, width: i32, height: i32) -> GridLines {
+        let mut lines = GridLines::default();
+
+        if width <= 0 || height <= 0 {
+            return lines;
+        }
+
+        let (x0, y0) = self.screen_to_grid(0, 0);
+        let (x1, y1) = self.screen_to_grid(width - 1, height - 1);
+
+        for grid_x in x0..=x1.saturating_add(1) {
+            let (screen_x, _) = self.grid_to_screen(grid_x, 0);
+
+            if (0..width).contains(&screen_x) {
+                lines.xs.push(screen_x);
+            }
+        }
+
+        for grid_y in y0..=y1.saturating_add(1) {
+            let (_, screen_y) = self.grid_to_screen(0, grid_y);
+
+            if (0..height).contains(&screen_y) {
+                lines.ys.push(screen_y);
+            }
+        }
+
+        // Close the playable area: the last cell boundary lies beyond the buffer
+        // when the window is an exact multiple of the cell size (7×64 = 448).
+        if lines.xs.last().copied() != Some(width - 1) {
+            lines.xs.push(width - 1);
+        }
+
+        if lines.ys.last().copied() != Some(height - 1) {
+            lines.ys.push(height - 1);
+        }
+
+        lines
+    }
+
     /// The screen rectangle intersects the screen.
     pub fn is_rect_visible(&self, rect: PixelRect) -> bool {
         rect.intersect(PixelRect::new(
@@ -516,5 +595,77 @@ mod tests {
         assert_eq!(range.width(), 2);
         assert_eq!(range.height(), 2);
         assert!(TileRange::new(3, 3, 2, 4).is_none());
+    }
+
+    #[test]
+    fn grid_lines_close_the_playable_area() {
+        // `WINDOW_MAIN_MAP` is 448×448 — exactly 7×7 cells; the next cell boundary
+        // (448) is one pixel past the buffer. The camera is cell-aligned here.
+        let viewport = Viewport::with_center(448, 448, (3616, 3616), 64);
+        let lines = viewport.grid_lines(448, 448);
+
+        assert!(!lines.is_empty());
+        assert_eq!(lines.xs.first(), Some(&0), "left edge of the map window");
+        assert_eq!(lines.xs.last(), Some(&447), "the last column is closed");
+        assert_eq!(lines.ys.last(), Some(&447), "the last row is closed");
+        assert_eq!(
+            &lines.xs[..lines.xs.len() - 1],
+            &[0, 64, 128, 192, 256, 320, 384],
+            "7 cell boundaries of the 7×7 map window"
+        );
+        assert_eq!(
+            &lines.ys[..lines.ys.len() - 1],
+            &[0, 64, 128, 192, 256, 320, 384]
+        );
+        assert_eq!(lines.xs.len(), 8, "7 cell boundaries + the closing edge");
+        assert_eq!(lines.ys.len(), 8);
+        assert!(
+            (447 - lines.xs[lines.xs.len() - 2]).abs() < 64,
+            "the closing edge belongs to the last cell"
+        );
+    }
+
+    #[test]
+    fn grid_lines_follow_the_viewport_edges_at_every_zoom() {
+        for (width, height, zoom) in [
+            (448i32, 448i32, 64u32),
+            (448, 448, 128),
+            (448, 448, 32),
+            (512, 384, 48),
+        ] {
+            let viewport =
+                Viewport::with_center(width as u32, height as u32, (3584, 3584), zoom);
+            let lines = viewport.grid_lines(width, height);
+
+            assert!(
+                lines.xs.last() == Some(&(width - 1)),
+                "zoom {zoom}: right edge is closed"
+            );
+            assert!(
+                lines.ys.last() == Some(&(height - 1)),
+                "zoom {zoom}: bottom edge is closed"
+            );
+            assert!(
+                lines.xs.iter().all(|x| (0..width).contains(x)),
+                "zoom {zoom}: columns stay inside the buffer: {:?}",
+                lines.xs
+            );
+            assert!(
+                lines.ys.iter().all(|y| (0..height).contains(y)),
+                "zoom {zoom}: rows stay inside the buffer: {:?}",
+                lines.ys
+            );
+            assert!(lines.xs.windows(2).all(|pair| pair[0] < pair[1]));
+            assert!(lines.ys.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    }
+
+    #[test]
+    fn grid_lines_of_an_empty_viewport_are_empty() {
+        let viewport = test_viewport();
+
+        assert!(viewport.grid_lines(0, 480).is_empty());
+        assert!(viewport.grid_lines(640, 0).is_empty());
+        assert!(viewport.grid_lines(-1, -1).is_empty());
     }
 }

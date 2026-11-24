@@ -18,6 +18,7 @@
 
 use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
+use max_core::map::{ResourceKind, ResourceMapEntry};
 use max_core::power::EnergyTotals;
 use max_core::team::{ComplexId, TeamId, TeamKind, TeamUnits};
 use max_core::unit::UnitId;
@@ -288,6 +289,130 @@ fn a_running_construction_pauses_before_the_mine_is_switched_off() {
         "the pause is a per-turn decision"
     );
     assert!(state.snapshot().unit(factory).expect("factory").build_time > 0);
+}
+
+// ---------------------------------------------------------------------------
+// D — automatic fuel redistribution on a power deficit
+// ---------------------------------------------------------------------------
+
+/// Defect 3 of the manual run 1.2: when power is short but there are switched-off
+/// power sources, the end-of-turn optimizer must **reallocate** the complex's
+/// mining — turn raw/gold extraction into fuel — instead of giving the producer up
+/// and switching the mine off.
+///
+/// `ProductionManager_OptimizeProduction` runs `CheckPowerNeed(0)` in its debt
+/// loop; `CheckPowerNeed` calls `OptimizeCargoProduction(CARGO_FUEL,
+/// -total.fuel, false)` (`production_manager.cpp:642-664`, repeated at
+/// `:849-861`), which converts the mining of the complex into fuel
+/// (`allocmenu.cpp:438-523`). The port performs the same step in
+/// `settle_producers` before cutting the planned producers back.
+///
+/// Fixture: mine A is saturated with 16 raw units and its surveyed square
+/// carries 8 fuel; mine B has free mining units and 8 raw. Both generators are
+/// off and the fuel stock is empty — without the redistribution the generators
+/// would stay off and the mines would be switched off one by one.
+#[test]
+fn power_deficit_redistributes_raw_mining_into_fuel() {
+    let mut state = state();
+    connector_band(&mut state);
+
+    let mine = building(&mut state, UnitType::MiningStation, 20);
+    let other_mine = building(&mut state, UnitType::MiningStation, 30);
+    let first_generator = building(&mut state, UnitType::PowerGenerator, 24);
+    let second_generator = building(&mut state, UnitType::PowerGenerator, 26);
+    let fuel = building(&mut state, UnitType::FuelStorage, 33);
+    state.unit_mut(fuel).expect("fuel").storage = 0;
+
+    // Mine A, surveyed square [20,21]×[22,23]: 8 fuel and 8 raw.
+    // Mine B, surveyed square [30,31]×[22,23]: 8 raw on free mining units.
+    for (x, y, kind) in [
+        (20, 22, ResourceKind::Fuel),
+        (21, 22, ResourceKind::Fuel),
+        (20, 23, ResourceKind::Raw),
+        (21, 23, ResourceKind::Raw),
+    ] {
+        state
+            .map_mut()
+            .resources
+            .set(x, y, ResourceMapEntry::new(4, Some(kind), 0));
+    }
+    for x in [30, 31] {
+        for y in [22, 23] {
+            state.map_mut().resources.set(
+                x,
+                y,
+                ResourceMapEntry::new(2, Some(ResourceKind::Raw), 0),
+            );
+        }
+    }
+
+    power_on(&mut state, mine);
+    power_on(&mut state, other_mine);
+    {
+        let unit = state.unit_mut(mine).expect("mine");
+        unit.raw_mining = 16;
+        unit.fuel_mining = 0;
+        unit.gold_mining = 0;
+        unit.total_mining = 16;
+    }
+    {
+        let unit = state.unit_mut(other_mine).expect("other mine");
+        unit.raw_mining = 0;
+        unit.fuel_mining = 0;
+        unit.gold_mining = 0;
+        unit.total_mining = 0;
+    }
+
+    let complex = complex_of(&state, mine);
+    for id in [other_mine, first_generator, second_generator] {
+        assert_eq!(
+            state.snapshot().unit(id).expect("member").complex,
+            Some(complex)
+        );
+    }
+
+    // Two powered mines = 2 power; two off generators = +1 each for 2 fuel.
+    // `manage_economy` is the end-of-turn entry point (`OptimizeComplexes`).
+    state.manage_economy(TeamId::RED);
+
+    let mine_unit = state.snapshot().unit(mine).expect("mine");
+    assert_eq!(
+        mine_unit.fuel_mining, 4,
+        "the 4 fuel units the two generators need were allocated"
+    );
+    assert_eq!(
+        mine_unit.raw_mining, 12,
+        "the same 4 units came out of the mine's raw extraction"
+    );
+    assert_eq!(
+        mine_unit.total_mining, 16,
+        "the mine's 16-unit cap is unchanged"
+    );
+    assert_eq!(
+        mine_unit.orders,
+        UnitOrder::PowerOn,
+        "the mine is not switched off: the fuel was redistributed instead"
+    );
+
+    let other = state.snapshot().unit(other_mine).expect("other mine");
+    assert_eq!(
+        other.raw_mining, 4,
+        "the displaced raw extraction moved to the free units of the second mine"
+    );
+    assert_eq!(other.orders, UnitOrder::PowerOn);
+
+    for generator in [first_generator, second_generator] {
+        assert_eq!(
+            state.snapshot().unit(generator).expect("generator").orders,
+            UnitOrder::PowerOn,
+            "the switched-off power sources were started"
+        );
+    }
+
+    let totals = state.snapshot().complex_totals(TeamId::RED, complex);
+    assert_eq!(totals.power, 0, "the demand is covered");
+    assert!(totals.fuel >= 0, "fuel never goes negative: {totals:?}");
+    assert!(totals.raw >= 0, "{totals:?}");
 }
 
 // ---------------------------------------------------------------------------

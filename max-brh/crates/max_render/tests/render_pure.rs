@@ -445,3 +445,122 @@ fn wrl_map_renders_through_the_same_pipeline() {
     assert_eq!(tile.get(0, 0), Some(style.land));
     assert_eq!(tile.get(32, 32), Some(style.land));
 }
+
+// ---------------------------------------------------------------------------
+// Grid geometry (defect 4 of the manual run 1.2)
+// ---------------------------------------------------------------------------
+
+/// The cell grid must cover the **whole playable viewport**, including its last
+/// row and column.
+///
+/// `DrawMap_RenderSimpleGridOverlay` (`drawmap.cpp:922-954`) draws a line at the
+/// top-left corner of every cell of the redrawn map window. The window
+/// (`WINDOW_MAIN_MAP`, `window_manager.cpp:89`) is exactly 7×7 cells of 64 px, so
+/// its last cell boundary lies at `448` — one pixel past the 448-pixel map
+/// buffer. A plain boundary walk therefore left the outer row/column of the
+/// playable area without a closing line: those border cells are partly covered
+/// by the panels and the End Turn button (`layout::END_TURN_BUTTON` overlaps
+/// `MAIN_MAP`), and a unit at the map edge visually slid off the grid.
+///
+/// [`Viewport::grid_lines`] closes the lines at the last buffer pixel, so the
+/// grid covers the full viewport.
+#[test]
+fn grid_covers_the_whole_playable_viewport() {
+    use max_render::layout::MAIN_MAP;
+
+    let width = MAIN_MAP.width;
+    let height = MAIN_MAP.height;
+    // A cell-aligned camera: world origin = (53, 53) * 64 = 3392.
+    let viewport = Viewport::with_center(width as u32, height as u32, (3616, 3616), 64);
+    let lines = viewport.grid_lines(width, height);
+
+    assert_eq!(lines.xs.first(), Some(&0), "left edge of the map window");
+    assert_eq!(lines.xs.last(), Some(&(width - 1)), "right edge is closed");
+    assert_eq!(lines.ys.first(), Some(&0), "top edge of the map window");
+    assert_eq!(lines.ys.last(), Some(&(height - 1)), "bottom edge is closed");
+    assert_eq!(lines.xs.len(), 8, "7 cell boundaries + the closing border");
+    assert_eq!(lines.ys.len(), 8);
+
+    // Every inner cell boundary of the 7×7 window is present.
+    for step in 1..7 {
+        assert!(lines.xs.contains(&(step * TILE_PIXELS)), "column {step}");
+        assert!(lines.ys.contains(&(step * TILE_PIXELS)), "row {step}");
+    }
+
+    // Paint the lines like the overlay: every corner of the playable area,
+    // including the last buffer pixel, is covered by the grid.
+    let grid = Rgba::rgb(200, 200, 200);
+    let mut frame = RgbaBuffer::filled(width as u32, height as u32, Rgba::BLACK);
+
+    for x in &lines.xs {
+        for y in 0..height {
+            frame.set(*x, y, grid);
+        }
+    }
+
+    for y in &lines.ys {
+        for x in 0..width {
+            frame.set(x, *y, grid);
+        }
+    }
+
+    for (x, y) in [
+        (0, 0),
+        (width - 1, 0),
+        (0, height - 1),
+        (width - 1, height - 1),
+    ] {
+        assert_eq!(
+            frame.get(x, y),
+            Some(grid),
+            "corner ({x}, {y}) of the playable area is gridded"
+        );
+    }
+}
+
+/// The closing lines stay inside the buffer and in order at every zoom level,
+/// including the ones where a cell does not divide the 448-pixel window.
+#[test]
+fn grid_lines_stay_inside_the_buffer_at_every_zoom_and_scroll() {
+    let width = 448;
+    let height = 448;
+
+    for zoom in [8u32, 16, 32, 48, 64, 128] {
+        // The camera is clamped by `Viewport`, so this also covers the map edge.
+        let viewport = Viewport::with_center(width as u32, height as u32, (3584, 3584), zoom);
+        let lines = viewport.grid_lines(width, height);
+
+        assert!(!lines.xs.is_empty() && !lines.ys.is_empty(), "zoom {zoom}");
+        assert_eq!(
+            lines.xs.last(),
+            Some(&(width - 1)),
+            "zoom {zoom}: right edge is closed"
+        );
+        assert_eq!(
+            lines.ys.last(),
+            Some(&(height - 1)),
+            "zoom {zoom}: bottom edge is closed"
+        );
+        assert!(
+            lines.xs.iter().all(|x| (0..width).contains(x)),
+            "zoom {zoom}: {lines:?}"
+        );
+        assert!(
+            lines.ys.iter().all(|y| (0..height).contains(y)),
+            "zoom {zoom}: {lines:?}"
+        );
+        assert!(lines.xs.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(lines.ys.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    // A non-cell-aligned origin (scrolling): the lines are still ordered, inside
+    // the buffer and closed at the far edge; no fake line is added at the near
+    // edge in the middle of a cell.
+    let viewport = Viewport::with_center(width as u32, height as u32, (3600, 3600), 64);
+    let lines = viewport.grid_lines(width, height);
+
+    assert_eq!(lines.xs.last(), Some(&(width - 1)));
+    assert_eq!(lines.ys.last(), Some(&(height - 1)));
+    assert!(lines.xs.iter().all(|x| (0..width).contains(x)));
+    assert!(lines.ys.iter().all(|y| (0..height).contains(y)));
+}

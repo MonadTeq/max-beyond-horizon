@@ -52,6 +52,10 @@
 //!   `RESEARCH` → `GREENHSE` → `COMMTWR` → constructions → `MININGST`;
 //! * power producers are turned on/off automatically by balance and
 //!   fuel reserve (C++ `OptimizePowerProduction`/`OptimizePowerConsumption`);
+//! * before a switched-off power source is given up, the complex tries to
+//!   allocate the missing fuel by converting raw/gold mining into fuel mining
+//!   (`OptimizeCargoProduction(CARGO_FUEL, …)`, `production_manager.cpp:642-664`,
+//!   `:849-861`) — see [`settle_producers`];
 //! * C++ does not turn **consumers** disabled due to a deficit back on itself —
 //!   the player (`UnitsManager_Popup_OnClick_PowerOn`) or the AI does that; the port
 //!   repeats this rule, while generators recover automatically;
@@ -62,11 +66,12 @@
 //! Difference from C++ (documented in `visual-1to1-status.md` §42): the exact
 //! arithmetic of `OptimizePowerProduction` (formulas with `count`) is replaced
 //! by a deterministic choice equivalent in observed balance:
-//! "stations → generators"; redistribution of production for fuel
-//! (`OptimizeCargoProduction`) is not ported in this task — when
-//! fuel is short, the producer is simply not turned on.
+//! "stations → generators". The fuel redistribution of `OptimizeCargoProduction`
+//! is performed by [`crate::alloc::optimize_cargo_production`]; the port keeps
+//! its "a resource never goes negative" rule, so a producer whose fuel cannot be
+//! covered by reallocation is still not turned on.
 
-use crate::alloc::{cargo_get_inventory, update_resources_total};
+use crate::alloc::{cargo_get_inventory, update_resources_total, MiningKind};
 use crate::enums::{UnitOrder, UnitOrderState, UnitType};
 use crate::game::GameState;
 use crate::production::is_factory;
@@ -388,15 +393,36 @@ fn without_producers(state: &GameState, units: &[UnitId], totals: EnergyTotals) 
     baseline
 }
 
+/// Bound of the `OptimizePowerProduction` → `OptimizeCargoProduction` re-planning
+/// rounds (`production_manager.cpp:830-861`). Every successful round allocates a
+/// finite number of free mining units, so the loop converges much earlier; the
+/// bound keeps the optimizer deterministic on a pathological fixture.
+const POWER_REDISTRIBUTION_ROUNDS: usize = 4;
+
 /// Port of `OptimizePowerProduction`/`OptimizePowerConsumption`
-/// (`production_manager.cpp:481-562`): choose how many `POWERSTN`/`POWGEN`
-/// should run, and apply the orders.
+/// (`production_manager.cpp:481-562`, `production_manager.cpp:830-901`): choose
+/// how many `POWERSTN`/`POWGEN` should run, redistribute mining for their fuel,
+/// and apply the orders.
 ///
 /// C++ first computes the target `power_station_active`/`power_generator_active`
 /// with formulas involving `count`, then `UpdateUnitPowerConsumption` adjusts the orders.
 /// The port makes the same "stations before generators" choice (a station gives 6
 /// power for 6 fuel, a generator — 1 for 2), but without intermediate arithmetic:
 /// the observed balance and orders match in working scenarios (see the header).
+///
+/// # Automatic fuel redistribution
+///
+/// `ProductionManager_OptimizeProduction` calls `CheckPowerNeed(0)` in every
+/// iteration of its debt loop (`production_manager.cpp:847-849`), and
+/// `CheckPowerNeed` runs `OptimizeCargoProduction(CARGO_FUEL, -total.fuel, false)`
+/// when the planned producers overdraw the complex fuel
+/// (`production_manager.cpp:642-664`). The same call is repeated in the debt loop
+/// itself (`production_manager.cpp:855-857`). It converts raw and gold mining of
+/// the complex into fuel mining *before* the optimizer gives up on the
+/// switched-off power source and starts shutting the industry down. The port
+/// does the same: the fuel for the planned producers is allocated here, and only
+/// when the complex cannot reallocate it (no fuel in the mine cells, no free
+/// mining units) are the producers cut back and a mine switched off.
 fn settle_producers(
     state: &mut GameState,
     team: TeamId,
@@ -405,8 +431,6 @@ fn settle_producers(
     totals: EnergyTotals,
     adjustments: &mut Vec<Adjustment>,
 ) -> EnergyTotals {
-    let baseline = without_producers(state, units, totals);
-
     let stations: Vec<UnitId> = units
         .iter()
         .copied()
@@ -426,21 +450,76 @@ fn settle_producers(
         })
         .collect();
 
-    let demand = (-baseline.power).max(0);
+    let mut totals = totals;
+    let mut stations_on = 0usize;
+    let mut generators_on = 0usize;
+    let mut demand = 0i32;
+    let mut fuel_budget = 0i32;
+    let mut cost = 0i32;
+    let mut redistributed = false;
 
-    // C++ station selection formula: `(power + station_rate - count) / station_rate`
-    // with `count = (generator_power * station_fuel) / generator_fuel = 3`.
-    let mut stations_on = stations.len().min(((demand + 3) / 6) as usize);
-    let mut generators_on = generators
-        .len()
-        .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
+    // The demand is computed with all producers off (`without_producers`), so a
+    // producer that is currently switched off is considered for re-enabling.
+    // C++ re-plans after every successful fuel reallocation; the free mining
+    // units of the complex are finite, so one round is normally enough — the
+    // bound only guards against a pathological fixture.
+    for _round in 0..=POWER_REDISTRIBUTION_ROUNDS {
+        let baseline = without_producers(state, units, totals);
+
+        demand = (-baseline.power).max(0);
+
+        // C++ station selection formula: `(power + station_rate - count) / station_rate`
+        // with `count = (generator_power * station_fuel) / generator_fuel = 3`.
+        stations_on = stations.len().min(((demand + 3) / 6) as usize);
+        generators_on = generators
+            .len()
+            .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
+
+        fuel_budget = baseline.fuel.max(0);
+        cost = stations_on as i32 * 6 + generators_on as i32 * 2;
+
+        if cost <= fuel_budget || demand == 0 {
+            break;
+        }
+
+        // `OptimizeCargoProduction(CARGO_FUEL, -total.fuel, false)` — raw/gold
+        // mining of the complex is converted into the fuel the plan needs.
+        let added = crate::alloc::optimize_cargo_production(
+            state,
+            team,
+            complex,
+            MiningKind::Fuel,
+            cost - fuel_budget,
+            false,
+        );
+
+        if added == 0 {
+            break;
+        }
+
+        totals = complex_totals(state, team, complex);
+        redistributed = true;
+    }
+
+    if redistributed {
+        // The plan above may belong to the pre-conversion balance when the loop
+        // exhausted its rounds right after a successful reallocation; C++
+        // re-runs `OptimizePowerProduction` on the new totals
+        // (`CheckPowerNeed`, `production_manager.cpp:642-664`).
+        let baseline = without_producers(state, units, totals);
+
+        demand = (-baseline.power).max(0);
+        stations_on = stations.len().min(((demand + 3) / 6) as usize);
+        generators_on = generators
+            .len()
+            .min(demand.saturating_sub(stations_on as i32 * 6) as usize);
+        fuel_budget = baseline.fuel.max(0);
+        cost = stations_on as i32 * 6 + generators_on as i32 * 2;
+    }
 
     // Fuel: an enabled producer must not drive the balance negative
     // (`CheckPowerNeed`, `production_manager.cpp:642-664`). Stations are cheaper in
     // fuel per unit of power, so generators are cut first.
-    let fuel_budget = baseline.fuel.max(0);
-    let mut cost = stations_on as i32 * 6 + generators_on as i32 * 2;
-
     while cost > fuel_budget && generators_on > 0 {
         generators_on -= 1;
         cost -= 2;
@@ -620,6 +699,28 @@ pub(crate) fn optimize_complex(
         let Some(shortage) = totals.first_shortage() else {
             break;
         };
+
+        // `CheckPowerNeed(0)` → `OptimizeCargoProduction(CARGO_FUEL, -total.fuel,
+        // false)` (`production_manager.cpp:849-857`): a fuel deficit of the
+        // enabled producers is first balanced by reallocating the complex's
+        // mining (raw/gold → fuel); only if that yields nothing are consumers
+        // switched off. `settle_producers` already allocates the fuel of the
+        // planned producers, so this path covers the remaining cases.
+        if shortage == Shortage::Fuel && totals.fuel < 0 {
+            let added = crate::alloc::optimize_cargo_production(
+                state,
+                team,
+                complex,
+                MiningKind::Fuel,
+                -totals.fuel,
+                false,
+            );
+
+            if added > 0 {
+                totals = complex_totals(state, team, complex);
+                continue;
+            }
+        }
 
         // `ValidateIndustry(selected, true)` — the selected/proposed factory
         // is stopped first (C++ `production_manager.cpp:877`).

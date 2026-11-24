@@ -232,6 +232,10 @@ pub fn cargo_get_inventory(unit: &UnitInfo) -> Cargo {
 
 /// `Cargo_GetCargoCapacity(unit)` (`cargo.cpp:50`) — `ATTRIB_STORAGE` capacity
 /// by cargo type.
+///
+/// The function has no special cases: a `MININGST` reports its 25-unit raw
+/// buffer too, and [`get_cargo_info`] sums it into the complex capacity
+/// (`Cargo_GetCargoCapacity` is called for every `Complex` member).
 pub fn cargo_get_cargo_capacity(unit: &UnitInfo) -> Cargo {
     let mut cargo = Cargo::init();
 
@@ -490,6 +494,59 @@ pub(crate) fn reduce_production(
     }
 }
 
+/// `ProductionManager::OptimizeCargoProduction(type, amount, mode)`
+/// (`production_manager.cpp:564-640`) — the automatic redistribution of mining
+/// that the end-of-turn optimizer runs when a resource balance is negative.
+///
+/// C++ first tries to grow `type` on the free mining units of the complex
+/// (`AllocMenu_Optimize`, `production_manager.cpp:591-599`), then swaps the
+/// production of the other resources into `type` (`SwapProduction` —
+/// `FreeUpProductionCapacity` + `AllocMenu_Optimize`, `:603-615`) and, if the
+/// request still cannot be met in `mode == false`, rolls the whole partial
+/// reallocation back (`AllocMenu_ReduceProduction` and the inverse
+/// `AllocMenu_Optimize` calls, `:617-633`) and returns 0.
+///
+/// The port keeps a single allocator call: `AllocMenu_Optimize` already converts
+/// raw/fuel/gold shares of the complex's mines into the target resource and
+/// re-allocates the displaced shares to the other mines
+/// (`Allocator::Optimize`, `allocmenu.cpp:413-523`), so the separate
+/// `SwapProduction` steps do not add a new distribution. What matters is the
+/// "all or nothing" property of `mode == false`: a partial conversion would only
+/// lower the raw/gold income of the complex without covering the shortage, so it
+/// is rolled back.
+///
+/// `amount <= 0` returns 1 like C++ (`result = 1`), so the caller can treat
+/// "already satisfied" and "converted" uniformly.
+pub(crate) fn optimize_cargo_production(
+    state: &mut GameState,
+    team: TeamId,
+    complex: ComplexId,
+    kind: MiningKind,
+    amount: i32,
+    mode: bool,
+) -> i32 {
+    if amount <= 0 {
+        return 1;
+    }
+
+    let added = optimize(state, team, complex, kind, amount);
+
+    if added == 0 {
+        return 0;
+    }
+
+    if !mode && added < amount {
+        // C++ `free_capacity == 0 || (amount != 0 && !mode)` rollback: the
+        // partial growth of `kind` is removed again, the other resources keep
+        // their (re-allocated) shares — `AllocMenu_ReduceProduction` is the
+        // inverse of the added units only.
+        reduce_production(state, team, complex, kind, added);
+        return 0;
+    }
+
+    added
+}
+
 /// `AllocMenu::Balance(complex, cargo_type, material1, material2)`
 /// (`allocmenu.cpp:567`) — "how many units of a resource are available to the complex".
 ///
@@ -590,6 +647,13 @@ pub(crate) fn get_cargo_minable(state: &GameState, team: TeamId, complex: Comple
 
 /// `Complex::GetCargoInfo(materials, capacity)` (`complex.cpp:136`) — what is
 /// in the complex and how much it can store.
+///
+/// The capacity is the sum of `Cargo_GetCargoCapacity` over **every** member
+/// (`complex.cpp:140-146`): the function is generic over the cargo type, so a
+/// connected `MININGST` contributes its `ATTRIB_STORAGE` buffer (25 raw) to the
+/// complex reserve exactly like an `ADUMP` contributes 50. The port previously
+/// narrowed the aggregation to the storage buildings — the mine's buffer was
+/// missing from the reserve (defect 1 of the manual run 1.2).
 pub(crate) fn get_cargo_info(state: &GameState, team: TeamId, complex: ComplexId) -> (Cargo, Cargo) {
     let mut materials = Cargo::init();
     let mut capacity = Cargo::init();

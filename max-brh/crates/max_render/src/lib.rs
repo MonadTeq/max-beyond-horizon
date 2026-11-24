@@ -81,7 +81,8 @@ pub use ui::{
     UiState, UiTheme, Widget,
 };
 pub use viewport::{
-    draw_order, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS, MAX_ZOOM, MIN_ZOOM, ZOOM_STEP,
+    draw_order, GridLines, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS, MAX_ZOOM, MIN_ZOOM,
+    ZOOM_STEP,
 };
 
 #[cfg(feature = "sdl")]

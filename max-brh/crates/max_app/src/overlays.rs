@@ -685,6 +685,13 @@ pub fn draw_range_scan<D: Dispatcher>(
 ///   in the **land** color (`GetGridOverlayColor(SURFACE_TYPE_LAND)`);
 /// * `complex_grid_overlay = 1` → `DrawMap_RenderComplexGridOverlay`: the top and
 ///   left border of each cell in the color of its surface.
+///
+/// The screen positions come from [`max_render::viewport::Viewport::grid_lines`],
+/// which closes the grid at the last buffer row/column: the 7×7 map window is an
+/// exact multiple of the 64-pixel cell, so its last boundary would fall one pixel
+/// past the map buffer and the outer cells of the playable area stayed without a
+/// border (defect 4 of the manual run 1.2 — a unit at the map edge visually slid
+/// out of the grid, into the panels that overlap the border cells).
 pub fn draw_grid<D: Dispatcher>(
     frame: &mut RgbaBuffer,
     app: &App<D>,
@@ -700,16 +707,13 @@ pub fn draw_grid<D: Dispatcher>(
         return 0;
     }
 
-    let (x0, y0) = viewport.screen_to_grid(0, 0);
-    let (x1, y1) = viewport.screen_to_grid(width - 1, height - 1);
+    let lines = viewport.grid_lines(width, height);
     let mut painted = 0u32;
 
     if !complex {
         let color = grid_color(palette, Surface::LAND);
 
-        for grid_x in x0..=x1.saturating_add(1) {
-            let (screen_x, _) = viewport.grid_to_screen(grid_x, 0);
-
+        for screen_x in lines.xs {
             for y in 0..height {
                 if frame.set(screen_x, y, color) {
                     painted += 1;
@@ -717,9 +721,7 @@ pub fn draw_grid<D: Dispatcher>(
             }
         }
 
-        for grid_y in y0..=y1.saturating_add(1) {
-            let (_, screen_y) = viewport.grid_to_screen(0, grid_y);
-
+        for screen_y in lines.ys {
             for x in 0..width {
                 if frame.set(x, screen_y, color) {
                     painted += 1;
@@ -730,6 +732,8 @@ pub fn draw_grid<D: Dispatcher>(
         return painted;
     }
 
+    let (x0, y0) = viewport.screen_to_grid(0, 0);
+    let (x1, y1) = viewport.screen_to_grid(width - 1, height - 1);
     let zoom = viewport.zoom() as i32;
 
     for grid_y in y0..=y1 {
@@ -747,6 +751,28 @@ pub fn draw_grid<D: Dispatcher>(
                     painted += 1;
                 }
             }
+        }
+    }
+
+    // Closing right/bottom edges of the playable viewport. The complex overlay
+    // colors every border by the surface of the cell it belongs to, so the
+    // closing line takes the color of the edge cell that touches it
+    // (`world.cpp:536-539`), not the fixed land color of the simple grid.
+    for y in 0..height {
+        let (grid_x, grid_y) = viewport.screen_to_grid(width - 1, y);
+        let color = grid_color(palette, state.map().surface_at(grid_x, grid_y));
+
+        if frame.set(width - 1, y, color) {
+            painted += 1;
+        }
+    }
+
+    for x in 0..width {
+        let (grid_x, grid_y) = viewport.screen_to_grid(x, height - 1);
+        let color = grid_color(palette, state.map().surface_at(grid_x, grid_y));
+
+        if frame.set(x, height - 1, color) {
+            painted += 1;
         }
     }
 
