@@ -297,7 +297,8 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
 
     // C++ `AbstractBuildMenu::Draw`: `stats_background->Write(&window)` +
     // `UnitStats_DrawStats(...)` in (11,293,250,174); the I_* icons — the same as
-    // in CargoMenu (pips `I_HITS`, `I_ARMOR`, `I_GOLD`).
+    // in CargoMenu (pips `I_HITS`, `I_ARMOR`), but the `Cost` row is `I_RAW`:
+    // production is paid in raw materials, not in credits.
     let diff = changed(&background, &frame, STATS);
     assert!(diff > 1_000, "таблица характеристик нарисована (diff={diff})");
 
@@ -306,6 +307,8 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
         &team_units.base_values,
         &team_units.current_values,
         UnitType::TrainingHall,
+        "I_RAW",
+        "I_RAWE",
     );
     let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
     for needed in ["Hits", "Armor", "Cost"] {
@@ -316,9 +319,11 @@ fn stats_table_shows_the_building_characteristics_with_icons() {
     // the background, and it is exactly `UnitStats_DrawCost` — 2 × 10 turns = 20.
     let cost = rows.last().expect("cost row");
     assert_eq!(cost.value, Some(20));
+    assert_eq!(cost.icons[0].resource, "I_RAW");
+    assert_eq!(cost.icons[0].empty_resource, "I_RAWE");
     let cost_rect = PixelRect::new(STATS.ulx, cost.y, STATS.width, 19);
     assert!(
         changed(&background, &frame, cost_rect) > 50,
-        "строка Cost с иконками I_GOLD нарисована"
+        "строка Cost с иконками I_RAW нарисована"
     );
 }

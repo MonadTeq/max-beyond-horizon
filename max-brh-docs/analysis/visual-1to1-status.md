@@ -2495,7 +2495,7 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 | цвет ходов | `BuildUnitTypeSelector::Draw` | `0xA2`, если строитель `STATIONARY` или `storage >= turns * Cargo_GetRawConsumptionRate(builder, 1)`, иначе `COLOR_RED` |
 | выделение | `GameManager_DrawUnitSelector` (`game_manager.cpp`) | белые уголки 8 px в 32×32-ячейке (offsetx=0, `scaled_size2 = 30`); не заливка и не цвет текста |
 | портрет | `AbstractBuildMenu::Draw` (`buildmenu.cpp:509-529`) | `WindowManager_LoadBigImage(base_unit.GetPortrait(), &local_window, window.width, false, true, -1, -1, false)`; `local_window.buffer = &window.buffer[11 + width*13]`, big image `P_*` 300×240 в (11,13), палитра окна (`CONBUILD`/`FACBUILD`), **без** обрезки 280×240 (в `CargoMenu` — своё окно `unit_portrait_window` 280×240); при отсутствии — `buf_fill` 300×240 чёрным |
-| характеристики | `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`), `UnitStats_DrawStats` (`unitstats.cpp:98`) | `stats_background` 11,293,250,174: `UnitStats_DrawStats(buffer, width, unit_type, unit->team, *UnitsManager_GetCurrentUnitValues(team, unit_type), 250, I_RAW, I_RAWE)` — военные строки, `Cargo`, `Prod./Uses`, `Armor/Hits/Scan`, `Speed`, `Cost`; условия по базовым значениям, числа/дельты — по текущим; иконки — `I_*` (pips), `Cost` — `I_GOLD`/`I_GOLDE` |
+| характеристики | `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`), `UnitStats_DrawStats` (`unitstats.cpp:98`) | `stats_background` 11,293,250,174: `UnitStats_DrawStats(buffer, width, unit_type, unit->team, *UnitsManager_GetCurrentUnitValues(team, unit_type), 250, I_RAW, I_RAWE)` — военные строки, `Cargo`, `Prod./Uses`, `Armor/Hits/Scan`, `Speed`, `Cost`; условия по базовым значениям, числа/дельты — по текущим; иконки — `I_*` (pips), `Cost` — `I_RAW`/`I_RAWE` (производство платится сырьём; `I_GOLD`/`I_GOLDE` — только у `CargoMenu`) |
 | ходы/цена | `AbstractBuildMenu::Draw` (`buildmenu.cpp:545-660`), `UnitInfo::GetTurnsToBuild` (`unitinfo.cpp:3393`) | 1×: `turns = GetTurnsToBuild(unit_type)`, `cost = turns * Cargo_GetRawConsumptionRate(builder, 1)`; 2×/4×: `unit->GetTurnsToBuild(unit_type, rate, &turns)` — на каждом ходу `min(rate, BuildMenu_GetMaxPossibleBuildRate(builder, remaining, storage))`, сумма ставок и число ходов; `ATTRIB_TURNS` — **текущие** значения (клановые `CLAN_TRADEOFFS` и исследования). У `TRAINHAL` кнопки 2×/4× выключены, строки не рисуются; у мобильного строителя строки скрыты, если `max_rate < rate` |
 | выбор портрета/статистики | `AbstractBuildMenu::Select` / `FactoryBuildMenu::Select` | `Draw(selector->GetLast())` — выбранная строка списка; у завода — активного селектора (список или очередь `cargo_selector`) |
 
@@ -2513,12 +2513,16 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * Портрет — `P_*` 300×240 в (11,13) (`PORTRAIT`), палитра `CONBUILD`/`FACBUILD`,
   без обрезки; тип — выбранная строка (у завода — активный список/очередь).
   Спрайт строителя 2×, который рисовался раньше, убран.
-* Характеристики — `Mobilization::stats_rows_for(&base, &current, unit_type)` +
-  `mobilize::draw_stats` в `STATS` (11,293,250,174): ровно
-  `UnitStats_DrawStats` с иконками `I_*` и строкой `Cost`
-  (`I_GOLD`/`I_GOLDE`). Это тот же код, что рисует `CargoMenu`; база/текущие
-  значения берутся из `state.team_units[team]`, поэтому клановые модификаторы
-  и исследования уже учтены.
+* Характеристики — `Mobilization::stats_rows_for(&base, &current, unit_type,
+  cost_icon, cost_empty_icon)` + `mobilize::draw_stats` в `STATS` (11,293,250,174):
+  ровно `UnitStats_DrawStats` с иконками `I_*` и строкой `Cost`. Пара иконок
+  строки `Cost` — аргументы, как `UnitStats_DrawStats(..., icon_full, icon_empty)`:
+  `CargoMenu` передаёт `I_GOLD`/`I_GOLDE` (покупка за кредиты), `BuildMenu` —
+  `I_RAW`/`I_RAWE` (`buildmenu.cpp:536`, производство за сырьё). Само число
+  всегда `Cargo_GetRawConsumptionRate(builder, 1) * ATTRIB_TURNS`
+  (`UnitStats_DrawCost`) независимо от иконок. База/текущие значения берутся из
+  `state.team_units[team]`, поэтому клановые модификаторы и исследования уже
+  учтены.
 * `Turns`/`Cost` — `max_core::production::turns_and_consumption` (точный порт
   `UnitInfo::GetTurnsToBuild`): 1× — ходы и `turns * rate1`, 2×/4× — сумма
   ставок с падением скорости при нехватке склада; `build_time` активной
@@ -2537,11 +2541,11 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   пропущенных через палитру окна) и отличается от фона; смена выбранной
   строки/выбранного элемента очереди меняет портрет; таблица
   `STATS` (11,293,250,174) нарисована, содержит `Hits`/`Armor`/`Cost`,
-  `Cost = 2 × 10 = 20` с `I_GOLD`/`I_GOLDE`.
+  `Cost = 2 × 10 = 20` с `I_RAW`/`I_RAWE` (сырьё; у `CargoMenu` — `I_GOLD`/`I_GOLDE`).
 * `max_app::buildmenu` unit (10, +5): `rate_numbers` = `(4,12)/(2,24)/(1,36)`
   для HVP→TANK; `TRAINHAL` `max_rate=1`; CrimsonPath сокращает SHIPYARD
   20→15 ходов и цену 40→30; цифры — активного селектора завода (выбранная очередь/список), а не всегда головы очереди; `stats_rows_for` для здания — `Hits`/`Armor`/
-  `Cost`, иконки `I_GOLD`/`I_GOLDE`.
+  `Cost`, иконки `I_RAW`/`I_RAWE`.
 * `max_core/tests/production.rs` (22, +2): `turns_and_consumption` для
   1×/2×/4×, остаток `build_time`, Training Hall, мобильный строитель с пустым
   складом; клановый модификатор SHIPYARD; реальный прогон 2× с 40 сырья —

@@ -54,8 +54,10 @@
 //!   the active selector: list or queue). The `P_*` cache —
 //!   `CargoMenuAssets::portrait`.
 //! * characteristics — UnitStats_DrawStats in stats_background
-//!   (11,293,250,174) with `I_*` icons and a `Cost` row (`I_GOLD`/`I_GOLDE`):
-//!   the same `mobilize::{stats_rows_for, draw_stats}` as in `CargoMenu`;
+//!   (11,293,250,174) with `I_*` icons and a `Cost` row in **raw materials**
+//!   (`I_RAW`/`I_RAWE`, `buildmenu.cpp:536`): the same
+//!   `mobilize::{stats_rows_for, draw_stats}` as in `CargoMenu`, but the latter
+//!   passes `I_GOLD`/`I_GOLDE` because the purchase `Cost` is paid in credits;
 //!   base/current team values (clan modifiers and upgrades are already inside).
 //! * `Turns`/`Cost` — `UnitInfo::GetTurnsToBuild` (`turns_and_consumption`):
 //!   for 2×/4× this is not a "rate per turn" but the total amount taking into account the fall
@@ -1115,7 +1117,8 @@ impl BuildMenu {
         // in `stats_background` (11,293,250,174), as in
         // `AbstractBuildMenu::Draw` (`buildmenu.cpp:531-536`): base/current
         // team values (clan modifiers and upgrades are already inside),
-        // `I_RAW`/`I_RAWE` for the `Cost` row. This is the same code as in CargoMenu.
+        // `I_RAW`/`I_RAWE` for the `Cost` row — production is paid in raw
+        // materials (unlike `CargoMenu`, which passes `I_GOLD`/`I_GOLDE`).
         if let Some(unit_type) = portrait_type {
             if let (Some(cargo), Some(team_units)) = (
                 assets.cargo.as_ref(),
@@ -1125,6 +1128,8 @@ impl BuildMenu {
                     &team_units.base_values,
                     &team_units.current_values,
                     unit_type,
+                    "I_RAW",
+                    "I_RAWE",
                 );
                 painted += crate::mobilize::draw_stats(frame, cargo, &palette, &rows);
             }
@@ -1870,10 +1875,13 @@ mod tests {
     fn stats_rows_for_a_building_carry_icons_and_the_cpp_cost() {
         let state = state();
         let team_units = &StateRef::from(&state).team_units()[0];
+        // `AbstractBuildMenu::Draw` (`buildmenu.cpp:536`): I_RAW/I_RAWE.
         let rows = crate::mobilize::Mobilization::stats_rows_for(
             &team_units.base_values,
             &team_units.current_values,
             UnitType::TrainingHall,
+            "I_RAW",
+            "I_RAWE",
         );
         let labels: Vec<&str> = rows.iter().map(|row| row.label).collect();
 
@@ -1881,12 +1889,13 @@ mod tests {
         assert!(labels.contains(&"Armor"), "характеристики: {labels:?}");
         assert_eq!(labels.last(), Some(&"Cost"), "строка Cost последняя");
 
-        // `UnitStats_DrawCost`: CONSTRCT builder rate (2) × ATTRIB_TURNS (10).
+        // `UnitStats_DrawCost`: CONSTRCT builder rate (2) × ATTRIB_TURNS (10);
+        // the pips are raw materials, not the mobilization (gold) price.
         let cost = rows.last().expect("cost row");
         assert_eq!(cost.value, Some(20));
         assert_eq!(cost.icons.len(), 1);
-        assert_eq!(cost.icons[0].resource, "I_GOLD");
-        assert_eq!(cost.icons[0].empty_resource, "I_GOLDE");
+        assert_eq!(cost.icons[0].resource, "I_RAW");
+        assert_eq!(cost.icons[0].empty_resource, "I_RAWE");
         assert_eq!(cost.icons[0].current, 20);
     }
 }

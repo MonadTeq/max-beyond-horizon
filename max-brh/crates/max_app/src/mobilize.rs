@@ -80,8 +80,8 @@
 //!   `HARVSTER`, `WALDO`) have no description in the original, but they are also unreachable in
 //!   `CargoMenu` (no `UPGRADABLE`/not buildable).
 //! * `UnitStats_DrawStats` — 1:1: the `I_*` icon grid (`I_HRDATK`, `I_SHOTS`,
-//!   `I_RANGE`, `I_AMMO`, `I_RAW`/`I_FUEL`/`I_GOLD`, `I_POWER`, `I_LIFE`,
-//!   `I_ARMOR`, `I_HITS`, `I_SCAN`, `I_SPEED`, `I_GOLD`/`I_GOLDE`), the pips step
+//!   `I_RANGE`, `I_AMMO`, `I_RAW`/`I_RAWE`/`I_FUEL`/`I_GOLD`/`I_GOLDE`,
+//!   `I_POWER`, `I_LIFE`, `I_ARMOR`, `I_HITS`, `I_SCAN`, `I_SPEED`), the pips step
 //!   `UnitStats_DrawIcons`, the red row lines, the numbers/labels
 //!   `ReportStats_DrawNumber`/`Text_Blit` (x=24/28, clip 49 px).
 //! * The `Cost`/`Credit`/`Cargo` numbers under the lists: in the C++ port only the
@@ -1070,17 +1070,29 @@ impl Mobilization {
             return Vec::new();
         };
 
-        Self::stats_rows_for(&self.base, &self.actual, unit)
+        // `CargoMenu` overrides `interface_icon_full/empty` with `I_GOLD`/`I_GOLDE`
+        // (`cargomenu.cpp:45-46`): the purchase `Cost` row is paid in credits.
+        Self::stats_rows_for(&self.base, &self.actual, unit, "I_GOLD", "I_GOLDE")
     }
 
     /// [`Self::stats_rows`] by explicit value sets — needed by `BuildMenu`:
     /// C++ `AbstractBuildMenu::Draw` calls `UnitStats_DrawStats` with
     /// `team_units->GetCurrentUnitValues(team, unit_type)` and the same
     /// `base_values` (clan modifiers and upgrades are already inside).
+    ///
+    /// `cost_icon`/`cost_empty_icon` are the `UnitStats_DrawStats(..., icon_full,
+    /// icon_empty)` pair for the `Cost` row: `CargoMenu` passes `I_GOLD`/`I_GOLDE`,
+    /// while `AbstractBuildMenu::Draw` (`buildmenu.cpp:536`) and `UnitStats_Menu`
+    /// (`unitstats.cpp:516`) pass `I_RAW`/`I_RAWE` — the production cost is paid in
+    /// raw materials. The number itself is always `UnitStats_DrawCost`
+    /// (`Cargo_GetRawConsumptionRate(builder, 1) * ATTRIB_TURNS`), independent of
+    /// the icon pair.
     pub fn stats_rows_for(
         base_values: &[UnitValues],
         current_values: &[UnitValues],
         unit: UnitType,
+        cost_icon: &'static str,
+        cost_empty_icon: &'static str,
     ) -> Vec<StatRow> {
         let base = base_values[unit as usize];
         let actual = current_values[unit as usize];
@@ -1298,8 +1310,8 @@ impl Mobilization {
                 STAT_COST,
                 Some(actual_level),
                 vec![StatIcon {
-                    resource: "I_GOLD",
-                    empty_resource: "I_GOLDE",
+                    resource: cost_icon,
+                    empty_resource: cost_empty_icon,
                     current: actual_level,
                     original: base_level,
                 }],
@@ -1893,10 +1905,13 @@ impl CargoMenuAssets {
 }
 
 /// `UnitStats_DrawStats` row icons: attack/shots/range/ammo,
-/// cargo, consumption, armor/hits/scan/speed and the price gold.
-pub const STAT_ICONS: [&str; 14] = [
-    "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_FUEL", "I_GOLD", "I_GOLDE", "I_POWER",
-    "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
+/// cargo, consumption, armor/hits/scan/speed and the `Cost` pips. Both empty
+/// variants are here because the `Cost` pair depends on the screen:
+/// `I_GOLD`/`I_GOLDE` in `CargoMenu`, `I_RAW`/`I_RAWE` in the `BuildMenu` and the
+/// unit statistics window (`UnitStats_DrawStats(..., icon_full, icon_empty)`).
+pub const STAT_ICONS: [&str; 15] = [
+    "I_HRDATK", "I_SHOTS", "I_RANGE", "I_AMMO", "I_RAW", "I_RAWE", "I_FUEL", "I_GOLD", "I_GOLDE",
+    "I_POWER", "I_LIFE", "I_ARMOR", "I_HITS", "I_SCAN", "I_SPEED",
 ];
 
 /// `Unit::GetIcon()` — `I_*` resources from `SC_UNITS` (units.json), in [`UnitType`]
@@ -3889,8 +3904,10 @@ mod tests {
         ] {
             assert!(STAT_ICONS.contains(&name), "{name}");
         }
-        // `CargoMenu` passes `interface_icon_full/empty = I_GOLD/I_GOLDE`.
+        // `CargoMenu` passes `interface_icon_full/empty = I_GOLD/I_GOLDE`,
+        // `BuildMenu` — `I_RAW`/`I_RAWE` (`buildmenu.cpp:536`).
         assert!(STAT_ICONS.contains(&"I_GOLDE"));
+        assert!(STAT_ICONS.contains(&"I_RAWE"));
 
         let mut mobilization = mobilization();
         for unit in upgrade_types(&[true, true, true, true, false]) {
