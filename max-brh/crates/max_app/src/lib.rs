@@ -919,6 +919,14 @@ impl<D: Dispatcher> App<D> {
     /// `Preferences` setting of the simulation, not a save field
     /// (`saveload.cpp:1175` writes only the timers), so it is applied here for
     /// every install path.
+    /// Narrow install API (SDL/UI Stage C3): accepts an already-built world.
+    ///
+    /// The single point that assigns the facade field (outside constructors), and the
+    /// single point that resets per-match application state. The install-tail config
+    /// (e.g. `set_player_team(ALIEN)` for hot-seat) runs **after** this call: the order
+    /// `adopt_universe(focus_player) → install-tail(set_player_team)` is FIXED and
+    /// covered by the golden hot-seat frames — do not merge the tail into this method
+    /// (it would reorder `focus` before the team switch and break golden).
     pub fn adopt_universe(&mut self, universe: GameUniverse<D>) {
         self.universe = universe;
         self.universe.set_enemy_halt(self.preferences.enemy_halt);
