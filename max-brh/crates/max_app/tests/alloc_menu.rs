@@ -318,7 +318,7 @@ fn allocation_changes_the_complex_income_next_turn() {
     app.flush_orders();
 
     // `manage_economy` → `OptimizeComplexes` → `Access_UpdateResourcesTotal`.
-    app.universe.manage_economy(TeamId::RED);
+    app.universe_mut().manage_economy(TeamId::RED);
 
     let complex_id = app.economy_complex().expect("комплекс шахты");
     let complex = app

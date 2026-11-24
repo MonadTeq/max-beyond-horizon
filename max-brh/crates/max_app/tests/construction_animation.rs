@@ -50,9 +50,9 @@ fn app_with_assets() -> Option<App> {
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    app.universe.teams_mut()[0].team_type = TeamKind::Player;
-    app.universe.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
-    app.universe.team_units_table_mut()[0].set_gold(100);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_units_table_mut()[0].set_gold(100);
     app.viewport_mut().set_zoom(64);
 
     Some(app)
@@ -75,13 +75,13 @@ fn builder_sprite_cycles_through_work_frames_with_real_dt() {
     };
 
     let builder = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(40, 40), 0)
         .expect("constructor");
     app.viewport_mut().center_on_grid(40, 40);
 
     {
-        let unit = app.universe.unit_mut(builder).expect("constructor");
+        let unit = app.universe_mut().unit_mut(builder).expect("constructor");
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::BuildInProgress;
     }
@@ -135,11 +135,11 @@ fn scaling_unit_grows_to_full_size_over_real_time() {
     let background = app.render_frame();
 
     let slab = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::LargeSlab, TeamId::RED, Point::new(40, 40), 0)
         .expect("slab");
     {
-        let unit = app.universe.unit_mut(slab).expect("slab");
+        let unit = app.universe_mut().unit_mut(slab).expect("slab");
         // `PrepareConstructionSite`: `scaler_adjust = 4` + ScaleUnit(EXPAND).
         unit.scaler_adjust = 4;
         unit.orders = UnitOrder::AwaitScaling;
@@ -183,7 +183,7 @@ fn unit_without_scaler_is_never_scaled() {
     };
 
     let unit: UnitId = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(40, 40), 0)
         .expect("tank");
     app.viewport_mut().center_on_grid(40, 40);

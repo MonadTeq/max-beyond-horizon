@@ -317,7 +317,7 @@ fn map_render_loop_covers_all_93_unit_types() {
         let unit_type = UnitType::try_from(index as u16).expect("тип 0..92");
         let grid = Point::new(40 + (index as i16 % 10), 40 + (index as i16 / 10));
         let id = app
-            .universe
+            .universe_mut()
             .spawn_unit(unit_type, TeamId::RED, grid, 0)
             .expect("спавн юнита");
         ids.push(id);
@@ -326,7 +326,7 @@ fn map_render_loop_covers_all_93_unit_types() {
     // Mines/commandos/submarine are hidden from all teams in the original
     // (`InitStealthStatus`); for the render test we make them visible.
     for id in &ids {
-        if let Some(unit) = app.universe.unit_mut(*id) {
+        if let Some(unit) = app.universe_mut().unit_mut(*id) {
             unit.visible_to_team = [true; 5];
         }
     }

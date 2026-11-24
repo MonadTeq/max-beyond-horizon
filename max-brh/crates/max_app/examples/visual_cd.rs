@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let team_index = usize::from(app.player_team().0);
-    app.universe.ai_mut().heat_maps[team_index].load_v70(&complete, &[0; MAP_TILES], &[0; MAP_TILES]);
+    app.universe_mut().ai_mut().heat_maps[team_index].load_v70(&complete, &[0; MAP_TILES], &[0; MAP_TILES]);
 
     // Select a unit and center the camera on the resource cell: this way both the
     // markers and the unit dots on the minimap get into the frame.

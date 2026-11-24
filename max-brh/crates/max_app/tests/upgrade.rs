@@ -21,13 +21,13 @@ fn app_with_team() -> App {
         .team_units_mut(TeamId::RED)
         .expect("RED economy")
         .gold = 500;
-    app.universe = state;
+    app.adopt_universe(state);
     app
 }
 
 fn select_constructor(app: &mut App) -> max_core::unit::UnitId {
     let id = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::Constructor,
             TeamId::RED,
@@ -92,7 +92,7 @@ fn upgrade_changes_current_values_and_deducts_gold_on_commit() {
     // A new unit of this type is created with the current values (C++
     // `UnitInfo::UnitInfo` → `GetCurrentUnitValues`).
     let spawned = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Infantry, TeamId::RED, Point::new(20, 20), 0)
         .expect("infantry");
     assert_eq!(

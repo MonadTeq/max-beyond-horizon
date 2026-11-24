@@ -124,8 +124,8 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     );
 
     // The target is visible to the shooter (in the match — survey): a deterministic shot.
-    app.universe.ai_mut().all_visible = true;
-    app.universe.update_visibility_status(false);
+    app.universe_mut().ai_mut().all_visible = true;
+    app.universe_mut().update_visibility_status(false);
 
     let base = app
         .state_ref()
@@ -143,7 +143,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
     let target_grid = Point::new((base.x + 9).min(110), base.y);
 
     let launcher = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::MissileCrawler,
             TeamId::RED,
@@ -152,7 +152,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
         )
         .expect("снайпер-ракетчик");
     let target = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::GREEN,
@@ -160,12 +160,12 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
             MOBILE_LAND_UNIT | SELECTABLE,
         )
         .expect("цель");
-    app.universe.update_visibility_status(false);
+    app.universe_mut().update_visibility_status(false);
 
     let mut data = app.state_ref().order_data(launcher);
     data.fire_on = target_grid;
-    app.universe.set_order_data(launcher, data);
-    app.universe
+    app.universe_mut().set_order_data(launcher, data);
+    app.universe_mut()
         .set_order(launcher, UnitOrder::Fire, UnitOrderState::Init);
 
     // The player presses End Turn without waiting for the hit.

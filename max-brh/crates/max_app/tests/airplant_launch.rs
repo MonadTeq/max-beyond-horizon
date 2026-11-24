@@ -172,15 +172,15 @@ fn air_move_order_is_a_packet_08_move_with_init_state() {
 #[test]
 fn app_launches_the_fighter_out_of_the_air_plant() {
     let mut app = App::new(AppConfig::default());
-    app.universe = state();
-    let (_plant, fighter) = plant_with_fighter(&mut app.universe);
+    app.adopt_universe(state());
+    let (_plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // Player: the ready unit is selected (after `PlaceNewUnit`), a click next to the factory.
     app.hud_mut().select(Some(fighter));
     let command = hud::build_activate_order(app.state_ref(), fighter, Point::new(9, 10))
         .expect("приказ вывода");
     assert_eq!(
-        app.universe.apply_now(command),
+        app.universe_mut().apply_now(command),
         max_core::ApplyOutcome::Applied,
         "08/P3 применён"
     );
@@ -208,8 +208,8 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
 #[test]
 fn unit_menu_on_a_ready_plant_selects_the_stored_fighter() {
     let mut app = App::new(AppConfig::default());
-    app.universe = state();
-    let (plant, fighter) = plant_with_fighter(&mut app.universe);
+    app.adopt_universe(state());
+    let (plant, fighter) = plant_with_fighter(app.universe_mut());
 
     // The first click on the factory — selection.
     app.hud_mut().select(Some(plant));

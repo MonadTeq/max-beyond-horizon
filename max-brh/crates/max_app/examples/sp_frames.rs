@@ -181,7 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
     for id in ai_units {
-        app.universe.destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     app.local_end_turn();
@@ -222,7 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
     for id in own_units {
-        app.universe.destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     app.local_end_turn();

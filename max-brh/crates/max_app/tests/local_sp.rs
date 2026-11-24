@@ -182,7 +182,7 @@ fn local_update_with_real_dt_animates_move_orders() {
     }
 
     let (destination, order) = chosen.expect("рядом есть проходимая клетка");
-    app.universe.apply_now(order.command);
+    app.universe_mut().apply_now(order.command);
 
     app.update_visual_units(0.0);
     let start = app.visual_position(surveyor).expect("Surveyor жив");
@@ -654,7 +654,7 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
     assert!(!ai_units.is_empty());
 
     for id in ai_units {
-        app.universe.destroy_unit(id);
+        app.universe_mut().destroy_unit(id);
     }
 
     // We close the round: player turn → AI turn (no units) → finish_turn.

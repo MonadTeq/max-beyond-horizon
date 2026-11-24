@@ -51,8 +51,8 @@ fn app_with_assets(save_dir: &Path) -> Option<App> {
         .with_save_dir(save_dir);
     let mut app = App::new(config);
     app.init_assets().ok()?;
-    app.universe.teams_mut()[0].team_type = TeamKind::Player;
-    app.universe.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
     app.viewport_mut().set_zoom(64);
 
     Some(app)
@@ -162,12 +162,12 @@ fn effects_off_freezes_building_animation_frames() {
     };
 
     let radar = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Radar, TeamId::RED, max_core::geo::Point::new(40, 40), 0)
         .expect("radar");
     app.viewport_mut().center_on_grid(40, 40);
     {
-        let unit = app.universe.unit_mut(radar).expect("radar");
+        let unit = app.universe_mut().unit_mut(radar).expect("radar");
         unit.orders = UnitOrder::Sentry;
         unit.state = UnitOrderState::ExecutingOrder;
     }

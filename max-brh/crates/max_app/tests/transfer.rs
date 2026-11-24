@@ -132,13 +132,13 @@ fn prepare_transfer(app: &mut App) -> (UnitId, UnitId) {
         .and_then(|unit| unit.complex)
         .expect("у шахты есть комплекс");
 
-    app.universe.unit_mut(mine).expect("mine").storage = 10;
-    app.universe
+    app.universe_mut().unit_mut(mine).expect("mine").storage = 10;
+    app.universe_mut()
         .unit_mut(constructor)
         .expect("constructor")
         .storage = 40;
     if let Some(target) = app
-        .universe
+        .universe_mut()
         .complex_mut(TeamId::RED, complex.0 as u16)
     {
         target.raw = 10;

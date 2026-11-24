@@ -84,8 +84,11 @@
 //!   (`with_setup`, `with_setup_and_dispatcher`, `reset_world`, `spawn_unit`,
 //!   `load_state`, `set_*`, `*_mut`). It never routes commands — a command needs a
 //!   tick and a transport, which a world that is still being built does not have.
-//!   The narrow `install_world`/`adopt_universe` API of Stage C3 replaces this
-//!   surface; the split of responsibilities stays the same.
+//!   SDL/UI Stage C3 adds the narrow application-level install API
+//!   (`max_app::App::install_world` / `max_app::App::adopt_universe`): install code
+//!   outside the application enters a world through those two entries, while this
+//!   surface stays the low-level layer they build on. The split of responsibilities
+//!   stays the same.
 //! * There is **no third path**: anything that changes the simulation belongs to
 //!   exactly one of the two channels, and the render layer is kept read-only by
 //!   `max-brh-cicd/scripts/check_render_readonly.py` (Stage A2).

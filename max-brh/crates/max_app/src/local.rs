@@ -657,14 +657,14 @@ impl App {
             .new_game(&config)
             .map_err(|error| format!("local game: {error:#}"))?;
 
-        let enemy_halt = self.preferences.enemy_halt;
         let universe = &mut self.universe;
 
+        // Install tail of the local match (Stage C3): the world was already installed
+        // by `new_game` → `App::install_world` → `App::adopt_universe`, which applies
+        // the live `enemy_halt` setting; the fields below are the match configuration
+        // (install code, not UI — no command is routed here).
         // `Remote_IsNetworkGame = false` — a local match, not lockstep.
         universe.set_network_game(false);
-        // `GameManager_InitGame`: `GameManager_FastMovement`/`enemy_halt` —
-        // live settings; in the port simulation the second is a state field.
-        universe.set_enemy_halt(enemy_halt);
         // `GameManager_UpdateHumanPlayerCount`: hot-seat is always turn-based.
         universe.set_play_mode(setup.effective_play_mode());
         universe.set_victory_type(setup.victory_type);
@@ -1691,7 +1691,11 @@ impl App {
         let saved_endturn = self.state_ref().save_meta().ini_options.endturn.max(0);
         self.preferences.turn_timer = saved_timer;
         self.preferences.endturn = saved_endturn;
-        // `settings` settings the simulation reads (`enemy_halt`).
+        // Install tail of a loaded match (Stage C3): the world was installed by
+        // `load_save_bytes` → `App::adopt_universe`; the writes below are install
+        // code, not UI, and run once before `local_resume_round`. The saved
+        // preferences are applied first because `enemy_halt` is a live setting,
+        // not a save field (`saveload.cpp:1175` writes only the timers).
         let enemy_halt = self.preferences.enemy_halt;
         self.universe.set_enemy_halt(enemy_halt);
 

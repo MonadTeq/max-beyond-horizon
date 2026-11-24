@@ -55,7 +55,7 @@ fn spawn(app: &mut App, unit_type: UnitType, team: TeamId, near: Point) -> Optio
     let flags = max_core::access::unit_type_flags(unit_type);
     let point = free_point(app, near);
 
-    app.universe.spawn_unit(unit_type, team, point, flags)
+    app.universe_mut().spawn_unit(unit_type, team, point, flags)
 }
 
 /// `attack` — the `targeting_mode` toggle (`UnitsManager_Popup_OnClick_TargetingMode`).
@@ -135,7 +135,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     );
 
     // A click on an own infantryman: **it** gets the order (C++ `GameManager_Unit`).
-    let state = app.universe.clone();
+    let state = app.universe_mut().clone();
     let command = max_app::unitmenu::load_mode_click(StateRef::from(&state), carrier, infantry)
         .expect("load click")
         .expect("приказ");
@@ -156,7 +156,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
 
     // The second click, when the passenger is already in the transport cell and ready:
     // `ORDER_LAND`/`INIT` with `parent = transport` (`game_manager.cpp:6824`).
-    let mut same_cell = app.universe.clone();
+    let mut same_cell = app.universe_mut().clone();
     let carrier_grid = same_cell.snapshot().unit(carrier).expect("транспорт").grid;
     if let Some(unit) = same_cell.unit_mut(infantry) {
         unit.grid = carrier_grid;
@@ -189,13 +189,13 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
 /// (`GameManager_StealUnit`/`DisableUnit`).
 #[test]
 fn infiltrator_orders_steal_and_disable_with_parent() {
-    let (app, team) = local_app();
+    let (mut app, team) = local_app();
 
     if !app.local_active() {
         return;
     }
 
-    let mut state = app.universe.clone();
+    let mut state = app.universe_mut().clone();
     let center = Point::new(state.snapshot().map().size.width / 2, state.snapshot().map().size.height / 2);
     let point = free_point(&app, center);
     let commando = state
@@ -302,7 +302,7 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
         .expect("бульдозер");
     let grid = app.state_ref().unit(bulldozer).expect("бульдозер").grid;
     let rubble = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::SmallRubble,
             team,
@@ -364,14 +364,14 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
     };
 
     // The upgrade is available: the current values are above the base.
-    if let Some(team_units) = app.universe.team_units_table_mut().get_mut(team.0 as usize) {
+    if let Some(team_units) = app.universe_mut().team_units_table_mut().get_mut(team.0 as usize) {
         let values = team_units.current_unit_values_mut(UnitType::PowerStation as u16);
         let hits = values.get_attribute(max_core::unit_values::ATTRIB_HITS);
         values.set_attribute(max_core::unit_values::ATTRIB_HITS, hits + 10);
     }
     // The complex has materials (C++ `GetCargoInfo`).
     if let Some(complex) = app.state_ref().unit(station).and_then(|unit| unit.complex) {
-        if let Some(complex) = app.universe.complex_mut(team, complex.0 as u16) {
+        if let Some(complex) = app.universe_mut().complex_mut(team, complex.0 as u16) {
             complex.raw = 120;
         }
     }

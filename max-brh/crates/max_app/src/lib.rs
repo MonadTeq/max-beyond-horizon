@@ -563,11 +563,13 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     ///
     /// The `GameState` is not a field of `App`: the facade owns it and is the only
     /// mutable entry to the world. Stage C §5 removed the accessor bridge of
-    /// stage B, so the facade is reached as a field: the driver uses it in-crate
-    /// (`self.universe…`), while integration tests use its documented config/test
-    /// layer. The dispatcher type is the `App` parameter: the universe and the
-    /// application share the same transport policy.
-    pub universe: GameUniverse<D>,
+    /// stage B. SDL/UI Stage C3 narrows the field to the crate: the driver uses it
+    /// in-crate (`self.universe…`), everything outside the crate installs a world
+    /// through [`App::install_world`]/[`App::adopt_universe`], and integration
+    /// tests use the hidden test accessor [`App::universe_mut`]. The dispatcher type
+    /// is the `App` parameter: the universe and the application share the same
+    /// transport policy.
+    pub(crate) universe: GameUniverse<D>,
     /// The application event cursor (stage A: the combat sounds of a tick are read
     /// from the facade event stream, see [`App::tick`]).
     universe_events: max_core::universe::EventStream,
@@ -900,13 +902,26 @@ impl<D: Dispatcher> App<D> {
         }
     }
 
-    /// Resets the per-match UI/frame state after a new world is installed (stage C A3).
+    /// Narrow install API (SDL/UI Stage C3): adopts a world built or loaded elsewhere.
     ///
-    /// Shared by the local generator (`new_game_on_surface`) and the network
-    /// `initialize_game`: around the world the application state is the same, only
-    /// the dispatcher differs. The caller assigns `self.universe` first — the field
-    /// assignment is the only move of the large state.
-    fn reset_after_world_install(&mut self) {
+    /// This is the **install channel** of the application, the counterpart of the
+    /// command channel: install code (a new match, a V70 load, the network lobby)
+    /// writes the simulation here, UI code never calls it. `App.universe` is
+    /// `pub(crate)`, so outside the crate this method and [`App::install_world`]
+    /// are the only entries that put a world into the application; inside the crate
+    /// this is the only assignment site of the field.
+    ///
+    /// The adoption is atomic for the application state around the world (shared by
+    /// the local generator, the load and the network `initialize_game`): the facade
+    /// event cursors are re-subscribed (the buffer of a fresh world starts empty),
+    /// the tick/command counters and all per-match UI state start over, and the
+    /// camera is focused on the player's team. `enemy_halt` is a live
+    /// `Preferences` setting of the simulation, not a save field
+    /// (`saveload.cpp:1175` writes only the timers), so it is applied here for
+    /// every install path.
+    pub fn adopt_universe(&mut self, universe: GameUniverse<D>) {
+        self.universe = universe;
+        self.universe.set_enemy_halt(self.preferences.enemy_halt);
         self.universe_events = self.universe.subscribe();
         self.turn_events = self.universe.subscribe();
         self.ticks = 0;
@@ -927,6 +942,44 @@ impl<D: Dispatcher> App<D> {
         self.focus_player();
         // Starting snapshot of the visual positions (see `load_game`).
         self.update_visual_units(0.0);
+    }
+
+    /// Narrow install API (SDL/UI Stage C3): builds a new match world and installs it.
+    ///
+    /// The single world-building entry of the application: it creates the facade for
+    /// the match dispatcher, runs the shared generator (`build_world_into`) and
+    /// adopts the result through [`App::adopt_universe`]. Both install paths — the
+    /// local `new_game_on_surface` and the network `initialize_game` — differ only in
+    /// the dispatcher they pass, so the canonical world bytes are identical
+    /// (`game-universe-stage-c.md` §4.1).
+    ///
+    /// The world is built into a local facade and moved into the application once
+    /// (the state is ~75 KB): installation happens once per match, while the tick
+    /// path never moves it.
+    pub fn install_world(
+        &mut self,
+        config: &NewGameConfig,
+        surface: &SurfaceMap,
+        dispatcher: D,
+    ) -> NewGameReport {
+        let mut universe = GameUniverse::with_dispatcher(dispatcher);
+        let report = build_world_into(config, surface, &mut universe);
+        self.adopt_universe(universe);
+        report
+    }
+
+    /// Test access to the facade (integration tests and examples only; Stage C3).
+    ///
+    /// `App.universe` is `pub(crate)` since Stage C3: production code outside the
+    /// crate uses the command channel ([`App::submit`]/[`App::tick`]), the install
+    /// API ([`App::install_world`]/[`App::adopt_universe`]) or the read-only
+    /// [`App::state_ref`]. Integration tests compile as separate crates and cannot
+    /// use `#[cfg(test)]` items, so this hidden accessor keeps the raw fixture
+    /// access they need (unit placement, team setup, direct `apply_now`). It is
+    /// **not** part of the stable API and must not be used by production code.
+    #[doc(hidden)]
+    pub fn universe_mut(&mut self) -> &mut GameUniverse<D> {
+        &mut self.universe
     }
 
     /// Loads the game data for `planet` and returns its surface map.
@@ -3528,38 +3581,17 @@ impl App<LocalDispatcher> {
     }
 
     /// Loads a V70 save from bytes (tests and embedded fixtures).
+    ///
+    /// Stage C3: the load is an install path and replaces the world through
+    /// [`App::adopt_universe`] — the same adoption the generator uses, so the
+    /// application state around a loaded match is reset exactly like around a
+    /// generated one.
     pub fn load_save_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
 
         // Stage A: the facade owns the state, so a load replaces the universe
         // (`GameUniverse::from_save` counts the load as a state version).
-        self.universe = max_core::universe::GameUniverse::from_save(&save);
-        self.universe_events = self.universe.subscribe();
-        self.turn_events = self.universe.subscribe();
-        // `SaveLoad_Load` leaves the player `settings` as is: `enemy_halt`
-        // is taken from `Preferences`, not from the file (`saveload.cpp:1175` writes only
-        // the timers into the settings).
-        let enemy_halt = self.preferences.enemy_halt;
-        self.universe.set_enemy_halt(enemy_halt);
-        self.ticks = 0;
-        self.applied_commands = 0;
-        self.hud.clear();
-        self.local = None;
-        self.build_menu = None;
-        self.save_load = None;
-        self.upgrade_menu = None;
-        self.research_menu = None;
-        self.unit_menu = None;
-        self.self_destruct = None;
-        self.alloc_menu = None;
-        self.transfer_menu = None;
-        self.help = None;
-        self.help_mode = None;
-        self.reset_visual_state();
-        self.focus_player();
-        // Starting snapshot: the first tick with `dt > 0` will see from which cell
-        // the unit started moving, otherwise the first route step would "teleport".
-        self.update_visual_units(0.0);
+        self.adopt_universe(max_core::universe::GameUniverse::from_save(&save));
 
         Ok(())
     }
@@ -3577,21 +3609,18 @@ impl App<LocalDispatcher> {
     /// Creates a local match on a ready surface map.
     ///
     /// The world itself is built by the shared generator ([`build_world_into`],
-    /// stage C A3): only the dispatcher differs between the local and the network
-    /// constructor. The world is written in place, so the 75 KB state is not moved.
+    /// stage C A3) through the narrow install API ([`App::install_world`]): only
+    /// the dispatcher differs between the local and the network constructor.
     pub fn new_game_on_surface(
         &mut self,
         config: &NewGameConfig,
         surface: &SurfaceMap,
     ) -> NewGameReport {
-        self.universe = GameUniverse::with_dispatcher(LocalDispatcher);
-        let report = build_world_into(config, surface, &mut self.universe);
         // `GameManager_InitGame`: the live `enemy_halt` setting. Generation has no
         // armed unit in range (`Access_UpdateMapStatus` reads the flag per unit
-        // step), so applying it right after the world is built is the same world.
-        self.universe.set_enemy_halt(self.preferences.enemy_halt);
-        self.reset_after_world_install();
-        report
+        // step), so applying it at adoption is the same world (`adopt_universe`
+        // applies it for every install path).
+        self.install_world(config, surface, LocalDispatcher)
     }
 
     /// Headless demo: load a save, run `turns` ticks, return the digest.
@@ -3613,8 +3642,13 @@ impl App<LocalDispatcher> {
 /// The body is the former `App::new_game_on_surface` without the application state:
 /// only the dispatcher differs between `App<LocalDispatcher>` and
 /// `App<NetworkDispatcher>`, so the canonical world bytes are identical
-/// (`game-universe-stage-c.md` §4.1). The caller installs the universe through
-/// `App::adopt_universe` and applies its own live settings.
+/// (`game-universe-stage-c.md` §4.1). SDL/UI Stage C3: the only caller is the
+/// narrow install API [`App::install_world`], which builds the facade for the match
+/// dispatcher and adopts it; the generator writes the world **in place**, so the
+/// 75 KB state is not moved while it is being built (`start_local_game` →
+/// `new_game` → `new_game_on_surface` is a deep debug-build stack). The resulting
+/// state is exactly [`GameUniverse::with_setup_and_dispatcher`] + the deployment
+/// tail, so the bytes are identical.
 ///
 /// A port of `GameManager_InitGame` to the extent of P2 + M3.2: `setup::generate_map`
 /// (resources + alien debris), then `GameState::with_setup`, deployment of
@@ -3639,24 +3673,6 @@ impl App<LocalDispatcher> {
 /// The units are created in `GameState` on behalf of `TeamId::ALIEN`; heat maps
 /// and team statistics/victory conditions do not see them (as in C++:
 /// `PLAYER_TEAM_ALIEN` has `team_type == TEAM_TYPE_NONE` and `heat_map == null`).
-pub(crate) fn build_world<D: Dispatcher>(
-    config: &NewGameConfig,
-    surface: &SurfaceMap,
-    dispatcher: D,
-) -> (GameUniverse<D>, NewGameReport) {
-    let mut universe = GameUniverse::with_dispatcher(dispatcher);
-    let report = build_world_into(config, surface, &mut universe);
-    (universe, report)
-}
-
-/// The same generator, writing the generated world **in place** (stage C §4.1).
-///
-/// `build_world` keeps the documented `(GameUniverse<D>, NewGameReport)` shape; the
-/// two constructors use this core instead, because the state is ~75 KB and a
-/// by-value return costs a full copy of it on the debug-build stack (the local
-/// `new_game` path is deep: `start_local_game` → `new_game` → `new_game_on_surface`).
-/// The resulting state is exactly [`GameUniverse::with_setup_and_dispatcher`] +
-/// the deployment tail, so the bytes are identical.
 pub(crate) fn build_world_into<D: Dispatcher>(
     config: &NewGameConfig,
     surface: &SurfaceMap,
@@ -3867,9 +3883,9 @@ pub(crate) fn build_world_into<D: Dispatcher>(
             report.surface_crc
         );
 
-    // Stage A: the generated state becomes the new facade-owned state; the
-    // caller installs it (`App::adopt_universe`), which also re-subscribes the
-    // event cursors because the buffer starts empty.
+    // Stage A/C3: the generated state becomes the facade-owned state of the match;
+    // `App::install_world` adopts it through `App::adopt_universe`, which also
+    // re-subscribes the event cursors because the buffer starts empty.
     report
 }
 
@@ -3889,6 +3905,8 @@ impl App<NetworkDispatcher> {
         let mut app = Self::with_universe(config, || {
             GameUniverse::with_dispatcher(NetworkDispatcher::new(local_team, play_mode))
         });
+        // Constructor configuration of the empty world (install code, Stage C3): the
+        // match itself arrives through `initialize_game` → `App::install_world`.
         app.universe.set_player_team(local_team);
         app.universe.set_play_mode(play_mode);
         app

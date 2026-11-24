@@ -604,10 +604,10 @@ fn app_flush_orders_matches_a_queued_tick() {
 
     for (name, command) in commands {
         let mut immediate = App::new(AppConfig::default());
-        immediate.universe = duel().0;
+        immediate.adopt_universe(duel().0);
 
         let mut queued = App::new(AppConfig::default());
-        queued.universe = duel().0;
+        queued.adopt_universe(duel().0);
 
         immediate.hud_mut().pending.push(command.clone());
         assert_eq!(
@@ -641,8 +641,8 @@ fn app_flush_orders_matches_a_queued_tick() {
 /// in which a player opens the upgrades screen.
 fn economy_app() -> App {
     let mut app = App::new(AppConfig::default());
-    app.universe = duel().0;
-    app.universe
+    app.adopt_universe(duel().0);
+    app.universe_mut()
         .team_units_mut(TeamId::RED)
         .expect("RED economy")
         .gold = 500;
@@ -732,9 +732,9 @@ fn upgrade_menu_commit_matches_the_broadcast_apply_on_a_peer() {
 /// The duel fixture as an [`App`] with a powered-on research center of RED selected.
 fn research_app() -> App {
     let mut app = App::new(AppConfig::default());
-    app.universe = duel().0;
+    app.adopt_universe(duel().0);
     let id = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::ResearchCentre,
             TeamId::RED,
@@ -746,8 +746,8 @@ fn research_app() -> App {
     unit.orders = UnitOrder::PowerOn;
     unit.state = UnitOrderState::ExecutingOrder;
     unit.research_topic = ResearchTopic::Attack;
-    app.universe.write_unit(id, unit);
-    app.universe
+    app.universe_mut().write_unit(id, unit);
+    app.universe_mut()
         .update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
     app.hud_mut().select(Some(id));
     app

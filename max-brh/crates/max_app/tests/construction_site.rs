@@ -65,15 +65,15 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         return;
     };
 
-    app.universe.teams_mut()[0].team_type = TeamKind::Player;
-    app.universe.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
-    app.universe.team_units_table_mut()[0].set_gold(100);
+    app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
+    app.universe_mut().team_units_table_mut()[0].set_gold(100);
 
     let constructor = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(40, 40), 0)
         .expect("constructor");
-    app.universe
+    app.universe_mut()
         .unit_mut(constructor)
         .expect("constructor")
         .storage = 40;
@@ -86,11 +86,11 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
 
     let (before, before_stats) = app.render_frame_with_stats();
 
-    app.universe
+    app.universe_mut()
         .enqueue_build(TeamId::RED, constructor, UnitType::TrainingHall)
         .expect("queue");
     let report = app
-        .universe
+        .universe_mut()
         .commit_build(TeamId::RED, constructor)
         .expect("build order");
 
@@ -142,12 +142,12 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
             .map(|unit| (unit.orders, unit.state))
             .expect("декаль на площадке");
 
-        app.universe
+        app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
             .set_visible_to_team(TeamId::RED, false);
         let without = app.render_frame();
-        app.universe
+        app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
             .set_visible_to_team(TeamId::RED, true);
@@ -166,7 +166,7 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
     // `ORDER_IDLE`/`ORDER_STATE_BUILDING_READY`, so it is **not visible**
     // (`IsRelevant`), while the tape/cones and the builder are in place.
     for _ in 0..report.turns {
-        app.universe.progress_build_state( TeamId::RED);
+        app.universe_mut().progress_build_state( TeamId::RED);
     }
 
     let (waiting, waiting_stats) = app.render_frame_with_stats();

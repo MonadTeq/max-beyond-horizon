@@ -236,9 +236,9 @@ fn new_game_with_p2_parameters_is_deterministic_and_renders() {
     // M3.2: the starting armies do not let the match end on the first turn —
     // `menu_check_end_game_conditions` no longer sees the teams as "eliminated".
     for turn in 0..3 {
-        app.universe.set_game_state(GameStateType::EndTurn);
+        app.universe_mut().set_game_state(GameStateType::EndTurn);
         assert!(
-            !app.universe.finish_turn(),
+            !app.universe_mut().finish_turn(),
             "партия не должна завершаться на ходу {turn}"
         );
     }
@@ -370,7 +370,7 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     let from = app.state_ref().unit(id).expect("юнит").grid;
     let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
     let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
-    app.universe.apply_now(command);
+    app.universe_mut().apply_now(command);
 
     // Without dt — a snapshot: the visual position equals the simulation one.
     app.update_visual_units(0.0);
@@ -407,11 +407,11 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     use max_core::unit_order::paths_get_angle;
 
     let mut app = App::new(AppConfig::default());
-    app.universe.teams_mut()[0].team_type = max_core::team::TeamKind::Player;
-    app.universe.team_units_table_mut()[0] =
+    app.universe_mut().teams_mut()[0].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().team_units_table_mut()[0] =
         max_core::team::TeamUnits::with_clan(max_core::TeamClan::Random);
     let id = app
-        .universe
+        .universe_mut()
         .spawn_unit(
             UnitType::Tank,
             TeamId::RED,
@@ -436,7 +436,7 @@ fn visual_angle_stays_on_the_segment_being_animated() {
             PathStep::new(0, -1),
         ],
     }));
-    app.universe.write_unit(id, unit);
+    app.universe_mut().write_unit(id, unit);
     app.update_visual_units(0.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
@@ -524,7 +524,7 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
 
     let from = app.state_ref().unit(id).expect("юнит").grid;
     let to = Point::new((from.x + 2).min(MAP_WIDTH - 2), from.y);
-    app.universe.apply_now(command_move_linear(
+    app.universe_mut().apply_now(command_move_linear(
         id,
         from,
         to,
@@ -621,7 +621,7 @@ fn move_command_replays_through_app() {
         // Exactly the same helper as in the max_core tests (`packet_38_builds_ground_path`).
         let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
 
-        assert_eq!(app.universe.apply_now(command), ApplyOutcome::Applied);
+        assert_eq!(app.universe_mut().apply_now(command), ApplyOutcome::Applied);
         assert!(
             app.state_ref().unit(id).expect("юнит").path.is_some(),
             "пакет 38 обязан выставить путь"
@@ -945,8 +945,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     let tan = palette.rgba(max_app::panels::END_TURN_TEXT);
 
     // My turn (RED, human): the button is released, the usual label.
-    app.universe.set_active_turn_team(max_core::TeamId::RED);
-    app.universe.teams_mut()[0].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::RED);
+    app.universe_mut().teams_mut()[0].team_type = max_core::team::TeamKind::Player;
     let (human, _) = app.render_frame_with_stats();
 
     assert!(
@@ -955,8 +955,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // Computer GREEN turn: the button is pressed, the label — the team color (index 2).
-    app.universe.set_active_turn_team(max_core::TeamId::GREEN);
-    app.universe.teams_mut()[1].team_type = max_core::team::TeamKind::Computer;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Computer;
     let (ai, _) = app.render_frame_with_stats();
     let green = palette.rgba(2);
 
@@ -988,8 +988,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // HOT-SEAT: the second human moves — the button is released again.
-    app.universe.set_active_turn_team(max_core::TeamId::GREEN);
-    app.universe.teams_mut()[1].team_type = max_core::team::TeamKind::Player;
+    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Player;
     let (hotseat, _) = app.render_frame_with_stats();
 
     assert!(
@@ -1017,15 +1017,15 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     let site = Point::new(30, 20);
     let team = app.player_team();
     let builder = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, site, 0)
         .expect("constructor");
     let building = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
 
-    app.universe.deploy_construction_site(
+    app.universe_mut().deploy_construction_site(
         builder,
         UnitType::TrainingHall,
         site,
@@ -1037,13 +1037,13 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     builder_unit.parent_unit = Some(building);
     builder_unit.orders = UnitOrder::Build;
     builder_unit.state = UnitOrderState::UnitReady;
-    app.universe.write_unit(builder, builder_unit);
+    app.universe_mut().write_unit(builder, builder_unit);
 
     let mut building_unit = app.state_ref().unit(building).expect("building").clone();
     building_unit.parent_unit = Some(builder);
     building_unit.orders = UnitOrder::Idle;
     building_unit.state = UnitOrderState::BuildingReady;
-    app.universe.write_unit(building, building_unit);
+    app.universe_mut().write_unit(building, building_unit);
 
     app.hud_mut().select(Some(builder));
     app.viewport_mut().center_on_grid(site.x, site.y);
@@ -1281,7 +1281,7 @@ fn assets_app_with_land() -> Option<App> {
     };
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
-    app.universe = empty_land_state();
+    app.adopt_universe(empty_land_state());
     app.viewport_mut().center_on_grid(40, 40);
 
     Some(app)
@@ -1325,21 +1325,21 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 
     let mut app = App::new(AppConfig::default());
-    app.universe = empty_land_state();
+    app.adopt_universe(empty_land_state());
 
     let site = Point::new(40, 40);
     let team = app.player_team();
     let building = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
     let builder = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, Point::new(41, 41), 0)
         .expect("constructor");
 
     let tape = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::LargeTape, team, site, 0)
         .expect("large tape");
     {
@@ -1349,7 +1349,7 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
         t.parent_unit = Some(builder);
         t.orders = UnitOrder::Await;
         t.state = UnitOrderState::ExecutingOrder;
-        app.universe.write_unit(tape, t);
+        app.universe_mut().write_unit(tape, t);
     }
 
     {
@@ -1358,14 +1358,14 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
         unit.parent_unit = Some(building);
         unit.orders = UnitOrder::Build;
         unit.state = UnitOrderState::UnitReady;
-        app.universe.write_unit(builder, unit);
+        app.universe_mut().write_unit(builder, unit);
     }
     {
         let mut unit = app.state_ref().unit(building).expect("building").clone();
         unit.parent_unit = Some(builder);
         unit.orders = UnitOrder::Idle;
         unit.state = UnitOrderState::BuildingReady;
-        app.universe.write_unit(building, unit);
+        app.universe_mut().write_unit(building, unit);
     }
 
     app.viewport_mut().center_on_grid(site.x, site.y);
@@ -1433,14 +1433,14 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     let site = Point::new(30, 20);
     let team = app.player_team();
     let builder = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Constructor, team, site, 0)
         .expect("constructor");
     let building = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
-    app.universe.deploy_construction_site(
+    app.universe_mut().deploy_construction_site(
         builder,
         UnitType::TrainingHall,
         site,
@@ -1452,7 +1452,7 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     builder_unit.parent_unit = Some(building);
     builder_unit.orders = UnitOrder::Build;
     builder_unit.state = UnitOrderState::UnitReady;
-    app.universe.write_unit(builder, builder_unit);
+    app.universe_mut().write_unit(builder, builder_unit);
 
     let cells =
         max_app::render::build_marker_cells(app.state_ref(), app.state_ref().unit(builder).unwrap());
@@ -1524,30 +1524,30 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     let unknown_cell = Point::new(42, 40);
 
     // RED surveyed gold in `known_cell`, the second cell is not surveyed.
-    app.universe.map_mut().resources.set(
+    app.universe_mut().map_mut().resources.set(
         known_cell.x,
         known_cell.y,
         ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0b1000),
     );
-    app.universe.map_mut().resources.set(
+    app.universe_mut().map_mut().resources.set(
         unknown_cell.x,
         unknown_cell.y,
         ResourceMapEntry::new(9, Some(ResourceKind::Gold), 0),
     );
 
     let building = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::PowerGenerator, TeamId::RED, known_cell, 0)
         .expect("power generator");
     {
         let mut unit = app.state_ref().unit(building).expect("generator").clone();
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
-        app.universe.write_unit(building, unit);
+        app.universe_mut().write_unit(building, unit);
     }
 
     let surveyor = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(30, 30), 0)
         .expect("surveyor");
 
@@ -1599,11 +1599,11 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
     use max_core::enums::UnitType;
 
     let mut app = App::new(AppConfig::default());
-    app.universe = empty_land_state();
+    app.adopt_universe(empty_land_state());
 
     let cell = Point::new(40, 40);
     let tank = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Tank, TeamId::RED, cell, 0)
         .expect("tank");
     app.viewport_mut().center_on_grid(cell.x, cell.y);
@@ -1686,21 +1686,21 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
 
     let mut site = Point::new(40, 40);
     let engineer = app
-        .universe
+        .universe_mut()
         .spawn_unit(UnitType::Engineer, TeamId::RED, Point::new(30, 30), 0)
         .expect("engineer");
     // `UnitsManager_DeployUnit` zeroes the new unit's storage; landing gives 40.
-    app.universe
+    app.universe_mut()
         .unit_mut(engineer)
         .expect("engineer")
         .storage = 40;
 
     {
-        app.universe
+        app.universe_mut()
             .enqueue_build(TeamId::RED, engineer, UnitType::Radar)
             .expect("queue");
         let report = app
-            .universe
+            .universe_mut()
             .commit_build(TeamId::RED, engineer)
             .expect("site");
 
@@ -1710,13 +1710,13 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
 
         let mut unit = app.state_ref().unit(engineer).expect("engineer").clone();
         unit.grid = report.site;
-        app.universe.write_unit(engineer, unit);
+        app.universe_mut().write_unit(engineer, unit);
     }
 
     let mut radar = None;
     for _ in 0..80 {
-        app.universe.manage_economy(TeamId::RED);
-        app.universe.progress_build_state(TeamId::RED);
+        app.universe_mut().manage_economy(TeamId::RED);
+        app.universe_mut().progress_build_state(TeamId::RED);
 
         if let Some(unit) = app
             .state_ref()
@@ -1754,9 +1754,9 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     }
 
     // The builder leaves by order (A1) → `BuildingReady`/`RestoreOrders`.
-    assert!(app.universe.issue_builder_exit(engineer));
+    assert!(app.universe_mut().issue_builder_exit(engineer));
     for _ in 0..60 {
-        app.universe.tick();
+        app.universe_mut().tick();
         if app
             .state_ref()
             .unit(radar)
