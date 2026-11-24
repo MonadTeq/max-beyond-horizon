@@ -67,7 +67,8 @@ enum Mode {
     Demo,
     NewGame,
     Connect,
-    /// P2P host: ENet server + server-side lobby (`PLAN-host-mode.md` §5 H2).
+    /// P2P host: ENet server + server-side lobby (`PLAN-host-mode.md` §5 H2)
+    /// and the host's own lockstep match (H3).
     Host,
     Ui,
 }
@@ -654,9 +655,9 @@ async fn run_connect(cli: &Cli) -> Result<()> {
 
 /// `--host [--listen <ip>] [--host-port <port>] [--min-players <n>] [--host-policy <p>]`.
 ///
-/// H2: the host runs the ENet server and the server-side lobby (28…34). It does
-/// not play the match yet — the host's lockstep loop and relay are H3 — so
-/// `--turns` is accepted for the H3 CLI contract and ignored here.
+/// H3: the host runs the ENet server, the server-side lobby (28…34) **and**
+/// plays its own team through the same lockstep driver as a guest; `--turns N`
+/// limits the number of turns of that match (`0` — until the match ends).
 async fn run_host(cli: &Cli) -> Result<()> {
     let game = cli.new_game_config();
     let options = HostRunOptions {
@@ -678,11 +679,12 @@ async fn run_host(cli: &Cli) -> Result<()> {
             start_gold: game.start_gold,
         },
         lobby_timeout: DEFAULT_HOST_LOBBY_TIMEOUT,
+        max_turns: cli.turns.unwrap_or(0),
     };
 
     println!(
-        "host: слушаю {}:{} (min_players={}, policy={})",
-        options.bind_ip, options.port, options.min_players, options.policy
+        "host: слушаю {}:{} (min_players={}, policy={}, turns={})",
+        options.bind_ip, options.port, options.min_players, options.policy, options.max_turns
     );
 
     let report = max_app::host::run_host(&cli.config, &options).await?;
@@ -697,6 +699,21 @@ async fn run_host(cli: &Cli) -> Result<()> {
         settings.map_or_else(String::new, |settings| settings.world_name.to_string()),
         report.policy
     );
+
+    let game = &report.game;
+    println!(
+        "host-game: team={} ticks={} commands={} turns={} barrier_timeouts={} desyncs={} sent=[{}] recv=[{}]",
+        game.local_team.0,
+        game.ticks,
+        game.commands_applied,
+        game.turns_finished,
+        game.barrier_timeouts,
+        game.desyncs,
+        game.sent.to_line(),
+        game.received.to_line()
+    );
+    println!("digest: {}", game.digest);
+    println!("shared: {}", game.shared.to_line());
 
     Ok(())
 }
@@ -754,7 +771,7 @@ fn print_new_game(report: &NewGameReport) {
 
 fn print_network(report: &NetworkReport) {
     println!(
-        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={} reconnects={} reconnect_attempts={} reconnect_pending_state={} join_attempts={} data_hash={}({})",
+        "network: game={} handshake={} lobby={} team={} ticks={} commands={} turns={} barrier_timeouts={} desyncs={} sent=[{}] recv=[{}] reconnects={} reconnect_attempts={} reconnect_pending_state={} join_attempts={} data_hash={}({})",
         report.game_id,
         report.handshake,
         report.lobby_complete,
@@ -763,6 +780,9 @@ fn print_network(report: &NetworkReport) {
         report.commands_applied,
         report.turns_finished,
         report.barrier_timeouts,
+        report.desyncs,
+        report.sent.to_line(),
+        report.received.to_line(),
         report.reconnects,
         report.reconnect_attempts,
         report.reconnect_pending_state,
@@ -771,6 +791,7 @@ fn print_network(report: &NetworkReport) {
         report.data_hash.len()
     );
     println!("digest: {}", report.digest);
+    println!("shared: {}", report.shared.to_line());
 }
 
 /// One SDL window input → the UI [`InputEvent`].
@@ -1663,8 +1684,8 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     max-brh.exe [ОПЦИИ]                     # по умолчанию — GUI (окно SDL3)
     max-brh.exe --demo <save> [--turns N] [ОПЦИИ]
     max-brh.exe --new-game [ОПЦИИ]
-    max-brh.exe --host [--listen <ip>] [--host-port <port>] [--min-players N] [--host-policy pause|eliminate] [ОПЦИИ]
-    max-brh.exe --connect <host:port>                   # прямой гость P2P-хоста (H2)
+    max-brh.exe --host [--listen <ip>] [--host-port <port>] [--min-players N] [--host-policy pause|eliminate] [--turns N] [ОПЦИИ]
+    max-brh.exe --connect <host:port>                   # прямой гость P2P-хоста (режим хоста)
     max-brh.exe --connect <host[:port]> --join <game_id> [--sdl] [ОПЦИИ]
 
 РЕЖИМЫ:
@@ -1674,7 +1695,8 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     --ui                 совместимый alias для запуска по умолчанию (GUI)
     --demo <save>        V70-сейв → N тиков → digest (headless)
     --new-game           локальная партия (setup::generate_map) + кадр
-    --host               сервер P2P-режима: ENet + лобби 28…34 (headless)
+    --host               сервер P2P-режима: ENet + лобби 28…34 и свой
+                         игровой цикл за команду хоста (headless)
     --listen <ip>        адрес ENet-сервера хоста (по умолчанию 0.0.0.0)
     --host-port <port>   UDP-порт ENet-сервера хоста (31554)
     --min-players N      READY-порог лобби, включая хоста (2; 1..=4)
@@ -1688,7 +1710,8 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          без SDL запись доступна как API max_app::qa::Recorder)
 
 ИГРА:
-    --turns N            тиков в --demo (5) / лимит ходов в --connect (0 — без лимита)
+    --turns N            тиков в --demo (5) / лимит ходов в --connect и --host
+                         (0 — без лимита)
     --reconnect-attempts N   попыток переподключения при разрыве ENet (3; 0 — выкл.)
     --reconnect-timeout S    таймаут одной попытки переподключения в секундах (10)
     --join-retry-attempts N  попыток первого подключения после Create game (6;

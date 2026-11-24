@@ -1,4 +1,5 @@
-//! Server-side lobby authority of the P2P host mode (`PLAN-host-mode.md` §5 H2).
+//! Server-side lobby authority and host player of the P2P host mode
+//! (`PLAN-host-mode.md` §5 H2–H3).
 //!
 //! The host is the session authority of the star topology: guests connect to its
 //! ENet server ([`max_net::host`], H1) and the server lobby below is ported from
@@ -45,6 +46,25 @@
 //! Two headless processes (`--host` and `--connect <host:port>`) must both reach
 //! packet 34 and log the same [`LobbyInfo::summary`] line
 //! (`host_node`/`team_nodes`/`rng_seed`/settings).
+//!
+//! # Host as a player (H3, `PLAN-host-mode.md` §5 H3)
+//!
+//! After `34` the host does not stay a lobby-only authority: it builds its own
+//! `App<NetworkDispatcher>` from the same [`LobbyInfo`] the guests received in
+//! packet 30 and plays its team through the **generic** lockstep driver
+//! (`App::run_game_loop`, `I: HostIo`), exactly like a guest. The
+//! host's [`HostIo`] implementation broadcasts every driver packet to the
+//! verified guests; an incoming `HostEventKind::Packet` has already been
+//! copy-forwarded to the other guests by the H1 transport, so the driver only
+//! submits it to its own simulation. The relay does not re-encode or reorder a
+//! frame (`PLAN-host-mode.md` §2).
+//!
+//! # Gate H3
+//!
+//! * (a) host + guest, 10 turns: `0` desyncs, `0` barrier timeouts, the
+//!   cross-client digest equal and the packet-45 CRC matching every turn;
+//! * (b) host + 2 guests (teams 0/1/2), 10 turns: the barrier-packet histograms
+//!   (`00`/`45`/`52`/`53`/`54`) are identical on all three clients.
 
 #![forbid(unsafe_code)]
 
@@ -53,7 +73,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use max_core::enums::{Planet, TeamClan};
+use max_core::enums::{Planet, PlayMode, TeamClan};
 use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::team::TeamId;
 use max_core::victory::MissionCategory;
@@ -64,8 +84,11 @@ use max_net::{
 };
 
 use crate::assets::world_asset_name;
-use crate::net::{handshake_data_hashes, LobbyInfo};
-use crate::AppConfig;
+use crate::net::{
+    handshake_data_hashes, local_team_of, play_mode_from_settings, DisconnectOutcome, FrameSink,
+    HostIo, IoEvent, LobbyInfo, NetworkDispatcher, NetworkOptions, PacketHistogram, SharedDigest,
+};
+use crate::{App, AppConfig, AppDigest};
 
 /// Node id of the host (`NetworkMenu::player_node`, `Randomizer(31991)+10` in C++).
 ///
@@ -836,6 +859,61 @@ impl HostLobby {
     }
 }
 
+/// Host side of [`HostIo`] (`PLAN-host-mode.md` §5 H3): the host is a player.
+///
+/// Every packet the driver sends is a broadcast to the verified guests. The
+/// host's own copy is applied locally by the facade (a barrier step, `submit`
+/// or `apply_immediate`), so it is never looped back through the relay.
+///
+/// An incoming [`HostEventKind::Packet`] arrives **after** the H1 transport has
+/// copy-forwarded the original bytes to the other guests
+/// (`max_net::host::HostSession::process_appl`), so the driver only feeds it
+/// into its own simulation — the relay is byte-exact by construction.
+///
+/// A guest that disconnects is not fatal here: H3 keeps the match waiting for
+/// it (`DisconnectOutcome::Ignored`); the H4 session policy owns the
+/// pause/elimination decision.
+#[allow(async_fn_in_trait)]
+impl HostIo for HostHandle {
+    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+        HostHandle::send(self, Recipient::Broadcast, packet)
+            .await
+            .context("host: отправка пакета")
+    }
+
+    async fn send_packet_untracked(&mut self, packet: Packet) -> Result<()> {
+        // The host transport has no barrier tracker (the driver retries the
+        // barriers itself), so both send paths are the same broadcast.
+        HostHandle::send(self, Recipient::Broadcast, packet)
+            .await
+            .context("host: отправка пакета")
+    }
+
+    async fn clear_barriers(&mut self) -> Result<()> {
+        // The host's barrier retransmission lives in the FSM
+        // (`BarrierPending`), not in the transport: nothing to clear.
+        Ok(())
+    }
+
+    async fn next_io_event(&mut self, wait: Duration) -> Result<IoEvent> {
+        match self.next_event_timeout(wait).await {
+            Ok(Some(event)) => Ok(match event.kind {
+                HostEventKind::Packet(packet) => IoEvent::Packet(packet),
+                // Lobby-phase/roster bookkeeping: no game meaning for the driver.
+                HostEventKind::Connected | HostEventKind::Verified => IoEvent::Control,
+                HostEventKind::Disconnected => IoEvent::Disconnected,
+            }),
+            Ok(None) => Ok(IoEvent::Closed),
+            Err(HostError::Timeout { .. }) => Ok(IoEvent::Idle),
+            Err(error) => Err(anyhow::Error::from(error)),
+        }
+    }
+
+    async fn on_disconnect(&mut self) -> Result<DisconnectOutcome> {
+        Ok(DisconnectOutcome::Ignored)
+    }
+}
+
 /// Parameters of the host process (`--host` + the lobby-related flags).
 #[derive(Debug, Clone)]
 pub struct HostRunOptions {
@@ -855,6 +933,8 @@ pub struct HostRunOptions {
     pub session: HostSessionSettings,
     /// How long the lobby may take before the run fails.
     pub lobby_timeout: Duration,
+    /// How many turns the host plays; `0` — until the match ends (`--turns`).
+    pub max_turns: u32,
 }
 
 impl Default for HostRunOptions {
@@ -868,11 +948,37 @@ impl Default for HostRunOptions {
             policy: SessionPolicy::default(),
             session: HostSessionSettings::default(),
             lobby_timeout: DEFAULT_HOST_LOBBY_TIMEOUT,
+            max_turns: 0,
         }
     }
 }
 
-/// Result of one host lobby run (`34` reached).
+/// The host's own match (H3): the same generic lockstep driver as a guest.
+#[derive(Debug, Clone)]
+pub struct HostGameReport {
+    /// The team the host plays.
+    pub local_team: TeamId,
+    /// Simulation ticks run by the host.
+    pub ticks: u64,
+    /// Commands the host applied.
+    pub commands_applied: u64,
+    /// Turns closed by barrier 52.
+    pub turns_finished: u32,
+    /// Times a barrier did not wait for the guests.
+    pub barrier_timeouts: u32,
+    /// Turns whose packet-45 CRC did not match every guest (`0` — no desync).
+    pub desyncs: u32,
+    /// Barrier packets the host FSM emitted (gate (b)).
+    pub sent: PacketHistogram,
+    /// Barrier packets the transport delivered to the host (gate (b)).
+    pub received: PacketHistogram,
+    /// Final state digest (per view: it carries the host's `player_team`).
+    pub digest: AppDigest,
+    /// The same state projected onto the values every client shares.
+    pub shared: SharedDigest,
+}
+
+/// Result of one host run: the lobby (`34` reached) plus the host's match.
 #[derive(Debug, Clone)]
 pub struct HostRunReport {
     /// Lobby data in the same shape the guest returns.
@@ -885,6 +991,8 @@ pub struct HostRunReport {
     pub policy: SessionPolicy,
     /// Final roster counters.
     pub status: HostLobbyStatus,
+    /// The host's own match (H3).
+    pub game: HostGameReport,
 }
 
 /// Result of [`run_host_lobby`] (state machine + final snapshot).
@@ -896,11 +1004,15 @@ pub struct HostLobbyReport {
     pub status: HostLobbyStatus,
 }
 
-/// Binds the H1 ENet server and runs the server lobby until packet 34.
+/// Binds the H1 ENet server, runs the server lobby until packet `34`, then
+/// plays the host's own team through the generic lockstep driver (H3).
 ///
-/// The host is not a game loop yet (H3): after `34` the session stays alive for
-/// [`HOST_START_LINGER`] so the reliable frame reaches the guests, then the
-/// transport closes.
+/// The host is a full player of its session: after the lobby it builds the same
+/// `App<NetworkDispatcher>` a guest does ([`run_host_game`]) and drives it over
+/// [`HostHandle`]. Every packet the driver produces is broadcast to the verified
+/// guests; every guest packet the transport delivers has already been relayed to
+/// the other guests (H1 copy-forward) and is submitted to the host's own
+/// simulation.
 pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<HostRunReport> {
     let hashes = handshake_data_hashes(config).context("host: data_hash для TP 00")?;
     let data_hash = *hashes
@@ -939,10 +1051,21 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
     };
 
     let result = run_host_lobby(&mut host, &lobby_config, options.lobby_timeout).await;
-    host.shutdown().await;
-    let report = result?;
+    let report = match result {
+        Ok(report) => report,
+        Err(error) => {
+            host.shutdown().await;
+            return Err(error);
+        }
+    };
 
     tracing::info!("{}", report.lobby.summary());
+
+    // H3: the host is a player too — the same world, the same barrier FSM, the
+    // same packets as a guest; only the transport (`HostHandle`) differs.
+    let game = run_host_game(&mut host, config, &report.lobby, options).await;
+    host.shutdown().await;
+    let game = game?;
 
     Ok(HostRunReport {
         lobby: report.lobby,
@@ -950,6 +1073,64 @@ pub async fn run_host(config: &AppConfig, options: &HostRunOptions) -> Result<Ho
         port: options.port,
         policy: options.policy,
         status: report.status,
+        game,
+    })
+}
+
+/// Plays the host's own team through the generic lockstep driver (H3).
+///
+/// The world is initialized from the same [`LobbyInfo`] the guests receive in
+/// packet 30 ([`App::initialize_game`]), so the host's simulation starts from
+/// the identical seed/map/team set. The host's team is the slot it holds in
+/// `team_nodes`; every other occupied slot is a `Remote` team the barrier FSM
+/// waits for.
+async fn run_host_game(
+    host: &mut HostHandle,
+    config: &AppConfig,
+    lobby: &LobbyInfo,
+    options: &HostRunOptions,
+) -> Result<HostGameReport> {
+    let local_team = local_team_of(lobby, options.host_team);
+    let play_mode = lobby
+        .settings
+        .as_ref()
+        .map(play_mode_from_settings)
+        .unwrap_or(PlayMode::TurnBased);
+
+    let mut game = App::<NetworkDispatcher>::new_network(config.clone(), local_team, play_mode);
+    game.initialize_game(lobby);
+
+    let network = NetworkOptions {
+        max_turns: options.max_turns,
+        ..NetworkOptions::default()
+    };
+    // The host is headless (H3): no SDL window, so no frame sink.
+    let mut sink: Option<&mut dyn FrameSink> = None;
+
+    tracing::info!(
+        "host: игровой цикл за команду {} (turns={}, пиров={})",
+        local_team.0,
+        options.max_turns,
+        game.universe
+            .dispatcher()
+            .remote_teams(&game.universe)
+            .count()
+    );
+
+    let stats = game.run_game_loop(host, &network, &mut sink).await?;
+    let digest = game.digest();
+
+    Ok(HostGameReport {
+        local_team,
+        ticks: game.ticks(),
+        commands_applied: game.applied_commands(),
+        turns_finished: stats.turns_finished,
+        barrier_timeouts: stats.barrier_timeouts,
+        desyncs: stats.desyncs,
+        sent: stats.sent,
+        received: stats.received,
+        digest,
+        shared: SharedDigest::capture(digest),
     })
 }
 
@@ -1025,6 +1206,8 @@ fn dispatch_host_event(lobby: &mut HostLobby, event: &HostEvent) -> Vec<LobbyOut
 #[cfg(test)]
 mod tests {
     use super::*;
+    use max_core::input::{Command, Packet18Chat};
+    use max_net::DataHash;
 
     fn config(min_players: usize) -> HostLobbyConfig {
         HostLobbyConfig {
@@ -1320,5 +1503,46 @@ mod tests {
         };
 
         assert_eq!(session.lobby_info().summary(), guest_info.summary());
+    }
+
+    /// H3: the host's `HostIo` adapter maps transport events and keeps the match
+    /// alive when a guest is lost (`DisconnectOutcome::Ignored`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_io_adapter_is_idle_and_ignores_a_lost_guest() {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe socket");
+        let port = socket.local_addr().expect("probe addr").port();
+        drop(socket);
+
+        let config = HostConfig::new(
+            Ipv4Addr::LOCALHOST,
+            port,
+            DataHash::from_bytes(b"max", b"patches"),
+        );
+        let mut host = HostHandle::bind(config).expect("bind host");
+
+        assert!(
+            matches!(
+                host.next_io_event(Duration::from_millis(50))
+                    .await
+                    .expect("host event"),
+                IoEvent::Idle
+            ),
+            "an empty server has no game event"
+        );
+        host.clear_barriers().await.expect("clear barriers");
+        // The host is not a peer: broadcasting with an empty roster is a no-op.
+        host.send_packet(Packet::Command(Command::Chat(Packet18Chat {
+            sender: TeamId::RED,
+            message: "no guests yet".to_string(),
+        })))
+        .await
+        .expect("broadcast with no verified peers");
+        assert_eq!(
+            host.on_disconnect().await.expect("disconnect outcome"),
+            DisconnectOutcome::Ignored,
+            "H3 keeps waiting for a lost guest; H4 owns the session policy"
+        );
+
+        host.shutdown().await;
     }
 }

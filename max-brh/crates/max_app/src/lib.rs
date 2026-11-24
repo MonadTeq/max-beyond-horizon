@@ -127,7 +127,7 @@ pub use mem::{memory_line, process_memory, ProcessMemory};
 pub use mobilize::Mobilization;
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, DirectEndpoint, FrameSink, LobbyInfo,
-    NetworkOptions, NetworkReport,
+    NetworkOptions, NetworkReport, PacketHistogram, SharedDigest,
 };
 pub use panels::{PanelButton, PanelState, Panels};
 pub use preferences::{

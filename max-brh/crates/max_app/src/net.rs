@@ -24,7 +24,7 @@
 //! whole driver below lives in that `impl` (§4.2): the mode switch is creating
 //! another `App<D>`, never mutating an existing one (ADR §7.8).
 //!
-//! # Host mode (P2P, `PLAN-host-mode.md` §5 H2)
+//! # Host mode (P2P, `PLAN-host-mode.md` §5 H2–H3)
 //!
 //! A guest of the host mode is the ordinary client with a direct endpoint
 //! ([`DirectEndpoint`]): [`SessionConfig::new`] instead of [`SessionConfig::from_joined`],
@@ -33,10 +33,12 @@
 //! 35/36/26 and finishes with 32 → 05 → 34. The lobby authority itself lives in
 //! [`crate::host`] (server side), not here.
 //!
-//! In H2 the direct run **stops after 34**: the host does not yet run the
-//! lockstep loop (H3), so the guest initializes the world from the lobby
-//! settings, captures the initial digest and closes the session. The Horizon
-//! path below is unaffected.
+//! H3 makes the whole driver transport-agnostic ([`HostIo`]): the host (a player
+//! of its own session) and its guests run the **same** `run_game_loop` over the
+//! same barrier FSM; only the I/O differs — [`SessionIo`] for a guest, the
+//! `max_net::HostHandle` for the host. The relay itself is the H1 transport's
+//! copy-forward: a guest's frame is forwarded to the other guests before the
+//! host driver sees it, and the host submits it to its own simulation.
 //!
 //! # Barriers
 //!
@@ -97,7 +99,7 @@ pub mod dispatcher;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use max_core::enums::{Planet, PlayMode, VictoryType};
+use max_core::enums::{GameStateType, Planet, PlayMode, VictoryType};
 use max_core::game::{PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use max_core::geo::Point;
 use max_core::input::{Command, Packet01FrameBarrier, Packet06FinishedTurn, Packet12MissionSupply};
@@ -107,7 +109,7 @@ use max_core::universe::RemoteCommand;
 use max_net::handshake::{DataHash, HandshakeError, RejectReason};
 use max_net::{
     complex_summary_for, state_sync_for, GameJoined, HorizonClient, LobbyGameSettings, LobbyPacket,
-    Packet, SessionConfig, SessionError, SessionEvent, SessionHandle, CLIENT_NAME,
+    Packet, SessionConfig, SessionError, SessionEvent, SessionHandle, WireError, CLIENT_NAME,
     HORIZON_PROTOCOL_VERSION,
 };
 use tokio::time::Instant;
@@ -970,6 +972,8 @@ pub struct NetworkReport {
     pub turns_finished: u32,
     /// How many times the barrier did not wait for the peers.
     pub barrier_timeouts: u32,
+    /// Turns whose packet-45 CRC did not match every peer (`0` — no desync).
+    pub desyncs: u32,
     /// How many times the transport was restored after a disconnect.
     pub reconnects: u32,
     /// How many reconnect attempts were made in total.
@@ -984,8 +988,15 @@ pub struct NetworkReport {
     /// How many first-connection attempts (`Create game → Join → start`)
     /// were needed; `1` — the session was already ready.
     pub join_attempts: u32,
-    /// Digest of the final state.
+    /// Barrier packets the local FSM emitted (`PLAN-host-mode.md` §5 H3 gate (b)).
+    pub sent: PacketHistogram,
+    /// Barrier packets the transport delivered.
+    pub received: PacketHistogram,
+    /// Digest of the final state (per client: it carries the local view fields).
     pub digest: AppDigest,
+    /// The same state projected onto the values every client shares — the
+    /// cross-client (host vs guest) gate digest.
+    pub shared: SharedDigest,
 }
 
 /// Connects to Horizon and joins the game (`Hello` → `JoinGame`).
@@ -1290,8 +1301,8 @@ pub async fn run_network(app: &mut App, options: &NetworkOptions) -> Result<Netw
 ///
 /// With [`NetworkOptions::endpoint`] the Horizon step is skipped (P2P host mode):
 /// the guest connects directly to the host's ENet server, reuses [`run_lobby`]
-/// and, in H2, stops after packet 34 with the world initialized from the lobby
-/// settings (`PLAN-host-mode.md` §5 H2).
+/// and then plays the match through the same generic [`HostIo`] driver the host
+/// uses (`PLAN-host-mode.md` §5 H3).
 pub async fn run_network_with_sink(
     app: &mut App,
     options: &NetworkOptions,
@@ -1324,12 +1335,7 @@ pub async fn run_network_with_sink(
 
     // Local team: the slot occupied by our node in `Welcome.team_nodes`
     // (usually `--team`), otherwise — the requested slot.
-    let local_team = lobby
-        .team_nodes
-        .iter()
-        .position(|&node| node > 4 && node == lobby.player_node)
-        .map(|slot| TeamId(slot as u8))
-        .unwrap_or(TeamId(config.team_slot.min(3)));
+    let local_team = local_team_of(&lobby, config.team_slot);
 
     // Stage C §4.2: after the lobby the client is a **network** application; the
     // mode switch is creating `App<NetworkDispatcher>` (ADR §7.8, no enum, no
@@ -1344,29 +1350,10 @@ pub async fn run_network_with_sink(
     game.adopt_user_settings(app);
     game.initialize_game(&lobby);
 
-    // H2: the direct (host-mode) run ends at 34. The host is a transport-only
-    // authority until H3 wires its own `App<NetworkDispatcher>` and relay; until
-    // then no barrier can be passed, so the guest reports the initial world.
+    // Host mode (H3): the guest keeps the lobby-identity line of the H2 gate in
+    // its log; the match itself runs through the same generic driver as the host.
     if options.endpoint.is_some() {
         tracing::info!("{}", lobby.summary());
-        tracing::info!("прямой сеанс (режим хоста): лобби завершено, игра не запущена (H2)");
-        handle.shutdown().await;
-        return Ok(NetworkReport {
-            game_id,
-            handshake: lobby.handshake,
-            lobby_complete: true,
-            local_team,
-            ticks: game.ticks(),
-            commands_applied: game.applied_commands(),
-            turns_finished: 0,
-            barrier_timeouts: 0,
-            reconnects: 0,
-            reconnect_attempts: 0,
-            reconnect_pending_state: false,
-            data_hash: data_hash.to_hex(),
-            join_attempts,
-            digest: game.digest(),
-        });
     }
 
     tracing::info!(
@@ -1379,10 +1366,11 @@ pub async fn run_network_with_sink(
             .map(|settings| settings.world_name.clone())
     );
 
-    let stats = game
-        .run_game_loop(&mut handle, &session_config, options, &mut sink)
-        .await?;
-    handle.shutdown().await;
+    // H3: the game loop is transport-agnostic (`I: HostIo`); a guest drives it
+    // through its ENet session with the reconnect policy.
+    let mut io = SessionIo::new(handle, session_config, options.reconnect);
+    let stats = game.run_game_loop(&mut io, options, &mut sink).await?;
+    io.shutdown().await;
 
     if stats.reconnect_pending_state {
         tracing::warn!(
@@ -1391,6 +1379,7 @@ pub async fn run_network_with_sink(
         );
     }
 
+    let digest = game.digest();
     Ok(NetworkReport {
         game_id,
         handshake: lobby.handshake,
@@ -1400,12 +1389,16 @@ pub async fn run_network_with_sink(
         commands_applied: game.applied_commands(),
         turns_finished: stats.turns_finished,
         barrier_timeouts: stats.barrier_timeouts,
+        desyncs: stats.desyncs,
         reconnects: stats.reconnects,
         reconnect_attempts: stats.reconnect_attempts,
         reconnect_pending_state: stats.reconnect_pending_state,
         data_hash: data_hash.to_hex(),
         join_attempts,
-        digest: game.digest(),
+        sent: stats.sent,
+        received: stats.received,
+        digest,
+        shared: SharedDigest::capture(digest),
     })
 }
 
@@ -1452,7 +1445,7 @@ fn planet_from_settings(settings: &LobbyGameSettings) -> Option<Planet> {
 /// `ini_play_mode` of the lobby settings (`PLAY_MODE_TURN_BASED`/`SIMULTANEOUS_MOVES`).
 ///
 /// It decides whether the 00 barrier is needed every turn (`TurnBarrierFsm`).
-fn play_mode_from_settings(settings: &LobbyGameSettings) -> PlayMode {
+pub(crate) fn play_mode_from_settings(settings: &LobbyGameSettings) -> PlayMode {
     PlayMode::try_from(u8::try_from(settings.ini_play_mode).unwrap_or(0))
         .unwrap_or(PlayMode::TurnBased)
 }
@@ -1464,19 +1457,337 @@ fn default_team_start(team: usize) -> Point {
     Point::new(x, y)
 }
 
+/// The local team of a lobby: the slot whose node is our own `player_node`
+/// (`Remote_SetupPlayers`), otherwise the requested slot.
+///
+/// Shared by the guest ([`run_network_with_sink`]) and the host
+/// ([`crate::host::run_host`]): both are ordinary players of the same match.
+pub(crate) fn local_team_of(lobby: &LobbyInfo, requested_slot: u8) -> TeamId {
+    lobby
+        .team_nodes
+        .iter()
+        .position(|&node| node > 4 && node == lobby.player_node)
+        .map(|slot| TeamId(slot as u8))
+        .unwrap_or(TeamId(requested_slot.min(3)))
+}
+
+// ---------------------------------------------------------------------------
+// H3: the generic lockstep driver over a transport (`PLAN-host-mode.md` §5 H3)
+// ---------------------------------------------------------------------------
+
+/// Per-kind counters of the lockstep barrier packets (`PLAN-host-mode.md` §5 H3).
+///
+/// Gate (b) compares these counters between the host and every guest: the
+/// barrier FSM emits exactly one `53`/`52`/`54`/`45` per turn and one `00` at
+/// match start (`TurnBased`) or per turn (`SimultaneousMoves`), so a healthy
+/// match has identical histograms on every client.
+///
+/// `sent` counts the packets the FSM produced (the 3 s retries are generated by
+/// [`BarrierPending`] and are not part of the histogram), `received` — the
+/// packets the transport delivered to the facade.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PacketHistogram {
+    /// Packet 00 (`TurnBarrier`).
+    pub turn_barrier: u64,
+    /// Packet 45 (`CrcBarrier`).
+    pub crc_barrier: u64,
+    /// Packet 52 (`EndTurnBarrier`).
+    pub end_turn_barrier: u64,
+    /// Packet 53 (`ComplexSummary`).
+    pub complex_summary: u64,
+    /// Packet 54 (`StateSync`).
+    pub state_sync: u64,
+}
+
+impl PacketHistogram {
+    /// Counts one barrier packet of this kind; other packets are ignored.
+    pub fn note(&mut self, packet: &Packet) {
+        match packet {
+            Packet::Command(Command::TurnBarrier(_)) => self.turn_barrier += 1,
+            Packet::Command(Command::CrcBarrier(_)) => self.crc_barrier += 1,
+            Packet::Command(Command::EndTurnBarrier(_)) => self.end_turn_barrier += 1,
+            Packet::Command(Command::ComplexSummary(_)) => self.complex_summary += 1,
+            Packet::StateSync(_) => self.state_sync += 1,
+            _ => {}
+        }
+    }
+
+    /// Counts every barrier packet of one FSM batch.
+    pub fn note_all(&mut self, packets: &[Packet]) {
+        for packet in packets {
+            self.note(packet);
+        }
+    }
+
+    /// One-line representation for the gate logs.
+    pub fn to_line(self) -> String {
+        format!(
+            "00={} 45={} 52={} 53={} 54={}",
+            self.turn_barrier,
+            self.crc_barrier,
+            self.end_turn_barrier,
+            self.complex_summary,
+            self.state_sync
+        )
+    }
+}
+
+/// Digest comparable between the clients of one lockstep match.
+///
+/// [`AppDigest`] is **per client** by design: its CRC covers
+/// `GameState::snapshot_bytes`, which carries the local view fields
+/// (`player_team`, every team's `Player`/`Remote` role) and the per-frame
+/// packet-01 counters — values that necessarily differ between the host and a
+/// guest even when the simulations are identical. The cross-client desync
+/// detector is the protocol's own packet-45 CRC (`GameManager_CheckDesync`,
+/// `protocol.md` §8.4), so this projection keeps exactly the fields every
+/// client of the match must share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedDigest {
+    /// Simulation ticks of the run.
+    pub ticks: u64,
+    /// `GameManager_TurnCounter`.
+    pub turn_counter: i32,
+    /// Match phase.
+    pub game_state: GameStateType,
+    /// Number of units in the world.
+    pub units: usize,
+    /// Packet-45 CRC (`state_checksum`) — the protocol's desync digest.
+    pub state_checksum: u16,
+    /// Snapshot length (the shared state must have the same size on every client).
+    pub snapshot_len: usize,
+}
+
+impl SharedDigest {
+    /// Projects an [`AppDigest`] onto the fields shared by every client.
+    pub fn capture(digest: AppDigest) -> Self {
+        Self {
+            ticks: digest.ticks,
+            turn_counter: digest.turn_counter,
+            game_state: digest.game_state,
+            units: digest.units,
+            state_checksum: digest.state_checksum,
+            snapshot_len: digest.snapshot_len,
+        }
+    }
+
+    /// One-line representation for the gate logs.
+    pub fn to_line(self) -> String {
+        format!(
+            "ticks={} turn={} state={:?} units={} crc45=0x{:04X} snapshot={}B",
+            self.ticks,
+            self.turn_counter,
+            self.game_state,
+            self.units,
+            self.state_checksum,
+            self.snapshot_len
+        )
+    }
+}
+
+/// One transport event, normalized for the generic lockstep driver.
+#[derive(Debug)]
+pub(crate) enum IoEvent {
+    /// A decoded APPL packet from a peer (for a guest — a relayed copy).
+    Packet(Packet),
+    /// The `TP 00` exchange completed (guest only; informational).
+    HandshakeOk,
+    /// A tracked barrier is due for retransmission (diagnostic only).
+    BarrierDue {
+        /// Retransmission number.
+        attempt: u32,
+    },
+    /// A tracked barrier waited longer than the transport timeout.
+    BarrierTimeout,
+    /// The transport refused the handshake.
+    HandshakeRejected {
+        /// Reject reason.
+        reason: RejectReason,
+        /// Diagnostic text.
+        reason_text: String,
+    },
+    /// A malformed APPL frame (ignored like the C++ receiver).
+    Malformed {
+        /// Decode error.
+        error: WireError,
+    },
+    /// The link is gone; [`HostIo::on_disconnect`] decides what happens next.
+    Disconnected,
+    /// The transport task ended — no reconnect is possible.
+    Closed,
+    /// Transport bookkeeping with no game meaning (a late `Connected`/`Verified`).
+    Control,
+    /// No event within the wait.
+    Idle,
+}
+
+/// What a transport does after [`IoEvent::Disconnected`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisconnectOutcome {
+    /// The transport was restored; the driver publishes its resume-54.
+    Restored {
+        /// Number of the successful attempt.
+        attempts: u32,
+    },
+    /// Every reconnect attempt failed.
+    Exhausted {
+        /// Number of attempts made.
+        attempts: u32,
+    },
+    /// `ReconnectPolicy::attempts == 0`.
+    Disabled,
+    /// The transport has no session to restore (host): the match keeps waiting
+    /// for the peer; the H4 session policy owns the pause/elimination decision.
+    Ignored,
+}
+
+/// Transport surface of the generic lockstep driver (`PLAN-host-mode.md` §5 H3).
+///
+/// In the star topology the host is a player **and** the relay-arbiter: the host
+/// and its guests run the **same** game loop (the barrier FSM of
+/// `max-brh-docs/barrier-flow.md` §3); only the transport differs:
+///
+/// * [`SessionIo`] — a guest: one ENet link to the host, with the session
+///   barrier tracker and the reconnect policy;
+/// * `HostHandle` — the host: the ENet server, where every driver packet is a
+///   broadcast to the verified guests (the host's own copy is applied locally
+///   by the facade and never looped back through the relay).
+///
+/// The driver keeps the FSM semantics verbatim: it decides **what** to send and
+/// **when** a barrier is reached, while the implementation only moves opaque
+/// [`Packet`]s.
+#[allow(async_fn_in_trait)]
+pub(crate) trait HostIo {
+    /// Sends a lockstep packet to every peer.
+    async fn send_packet(&mut self, packet: Packet) -> Result<()>;
+
+    /// Sends a lockstep packet **without** transport-level barrier tracking.
+    ///
+    /// The driver retries barriers itself ([`BarrierPending`]), so a retry must
+    /// not add a second entry to a session tracker
+    /// (`max-brh-docs/barrier-flow.md` §6.8).
+    async fn send_packet_untracked(&mut self, packet: Packet) -> Result<()>;
+
+    /// Stops the transport barrier retransmission of the current turn.
+    async fn clear_barriers(&mut self) -> Result<()>;
+
+    /// Waits up to `wait` for the next transport event.
+    async fn next_io_event(&mut self, wait: Duration) -> Result<IoEvent>;
+
+    /// Reaction to a lost link (the guest reconnects, the host keeps playing).
+    async fn on_disconnect(&mut self) -> Result<DisconnectOutcome>;
+}
+
+/// Guest side of [`HostIo`]: one ENet session to the host (or the server).
+///
+/// A thin adapter, not a new transport: [`SessionHandle`] gains the session
+/// configuration the reconnect path needs (`--reconnect-*`), which is
+/// application state and cannot live inside `max_net`. The trait is implemented
+/// for this wrapper so that the generic driver depends on [`HostIo`] only.
+pub(crate) struct SessionIo {
+    handle: SessionHandle,
+    session_config: SessionConfig,
+    reconnect: ReconnectPolicy,
+}
+
+impl SessionIo {
+    /// Wraps a connected session with its reconnect context.
+    pub(crate) fn new(
+        handle: SessionHandle,
+        session_config: SessionConfig,
+        reconnect: ReconnectPolicy,
+    ) -> Self {
+        Self {
+            handle,
+            session_config,
+            reconnect,
+        }
+    }
+
+    /// Disconnects and waits for the session task to finish.
+    pub(crate) async fn shutdown(self) {
+        self.handle.shutdown().await;
+    }
+}
+
+#[allow(async_fn_in_trait)]
+impl HostIo for SessionIo {
+    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+        self.handle.send(packet).await.map_err(anyhow::Error::from)
+    }
+
+    async fn send_packet_untracked(&mut self, packet: Packet) -> Result<()> {
+        self.handle
+            .send_untracked(packet)
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn clear_barriers(&mut self) -> Result<()> {
+        self.handle
+            .clear_barriers()
+            .await
+            .map_err(anyhow::Error::from)
+    }
+
+    async fn next_io_event(&mut self, wait: Duration) -> Result<IoEvent> {
+        match self.handle.next_event_timeout(wait).await {
+            Ok(Some(SessionEvent::Packet(packet))) => Ok(IoEvent::Packet(packet)),
+            Ok(Some(SessionEvent::HandshakeOk)) => Ok(IoEvent::HandshakeOk),
+            Ok(Some(SessionEvent::BarrierDue { attempt, .. })) => {
+                Ok(IoEvent::BarrierDue { attempt })
+            }
+            Ok(Some(SessionEvent::BarrierTimeout { .. })) => Ok(IoEvent::BarrierTimeout),
+            Ok(Some(SessionEvent::HandshakeRejected {
+                reason,
+                reason_text,
+            })) => Ok(IoEvent::HandshakeRejected {
+                reason,
+                reason_text,
+            }),
+            Ok(Some(SessionEvent::Disconnected)) => Ok(IoEvent::Disconnected),
+            Ok(Some(SessionEvent::Malformed { error })) => Ok(IoEvent::Malformed { error }),
+            Ok(Some(SessionEvent::Error(error))) => {
+                Err(anyhow::Error::from(error).context("ошибка сессии"))
+            }
+            Ok(None) => Ok(IoEvent::Closed),
+            Err(SessionError::Timeout { .. }) => Ok(IoEvent::Idle),
+            Err(error) => Err(anyhow::Error::from(error)),
+        }
+    }
+
+    async fn on_disconnect(&mut self) -> Result<DisconnectOutcome> {
+        match reconnect_session(&mut self.handle, &self.session_config, self.reconnect).await {
+            ReconnectOutcome::Restored { attempts, .. } => {
+                Ok(DisconnectOutcome::Restored { attempts })
+            }
+            ReconnectOutcome::Exhausted { attempts } => {
+                Ok(DisconnectOutcome::Exhausted { attempts })
+            }
+            ReconnectOutcome::Disabled => Ok(DisconnectOutcome::Disabled),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-struct GameLoopStats {
-    turns_finished: u32,
-    barrier_timeouts: u32,
+pub(crate) struct GameLoopStats {
+    pub(crate) turns_finished: u32,
+    pub(crate) barrier_timeouts: u32,
+    /// Turns whose packet-45 CRC did not match every peer (`crc_matches`).
+    pub(crate) desyncs: u32,
     /// ENet session disconnects per run.
-    disconnects: u32,
+    pub(crate) disconnects: u32,
     /// Reconnect attempts made.
-    reconnect_attempts: u32,
+    pub(crate) reconnect_attempts: u32,
     /// Successful transport restorations and match continuations.
-    reconnects: u32,
+    pub(crate) reconnects: u32,
     /// The transport was restored, but the match state could not be restored
     /// (currently `false` after a successful resume-54; the field is kept for the report).
-    reconnect_pending_state: bool,
+    pub(crate) reconnect_pending_state: bool,
+    /// Barrier packets the FSM produced in this run (gate (b)).
+    pub(crate) sent: PacketHistogram,
+    /// Barrier packets the transport delivered in this run (gate (b)).
+    pub(crate) received: PacketHistogram,
 }
 
 // Network driver surface (stage C §4.2): the barrier FSM, the session pump and
@@ -1566,7 +1877,7 @@ impl App<NetworkDispatcher> {
     /// Stage C §4.1/§4.3 (A3/A4): the world comes from the common [`build_world`] with
     /// `NetworkDispatcher::new(...)` and **without entering a round**; the packet-12
     /// supplies are read from [`LobbyInfo`] directly (no `flush_commands`/`submit`).
-    fn initialize_game(&mut self, lobby: &LobbyInfo) {
+    pub(crate) fn initialize_game(&mut self, lobby: &LobbyInfo) {
         let Some(settings) = lobby.settings.as_ref() else {
             return;
         };
@@ -1680,12 +1991,11 @@ impl App<NetworkDispatcher> {
         );
     }
 
-    /// Sends barrier packets without registering in the session tracker (the retries
+    /// Sends barrier packets without registering in the transport tracker (the retries
     /// are done by [`BarrierPending`], so there is no double tracking).
-    async fn send_barrier(handle: &SessionHandle, packets: &[Packet]) -> Result<()> {
+    async fn send_barrier<I: HostIo>(io: &mut I, packets: &[Packet]) -> Result<()> {
         for packet in packets {
-            handle
-                .send_untracked(packet.clone())
+            io.send_packet_untracked(packet.clone())
                 .await
                 .context("отправка барьера")?;
         }
@@ -1713,13 +2023,12 @@ impl App<NetworkDispatcher> {
     /// survives the following `tick` — decision A2, gate (b)). The driver is the only
     /// place that owns the transport, so it sends them right after `tick`. Barrier
     /// packets stay with the barrier FSM (`wait_barrier`), not on this path.
-    async fn broadcast_outgoing(&mut self, handle: &SessionHandle) -> Result<()> {
+    async fn broadcast_outgoing<I: HostIo>(&mut self, io: &mut I) -> Result<()> {
         for command in self.drain_outgoing() {
             match command {
                 max_core::universe::NetworkCommand::Command(command) => {
                     let kind = format!("{:?}", command.kind());
-                    handle
-                        .send(Packet::Command(command))
+                    io.send_packet(Packet::Command(command))
                         .await
                         .with_context(|| format!("broadcast of {kind}"))?;
                 }
@@ -1731,9 +2040,9 @@ impl App<NetworkDispatcher> {
     }
 
     /// Per-frame barrier 01 (real-time pacing, §8.6) — A5: immediate, untracked.
-    async fn send_frame_barrier(
+    async fn send_frame_barrier<I: HostIo>(
         &mut self,
-        handle: &SessionHandle,
+        io: &mut I,
         frame_counter: &mut u8,
     ) -> Result<()> {
         *frame_counter = frame_counter.wrapping_add(1) & 0x3F;
@@ -1743,8 +2052,7 @@ impl App<NetworkDispatcher> {
             counter: *frame_counter,
         });
         self.apply_immediate(command.clone());
-        handle
-            .send_untracked(Packet::Command(command))
+        io.send_packet_untracked(Packet::Command(command))
             .await
             .context("отправка барьера 01")
     }
@@ -1752,13 +2060,12 @@ impl App<NetworkDispatcher> {
     /// Waits until all peers send the values of the current barrier.
     ///
     /// While waiting: drains events (applying commands/54), repeats the barrier
-    /// packets via [`SessionHandle::send_untracked`] every 3 s, sends 01 and after
+    /// packets via [`HostIo::send_packet_untracked`] every 3 s, sends 01 and after
     /// 30 s logs the timeout (but keeps waiting, like the Rust client in
     /// `max-brh-docs/barrier-flow.md` §3).
-    async fn wait_barrier(
+    async fn wait_barrier<I: HostIo>(
         &mut self,
-        handle: &mut SessionHandle,
-        session_config: &SessionConfig,
+        io: &mut I,
         stats: &mut GameLoopStats,
         frame_counter: &mut u8,
         options: &NetworkOptions,
@@ -1768,10 +2075,7 @@ impl App<NetworkDispatcher> {
         let mut pending = BarrierPending::new(packets, Instant::now());
 
         loop {
-            if !self
-                .pump_events(handle, session_config, stats, options)
-                .await?
-            {
+            if !self.pump_events(io, stats, options).await? {
                 return Ok(WaitOutcome::Stopped);
             }
             if self.barrier_reached() {
@@ -1786,7 +2090,7 @@ impl App<NetworkDispatcher> {
                         pending.attempts,
                         pending.packets.len()
                     );
-                    Self::send_barrier(handle, &pending.packets).await?;
+                    Self::send_barrier(io, &pending.packets).await?;
                 }
                 Some(BarrierPoll::TimedOut) => {
                     stats.barrier_timeouts = stats.barrier_timeouts.saturating_add(1);
@@ -1799,16 +2103,20 @@ impl App<NetworkDispatcher> {
                 None => {}
             }
 
-            self.send_frame_barrier(handle, frame_counter).await?;
+            self.send_frame_barrier(io, frame_counter).await?;
             tokio::time::sleep(options.event_wait).await;
         }
     }
 
-    /// Game loop of the lockstep client per the FSM `max-brh-docs/barrier-flow.md` §3.
-    async fn run_game_loop(
+    /// Game loop of a lockstep client per the FSM `max-brh-docs/barrier-flow.md` §3.
+    ///
+    /// Generic over the transport (`PLAN-host-mode.md` §5 H3): a guest runs it
+    /// over [`SessionIo`], the host (a player **and** the relay-arbiter of the
+    /// star) — over its `max_net::HostHandle`. The barrier phases, counters,
+    /// timings and packets are verbatim; only [`HostIo`] moves them.
+    pub(crate) async fn run_game_loop<I: HostIo>(
         &mut self,
-        handle: &mut SessionHandle,
-        session_config: &SessionConfig,
+        io: &mut I,
         options: &NetworkOptions,
         sink: &mut Option<&mut dyn FrameSink>,
     ) -> Result<GameLoopStats> {
@@ -1825,11 +2133,11 @@ impl App<NetworkDispatcher> {
 
         // BEGIN (00): loading the match and every turn in SimultaneousMoves.
         let packets = self.barrier_begin();
-        Self::send_barrier(handle, &packets).await?;
+        stats.sent.note_all(&packets);
+        Self::send_barrier(io, &packets).await?;
         if self
             .wait_barrier(
-                handle,
-                session_config,
+                io,
                 &mut stats,
                 &mut frame_counter,
                 options,
@@ -1841,17 +2149,17 @@ impl App<NetworkDispatcher> {
         {
             return Ok(stats);
         }
-        handle.clear_barriers().await?;
+        io.clear_barriers().await?;
         tracing::info!("барьер 00 (начало хода) пройден");
 
         loop {
             // PLAY (53): base totals at the start of the turn, then one tick and 06.
             let packets = self.barrier_complex();
-            Self::send_barrier(handle, &packets).await?;
+            stats.sent.note_all(&packets);
+            Self::send_barrier(io, &packets).await?;
             if self
                 .wait_barrier(
-                    handle,
-                    session_config,
+                    io,
                     &mut stats,
                     &mut frame_counter,
                     options,
@@ -1863,7 +2171,7 @@ impl App<NetworkDispatcher> {
             {
                 return Ok(stats);
             }
-            handle.clear_barriers().await?;
+            io.clear_barriers().await?;
             tracing::debug!(
                 "барьер 53 (итоги баз) пройден: turn={}",
                 self.universe.dispatcher().complex_turn()
@@ -1878,15 +2186,12 @@ impl App<NetworkDispatcher> {
             let play_deadline = Instant::now() + options.turn_wait;
 
             loop {
-                if !self
-                    .pump_events(handle, session_config, &mut stats, options)
-                    .await?
-                {
+                if !self.pump_events(io, &mut stats, options).await? {
                     return Ok(stats);
                 }
                 self.tick();
-                self.broadcast_outgoing(handle).await?;
-                self.send_frame_barrier(handle, &mut frame_counter).await?;
+                self.broadcast_outgoing(io).await?;
+                self.send_frame_barrier(io, &mut frame_counter).await?;
 
                 if let Some(sink) = sink.as_deref_mut() {
                     if !sink.frame(self) {
@@ -1920,8 +2225,7 @@ impl App<NetworkDispatcher> {
             if !self.universe.dispatcher().local_finished_sent() {
                 let finish = Command::FinishedTurn(Packet06FinishedTurn { team: local_team });
                 self.apply_immediate(finish.clone());
-                handle
-                    .send_untracked(Packet::Command(finish))
+                io.send_packet_untracked(Packet::Command(finish))
                     .await
                     .context("отправка пакета 06")?;
                 self.universe.dispatcher_mut().mark_local_finished();
@@ -1929,11 +2233,11 @@ impl App<NetworkDispatcher> {
 
             // END (52).
             let packets = self.barrier_end();
-            Self::send_barrier(handle, &packets).await?;
+            stats.sent.note_all(&packets);
+            Self::send_barrier(io, &packets).await?;
             if self
                 .wait_barrier(
-                    handle,
-                    session_config,
+                    io,
                     &mut stats,
                     &mut frame_counter,
                     options,
@@ -1945,16 +2249,16 @@ impl App<NetworkDispatcher> {
             {
                 return Ok(stats);
             }
-            handle.clear_barriers().await?;
+            io.clear_barriers().await?;
             tracing::debug!("барьер 52 (конец хода) пройден");
 
             // SYNC (54): the authoritative state of the own team.
             let packets = self.barrier_sync();
-            Self::send_barrier(handle, &packets).await?;
+            stats.sent.note_all(&packets);
+            Self::send_barrier(io, &packets).await?;
             if self
                 .wait_barrier(
-                    handle,
-                    session_config,
+                    io,
                     &mut stats,
                     &mut frame_counter,
                     options,
@@ -1966,16 +2270,16 @@ impl App<NetworkDispatcher> {
             {
                 return Ok(stats);
             }
-            handle.clear_barriers().await?;
+            io.clear_barriers().await?;
             tracing::debug!("барьер 54 (состояние команды) пройден");
 
             // CRC (45): the own CRC after the 54 correction, then the comparison with the peers.
             let packets = self.barrier_crc();
-            Self::send_barrier(handle, &packets).await?;
+            stats.sent.note_all(&packets);
+            Self::send_barrier(io, &packets).await?;
             if self
                 .wait_barrier(
-                    handle,
-                    session_config,
+                    io,
                     &mut stats,
                     &mut frame_counter,
                     options,
@@ -1987,7 +2291,7 @@ impl App<NetworkDispatcher> {
             {
                 return Ok(stats);
             }
-            handle.clear_barriers().await?;
+            io.clear_barriers().await?;
 
             if self.crc_matches() {
                 tracing::debug!(
@@ -1995,6 +2299,7 @@ impl App<NetworkDispatcher> {
                     self.universe.dispatcher().crc_checksum()
                 );
             } else {
+                stats.desyncs = stats.desyncs.saturating_add(1);
                 let peers: Vec<String> = self
                     .universe
                     .dispatcher()
@@ -2038,11 +2343,11 @@ impl App<NetworkDispatcher> {
             // 00 of the next turn — only in SimultaneousMoves.
             if self.universe.dispatcher().simultaneous() {
                 let packets = self.barrier_begin();
-                Self::send_barrier(handle, &packets).await?;
+                stats.sent.note_all(&packets);
+                Self::send_barrier(io, &packets).await?;
                 if self
                     .wait_barrier(
-                        handle,
-                        session_config,
+                        io,
                         &mut stats,
                         &mut frame_counter,
                         options,
@@ -2054,7 +2359,7 @@ impl App<NetworkDispatcher> {
                 {
                     break;
                 }
-                handle.clear_barriers().await?;
+                io.clear_barriers().await?;
                 tracing::debug!("барьер 00 следующего хода пройден");
             }
 
@@ -2064,26 +2369,28 @@ impl App<NetworkDispatcher> {
         Ok(stats)
     }
 
-    /// Drains session events; `false` — the session/loop is finished.
-    async fn pump_events(
+    /// Drains transport events; `false` — the session/loop is finished.
+    async fn pump_events<I: HostIo>(
         &mut self,
-        handle: &mut SessionHandle,
-        session_config: &SessionConfig,
+        io: &mut I,
         stats: &mut GameLoopStats,
         options: &NetworkOptions,
     ) -> Result<bool> {
         loop {
-            match handle.next_event_timeout(options.event_wait).await {
+            let event = io.next_io_event(options.event_wait).await?;
+            match event {
                 // A disconnect does not end the run silently: first an automatic
                 // ENet connect + TP 00 per ReconnectPolicy, then resume-54 and
-                // continuation of the barriers.
-                Ok(Some(SessionEvent::Disconnected)) => {
+                // continuation of the barriers. The host (H3) has no session to
+                // restore: a lost guest link keeps the match waiting (H4 owns the
+                // session policy).
+                IoEvent::Disconnected => {
                     stats.disconnects = stats.disconnects.saturating_add(1);
-                    tracing::warn!("reconnect: сервер разорвал ENet-сессию");
-                    let outcome =
-                        reconnect_session(handle, session_config, options.reconnect).await;
-                    match outcome {
-                        ReconnectOutcome::Restored { attempts, .. } => {
+                    // Guest: the server closed the ENet session; host: a guest
+                    // left (the outcome below decides what happens next).
+                    tracing::warn!("транспорт: соединение потеряно");
+                    match io.on_disconnect().await? {
+                        DisconnectOutcome::Restored { attempts } => {
                             stats.reconnect_attempts =
                                 stats.reconnect_attempts.saturating_add(attempts);
                             stats.reconnects = stats.reconnects.saturating_add(1);
@@ -2095,11 +2402,9 @@ impl App<NetworkDispatcher> {
                             // our 54 (the server and peers apply the owner's state),
                             // the peers' 54 will correct the remote teams
                             // at the nearest SYNC; 53/52/45 are caught up by repeats.
-                            let packets = self
-                                .universe
-                                .dispatcher()
-                                .resume_state_sync(&self.universe);
-                            Self::send_barrier(handle, &packets)
+                            let packets =
+                                self.universe.dispatcher().resume_state_sync(&self.universe);
+                            Self::send_barrier(io, &packets)
                                 .await
                                 .context("reconnect: публикация своего 54 после TP00")?;
 
@@ -2111,7 +2416,7 @@ impl App<NetworkDispatcher> {
                                 packets.len()
                             );
                         }
-                        ReconnectOutcome::Exhausted { attempts } => {
+                        DisconnectOutcome::Exhausted { attempts } => {
                             stats.reconnect_attempts =
                                 stats.reconnect_attempts.saturating_add(attempts);
                             stats.reconnect_pending_state = true;
@@ -2121,10 +2426,16 @@ impl App<NetworkDispatcher> {
                             );
                             return Ok(false);
                         }
-                        ReconnectOutcome::Disabled => {
+                        DisconnectOutcome::Disabled => {
                             stats.reconnect_pending_state = true;
                             tracing::warn!("reconnect: автоматическое переподключение выключено");
                             return Ok(false);
+                        }
+                        DisconnectOutcome::Ignored => {
+                            tracing::warn!(
+                                "транспорт потерял пира; матч продолжается \
+                                 (политика сессии — H4)"
+                            );
                         }
                     }
                     // We continue draining events from the new session already; the barrier
@@ -2132,26 +2443,58 @@ impl App<NetworkDispatcher> {
                     // three-second interval expires (for it, time runs from the last
                     // send).
                 }
-                Ok(Some(event)) => {
+                IoEvent::Idle => return Ok(true),
+                IoEvent::Closed => return Ok(false),
+                // Transport bookkeeping (a late `Connected`/`Verified`) carries no
+                // game meaning for the driver: keep draining.
+                IoEvent::Control => continue,
+                event => {
                     if !self.handle_session_event(event, stats)? {
                         return Ok(false);
                     }
                 }
-                Ok(None) => return Ok(false),
-                Err(SessionError::Timeout { .. }) => return Ok(true),
-                Err(error) => return Err(error).context("ожидание события сессии"),
             }
         }
     }
 
-    /// Handles one session event; `false` — the session has ended.
-    fn handle_session_event(
-        &mut self,
-        event: SessionEvent,
-        stats: &mut GameLoopStats,
-    ) -> Result<bool> {
+    /// Handles one transport event; `false` — the session has ended.
+    fn handle_session_event(&mut self, event: IoEvent, stats: &mut GameLoopStats) -> Result<bool> {
         match event {
-            SessionEvent::Packet(Packet::Command(command)) => {
+            IoEvent::Packet(packet) => {
+                stats.received.note(&packet);
+                self.handle_incoming_packet(packet)?;
+            }
+            IoEvent::HandshakeOk => {}
+            IoEvent::BarrierDue { attempt } => {
+                tracing::debug!("барьер сессии: повтор #{attempt}");
+            }
+            IoEvent::BarrierTimeout => {
+                stats.barrier_timeouts = stats.barrier_timeouts.saturating_add(1);
+                tracing::warn!("барьер сессии: таймаут пиров");
+            }
+            IoEvent::HandshakeRejected {
+                reason,
+                reason_text,
+            } => {
+                return Err(anyhow!("хендшейк отклонён: {reason:?} ({reason_text})"));
+            }
+            IoEvent::Disconnected => {
+                tracing::info!("сервер отключил клиента");
+                return Ok(false);
+            }
+            IoEvent::Malformed { error } => {
+                tracing::warn!("битый пакет: {error}");
+            }
+            IoEvent::Idle | IoEvent::Closed | IoEvent::Control => {}
+        }
+
+        Ok(true)
+    }
+
+    /// Feeds one incoming APPL packet into the facade (the former packet arms).
+    fn handle_incoming_packet(&mut self, packet: Packet) -> Result<()> {
+        match packet {
+            Packet::Command(command) => {
                 // Packet 13 — `Remote_RngSeed`. The world is already generated with this seed from
                 // the settings 30 (`initialize_game`), and `GameManager_PopulateMapWithResources`
                 // in C++ re-seeds the RNG and continues the stream. A repeated
@@ -2159,7 +2502,7 @@ impl App<NetworkDispatcher> {
                 // from the server simulation.
                 if matches!(command, Command::Seed(_)) {
                     tracing::debug!("13: seed уже применён при инициализации мира");
-                    return Ok(true);
+                    return Ok(());
                 }
 
                 // 53 — not only applying the base totals but also a fact for the barrier.
@@ -2190,7 +2533,7 @@ impl App<NetworkDispatcher> {
                 // 54 → authoritative state, the rest → receive-order queue).
                 self.universe.submit_remote(RemoteCommand::Command(command));
             }
-            SessionEvent::Packet(Packet::StateSync(sync)) => {
+            Packet::StateSync(sync) => {
                 // A port of `Remote_ReceiveNetPacket_54`: we apply the authoritative
                 // team state, otherwise the worlds diverge and the CRC barrier honestly
                 // shows a desync.
@@ -2205,46 +2548,22 @@ impl App<NetworkDispatcher> {
                     sync.is_last
                 );
             }
-            SessionEvent::Packet(Packet::Desync { team, param }) => {
+            Packet::Desync { team, param } => {
                 tracing::warn!(
                     "сервер сообщил о десинке: команда {} param {}",
                     team.0,
                     param
                 );
             }
-            SessionEvent::Packet(Packet::Lobby(lobby)) => {
+            Packet::Lobby(lobby) => {
                 tracing::debug!("игровой канал: лобби {lobby:?}");
             }
-            SessionEvent::Packet(packet) => {
+            packet => {
                 tracing::debug!("игровой канал: {packet:?}");
-            }
-            SessionEvent::HandshakeOk => {}
-            SessionEvent::BarrierDue { attempt, .. } => {
-                tracing::debug!("барьер сессии: повтор #{attempt}");
-            }
-            SessionEvent::BarrierTimeout { .. } => {
-                stats.barrier_timeouts = stats.barrier_timeouts.saturating_add(1);
-                tracing::warn!("барьер сессии: таймаут пиров");
-            }
-            SessionEvent::HandshakeRejected {
-                reason,
-                reason_text,
-            } => {
-                return Err(anyhow!("хендшейк отклонён: {reason:?} ({reason_text})"));
-            }
-            SessionEvent::Disconnected => {
-                tracing::info!("сервер отключил клиента");
-                return Ok(false);
-            }
-            SessionEvent::Malformed { error } => {
-                tracing::warn!("битый пакет: {error}");
-            }
-            SessionEvent::Error(error) => {
-                return Err(error).context("ошибка сессии");
             }
         }
 
-        Ok(true)
+        Ok(())
     }
 }
 /// Diagnostic text for `TicketKind` (short, for logs).
@@ -2267,8 +2586,8 @@ mod tests {
     use super::*;
     use max_core::enums::{TeamClan, UnitType};
     use max_core::input::{
-        Packet00TurnBarrier, Packet06FinishedTurn, Packet13Seed, Packet18Chat,
-        Packet52EndTurnBarrier,
+        Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet13Seed,
+        Packet18Chat, Packet45CrcBarrier, Packet52EndTurnBarrier, Packet53ComplexSummary,
     };
     use max_core::team::TeamUnits;
     use max_core::universe::{NetworkCommand, SubmitOutcome};
@@ -2373,6 +2692,91 @@ mod tests {
         );
     }
 
+    /// H3 gate (b): the histogram counts exactly the five barrier kinds.
+    #[test]
+    fn packet_histogram_counts_the_five_barrier_kinds() {
+        let mut histogram = PacketHistogram::default();
+        let sync = max_net::state_sync_for(
+            max_core::universe::GameUniverse::default().snapshot(),
+            TeamId::RED,
+            1,
+        )
+        .pop()
+        .expect("one empty-team chunk");
+
+        histogram.note_all(&[
+            Packet::Command(Command::TurnBarrier(Packet00TurnBarrier {
+                team: TeamId::RED,
+                counter: 1,
+            })),
+            Packet::Command(Command::ComplexSummary(Packet53ComplexSummary {
+                team: TeamId::RED,
+                turn: 1,
+                complexes: Vec::new(),
+            })),
+            Packet::Command(Command::EndTurnBarrier(Packet52EndTurnBarrier {
+                team: TeamId::RED,
+                counter: 1,
+            })),
+            Packet::Command(Command::CrcBarrier(Packet45CrcBarrier {
+                team: TeamId::RED,
+                next_turn_index: 1,
+                crc16: 0,
+            })),
+            Packet::StateSync(sync),
+        ]);
+        assert_eq!(histogram.to_line(), "00=1 45=1 52=1 53=1 54=1");
+
+        // 01 and 06 are pacing/turn packets, not gate-(b) barrier kinds.
+        histogram.note(&Packet::Command(Command::FrameBarrier(
+            Packet01FrameBarrier {
+                team: TeamId::RED,
+                counter: 1,
+            },
+        )));
+        histogram.note(&Packet::Command(Command::FinishedTurn(
+            Packet06FinishedTurn { team: TeamId::RED },
+        )));
+        assert_eq!(histogram.to_line(), "00=1 45=1 52=1 53=1 54=1");
+    }
+
+    /// H3: the cross-client digest keeps only the values every client shares.
+    #[test]
+    fn shared_digest_drops_the_per_client_view_fields() {
+        let digest = AppDigest::capture(max_core::universe::GameUniverse::default().snapshot(), 3);
+        let shared = SharedDigest::capture(digest);
+
+        assert_eq!(shared.ticks, 3);
+        assert_eq!(shared.turn_counter, digest.turn_counter);
+        assert_eq!(shared.game_state, digest.game_state);
+        assert_eq!(shared.units, digest.units);
+        assert_eq!(shared.state_checksum, digest.state_checksum);
+        assert_eq!(shared.snapshot_len, digest.snapshot_len);
+        assert!(shared.to_line().contains("crc45=0x"));
+        assert!(
+            !shared.to_line().contains("state_digest"),
+            "the per-view snapshot CRC is not a cross-client value"
+        );
+    }
+
+    /// H3: the local team is the slot of the own node, otherwise the requested one.
+    #[test]
+    fn local_team_comes_from_the_own_node_slot() {
+        let lobby = LobbyInfo {
+            player_node: 11,
+            team_nodes: [10, 11, 12, 0],
+            ..LobbyInfo::default()
+        };
+        assert_eq!(local_team_of(&lobby, 0), TeamId::GREEN);
+
+        let lobby = LobbyInfo {
+            player_node: 99,
+            team_nodes: [10, 11, 0, 0],
+            ..LobbyInfo::default()
+        };
+        assert_eq!(local_team_of(&lobby, 2), TeamId::BLUE);
+    }
+
     /// Stage C §4.3 (A4): packet 12 is the only lobby setup command the world reads;
     /// 13 is ignored (the seed comes from packet 30) and never reaches a dispatcher.
     #[test]
@@ -2405,11 +2809,11 @@ mod tests {
         assert_eq!(info.mission_supplies[TeamId::RED.0 as usize], None);
     }
 
-    /// The relay copy comes from the server that has no team: the session
+    /// The relay copy comes from the server that has no team: the transport
     /// event carries only the payload. The frame goes through the real wire codec.
-    fn relayed(packet: &Packet) -> SessionEvent {
+    fn relayed(packet: &Packet) -> IoEvent {
         let frame = packet.encode().expect("encode barrier");
-        SessionEvent::Packet(Packet::decode(&frame).expect("decode relayed frame"))
+        IoEvent::Packet(Packet::decode(&frame).expect("decode relayed frame"))
     }
 
     /// Packet 00 from the server with `team = 1` is counted as team 1.
@@ -2924,7 +3328,7 @@ mod tests {
         let mut stats = GameLoopStats::default();
 
         let keep_going = app
-            .handle_session_event(SessionEvent::Disconnected, &mut stats)
+            .handle_session_event(IoEvent::Disconnected, &mut stats)
             .expect("разрыв — не ошибка обработчика");
 
         assert!(!keep_going, "Disconnected завершает обработку");
