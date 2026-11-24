@@ -1577,6 +1577,20 @@ impl StatRow {
     }
 }
 
+/// The "Enemy %s in radar range." notice — `GameManager_NotifyEvent(unit, 0)`
+/// (`game_manager.cpp:3458-3462`), called from `UnitInfo::SpotByTeam` →
+/// `RadarPing` (`unitinfo.cpp:2810-2839/3711-3717`) when the **player's** team
+/// spots an enemy. `%s` is `GetSingularName()` → [`crate::buildmenu::unit_name`].
+///
+/// Shown as `MESSAGE_BOX_NOTICE` (`MessageManager_DrawMessage`) and repeated in
+/// the log (the turn report of `game_manager.cpp:8180` also goes there).
+pub fn enemy_spotted_message(unit_type: UnitType) -> String {
+    format!(
+        "Enemy {} in radar range.",
+        crate::buildmenu::unit_name(unit_type)
+    )
+}
+
 /// The "Finished building …" line — `language.json` `1200`/`276c` (three variants
 /// by the building gender; in the original all three coincide in text).
 const FINISHED_CONSTRUCTION: &str =
@@ -2222,14 +2236,36 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
     {
         let (value, capacity) = complex_cargo(state, unit, cargo_type);
 
+        // The icon family of this row is the **cargo** family, not the worker one:
+        // `GameManager_UpdateInfoDisplay` (`game_manager.cpp:7772-7775`) draws
+        // `_(d28b)` with `ReportStats_CargoIcons[cargo_type * 2]` — `SI_RAW` for a
+        // mine (the manual defect «у шахты TOTAL индицируется иконками рабочих»).
         assign_row(
             &mut rows,
             2,
-            make_row(StatLabel::Total, value, capacity, scaling_factor),
+            make_row_icon(
+                cargo_stat_icon(cargo_type),
+                StatLabel::Total,
+                value,
+                capacity,
+                scaling_factor,
+            ),
         );
     }
 
     rows
+}
+
+/// The `(full, empty)` icon family of a cargo row — `ReportStats_CargoIcons`
+/// (`reportstats.cpp:56-59`): `CARGO_TYPE_RAW/FUEL/GOLD` → `SI_RAW`/`SI_FUEL`/
+/// `SI_GOLD`, anything else (transport cargo) keeps the worker pips.
+fn cargo_stat_icon(cargo_type: CargoType) -> StatIcon {
+    match cargo_type {
+        CargoType::Raw => StatIcon::Raw,
+        CargoType::Fuel => StatIcon::Fuel,
+        CargoType::Gold => StatIcon::Gold,
+        _ => StatIcon::Work,
+    }
 }
 
 /// One drawn row (`GameManager_DrawInfoDisplayRow`): the `current/base` value
@@ -2345,9 +2381,14 @@ fn draw_stat_row_icons(
 
     let pitch = icon_width + pip_width * 4 - pip_offset;
 
-    let mut image = full;
+    // C++ `GameManager_DrawInfoDisplayRowIcons` (`game_manager.cpp:7304-7310`):
+    // `if (current_value) image = icon; else image = icon + 1;` — a row with
+    // nothing left is drawn entirely with the **empty** (`EI_*`, contour) pips,
+    // and the switch to `icon + 1` happens after the filled ones
+    // (`:7360-7365`). The empty part is what is spent/unfilled, so the full/empty
+    // direction must not be inverted.
+    let mut image = if current_scaled > 0 { full } else { used };
     let mut remaining = current_scaled;
-
     for index in 0..base_scaled {
         let icon_index = index % 5;
         let px = origin_x + pitch * (index / 5) + pip_width * icon_index;
@@ -2637,8 +2678,18 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
     let combined = minimap_palette(palette, world.palette());
     let dark = darkening_table(&combined);
 
-    // 1. FOV: `Access_UpdateMinimapFogOfWar` — unexplored cells are darker.
-    let all_visible = state.ai().all_visible;
+    // 1. FOV: `Access_UpdateMinimapFogOfWar` — unexplored cells are darker. The
+    // debug `--no-fow` mode lifts the shading (`GameManager_AllVisible`).
+    //
+    // While the frame follows the visual anchors, the explored memory is the
+    // frame-side one ([`crate::vision::VisionView`]): the radar of a moving unit
+    // reveals the cells it has **visibly** reached, as
+    // `Access_UpdateMapStatus` does on the cell crossing in `UnitInfo::Move`
+    // (`unitinfo.cpp:1787-1816`). `dt = 0` (QA/headless) uses the simulation heat
+    // map verbatim, so the golden frames do not drift.
+    let all_visible = state.ai().all_visible || app.no_fow();
+    let vision = app.vision();
+    let follow_visual = vision.follow_visual() && !all_visible;
     let heat = state
         .ai()
         .heat_maps
@@ -2648,7 +2699,11 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
     let mut layer = Vec::with_capacity((map_width * map_height) as usize);
 
     for (index, &color) in minimap.iter().enumerate() {
-        let explored = heat.get(index).is_some_and(|cell| cell.complete > 0);
+        let explored = if follow_visual {
+            vision.explored_mask().get_index(index)
+        } else {
+            heat.get(index).is_some_and(|cell| cell.complete > 0)
+        };
 
         layer.push(if all_visible || explored {
             color
@@ -2665,6 +2720,8 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
         map_height,
         panel.minimap_tnt,
         panel.minimap_2x,
+        app.no_fow(),
+        Some(vision),
     );
 
     // 3. Map into the 112×112 window (`GameManager_RenderMinimap` + `cscale`).
@@ -2745,6 +2802,18 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
 }
 
 /// Unit dots on the minimap layer (exactly the C++ conditions).
+///
+/// `no_fow` — the debug observation mode (`--no-fow`): every unit gets a dot,
+/// visible or not (`GameManager_AllVisible`).
+///
+/// `vision` — the frame-side scan ([`crate::vision::VisionView`]). When it follows
+/// the visual anchors: an own unit's dot stands on the cell its **sprite** is in
+/// (`App::visual_position`, so the dot does not run ahead of the unit), and a
+/// foreign one is drawn only inside the own scan at those anchors — exactly the
+/// `IsVisibleToTeam(GameManager_PlayerTeam)` test of
+/// `DrawMap_RenderMiniMapUnitList` (`drawmap.cpp:838`), whose `grid` in the
+/// original moves with the sprite. `None`/`!follow_visual` — the simulation state
+/// verbatim (`dt = 0`, QA/headless frames, goldens).
 fn paint_minimap_units(
     layer: &mut [u8],
     state: StateRef<'_>,
@@ -2752,21 +2821,39 @@ fn paint_minimap_units(
     map_height: i32,
     tnt: bool,
     two_x: bool,
+    no_fow: bool,
+    vision: Option<&crate::vision::VisionView>,
 ) {
     use max_core::enums::unit_flags;
     use max_core::enums::UnitOrder;
 
     let player_team = state.player_team();
+    let follow_visual = vision.is_some_and(|view| view.follow_visual());
 
     for id in state.unit_ids_in_order() {
         let Some(unit) = state.unit(id) else {
             continue;
         };
 
-        if !unit.is_visible_to_team(player_team)
-            || unit.orders == UnitOrder::Idle
-            || unit.flags & unit_flags::SELECTABLE == 0
-        {
+        let own = unit.team == player_team;
+        let grid = (i32::from(unit.grid.x), i32::from(unit.grid.y));
+
+        // `IsVisibleToTeam(GameManager_PlayerTeam)` (own units are always visible
+        // to their team). While the frame follows the visual anchors, a foreign
+        // unit needs the own scan at the visual cells — the radar of a moving unit
+        // then reveals it on arrival, not when the simulation cell did
+        // ([`crate::vision::presented_visible`]).
+        let visible = if no_fow || own {
+            true
+        } else if !unit.is_visible_to_team(player_team) {
+            false
+        } else if follow_visual {
+            vision.is_some_and(|view| crate::vision::presented_visible(state, view, unit))
+        } else {
+            true
+        };
+
+        if !visible || unit.orders == UnitOrder::Idle || unit.flags & unit_flags::SELECTABLE == 0 {
             continue;
         }
 
@@ -2775,8 +2862,16 @@ fn paint_minimap_units(
         }
 
         let color = minimap_unit_color(unit.team);
-        let grid_x = i32::from(unit.grid.x);
-        let grid_y = i32::from(unit.grid.y);
+        // An own unit's dot follows the sprite; a foreign one — its simulation
+        // cell (the original has no difference: its `grid` is the sprite cell).
+        let (grid_x, grid_y) = if own && follow_visual {
+            vision
+                .and_then(|view| view.anchor(id))
+                .map(|(x, y)| (i32::from(x), i32::from(y)))
+                .unwrap_or(grid)
+        } else {
+            grid
+        };
 
         if two_x && !unit.is_quad() {
             if grid_x >= 0 && grid_y >= 0 && grid_x < map_width && grid_y < map_height {
@@ -3085,7 +3180,16 @@ mod tests {
             .unwrap();
         let mut layer = vec![0u8; MAP_TILES];
 
-        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
+        paint_minimap_units(
+            &mut layer,
+            StateRef::from(&state),
+            112,
+            112,
+            false,
+            false,
+            false,
+            None,
+        );
         assert_eq!(
             layer[10 * 112 + 10],
             minimap_unit_color(TeamId::RED),
@@ -3099,7 +3203,16 @@ mod tests {
             .unwrap()
             .set_visible_to_team(TeamId::RED, true);
         layer.fill(0);
-        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
+        paint_minimap_units(
+            &mut layer,
+            StateRef::from(&state),
+            112,
+            112,
+            false,
+            false,
+            false,
+            None,
+        );
         assert_eq!(
             layer[20 * 112 + 20],
             minimap_unit_color(TeamId::GREEN),
@@ -3107,6 +3220,45 @@ mod tests {
         );
         assert_eq!(layer[10 * 112 + 10], minimap_unit_color(TeamId::RED));
         let _ = own;
+    }
+
+    #[test]
+    fn minimap_unit_dots_use_the_no_fow_debug_mode() {
+        use max_core::enums::UnitType;
+        use max_core::geo::{Point, MAP_TILES};
+        use max_core::team::TeamId;
+
+        let mut state = max_core::universe::GameUniverse::default();
+        let _own = state
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
+            .unwrap();
+        let _enemy = state
+            .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(20, 20), 0)
+            .unwrap();
+        let mut layer = vec![0u8; MAP_TILES];
+
+        // Debug `--no-fow`: the enemy that is outside the FOV is drawn too.
+        paint_minimap_units(
+            &mut layer,
+            StateRef::from(&state),
+            112,
+            112,
+            false,
+            false,
+            true,
+            None,
+        );
+
+        assert_eq!(
+            layer[10 * 112 + 10],
+            minimap_unit_color(TeamId::RED),
+            "own unit is drawn"
+        );
+        assert_eq!(
+            layer[20 * 112 + 20],
+            minimap_unit_color(TeamId::GREEN),
+            "the debug mode draws the enemy without the fog of war"
+        );
     }
 
     #[test]
@@ -3248,7 +3400,16 @@ mod tests {
         state.unit_mut(id).expect("юнит").orders = UnitOrder::Move;
 
         let mut layer = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut layer, StateRef::from(&state), 112, 112, false, false);
+        paint_minimap_units(
+            &mut layer,
+            StateRef::from(&state),
+            112,
+            112,
+            false,
+            false,
+            false,
+            None,
+        );
 
         // 2×2 unit dot, RED color (index 1).
         assert_eq!(layer[10 * 112 + 10], 1);
@@ -3260,12 +3421,30 @@ mod tests {
             unit.flags &= !(unit_flags::HAS_FIRING_SPRITE | unit_flags::FIRES_MISSILES);
         }
         let mut filtered = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut filtered, StateRef::from(&state), 112, 112, true, false);
+        paint_minimap_units(
+            &mut filtered,
+            StateRef::from(&state),
+            112,
+            112,
+            true,
+            false,
+            false,
+            None,
+        );
         assert_eq!(filtered[10 * 112 + 10], 0);
 
         // In 2x a non-building is drawn as one cell.
         let mut zoomed = vec![0u8; 112 * 112];
-        paint_minimap_units(&mut zoomed, StateRef::from(&state), 112, 112, false, true);
+        paint_minimap_units(
+            &mut zoomed,
+            StateRef::from(&state),
+            112,
+            112,
+            false,
+            true,
+            false,
+            None,
+        );
         assert_eq!(zoomed[10 * 112 + 10], 1);
         assert_eq!(zoomed[11 * 112 + 11], 0);
     }
@@ -3393,6 +3572,116 @@ mod tests {
         assert_eq!(rows[2].expect("Total").color(), RED);
         // Row 4 (Shots) is empty: `min(ROUNDS, AMMO) == 0`.
         assert_eq!(rows[3], None);
+    }
+
+    /// Regression for the manual defect «у шахты TOTAL индицируется иконками
+    /// рабочих»: the complex stock row of a mine takes the **cargo** family.
+    ///
+    /// Oracle: `GameManager_UpdateInfoDisplay` draws `_(d28b)` with
+    /// `ReportStats_CargoIcons[cargo_type * 2]` (`game_manager.cpp:7772-7775`,
+    /// `reportstats.cpp:56-59`) — `SI_RAW`/`EI_RAW` for a mine, `SI_FUEL`/
+    /// `EI_FUEL` for a fuel storage. `SI_WORK` belongs to the worker rows of
+    /// `DrawInfoDisplayType1` only (`game_manager.cpp:7528-7576`).
+    #[test]
+    fn complex_total_row_takes_the_cargo_icon_family() {
+        let mut state = stats_state();
+        let mine = deployed(&mut state, UnitType::MiningStation);
+        let rows = rows_for(StateRef::from(&state), &mine, TeamId::RED);
+
+        assert_eq!(
+            rows[2].expect("Total").icon,
+            StatIcon::Raw,
+            "_(d28b) шахты — SI_RAW (ReportStats_CargoIcons[RAW * 2])"
+        );
+        assert_eq!(
+            rows[1].expect("Cargo").icon,
+            StatIcon::Raw,
+            "_(1274) шахты — SI_RAW"
+        );
+
+        let mut state = stats_state();
+        let dump = deployed(&mut state, UnitType::FuelStorage);
+        let rows = rows_for(StateRef::from(&state), &dump, TeamId::RED);
+
+        assert_eq!(
+            rows[2].expect("Total").icon,
+            StatIcon::Fuel,
+            "_(d28b) топливного склада — SI_FUEL"
+        );
+    }
+
+    /// Regression for the «заполнение наоборот» half of the same defect: a row with
+    /// nothing left is drawn with the **empty** (`EI_*`, contour) pips, not with the
+    /// full ones.
+    ///
+    /// Oracle: `GameManager_DrawInfoDisplayRowIcons` (`game_manager.cpp:7304-7310`)
+    /// picks `icon + 1` (the empty image) when `current_value == 0`, and switches
+    /// to it after the filled pips (`:7360-7365`).
+    #[test]
+    fn a_spent_row_draws_the_empty_pips_and_a_full_one_the_filled_pips() {
+        let mut images = std::collections::BTreeMap::new();
+        images.insert("SI_RAW", solid_image(0x01));
+        images.insert("EI_RAW", solid_image(0x02));
+        let icons = StatIcons { images };
+        let palette = test_palette();
+        let row = layout::STAT_ROW_2;
+        let strip = PixelRect::new(row.ulx + 75, row.uly, row.width - 75, row.height);
+
+        let count = |frame: &RgbaBuffer, color: Rgba| -> usize {
+            let mut count = 0;
+            for y in strip.uly..strip.lry() {
+                for x in strip.ulx..strip.lrx() {
+                    if frame.get(x, y) == Some(color) {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+        let draw = |current: i32| -> RgbaBuffer {
+            let mut frame = RgbaBuffer::filled(640, 480, Rgba::from_rgb([0, 0, 0]));
+            let stat = StatRow {
+                label: StatLabel::Cargo,
+                icon: StatIcon::Raw,
+                current,
+                base: 10,
+                factor: 1,
+            };
+
+            draw_stat_row_icons(&mut frame, row, &stat, &palette, &icons);
+            frame
+        };
+
+        let empty = palette.rgba(0x02);
+        let full = palette.rgba(0x01);
+
+        // Nothing stored: every pip is the contour one.
+        let spent = draw(0);
+        assert_eq!(count(&spent, full), 0, "заполненных иконок быть не должно");
+        assert!(count(&spent, empty) > 0, "пустая строка — контурные иконки");
+
+        // Full: the opposite.
+        let filled = draw(10);
+        assert_eq!(count(&filled, empty), 0, "пустых иконок быть не должно");
+        assert!(
+            count(&filled, full) > 0,
+            "полная строка — заполненные иконки"
+        );
+
+        // Half: both families are present.
+        let half = draw(5);
+        assert!(count(&half, full) > 0, "половина — заполненные");
+        assert!(count(&half, empty) > 0, "половина — контурные");
+    }
+
+    /// A solid `SimpleImage` of the given palette index (row pip stub).
+    fn solid_image(color: u8) -> max_assets::SimpleImage {
+        let mut bytes = vec![4u8, 0, 4, 0, 0, 0, 0, 0];
+        // `pixels[0]` is the transparent index; the rest is the pip colour.
+        bytes.push(0);
+        bytes.extend(std::iter::repeat(color).take(15));
+
+        max_assets::SimpleImage::decode(&bytes).expect("simple image")
     }
 
     /// A tank (mobile ground with an attack): `Hits/Ammo/Speed/Shots`.

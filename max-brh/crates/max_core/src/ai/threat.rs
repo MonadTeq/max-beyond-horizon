@@ -399,11 +399,67 @@ impl GameState {
         grid_y: i32,
         scan_range: i32,
     ) -> bool {
-        let scan_area = (scan_range * 64) * (scan_range * 64);
-        let radius_x = (grid_x - i32::from(unit.grid.x)) * 64;
-        let radius_y = (grid_y - i32::from(unit.grid.y)) * 64;
+        Self::is_within_scan_range_at(unit.grid, grid_x, grid_y, scan_range)
+    }
 
-        radius_x * radius_x + radius_y * radius_y <= scan_area
+    /// `Access_IsWithinScanRange` for a **detached** anchor cell.
+    ///
+    /// The presentation needs the coverage of a unit whose scan anchor is the
+    /// cell its *sprite* stands in, not the simulation cell (`App::vision`):
+    /// `UnitInfo::Move` (`unitinfo.cpp:1790-1816`) advances `grid_x/grid_y` only
+    /// when the sprite crosses into the next cell, so the pure geometry is
+    /// shared here instead of being duplicated in the client.
+    pub fn is_within_scan_range_at(
+        anchor: Point,
+        grid_x: i32,
+        grid_y: i32,
+        scan_range: i32,
+    ) -> bool {
+        access::is_within_scan_range_at(anchor, grid_x, grid_y, scan_range)
+    }
+
+    /// The `ATTRIB_SCAN` radius the unit contributes to `Access_UpdateMapStatus`
+    /// (`access.cpp:762-796`), or `None` when the unit does not scan at all.
+    ///
+    /// This is the single "does this unit scan" rule: [`Self::update_map_status_unit`]
+    /// uses it for the simulation, and the client uses it to recompute the same
+    /// coverage from the frame's visual anchors (`App::vision`). Keeping one
+    /// implementation is what prevents the presentation from drifting from the
+    /// simulation.
+    pub fn scan_radius(&self, unit: &UnitInfo) -> Option<i32> {
+        if unit.orders == UnitOrder::Disable {
+            return None;
+        }
+
+        if self.teams[unit.team.0 as usize].team_type == TeamKind::None {
+            return None;
+        }
+
+        // C++ `Access_UpdateMapStatus` updates layers only for teams
+        // `PLAYER_TEAM_RED..GRAY`; `PLAYER_TEAM_ALIEN` has no heat map.
+        if heat_map_index(unit.team).is_none() {
+            return None;
+        }
+
+        // `GameManager_AllVisible` reveals every unit through `SpotByTeam`
+        // instead of the scan coverage.
+        if self.ai.all_visible {
+            return None;
+        }
+
+        // `unit->GetOrder() != ORDER_IDLE`.
+        if unit.orders == UnitOrder::Idle {
+            return None;
+        }
+
+        if unit.flags & unit_flags::SELECTABLE == 0 {
+            return None;
+        }
+
+        Some(
+            unit.base_values
+                .get_attribute(crate::unit_values::ATTRIB_SCAN),
+        )
     }
 
     /// `UnitsManager_IsUnitUnderWater` (`units_manager.cpp`).
@@ -754,20 +810,11 @@ impl GameState {
             return;
         }
 
-        if unit.orders == UnitOrder::Idle {
+        // `ORDER_IDLE`, the `SELECTABLE` bit and the `ATTRIB_SCAN` radius: the one
+        // rule shared with the presentation (`GameState::scan_radius`).
+        let Some(scan) = self.scan_radius(unit) else {
             return;
-        }
-
-        if unit.flags & unit_flags::SELECTABLE == 0 {
-            return;
-        }
-
-        let mut scan = unit
-            .base_values
-            .get_attribute(crate::unit_values::ATTRIB_SCAN);
-        if unit.orders == UnitOrder::Disable {
-            scan = 0;
-        }
+        };
 
         let mut ulx = i32::from(unit.grid.x) - scan;
         let mut uly = i32::from(unit.grid.y) - scan;

@@ -226,7 +226,8 @@ pub(crate) fn manage_create_building(
         return None;
     }
 
-    // One planned task per type (`ClearPlannedBuildings` stand-in).
+    // One planned task per type (the C++ census is priority based; the port keeps
+    // one plan per type as the `ClearPlannedBuildings` stand-in).
     for task_id in manager_tasks(kind) {
         if let Some(task) = ctx.tm.task(task_id) {
             if let TaskKind::CreateBuilding {
@@ -240,7 +241,18 @@ pub(crate) fn manage_create_building(
         }
     }
 
-    let site = super::create::find_build_site(ctx.world, team, unit_type, site_base)?;
+    // The site skips the footprints of the base's other plans
+    // (`TaskManageBuildings::ClearPlannedBuildings`, `taskmanagebuildings.cpp:352`)
+    // — two plans of one turn must not share cells.
+    let planned = super::create::planned_build_footprints(ctx.tm, team, None);
+    let site = super::create::find_build_site_for_task(
+        ctx.world,
+        team,
+        unit_type,
+        site_base,
+        &planned,
+        &[],
+    )?;
 
     let child = TaskKind::create_building(unit_type, site, Some(header.id));
     let task_id = ctx.append_task(team, Some(header.id), priority, child);

@@ -91,46 +91,98 @@ fn repair_shop_type(unit_type: UnitType) -> UnitType {
     }
 }
 
-/// Source storage of resources (`TaskGetMaterials::FindBuilding`).
-fn find_source_building(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<UnitId> {
-    for kind in [
-        UnitType::MaterialStorage,
-        UnitType::Depot,
-        UnitType::MiningStation,
-    ] {
-        for id in ctx.list(UnitListKind::Stationary) {
-            let Some(info) = ctx.unit(id) else { continue };
-            if info.team == team && info.unit_type == kind && info.orders != UnitOrder::Idle {
-                return Some(id);
-            }
+/// Source of raw material — `TaskGetMaterials::FindBuilding`
+/// (`taskgetmaterials.cpp:211`): the nearest stationary building of the team
+/// that holds raw material (`storage > 0`).
+fn find_source_building(
+    ctx: &TaskCtx<'_>,
+    team: crate::team::TeamId,
+    requestor: UnitId,
+) -> Option<UnitId> {
+    let requestor_grid = ctx.unit(requestor).map(|info| info.grid)?;
+    let mut best: Option<(i32, UnitId)> = None;
+
+    for id in ctx.list(UnitListKind::Stationary) {
+        let Some(info) = ctx.unit(id) else { continue };
+
+        if info.team != team
+            || info.hits == 0
+            || info.storage <= 0
+            || id == requestor
+            || crate::ai::tasks::create::cargo_type_of(info.unit_type)
+                != Some(crate::ai::tasks::create::CargoType::Raw)
+        {
+            continue;
+        }
+
+        let distance = distance_squared(info.grid, requestor_grid);
+
+        if best
+            .map(|(best_distance, _)| distance < best_distance)
+            .unwrap_or(true)
+        {
+            best = Some((distance, id));
         }
     }
 
-    None
+    best.map(|(_, id)| id)
 }
 
-/// Supply truck (`TaskGetMaterials::FindTruck`).
-fn find_truck(ctx: &TaskCtx<'_>, team: crate::team::TeamId) -> Option<UnitId> {
+/// Truck for the material — `TaskGetMaterials::FindTruck`
+/// (`taskgetmaterials.cpp:239`): any mobile land/sea unit of the team that
+/// carries raw material and waits for orders (`ORDER_AWAIT`, or a stopped
+/// `ORDER_MOVE`), other than the requestor itself.
+fn find_truck(ctx: &TaskCtx<'_>, team: crate::team::TeamId, requestor: UnitId) -> Option<UnitId> {
+    let requestor_grid = ctx.unit(requestor).map(|info| info.grid)?;
+    let mut best: Option<(i32, UnitId)> = None;
+
     for id in ctx.list(UnitListKind::MobileLandSea) {
         let Some(info) = ctx.unit(id) else { continue };
-        if info.team == team
-            && matches!(
-                info.unit_type,
-                UnitType::SupplyTruck | UnitType::FuelTruck | UnitType::GoldTruck
-            )
-            && info.hits > 0
+
+        if info.team != team
+            || id == requestor
+            || info.hits == 0
+            || info.storage <= 0
+            || crate::ai::tasks::create::cargo_type_of(info.unit_type)
+                != Some(crate::ai::tasks::create::CargoType::Raw)
+            || !(info.orders == UnitOrder::Await
+                || (info.orders == UnitOrder::Move && info.speed == 0))
         {
-            return Some(id);
+            continue;
+        }
+
+        let distance = distance_squared(info.grid, requestor_grid);
+
+        if best
+            .map(|(best_distance, _)| distance < best_distance)
+            .unwrap_or(true)
+        {
+            best = Some((distance, id));
         }
     }
 
-    None
+    best.map(|(_, id)| id)
 }
 
 // ---------------------------------------------------------------------------
 // TaskGetMaterials / TaskGetResource
 // ---------------------------------------------------------------------------
 
+/// `TaskGetMaterials::EndTurn` + `TaskGetResource::ChooseSource`/`EndTurn`
+/// (`taskgetmaterials.cpp:99`, `taskgetresource.cpp:24/103`).
+///
+/// The requestor is the unit that needs raw material (a mobile builder of a
+/// `TaskCreateBuilding`); `source` is a stationary raw storage of the team
+/// (`FindBuilding`) and `supplier` is the unit that carries the material — a
+/// truck (`FindTruck`) or, when the team has none, the source building itself
+/// (`ChooseSource`: `if (!supplier) supplier = unit`). An adjacent building
+/// transfers straight into the requestor (`DoTransfer`), otherwise the
+/// requestor walks to it (`TaskRendezvous`).
+///
+/// This is the branch the AI needs to keep a builder going once the team's raw
+/// material sits in a dump instead of the builder's own cargo: without it a
+/// builder with an empty `storage` waited forever in
+/// `CREATE_BUILDING_STATE_GETTING_MATERIALS` while the base's complex was full.
 fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::GetMaterials {
         resource,
@@ -151,39 +203,30 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
     };
 
     let team = requestor_info.team;
+    let needed = i32::from(*materials_needed);
 
-    // `FindTruck` — assign a truck.
-    if resource.supplier.is_none() {
-        match find_truck(ctx, team) {
-            Some(truck) => {
-                resource.supplier = Some(truck);
-                ctx.attach(header.id, truck);
-            }
-            None => {
-                // No truck: order `SPLYTRCK` via `TaskObtainUnits`.
-                if !resource.started {
-                    resource.started = true;
-                    let mut obtain = TaskKind::obtain_units(requestor_info.grid);
-                    super::create::obtain_units_add_type(&mut obtain, UnitType::SupplyTruck);
-                    ctx.append_task(team, Some(header.id), TASK_PRIORITY_GET_RESOURCE, obtain);
-                }
-
-                return;
-            }
-        }
+    // `TaskGetMaterials::EndTurn`: already on hand — the task is done
+    // (`EventCargoTransfer` → `requestor->RemoveTask(this)`).
+    if i32::from(requestor_info.storage) >= needed {
+        ctx.set_parent(header.id, None);
+        ctx.remove_self(header.id);
+        return;
     }
 
-    let Some(supplier) = resource.supplier else {
-        return;
-    };
-
-    // `FindBuilding` — the resource source.
+    // `ChooseSource` → `FindBuilding` + `FindTruck`.
     if resource.source.is_none() {
-        resource.source = find_source_building(ctx, team);
+        resource.source = find_source_building(ctx, team, requestor);
     }
 
     let Some(source) = resource.source else {
-        // No source — deliver directly (structurally).
+        return;
+    };
+
+    if resource.supplier.is_none() {
+        resource.supplier = find_truck(ctx, team, requestor).or(Some(source));
+    }
+
+    let Some(supplier) = resource.supplier else {
         return;
     };
 
@@ -197,9 +240,29 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         return;
     };
 
+    // The building itself delivers (`supplier == source`): wait for adjacency,
+    // then transfer the missing amount straight into the requestor.
+    if supplier == source {
+        if distance_squared(requestor_info.grid, source_info.grid) <= 2 {
+            if ctx.world.is_active_turn(team) {
+                do_transfer(ctx, source, requestor, needed);
+            }
+        } else {
+            let priority = ctx.priority_of(header.id);
+            let rendezvous = TaskKind::Rendezvous {
+                unit1: Some(source),
+                unit2: Some(requestor),
+                mode: super::RendezvousMode::Failed,
+            };
+            ctx.append_task(team, Some(header.id), priority, rendezvous);
+        }
+
+        return;
+    }
+
     // At the source: load (`ORDER_TRANSFER` order).
     if distance_squared(supplier_info.grid, source_info.grid) <= 2 {
-        if i32::from(supplier_info.storage) < i32::from(*materials_needed) {
+        if i32::from(supplier_info.storage) < needed {
             if supplier_info.orders == UnitOrder::Await {
                 if let Some(mut supplier_info) = ctx.unit(supplier) {
                     supplier_info.transfer_cargo = *materials_needed as i16;
@@ -237,6 +300,64 @@ fn get_materials_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
         );
         ctx.append_task(team, Some(header.id), priority, move_kind);
     }
+}
+
+/// `TaskGetMaterials::DoTransfer` (`taskgetmaterials.cpp:158`): the source hands
+/// the missing material to the requestor.
+///
+/// A stationary source pays from its **complex stock** (`GetComplex()->GetCargoInfo`),
+/// a mobile one from its own `storage`; the amount is capped by the requestor's
+/// free `ATTRIB_STORAGE`. The transfer itself is the regular `ORDER_TRANSFER`
+/// order of the source with the requestor as its parent.
+fn do_transfer(
+    ctx: &mut TaskCtx<'_>,
+    source: UnitId,
+    requestor: UnitId,
+    materials_needed: i32,
+) {
+    let Some(source_info) = ctx.unit(source) else {
+        return;
+    };
+
+    let Some(requestor_info) = ctx.unit(requestor) else {
+        return;
+    };
+
+    if source_info.orders == UnitOrder::Transfer {
+        return;
+    }
+
+    let capacity = i32::from(
+        requestor_info
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_STORAGE),
+    );
+    let storage = i32::from(requestor_info.storage);
+
+    let available = match source_info.complex {
+        Some(complex) => ctx
+            .world
+            .complex(source_info.team, complex.0 as u16)
+            .map(|complex| i32::from(complex.raw))
+            .unwrap_or(0),
+        None => i32::from(source_info.storage),
+    };
+
+    let amount = (materials_needed - storage)
+        .min(capacity - storage)
+        .min(available);
+
+    if amount <= 0 {
+        return;
+    }
+
+    if let Some(mut source_info) = ctx.unit(source) {
+        source_info.transfer_cargo = amount as i16;
+        source_info.parent_unit = Some(requestor);
+        ctx.write_unit(source, source_info);
+    }
+
+    ctx.set_new_order(source, UnitOrder::Transfer, UnitOrderState::Init);
 }
 
 fn get_resource_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {

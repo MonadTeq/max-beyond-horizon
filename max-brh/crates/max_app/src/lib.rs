@@ -81,6 +81,7 @@ pub mod ui;
 pub mod unit_names;
 pub mod unitmenu;
 pub mod upgrademenu;
+pub mod vision;
 pub mod winloss;
 
 use std::fmt;
@@ -100,7 +101,7 @@ use max_core::setup::{
     generate_map, AlienUnitCosts, GameSetup, GenerationSettings, ResourceLevel, TeamStart,
 };
 use max_core::team::{TeamId, TeamKind};
-use max_core::unit::UnitId;
+use max_core::unit::{UnitId, UnitInfo};
 use max_core::unit_values::{base_unit_values, ATTRIB_TURNS};
 use max_core::universe::{
     Dispatcher, GameEvent, GameUniverse, LocalDispatcher, StateRef, SubmitOutcome,
@@ -657,6 +658,13 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// Each point stores the movement direction toward it (`VisualStep.angle`),
     /// so that the sprite turns at the turn cell, not earlier.
     visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
+    /// Frame-side vision of the local player's team — the scan coverage and the
+    /// explored cells computed from the **visual** anchors, so the radar (the
+    /// minimap fog and the unit dots) moves on arrival, not earlier
+    /// (`Access_UpdateMapStatus` is called from `UnitInfo::Move` when the sprite
+    /// crosses into the cell, `unitinfo.cpp:1787-1816`). Frame-only: it is not
+    /// part of the snapshot/CRC, and `dt = 0` copies the simulation exactly.
+    vision: vision::VisionView,
     /// Visual frame clock of units (`FrameAnimation`).
     ///
     /// Two mechanisms: the builder cycle (`ProcessOrderBuild`) and the animation of
@@ -923,6 +931,7 @@ impl<D: Dispatcher> App<D> {
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
+            vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             color_cycles: max_render::palette::ColorCycles::new(),
             cycle_palette: None,
@@ -2550,8 +2559,13 @@ impl<D: Dispatcher> App<D> {
     ///
     /// The facade publishes `GameEvent::Sound` from `GameState::unit_sounds`, so the
     /// frame queue stays exactly the same as with [`App::collect_combat_sounds`].
-    /// Other events are ignored in stage A: the local match still reads its UI
-    /// reports from the state (`local.rs`, the `local_update` tick path).
+    ///
+    /// It also consumes [`GameEvent::EnemySpotted`] — the radar ping of
+    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2833-2834`): the `MESSAGE_BOX_NOTICE`
+    /// «Enemy %s in radar range.» (`GameManager_NotifyEvent`,
+    /// `game_manager.cpp:3458`) and the log line. The other events are ignored in
+    /// stage A: the local match still reads its UI reports from the state
+    /// (`local.rs`, the `local_update` tick path).
     fn collect_facade_sounds(&mut self) -> usize {
         const MAX_QUEUED: usize = 64;
 
@@ -2560,11 +2574,28 @@ impl<D: Dispatcher> App<D> {
         let mut added = 0;
 
         for event in events {
-            if let GameEvent::Sound(event) = event {
-                if let Some(sound) = sfx::combat_sound(event) {
-                    self.unit_sounds.push(sound);
-                    added += 1;
+            match event {
+                GameEvent::Sound(event) => {
+                    if let Some(sound) = sfx::combat_sound(event) {
+                        self.unit_sounds.push(sound);
+                        added += 1;
+                    }
                 }
+                GameEvent::EnemySpotted { unit } => {
+                    // `UnitInfo::SpotByTeam` → `RadarPing`
+                    // (`unitinfo.cpp:2833-2834/3711-3717`) →
+                    // `GameManager_NotifyEvent(this, 0)` (`game_manager.cpp:3458`):
+                    // the `MESSAGE_BOX_NOTICE` «Enemy %s in radar range.» at the top
+                    // of the map, and the same line in the log. `enemy_halt` is what
+                    // stopped the moving unit (`access.cpp:827-868`).
+                    if let Some(spotted) = self.state_ref().unit(unit) {
+                        let message = panels::enemy_spotted_message(spotted.unit_type);
+                        self.hud.push_log(message.clone());
+                        self.hud
+                            .set_hint_styled(message, panels::MessageBoxStyle::Notice);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -3151,6 +3182,9 @@ impl<D: Dispatcher> App<D> {
         self.visual_units.clear();
         self.visual_goals.clear();
         self.visual_paths.clear();
+        // The frame-side vision belongs to the previous match: the next frame
+        // reseeds it from the new simulation (`App::update_visual_units`).
+        self.vision.reset();
         self.frame_anims.clear();
         self.growth_anims.clear();
         // The site selection mode belongs to the previous match: the ghost must not
@@ -3170,6 +3204,27 @@ impl<D: Dispatcher> App<D> {
                 .copied()
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y))),
         )
+    }
+
+    /// Frame-side vision of the local player's team ([`vision::VisionView`]).
+    ///
+    /// The scan coverage and the explored cells of the **visual** anchors of the
+    /// frame; `VisionView::follow_visual() == false` means the values are a copy of
+    /// the simulation (`dt = 0`, QA/headless, `GameManager_AllVisible`).
+    pub fn vision(&self) -> &vision::VisionView {
+        &self.vision
+    }
+
+    /// Whether a unit is drawn by the frame (`DrawMap_RenderUnits` /
+    /// `DrawMap_RenderMiniMapUnitList`: `IsVisibleToTeam(GameManager_PlayerTeam)`).
+    ///
+    /// Delegates to [`vision::presented_visible`]: the simulation flag is the
+    /// authority, and while the frame follows the visual anchors a foreign unit also
+    /// has to be inside the scan of an own unit **at its visual cell** — the radar
+    /// of a moving unit then reveals the enemy when the sprite arrives, not when the
+    /// simulation cell did (`Access_UpdateMapStatus`, `access.cpp:762`).
+    pub fn presented_visible(&self, unit: &UnitInfo) -> bool {
+        vision::presented_visible(self.state_ref(), &self.vision, unit)
     }
 
     /// Body angle for the frame: the direction of the current visual segment.
@@ -3480,6 +3535,10 @@ impl<D: Dispatcher> App<D> {
         let visual = &mut self.visual_units;
         let goals = &mut self.visual_goals;
         let paths = &mut self.visual_paths;
+        // Visual anchors of this frame (the cell the sprite stands in) — the input
+        // of the frame-side vision (`App::vision`).
+        let mut anchors: std::collections::BTreeMap<UnitId, (i16, i16)> =
+            std::collections::BTreeMap::new();
 
         visual.retain(|id, _| state.unit(*id).is_some());
         goals.retain(|id, _| state.unit(*id).is_some());
@@ -3497,6 +3556,9 @@ impl<D: Dispatcher> App<D> {
                 goals.insert(id, (unit.grid.x, unit.grid.y));
                 paths.remove(&id);
             }
+            // No frame time: the vision is the simulation one (the radar, the fog
+            // and the golden frames read exactly the scan of the tick).
+            self.vision.reset_from_sim(state);
             return;
         }
 
@@ -3577,7 +3639,17 @@ impl<D: Dispatcher> App<D> {
                     left = 0.0;
                 }
             }
+
+            // The anchor of the frame's vision: the cell the sprite stands in
+            // (the same rounding the renderer uses for the drawing cell).
+            anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
         }
+
+        // Rebuild the player's scan from the visual anchors: the radar and the
+        // minimap fog move together with the sprite, not with the simulation cell
+        // (`Access_UpdateMapStatus` is called on the cell crossing in
+        // `UnitInfo::Move`, `unitinfo.cpp:1787-1816`).
+        self.vision.rebuild(state, &anchors);
     }
 
     /// Canonical state digest.

@@ -30,7 +30,15 @@ use support::phase5::{
 const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0xD94E, 0xB2DB);
 /// Pinned digests of the production scenario (A.3: base + first buildings, 12
 /// rounds).
-const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x2804);
+///
+/// Repinned after the AI construction fix (2026-11-24): a finished building now
+/// reaches `TaskManageBuildings::units` (`TaskCreateBuilding::Finish` →
+/// `AddUnit`, `taskcreatebuilding.cpp:326`) and the manager registers the
+/// started base, so `PlanNextBuildJob` plans the light plant in this scenario.
+/// The packet 45 `state_checksum` and the replay digest do not change (the units
+/// themselves are the same); only the snapshot digest differs — it carries the
+/// AI task list.
+const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x4901);
 /// Pinned digests of the factory scenario (A.1/A.3: spotted enemy tank → heavy
 /// plant orders a tank, 4 rounds).
 const FACTORY_CRCS: (u16, u16, u16) = (0x1DE6, 0xF849, 0x2DA9);

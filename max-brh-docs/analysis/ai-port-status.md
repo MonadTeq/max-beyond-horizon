@@ -377,7 +377,7 @@ seed-пути» остаётся открытым: тесты фиксируют
 | Сценарий | Ходы | `state_checksum` | `replay_digest_crc` | `state_digest` (снапшот) |
 |---|---|---|---|---|
 | `strategy` (A.2: клан AyersHand → MISSILES) | 6 | `0x4C90` | `0xD94E` | `0xB2DB` |
-| `production` (A.3: голая база, стройка) | 12 | `0x7682` | `0x0404` | `0x2804` |
+| `production` (A.3: голая база, стройка) | 12 | `0x7682` | `0x0404` | `0x4901` |
 | `factory` (A.1/A.3: замеченный танк → LANDPLT заказывает TANK) | 4 | `0x1DE6` | `0xF849` | `0x2DA9` |
 | `combat` (A.4: замеченный TRAINHAL, штурм) | 6 | `0x56BC` | `0xECCA` | `0x8536` |
 | `research` (A.5: апгрейды + включённый центр) | 4 | `0xCC41` | `0x6407` | `0x38C5` |
@@ -410,6 +410,96 @@ seed-пути» остаётся открытым: тесты фиксируют
 (`0x0CA2 → 0x6407`, `0xADC0 → 0x38C5`). `state_checksum` (пакет 45) не зависит
 от счётчиков добычи и остался `0xCC41`. Фикстура `add_research_lab` теперь
 пишет `raw/fuel/gold/total_mining` согласованно (10 топлива, сумма 10).
+
+**2026-11-24, перепин `production` — починка стройки ИИ (БЛОКЕР ручного
+прогона):** см. раздел «Починка стройки ИИ» ниже. `state_checksum` (пакет 45) и
+`replay_digest_crc` не изменились — набор юнитов в сценарии тот же; `state_digest`
+изменился (`0x2804 → 0x4901`), потому что снапшот несёт список задач ИИ: база
+теперь регистрирует свои здания в `TaskManageBuildings::units` и планирует
+LIGHTPLT через `PlanNextBuildJob`.
+
+## Починка стройки ИИ (2026-11-24)
+
+Ручной прогон: «ИИ не строит ничего (сломаны все стратегии)» и «построил радар
+поверх завода лёгких машин». Диагностика — сценарий 20–30 ходов (база ИИ +
+пассивная база противника, `support/phase5.rs`) с печатью `TaskManageBuildings`
+и планов `TaskCreateBuilding` на каждой границе хода.
+
+### Что именно было сломано
+
+1. **Здание не доходило до менеджера базы.** `TaskManageBuildings::units` —
+   единственный вход стратегической ветки `PlanNextBuildJob`
+   (`taskmanagebuildings.cpp:1011`: при пустом списке функция сразу возвращает
+   `false`). Список наполняется только `AiPlayer::AddBuilding` в `need_init`
+   (`aiplayer.cpp:2343-2348`) и передачей из `TaskCreateBuilding::Finish` —
+   `AddUnit(*building)` (`taskcreatebuilding.cpp:326-334`). В порте второго
+   вызова не было: `create_building_finish` чистил задачу и удалял себя.
+   Итог: ИИ доводил до конца первую шахту и **больше не планировал ничего** —
+   ни LIGHTPLT, ни LANDPLT, ни AIRPLT/SHIPYARD/TRAINHAL, ни HABITAT/GREENHSE/
+   RESEARCH; «сломаны все стратегии» = недостижима общая ветка после этого
+   стража.
+2. **`CheckMaterials` считал не то.** Оракул требует, чтобы **собственный груз
+   строителя** покрывал всю постройку: `BuildMenu_GetTurnsToBuild(unit_type) *
+   Cargo_GetRawConsumptionRate(builder, 1)`, плюс ветку резерва
+   `TaskManager_NeedToReserveRawMaterials` (`taskcreatebuilding.cpp:1033-1086`).
+   Порт сравнивал **сумму raw комплексов** с фиксированными 10. Пока комплекс
+   пуст (нет склада, шахта без питания) — строитель навсегда застревал в
+   `CREATE_BUILDING_STATE_GETTING_MATERIALS`, оставаясь привязанным к задаче:
+   другие постройки не могли получить строителя, и база вставала. Оракул в этом
+   состоянии отправляет строителя за сырьём (`TaskGetMaterials`,
+   `:1070-1078`) — в порте этого вызова не было.
+   Родственная ошибка: `need_to_reserve_raw_materials` использовал собственную
+   таблицу «потребления» (шахта «потребляет» 2), а не
+   `Cargo_GetRawConsumptionRate(type, 1)` (`ai.cpp:434`).
+3. **Площадка стройки не проверяла занятость.** `find_build_site` в
+   `ai/tasks/create.rs` проверял только проходимость (`is_valid_building_site`),
+   но не хеш клеток: клетка с юнитом возвращалась как свободная. Вторая ошибка —
+   два плана одного хода могли выбрать одни и те же клетки. Оракул для этого
+   строит карту стройки: `ClearBuildingAreas` (стационарные здания) +
+   `ClearPlannedBuildings` (футпринты других `TaskCreateBuilding`,
+   `taskmanagebuildings.cpp:261-374`). Итог ручного прогона: радар планировался
+   на клетку будущего LIGHTPLT и после его постройки вставал сверху; порядок
+   проверок на старте стройки занятую клетку тоже не отсекал.
+
+### Когда сломалось
+
+Регрессии от `3ab9aec` (тайминг ресурсов) и `bef1592` (резерв энергии) **нет**:
+на родителе `3ab9aec` (`02939f1`) сценарий ведёт себя так же — ИИ строит первую
+шахту и встаёт (проверено прогоном того же сценария на обеих ревизиях). Обе
+причины живут в порте ИИ с начального порта: `check_materials`-упрощение и
+отсутствие передачи здания появились до переименования `max-rust → max-brh`
+(`bb3c0cd`). Правки экономики лишь сдвинули тайминг: на `02939f1` шахта
+достраивается на 7-м ходу, на `6aee166` — на 8-м (завод платит из уже
+начисленного запаса), поэтому CRC ИИ и перепинивался — это законное изменение,
+а не поломка стратегий. Уровень сложности на блокер не влияет: на
+`Apprentice`/`Average`/`Expert` картина одинаковая (после починки все 9
+стратегий строят LIGHTPLT, часть — LANDPLT/HABITAT).
+
+### Исправления (файл:строка)
+
+| Что | Оракул | Порт |
+|---|---|---|
+| передача готового здания менеджеру | `taskcreatebuilding.cpp:326-334` (`Finish` → `AddUnit`) | `ai/tasks/create.rs::create_building_finish` |
+| `CheckMaterials` по грузу строителя + ветка резерва | `taskcreatebuilding.cpp:1033-1086` | `ai/tasks/create.rs::check_materials` |
+| ставка потребления raw | `cargo.cpp:140` (`Cargo_GetRawConsumptionRate`) | `ai/tasks/create.rs::need_to_reserve_raw_materials` |
+| запрос сырья строителю | `taskcreatebuilding.cpp:1070-1078` (`TaskGetMaterials`) | `ai/tasks/create.rs::create_building_request_materials` |
+| доставка сырья со склада/грузовика | `taskgetresource.cpp:24-135`, `taskgetmaterials.cpp:99-211` | `ai/tasks/misc.rs::get_materials_end_turn` / `do_transfer` / `find_source_building` / `find_truck` |
+| площадка: занятые клетки + планы базы | `taskmanagebuildings.cpp:261-374` (`ClearBuildingAreas`/`ClearPlannedBuildings`) | `production.rs::find_build_site_excluding` / `site_is_free_except` / `construction_utilities_at`, `ai/tasks/create.rs::find_build_site_for_task` / `planned_build_footprints` |
+| проверка площадки на старте стройки | `taskcreatebuilding.cpp:822-845` (пере-поиск площадки) | `ai/tasks/create.rs::create_building_begin` |
+
+Тесты: `max_core/tests/ai_build_chain.rs` (4 сценария: регистрация зданий и
+LIGHTPLT; доставка сырья со склада; отсутствие пересечений планов и построек;
+стройка при пустом комплексе). Все четыре падают на ревизии до правок и
+проходят после.
+
+### Отладка: `--no-fow`
+
+Наблюдение за ИИ «в покое» — режим без тумана войны: флаг `--no-fow` (UI) или
+строка `no_fow=1` в `preferences.ini`. Это **только представление**: рисуются
+все юниты (`render`, `overlays`), миникарта без затемнения неисследованных
+клеток (`panels::draw_minimap`), точки юнитов на миникарте — все. Состояние
+симуляции и CRC не меняются (в отличие от `AiState::all_visible`, который
+входит в дайджест).
 
 ### Наблюдения, зафиксированные сценариями (не правки порта)
 

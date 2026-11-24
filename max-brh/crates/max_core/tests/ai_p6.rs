@@ -115,6 +115,15 @@ fn ai_constructor_builds_mining_station() {
     let constructor = state
         .spawn_unit(UnitType::Constructor, TeamId::RED, Point::new(10, 10), 0)
         .expect("constructor spawned");
+    // `TaskCreateBuilding::CheckMaterials` (`taskcreatebuilding.cpp:1033-1086`)
+    // needs the builder's own cargo for the whole construction
+    // (`turns_to_build * Cargo_GetRawConsumptionRate(CONSTRCT, 1)`): a constructor
+    // without raw material waits in `GETTING_MATERIALS` for a team storage, so the
+    // fixture gives it the load a mission's starting base carries.
+    state
+        .unit_mut(constructor)
+        .expect("constructor")
+        .storage = 60;
 
     // `Ai_SetupStrategy` — strategy only (without map regeneration).
     assert!(

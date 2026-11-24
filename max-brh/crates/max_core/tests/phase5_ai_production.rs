@@ -51,11 +51,21 @@ fn ai_orders_the_heavy_plant_for_a_tank_horde() {
         observation.max_create_building_tasks >= 1,
         "TaskCreateBuilding must be alive during the turn"
     );
+    // `PlanNextBuildJob` (`taskmanagebuildings.cpp:1034`): once **both** plants
+    // exist — and a planned plant is counted by `GetUnitCount` — the oracle goes
+    // on to the support block (`AIRPLT`, then `HABITAT`, then the greenhouse and
+    // the research centre). The light plant is already standing here and the
+    // heavy plant is planned on the first turn, so the support block follows from
+    // the oracle; what must not happen is a strategy-specific detour into the sea
+    // or espionage factories.
+    assert!(
+        !planned.contains(&UnitType::Shipyard) && !planned.contains(&UnitType::TrainingHall),
+        "the strategy must not rush the sea/espionage factories, planned: {planned:?}"
+    );
     assert!(
         !planned.contains(&UnitType::AirUnitsPlant)
-            && !planned.contains(&UnitType::Shipyard)
-            && !planned.contains(&UnitType::TrainingHall),
-        "the strategy must not rush the other factories, planned: {planned:?}"
+            || planned.contains(&UnitType::HeavyVehiclePlant),
+        "the support block may follow only after the heavy plant, planned: {planned:?}"
     );
 }
 

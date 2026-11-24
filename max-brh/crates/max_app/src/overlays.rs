@@ -872,7 +872,10 @@ pub fn draw_unit_overlays<D: Dispatcher>(
             continue;
         };
 
-        if !unit.is_visible_to_team(player_team) {
+        // The debug `--no-fow` mode shows every unit and its indicators. The
+        // visibility is the frame-side one (`App::presented_visible`): a foreign
+        // unit appears when the own scan — at the sprite cells — reaches it.
+        if !app.no_fow() && !app.presented_visible(unit) {
             continue;
         }
 
@@ -951,7 +954,7 @@ pub fn draw_range_scan<D: Dispatcher>(
         return 0;
     };
 
-    if !unit.is_visible_to_team(player_team) {
+    if !app.no_fow() && !unit.is_visible_to_team(player_team) {
         return 0;
     }
 

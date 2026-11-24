@@ -151,3 +151,77 @@ fn enemy_halt_ignores_remote_teams() {
         "C++ останавливает только TEAM_TYPE_PLAYER/COMPUTER (access.cpp:828)"
     );
 }
+
+/// The scan rule of `Access_UpdateMapStatus` (`access.cpp:762-796`) is exposed once
+/// (`GameState::scan_radius`) and shared with the frame-side vision: a unit that
+/// does not scan must report `None`, a scanning one — its `ATTRIB_SCAN` radius.
+#[test]
+fn scan_radius_mirrors_the_map_status_rule() {
+    let (mut state, mover, _) = setup_two_units(true);
+    let unit = state.snapshot().unit(mover).cloned().expect("юнит");
+    let scan = unit
+        .base_values
+        .get_attribute(max_core::unit_values::ATTRIB_SCAN);
+
+    assert_eq!(
+        state.snapshot().scan_radius(&unit),
+        Some(scan),
+        "ORDER_MOVE + SELECTABLE → сканирует"
+    );
+
+    // `ORDER_IDLE` units are skipped by C++ (`if (unit->GetOrder() != ORDER_IDLE)`).
+    let mut idle = unit.clone();
+    idle.orders = UnitOrder::Idle;
+    assert_eq!(state.snapshot().scan_radius(&idle), None);
+
+    // `GameManager_AllVisible` replaces the scan with `SpotByTeam`.
+    state.ai_mut().all_visible = true;
+    assert_eq!(state.snapshot().scan_radius(&unit), None);
+}
+
+/// `UnitInfo::SpotByTeam` → `RadarPing` (`unitinfo.cpp:2833-2834`): when the
+/// **player's** team spots an enemy, C++ calls `GameManager_NotifyEvent(this, 0)`
+/// («Enemy %s in radar range.», `game_manager.cpp:3458`). The report travels as a
+/// [`max_core::universe::GameEvent::EnemySpotted`] and never enters the state.
+#[test]
+fn the_player_team_spotting_an_enemy_emits_a_radar_ping() {
+    use max_core::universe::GameEvent;
+
+    let (mut state, _, enemy) = setup_two_units(true);
+    let mut events = state.subscribe();
+
+    state.spot_by_team(enemy, TeamId::RED);
+    state.tick();
+
+    let reported = events.drain(&mut state);
+
+    assert!(
+        reported
+            .iter()
+            .any(|event| matches!(event, GameEvent::EnemySpotted { unit } if *unit == enemy)),
+        "SpotByTeam команды игрока обязан дать radar ping: {reported:?}"
+    );
+}
+
+/// Only the **player's** team pings: a computer team spotting a unit is an AI
+/// report (`Ai_UnitSpotted`), not a message box for the human
+/// (`if (team == GameManager_PlayerTeam)`, `unitinfo.cpp:2833`).
+#[test]
+fn a_foreign_team_spotting_a_unit_does_not_ping_the_player() {
+    use max_core::universe::GameEvent;
+
+    let (mut state, mover, _) = setup_two_units(true);
+    let mut events = state.subscribe();
+
+    state.spot_by_team(mover, TeamId::GREEN);
+    state.tick();
+
+    let reported = events.drain(&mut state);
+
+    assert!(
+        !reported
+            .iter()
+            .any(|event| matches!(event, GameEvent::EnemySpotted { .. })),
+        "чужой скан не рисует сообщение игроку: {reported:?}"
+    );
+}

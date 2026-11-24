@@ -317,6 +317,16 @@ impl GameState {
         }
 
         ai_unit_spotted(self, id, team);
+
+        // `UnitInfo::SpotByTeam` (`unitinfo.cpp:2833-2834`):
+        // `if (team == GameManager_PlayerTeam) RadarPing();` — the radar ping
+        // sound and the `MESSAGE_BOX_NOTICE` «Enemy %s in radar range.»
+        // (`GameManager_NotifyEvent(this, 0)`, `game_manager.cpp:3458`). The
+        // client drains these reports from the facade event stream; they are a
+        // UI report, not simulation state.
+        if team == self.player_team && self.player_team != TeamId::ALIEN {
+            self.spotted_reports.push(id);
+        }
     }
 
     /// `Ai_CheckReactions` (`ai.cpp:407`) — the tick call site.

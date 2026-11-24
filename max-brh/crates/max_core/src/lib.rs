@@ -109,8 +109,9 @@ pub mod victory;
 pub use max_types::{enums, geo, input, map};
 
 pub use access::{
-    unit_type_flags, unit_type_land_type, unit_type_properties, UnitTypeProperties,
-    ACCESS_MODIFIER_NONE, ACCESS_MODIFIER_SAME_CLASS_BLOCKS, UNIT_TYPE_PROPERTIES,
+    is_within_scan_range_at, unit_type_flags, unit_type_land_type, unit_type_properties,
+    UnitTypeProperties, ACCESS_MODIFIER_NONE, ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    UNIT_TYPE_PROPERTIES,
 };
 pub use ai::HeatMap as AiHeatMap;
 pub use ai::{

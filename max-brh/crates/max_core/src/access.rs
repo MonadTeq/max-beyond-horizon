@@ -87,6 +87,20 @@ pub const SURFACE_TYPE_AIR: u8 = 0x8;
 /// `SURFACE_TYPE_ALL`.
 pub const SURFACE_TYPE_ALL: u8 = 0x0F;
 
+/// `Access_IsWithinScanRange` (`access.cpp:353`) for an **explicit** anchor cell.
+///
+/// The simulation passes the unit's `grid` (`GameState::is_within_scan_range`);
+/// the frame passes the cell the sprite stands in (`max_app::vision`), because
+/// `UnitInfo::Move` (`unitinfo.cpp:1787-1816`) moves `grid_x/grid_y` — and with
+/// them the scan — only when the sprite crosses into the next cell.
+pub fn is_within_scan_range_at(anchor: Point, grid_x: i32, grid_y: i32, scan_range: i32) -> bool {
+    let scan_area = (scan_range * 64) * (scan_range * 64);
+    let radius_x = (grid_x - i32::from(anchor.x)) * 64;
+    let radius_y = (grid_y - i32::from(anchor.y)) * 64;
+
+    radius_x * radius_x + radius_y * radius_y <= scan_area
+}
+
 // ---------------------------------------------------------------------------
 // Unit-type property table (SC_UNITS)
 // ---------------------------------------------------------------------------

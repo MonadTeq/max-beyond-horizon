@@ -795,14 +795,37 @@ pub fn site_covers(unit_type: UnitType, anchor: Point, cursor: Point) -> bool {
 }
 
 /// `TaskCreateBuilding::FindBuildSite` — the nearest free site.
-///
-/// The traversal order is deterministic: by ascending distance, then `y`,
-/// then `x` (no hash tables), so two runs match.
 pub(crate) fn find_build_site(
     state: &GameState,
     team: TeamId,
     unit_type: UnitType,
     origin: Point,
+) -> Option<Point> {
+    find_build_site_excluding(state, team, unit_type, origin, &[])
+}
+
+/// Whether two footprints overlap (a `size × size` square at its anchor cell).
+pub(crate) fn footprints_overlap(a: Point, a_size: i16, b: Point, b_size: i16) -> bool {
+    a.x < b.x + b_size && b.x < a.x + a_size && a.y < b.y + b_size && b.y < a.y + a_size
+}
+
+/// [`find_build_site`] that also skips the cells of other **planned**
+/// construction sites — the port of `TaskManageBuildings::ClearPlannedBuildings`
+/// (`taskmanagebuildings.cpp:352`), whose construction map marks the footprint
+/// of every other `TaskCreateBuilding` of the base as `AREA_BUILT_IN`.
+///
+/// Without it two plans made in one turn could pick the same cells, and the
+/// second building was later placed on top of the first (manual defect "the AI
+/// built a radar on top of the light vehicle plant").
+///
+/// The traversal order is deterministic: by ascending distance, then `y`,
+/// then `x` (no hash tables), so two runs match.
+pub(crate) fn find_build_site_excluding(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    origin: Point,
+    planned: &[(Point, i16)],
 ) -> Option<Point> {
     let size = footprint(unit_type);
     let mut candidates: Vec<(i32, i16, i16)> = Vec::new();
@@ -829,12 +852,100 @@ pub(crate) fn find_build_site(
     for (_, y, x) in candidates {
         let site = Point::new(x, y);
 
-        if site_is_free(state, team, unit_type, site, size) {
-            return Some(site);
+        if !site_is_free(state, team, unit_type, site, size) {
+            continue;
         }
+
+        if planned.iter().any(|(planned_site, planned_size)| {
+            footprints_overlap(site, size, *planned_site, *planned_size)
+        }) {
+            continue;
+        }
+
+        return Some(site);
     }
 
     None
+}
+
+/// Whether any cell of the type's footprint at `site` carries a unit other than
+/// the ones in `allowed` — the guard of the construction start.
+///
+/// `site_is_free` only answers for a *fresh* search; a site picked some turns
+/// earlier can be taken in between (another planned building started first, a
+/// unit walked in). C++ re-runs `FindBuildSite` whenever a builder has to commit
+/// (`TaskCreateBuilding::Execute`, `taskcreatebuilding.cpp:822-845`); the port
+/// keeps that invariant at the moment of the build order as well.
+pub(crate) fn site_is_free_except(
+    state: &GameState,
+    unit_type: UnitType,
+    site: Point,
+    allowed: &[UnitId],
+) -> bool {
+    let size = footprint(unit_type);
+
+    for dy in 0..size {
+        for dx in 0..size {
+            let cell = Point::new(site.x + dx, site.y + dy);
+
+            if state
+                .units_at(cell)
+                .iter()
+                .any(|id| !allowed.contains(id) && state.unit(*id).is_some())
+            {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// The construction utilities (`LRGTAPE`/`LRGCONES`/`LRGSLAB` or the small
+/// variants) of `builder` on the cells of `site`'s footprint — they belong to the
+/// building this builder is placing there and must not block it.
+///
+/// The `parent_unit` filter matters: the utilities of **another** construction
+/// site (a foreign footprint that happens to overlap) must still block the site,
+/// otherwise the building would be laid over a construction already in progress.
+pub(crate) fn construction_utilities_at(
+    state: &GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    site: Point,
+    builder: UnitId,
+) -> Vec<UnitId> {
+    let size = footprint(unit_type);
+    let mut utilities = Vec::new();
+
+    for dy in 0..size {
+        for dx in 0..size {
+            let cell = Point::new(site.x + dx, site.y + dy);
+
+            for id in state.units_at(cell) {
+                let Some(unit) = state.unit(*id) else {
+                    continue;
+                };
+
+                if unit.team == team
+                    && unit.parent_unit == Some(builder)
+                    && matches!(
+                        unit.unit_type,
+                        UnitType::LargeTape
+                            | UnitType::SmallTape
+                            | UnitType::LargeCones
+                            | UnitType::SmallCones
+                            | UnitType::LargeSlab
+                            | UnitType::SmallSlab
+                    )
+                {
+                    utilities.push(*id);
+                }
+            }
+        }
+    }
+
+    utilities
 }
 
 // ---------------------------------------------------------------------------

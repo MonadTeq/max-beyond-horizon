@@ -129,6 +129,9 @@ struct Cli {
     fullscreen: bool,
     /// Print the 60 Hz presentation statistics (`PRESENT: …`) to stderr.
     fps_stats: bool,
+    /// Debug observation mode (`--no-fow`): draw the game without the fog of war
+    /// (presentation only — the simulation state and the CRC are unchanged).
+    no_fow: bool,
     /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
 }
@@ -174,6 +177,7 @@ impl Cli {
             window_scale: None,
             fullscreen: false,
             fps_stats: false,
+            no_fow: false,
             record: None,
         };
         let mut mode_set = false;
@@ -281,6 +285,11 @@ impl Cli {
                 }
                 "--fps" => {
                     cli.fps_stats = true;
+                }
+                // Debug observation mode: draw the world without the fog of war
+                // (live AI observation; presentation only, the CRC is unchanged).
+                "--no-fow" => {
+                    cli.no_fow = true;
                 }
                 "--record" => {
                     cli.record = Some(PathBuf::from(
@@ -1056,6 +1065,12 @@ fn run_ui(cli: &Cli) -> Result<()> {
             "UI: настройки загружены из {}",
             app.preferences_path().display()
         );
+    }
+    // Debug observation of the AI (`--no-fow`): the fog of war is not drawn, so
+    // the opponent plays "in peace" in front of the observer. Presentation only.
+    if cli.no_fow {
+        app.set_no_fow(true);
+        println!("UI: режим отладки ИИ — туман войны отключён (--no-fow)");
     }
 
     let mut window = SdlWindow::new_scaled(
@@ -2115,6 +2130,19 @@ mod tests {
         let cli = parse(&[]).expect("пустой список аргументов разбирается");
         assert!(!cli.fullscreen);
         assert!(!cli.fps_stats);
+    }
+
+    /// Debug observation mode: `--no-fow` is a flag, off by default, and it does
+    /// not change any other mode.
+    #[test]
+    fn no_fow_flag_is_parsed() {
+        let cli = parse(&["--no-fow"]).expect("--no-fow разбирается");
+
+        assert!(cli.no_fow);
+        assert_eq!(cli.mode, Mode::Ui, "the flag keeps the interactive mode");
+
+        let cli = parse(&[]).expect("пустой список аргументов разбирается");
+        assert!(!cli.no_fow);
     }
 
     #[test]

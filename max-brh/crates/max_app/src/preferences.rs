@@ -76,6 +76,17 @@
 //! (`App::load_preferences_from_disk`); the QA driver keeps the defaults and never
 //! sees the section unless a scenario sets the setting.
 //!
+//! # Port-only observation switch: `no_fow`
+//!
+//! No control row (the `PREFSPIC` layout stays 1:1 with the oracle), a debug
+//! flag instead: `--no-fow` on the command line or `no_fow=1` in
+//! `preferences.ini`. It lifts the fog of war for the **presentation** — every
+//! unit is drawn (`render`, `overlays`) and the minimap shows all cells and all
+//! unit dots (`panels::draw_minimap`), i.e. the `GameManager_AllVisible`
+//! observation mode — so the AI can be watched "in peace". Unlike
+//! `AiState::all_visible` it does not touch `GameState`: the snapshot and the
+//! CRC are unchanged.
+//!
 //! Slider: the label `Text_TextBox(ulx, uly, 185, 20)`, the `PRFSLIT` groove 57×3 at
 //! `x = ulx + Text_GetWidth(caption) + 10`, `y = uly + 8`; the `PRFSLIDE` thumb
 //! 14×17 at `x = track_x + value·57/range_max − 7`, `y = uly + 1`; a click on
@@ -692,6 +703,13 @@ pub struct Preferences {
     /// `red_team_player` … `gray_team_player` — who controls each team
     /// (`menu_team_player_setting`, `settings.cpp` `TEAMS`), `0..=3`.
     pub team_players: [TeamKind; DEBUG_TEAM_COUNT],
+    /// `no_fow` — **debug/presentation only**: draw every unit and the whole
+    /// minimap without the fog of war (the `GameManager_AllVisible` observation
+    /// mode of the oracle). Not a player setting and not part of the dialog: it
+    /// is switched by the `--no-fow` command line flag or the
+    /// `no_fow=1` line of `preferences.ini`, and it never writes the
+    /// simulation state (`GameState`/CRC unchanged).
+    pub no_fow: bool,
 }
 
 impl Default for Preferences {
@@ -728,6 +746,7 @@ impl Default for Preferences {
                 TeamKind::None,
                 TeamKind::None,
             ],
+            no_fow: false,
         }
     }
 }
@@ -964,6 +983,8 @@ impl Preferences {
                 "debug" => prefs.debug = parse_bool(value, prefs.debug),
                 "disable_fire" => prefs.disable_fire = parse_bool(value, prefs.disable_fire),
                 "real_time" => prefs.real_time = parse_bool(value, prefs.real_time),
+                // Debug observation mode: draw the world without the fog of war.
+                "no_fow" => prefs.no_fow = parse_bool(value, prefs.no_fow),
                 "red_team_player" => {
                     prefs.team_players[0] = parse_team_kind(value, prefs.team_players[0])
                 }
@@ -1017,6 +1038,7 @@ impl Preferences {
         push_bool(&mut out, "debug", self.debug);
         push_bool(&mut out, "disable_fire", self.disable_fire);
         push_bool(&mut out, "real_time", self.real_time);
+        push_bool(&mut out, "no_fow", self.no_fow);
         for (slot, name) in [
             (0, "red_team_player"),
             (1, "green_team_player"),
@@ -2223,6 +2245,18 @@ impl<D: Dispatcher> crate::App<D> {
         &self.preferences
     }
 
+    /// Debug observation mode: the fog of war is not drawn (`--no-fow` /
+    /// `no_fow=1`). Presentation only — the simulation state and the digest do
+    /// not see it.
+    pub fn no_fow(&self) -> bool {
+        self.preferences.no_fow
+    }
+
+    /// Switches the debug observation mode (see [`Self::no_fow`]).
+    pub fn set_no_fow(&mut self, enabled: bool) {
+        self.preferences.no_fow = enabled;
+    }
+
     /// Whether visual effects are enabled (`settings["effects"]`).
     pub fn effects_enabled(&self) -> bool {
         self.preferences.effects
@@ -2787,11 +2821,14 @@ mod tests {
         prefs.quick_scroll = 40;
         prefs.disable_fx = true;
         prefs.player_name = "Cmdr".to_string();
+        // Debug observation mode: the value survives the file round trip.
+        prefs.no_fow = true;
 
         prefs.save_file(&path).expect("save");
         let loaded = Preferences::load_file(&path).expect("load");
 
         assert_eq!(loaded, prefs);
+        assert!(loaded.no_fow, "no_fow must be read back from preferences.ini");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -325,6 +325,14 @@ pub enum GameEvent {
     Research(ResearchEvent),
     /// A combat sound.
     Sound(UnitSound),
+    /// An enemy was spotted by the **local player's** team — `RadarPing`
+    /// (`unitinfo.cpp:3711`): the client shows the `MESSAGE_BOX_NOTICE`
+    /// «Enemy %s in radar range.» (`GameManager_NotifyEvent(this, 0)`,
+    /// `game_manager.cpp:3458`). A UI report, never simulation state.
+    EnemySpotted {
+        /// The spotted enemy.
+        unit: UnitId,
+    },
     /// A complex power message.
     Industry(String),
     /// In-game chat (packet 18).
@@ -499,6 +507,16 @@ impl<'a> StateRef<'a> {
     /// `GameManager_PlayerTeam` (the local player).
     pub fn player_team(&self) -> TeamId {
         self.state.player_team
+    }
+
+    /// The scan radius the unit contributes to `Access_UpdateMapStatus`
+    /// (`access.cpp:762-796`), or `None` when it does not scan.
+    ///
+    /// The frame uses it to rebuild the same coverage from the **visual** anchors
+    /// (`max_app::vision`), so the presentation never re-implements the rule; the
+    /// coverage geometry is [`crate::is_within_scan_range_at`].
+    pub fn scan_radius(&self, unit: &crate::unit::UnitInfo) -> Option<i32> {
+        self.state.scan_radius(unit)
     }
 
     /// `GameManager_GameState`.
@@ -1294,6 +1312,9 @@ impl<D: Dispatcher> GameUniverse<D> {
         }
         for sound in self.state.take_unit_sounds() {
             self.bus.push(GameEvent::Sound(sound));
+        }
+        for unit in self.state.take_spotted_reports() {
+            self.bus.push(GameEvent::EnemySpotted { unit });
         }
         if let Some(message) = self.state.take_industry_message() {
             self.bus.push(GameEvent::Industry(message));

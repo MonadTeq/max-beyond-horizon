@@ -314,6 +314,15 @@ pub(crate) struct GameState {
     /// and explosion). The simulation only accumulates events; the resource/volume is chosen by
     /// the client (`max_app::sfx`, `SC_UNITS` table). Not part of the digest/CRC.
     pub(crate) unit_sounds: Vec<UnitSound>,
+    /// Enemies newly spotted **by the local player's team** — the UI report of
+    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2810-2839`): when the spotting team
+    /// is `GameManager_PlayerTeam`, C++ calls `RadarPing()` — the `RADRPING`
+    /// sound and `GameManager_NotifyEvent(this, 0)` (`game_manager.cpp:3458`),
+    /// the `MESSAGE_BOX_NOTICE` «Enemy %s in radar range.»
+    ///
+    /// A UI/QA report (like `unit_sounds`), **not** part of the snapshot/CRC:
+    /// the client drains it into [`crate::universe::GameEvent::EnemySpotted`].
+    pub(crate) spotted_reports: Vec<UnitId>,
     /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
     /// barrier counters so that the state is self-contained.
     pub(crate) turn_indices: [u8; TEAM_SLOTS],
@@ -455,6 +464,7 @@ impl GameState {
             research_events: Vec::new(),
             industry_message: None,
             unit_sounds: Vec::new(),
+            spotted_reports: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -579,6 +589,7 @@ impl GameState {
         self.pending_air_group_leader = None;
         self.unit_events.clear();
         self.live_attacks.clear();
+        self.spotted_reports.clear();
         self.path_requests.clear();
         self.chat_log.clear();
         for targets in &mut self.delayed_attack_targets {
@@ -2174,6 +2185,16 @@ impl GameState {
     /// them (`max_app::App::collect_combat_sounds`) right after the tick.
     pub(crate) fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
         std::mem::take(&mut self.unit_sounds)
+    }
+
+    /// Takes the "enemy spotted" reports of the local player's team
+    /// (`UnitInfo::SpotByTeam` → `RadarPing`, `unitinfo.cpp:2833-2834`).
+    ///
+    /// The facade turns them into [`crate::universe::GameEvent::EnemySpotted`];
+    /// the client shows the `MESSAGE_BOX_NOTICE` «Enemy %s in radar range.»
+    /// (`GameManager_NotifyEvent`, `game_manager.cpp:3458-3470`).
+    pub(crate) fn take_spotted_reports(&mut self) -> Vec<UnitId> {
+        std::mem::take(&mut self.spotted_reports)
     }
 
     /// `UnitInfo::UpdateProduction` (`unitinfo.cpp:2904`) — reset of speeds,

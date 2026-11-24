@@ -1497,7 +1497,12 @@ impl<D: Dispatcher> App<D> {
             if !in_range {
                 continue;
             }
-            if !unit.is_visible_to_team(self.state_ref().player_team()) {
+            // Visibility (fog of war); the debug `--no-fow` mode draws every unit
+            // (`GameManager_AllVisible` observation mode). While the frame follows
+            // the visual anchors, a foreign unit must also be inside the scan of an
+            // own unit **at its visual cell** — the radar of a moving unit reveals
+            // the enemy when the sprite arrives (`App::presented_visible`).
+            if !self.no_fow() && !self.presented_visible(unit) {
                 continue;
             }
             // `UnitInfoGroup::IsRelevant` (`unitinfogroup.cpp:59`): idle units

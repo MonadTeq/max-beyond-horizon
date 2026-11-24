@@ -23,10 +23,12 @@
 //!    (the P3 `resourcetable`), so `TaskObtainUnits::RequestUnits`
 //!    orders one `TaskCreateUnit` per missing unit rather than
 //!    "2×(factories)+1 − already ordered";
-//! 2. `CheckMaterials` computes team materials by complexes
-//!    (`TeamUnits::complexes()`), the threshold is 10 raw units, as for building
-//!    a unit in C++; if the team has no complexes (P3 economy is not
-//!    modeled), materials are considered available;
+//! 2. `CheckMaterials` is a port of the oracle (`taskcreatebuilding.cpp:1033`):
+//!    the raw reserve branch plus the builder's own cargo against
+//!    `turns_to_build * Cargo_GetRawConsumptionRate(builder, 1)`; when the cargo is
+//!    short, a `TaskGetMaterials` child sends the builder to the base storage
+//!    (`:1070-1078`). The port keeps one fetch task per construction instead of
+//!    appending a new one on every failed check;
 //! 3. sites for roads/bridges/water platforms (`BuildRoad`,
 //!    `BuildBoardwalks`, `BuildBridges`, `RequestWaterPlatform`) are not
 //!    ported — they rely on `AccessMap` and `Zone` clearing (P5/P7);
@@ -38,13 +40,14 @@ use crate::enums::{CautionLevel, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::Point;
 use crate::team::TeamId;
 use crate::unit::UnitId;
+use crate::victory::cargo_raw_consumption_rate;
 
 use super::super::task::{
     task_estimate_turns_till_mission_end, task_retreat_from_danger, TaskHeader, TASK_PRIORITY_MOVE,
     TASK_PRIORITY_OFFSET_CENSUS_SLACK, TASK_TYPE_CREATE_UNIT, TASK_TYPE_OBTAIN_UNITS,
 };
 use super::super::task_manager::TaskManager;
-use super::{create_building_state, create_unit_state, TaskCtx, TaskKind};
+use super::{create_building_state, create_unit_state, GetResourceState, TaskCtx, TaskKind};
 
 // ---------------------------------------------------------------------------
 // Production data (replacing `Builder_*`/`BuildMenu_*`)
@@ -97,12 +100,65 @@ pub(crate) fn team_materials(world: &crate::game::GameState, team: TeamId) -> Op
     Some(complexes.iter().map(|complex| i32::from(complex.raw)).sum())
 }
 
-/// `TaskCreateBuilding::CheckMaterials` — whether there are enough materials to build.
-pub(crate) fn check_materials(world: &crate::game::GameState, team: TeamId, unit_type: UnitType) -> bool {
-    const REQUIRED_RAW_MATERIALS: i32 = 10;
+/// `TaskCreateBuilding::CheckMaterials` (`taskcreatebuilding.cpp:1033`) — whether
+/// the builder carries enough raw material to start the construction.
+///
+/// Oracle order:
+/// 1. a reserve branch — the team holds raw back for the ready units of the type
+///    (`Cargo_GetRawConsumptionRate(unit_type, 1) > 0`,
+///    `Task_GetReadyUnitsCount > 0`, `TaskManager_NeedToReserveRawMaterials`);
+/// 2. otherwise the **builder's own cargo** must cover the whole construction at
+///    the normal rate: `BuildMenu_GetTurnsToBuild(unit_type) *
+///    Cargo_GetRawConsumptionRate(builder_type, 1)` (plus the water-platform
+///    surcharge, which the port's builders do not need).
+///
+/// The previous port compared the sum of the team's **complex** stocks against a
+/// fixed 10. A base whose builder still carried material therefore stalled
+/// forever in `CREATE_BUILDING_STATE_GETTING_MATERIALS` as soon as its complexes
+/// were empty (no dump, an unpowered mine): the builder stayed attached to the
+/// stalled task, no other construction could get a builder, and every strategy
+/// plan of the base silently died behind it (manual defect "the AI builds
+/// nothing", root cause of the stalled `PlanNextBuildJob`).
+///
+/// The power/worker reserve branches of the oracle (`IsMorePowerNeeded`,
+/// `IsMoreLifeNeeded`) are enforced by the power and habitat assistants in the
+/// port (a shortage pauses the factory), so they are not repeated here.
+pub(crate) fn check_materials(
+    world: &crate::game::GameState,
+    team: TeamId,
+    unit_type: UnitType,
+    builder: UnitId,
+) -> bool {
+    let Some(builder_info) = world.unit(builder).cloned() else {
+        return false;
+    };
 
-    let turns = turns_to_build(world, team, unit_type);
-    let _ = turns;
+    if cargo_raw_consumption_rate(unit_type, 1) > 0
+        && crate::ai::task::task_get_ready_units_count(world, team, unit_type) > 0
+        && need_to_reserve_raw_materials(world, team)
+    {
+        return false;
+    }
+
+    let demand = turns_to_build(world, team, unit_type)
+        * cargo_raw_consumption_rate(builder_info.unit_type, 1);
+
+    i32::from(builder_info.storage) >= demand
+}
+
+/// `TaskCreateUnit::WaitForMaterials` (`taskcreateunit.cpp`) — a factory pays for a
+/// unit from its **complex** (`builder->GetComplex()->GetCargoInfo`), threshold
+/// 10 raw units.
+///
+/// This is a different rule from [`check_materials`] (a mobile builder pays from
+/// its own cargo): both were the same simplified function in the previous port,
+/// which is why the complex stock leaked into the construction path.
+pub(crate) fn check_unit_materials(
+    world: &crate::game::GameState,
+    team: TeamId,
+    _unit_type: UnitType,
+) -> bool {
+    const REQUIRED_RAW_MATERIALS: i32 = 10;
 
     match team_materials(world, team) {
         None => true,
@@ -113,7 +169,10 @@ pub(crate) fn check_materials(world: &crate::game::GameState, team: TeamId, unit
 /// `UnitsManager_NeedToReserveRawMaterials` for the team.
 ///
 /// A port of `TaskManager_NeedToReserveRawMaterials` (`ai.cpp:434`): raw material
-/// carried by units minus the consumption of the team's buildings.
+/// carried by units minus the consumption of the team's buildings. The rate is
+/// `Cargo_GetRawConsumptionRate(type, 1)`; the previous port used an ad-hoc
+/// consumer table (a mine "consuming" 2), which made the AI hold raw back for a
+/// base that never consumed it and fed the stalled-material deadlock above.
 pub(crate) fn need_to_reserve_raw_materials(world: &crate::game::GameState, team: TeamId) -> bool {
     let mut raw_materials: i32 = -10;
 
@@ -147,7 +206,7 @@ pub(crate) fn need_to_reserve_raw_materials(world: &crate::game::GameState, team
             continue;
         }
 
-        raw_materials -= raw_consumption_rate(unit.unit_type);
+        raw_materials -= cargo_raw_consumption_rate(unit.unit_type, 1);
 
         if cargo_type_of(unit.unit_type) == Some(CargoType::Raw) {
             raw_materials += i32::from(unit.storage);
@@ -264,16 +323,45 @@ fn resource_amount(world: &crate::game::GameState, site: Point) -> i32 {
 
 /// `TaskCreateBuilding::FindBuildSite` — search for a free site nearby.
 ///
-/// C++ scans the `AccessMap` around the claimed site; here — the square
-/// of radius 8 around the site in `y`, then `x` order (like the C++ `rect` loops),
-/// preferring sites near raw material for an ore station.
-pub(crate) fn find_build_site(
+/// C++ builds a construction map before the search: `ClearBuildingAreas` marks
+/// every stationary building of the team (`taskmanagebuildings.cpp:308-317`,
+/// anything else in the cell hash too) and `ClearPlannedBuildings` marks the
+/// footprint of every other `TaskCreateBuilding` that has committed to a site
+/// (`:352-374`). The port checks the cell hash for the candidate footprint and
+/// excludes the sites of the base's other plans — without the occupancy check a
+/// plan could be placed on a cell that was already taken, which is how the AI
+/// once put its radar on top of the light vehicle plant.
+///
+/// `task_id` — the task that searches (its own site is not a blocker); `allowed`
+/// — the units that do not block the footprint (the builder and the construction
+/// utilities of that site). The ore preference of a mining station is a port
+/// addition (the C++ volume search uses the resource survey instead); it is kept
+/// unchanged here.
+pub(crate) fn find_build_site_for_task(
     world: &crate::game::GameState,
     team: TeamId,
     unit_type: UnitType,
     origin: Point,
+    planned: &[(Point, i16)],
+    allowed: &[UnitId],
 ) -> Option<Point> {
-    if is_valid_building_site(world, team, unit_type, origin) && origin.x >= 0 && origin.y >= 0 {
+    let site_is_free = |site: Point| {
+        crate::production::site_is_free_except(world, unit_type, site, allowed)
+            && !planned.iter().any(|(planned_site, planned_size)| {
+                crate::production::footprints_overlap(
+                    site,
+                    crate::production::footprint(unit_type),
+                    *planned_site,
+                    *planned_size,
+                )
+            })
+    };
+
+    if is_valid_building_site(world, team, unit_type, origin)
+        && origin.x >= 0
+        && origin.y >= 0
+        && site_is_free(origin)
+    {
         return Some(origin);
     }
 
@@ -286,7 +374,8 @@ pub(crate) fn find_build_site(
         while x <= origin.x + RADIUS {
             let site = Point::new(x, y);
 
-            if x >= 0 && y >= 0 && is_valid_building_site(world, team, unit_type, site) {
+            if x >= 0 && y >= 0 && is_valid_building_site(world, team, unit_type, site) && site_is_free(site)
+            {
                 let score = if unit_type == UnitType::MiningStation {
                     let mut ore = 0;
                     for dy in -1..=2 {
@@ -319,6 +408,36 @@ pub(crate) fn find_build_site(
     }
 
     best.map(|(_, site)| site)
+}
+
+/// `TaskManageBuildings::ClearPlannedBuildings` (`taskmanagebuildings.cpp:352`):
+/// the footprints of the other `TaskCreateBuilding` tasks of the team.
+///
+/// Read from the **task manager**, not from `world.ai.task_manager`: inside a task
+/// handler the manager is temporarily taken out of the world (the
+/// `with_task_manager` idiom).
+///
+/// A site that is merely planned is included as well (C++ limits the mark to
+/// `HasCommittedToSite`): the builder census already counts it, so the cells are
+/// taken; excluding them is what keeps two plans of one turn apart.
+pub(crate) fn planned_build_footprints(
+    manager: &TaskManager,
+    team: TeamId,
+    exclude: Option<u32>,
+) -> Vec<(Point, i16)> {
+    let mut planned = Vec::new();
+
+    for task in manager.tasks() {
+        if task.team != team || Some(task.id) == exclude {
+            continue;
+        }
+
+        if let TaskKind::CreateBuilding { unit_type, site, .. } = &task.kind {
+            planned.push((*site, crate::production::footprint(*unit_type)));
+        }
+    }
+
+    planned
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +816,7 @@ fn create_unit_wait_for_materials(
         return;
     }
 
-    if !check_materials(ctx.world, header.team, unit_type) {
+    if !check_unit_materials(ctx.world, header.team, unit_type) {
         return;
     }
 
@@ -944,7 +1063,16 @@ fn create_building_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: 
                     return;
                 }
 
-                match find_build_site(ctx.world, header.team, unit_type, site) {
+                let planned = planned_build_footprints(ctx.tm, header.team, Some(header.id));
+
+                match find_build_site_for_task(
+                    ctx.world,
+                    header.team,
+                    unit_type,
+                    site,
+                    &planned,
+                    &[builder_id],
+                ) {
                     Some(new_site) => {
                         if let TaskKind::CreateBuilding { site, op_state, .. } = kind {
                             *site = new_site;
@@ -1156,7 +1284,8 @@ fn create_building_execute(
 
     match *op_state {
         create_building_state::MOVING_TO_SITE => {
-            if !check_materials(ctx.world, header.team, *unit_type) {
+            if !check_materials(ctx.world, header.team, *unit_type, unit) {
+                create_building_request_materials(kind, ctx, header, unit);
                 return true;
             }
 
@@ -1196,12 +1325,22 @@ fn create_building_execute(
             true
         }
         create_building_state::GETTING_MATERIALS => {
-            if !check_materials(ctx.world, header.team, *unit_type) {
+            if !check_materials(ctx.world, header.team, *unit_type, unit) {
+                create_building_request_materials(kind, ctx, header, unit);
                 return true;
             }
 
             if manager.is_some() {
-                if let Some(new_site) = find_build_site(ctx.world, header.team, *unit_type, *site) {
+                let planned = planned_build_footprints(ctx.tm, header.team, Some(header.id));
+
+                if let Some(new_site) = find_build_site_for_task(
+                    ctx.world,
+                    header.team,
+                    *unit_type,
+                    *site,
+                    &planned,
+                    &[unit],
+                ) {
                     *site = new_site;
                 }
             }
@@ -1316,7 +1455,44 @@ fn create_building_begin(
         return;
     }
 
-    if !check_materials(ctx.world, header.team, *unit_type) {
+    if !check_materials(ctx.world, header.team, *unit_type, unit) {
+        create_building_request_materials(kind, ctx, header, unit);
+        return;
+    }
+
+    // The site was searched some turns ago. The builder's own cell, its site
+    // utilities and nothing else may stand there now; another plan that started
+    // in between is a blocker, so the site is searched again instead of laying
+    // this building on top of it (the "radar over the light plant" defect).
+    let mut allowed = vec![unit];
+    allowed.extend(crate::production::construction_utilities_at(
+        ctx.world,
+        header.team,
+        *unit_type,
+        *site,
+        unit,
+    ));
+
+    if !crate::production::site_is_free_except(ctx.world, *unit_type, *site, &allowed) {
+        let planned = planned_build_footprints(ctx.tm, header.team, Some(header.id));
+
+        match find_build_site_for_task(
+            ctx.world,
+            header.team,
+            *unit_type,
+            *site,
+            &planned,
+            &allowed,
+        ) {
+            Some(new_site) => {
+                if let TaskKind::CreateBuilding { site, op_state, .. } = kind {
+                    *site = new_site;
+                    *op_state = create_building_state::MOVING_TO_SITE;
+                }
+            }
+            None => create_building_abort(kind, ctx, header),
+        }
+
         return;
     }
 
@@ -1348,12 +1524,80 @@ fn create_building_begin(
     let _ = (manager, builder);
 }
 
-/// `TaskCreateBuilding::Finish`.
+/// `TaskCreateBuilding::CheckMaterials`'s fetch request
+/// (`taskcreatebuilding.cpp:1070-1078`): the builder is short of raw material, so
+/// `TaskGetMaterials(this, *builder, resource_demand)` is appended and the builder
+/// walks to the base's storage to fill its cargo.
+///
+/// The oracle appends a task on every failed check; the port keeps one per
+/// construction (the task removes itself once the cargo is on hand), which avoids
+/// a pile of duplicate fetch tasks for the same builder.
+fn create_building_request_materials(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    builder: UnitId,
+) {
+    let TaskKind::CreateBuilding { unit_type, .. } = kind else {
+        return;
+    };
+
+    let unit_type = *unit_type;
+
+    let already_requested = ctx.tm.tasks().iter().any(|task| {
+        task.parent == Some(header.id) && matches!(task.kind, TaskKind::GetMaterials { .. })
+    });
+
+    if already_requested {
+        return;
+    }
+
+    let Some(builder_info) = ctx.unit(builder) else {
+        return;
+    };
+
+    let demand =
+        turns_to_build(ctx.world, header.team, unit_type) * cargo_raw_consumption_rate(builder_info.unit_type, 1);
+    let missing = demand - i32::from(builder_info.storage);
+
+    if missing <= 0 {
+        return;
+    }
+
+    let priority = ctx.priority_of(header.id);
+    let resource = GetResourceState {
+        requestor: Some(builder),
+        ..GetResourceState::default()
+    };
+    let child = TaskKind::GetMaterials {
+        resource,
+        materials_needed: missing.min(i32::from(u16::MAX)) as u16,
+    };
+
+    ctx.append_task(header.team, Some(header.id), priority, child);
+}
+
+/// `TaskCreateBuilding::Finish` (`taskcreatebuilding.cpp:317-360`).
+///
+/// Besides the cleanup the oracle hands the completed building over to the base
+/// manager — `AddUnit(*building)` (`:326-334`), which reaches
+/// `TaskManageBuildings::AddUnit` (`:2168`) and appends the unit to its `units`
+/// list. That list is the **only** way the base learns about a building after
+/// the first turn (`AiPlayer::AddBuilding` runs inside `need_init`,
+/// `aiplayer.cpp:2343-2348`), and `PlanNextBuildJob` returns immediately while it
+/// is empty (`taskmanagebuildings.cpp:1011`). Without the handover an AI base
+/// finished its first mining station and then planned nothing at all: every
+/// strategy (light plant, heavy plant, air plant, shipyard, training hall,
+/// habitat, greenhouse, research) is reached through that list.
 fn create_building_finish(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
     let TaskKind::CreateBuilding {
+        unit_type,
+        site,
         op_state,
         tasks,
         builder,
+        building,
+        manager,
         ..
     } = kind
     else {
@@ -1361,6 +1605,30 @@ fn create_building_finish(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
     };
 
     *op_state = create_building_state::FINISHED;
+
+    // `Finish`: `if (building && building->GetOrder() != ORDER_IDLE &&
+    // building->GetOrder() != ORDER_AWAIT_SCALING) AddUnit(*building);` — the
+    // tracked building, or the one standing on the site when the task never got
+    // the handover (the builder leaves before the grow animation ends).
+    //
+    // Deviation: the port registers the building even when it is still
+    // `ORDER_AWAIT_SCALING` or already `ORDER_IDLE`. The C++ guard relies on a
+    // later `TaskActivate` handover (`taskactivate.cpp:263`), and the port's
+    // activate path only hands over a building that is no longer idle/scaling —
+    // so keeping the guard would lose such a building from the manager for good,
+    // and with it the whole strategy branch of `PlanNextBuildJob`.
+    let completed = (*building).or_else(|| {
+        ctx.world.units_at(*site).iter().copied().find(|id| {
+            ctx.world
+                .unit(*id)
+                .map(|unit| unit.team == header.team && unit.unit_type == *unit_type)
+                .unwrap_or(false)
+        })
+    });
+
+    if let (Some(manager_id), Some(building_id)) = (*manager, completed) {
+        ctx.tm.task_add_unit(ctx.world, manager_id, building_id);
+    }
 
     if let Some(builder_id) = *builder {
         ctx.clear_unit_tasks(builder_id, false);
@@ -1372,6 +1640,8 @@ fn create_building_finish(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: Ta
     tasks.clear();
 
     *builder = None;
+    *building = None;
+    *manager = None;
 
     if let Some(parent) = header.parent {
         ctx.tm.task_child_complete(ctx.world, parent, header.id);
