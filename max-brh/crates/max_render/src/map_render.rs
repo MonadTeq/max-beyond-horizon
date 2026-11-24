@@ -317,7 +317,8 @@ pub fn render_resources_into(
     painted
 }
 
-/// Draws resource markers from `MAX.RES` (`Survey_RenderMarker`).
+/// Draws the survey overlay from `MAX.RES` (`Survey_RenderMarkers` +
+/// `Survey_RenderMarker`, `survey.cpp:32-155`).
 ///
 /// Unlike [`render_resources_into`] (colored dots for the simplified
 /// render without game data), this uses the real images
@@ -330,12 +331,18 @@ pub fn render_resources_into(
 ///
 /// `team`/`max_survey` — the survey mask (`Survey_RenderMarkers`,
 /// `survey.cpp:137-151`): `mask = GameManager_MaxSurvey ? 0xFFFF : 0` plus
-/// the team's `hash_team_id`. The icon is drawn only where
-/// `ResourceManager_CargoMap & mask`, that is, **surveyed** by this team
-/// (or the `MAXSURVEY` cheat is enabled). In addition, C++ requires
+/// the team's `hash_team_id`. In addition, C++ requires
 /// `Access_GetModifiedSurfaceType(i, j) != SURFACE_TYPE_AIR`.
 ///
-/// Returns `(pixels drawn, cells with an icon)`.
+/// Every cell the team has **surveyed** gets its marker: `Survey_RenderMarkers`
+/// calls `Survey_RenderMarker` for each surveyed cell, and the marker index is
+/// `min(CargoMap & CARGO_MASK, 16)` — `*MK0` for a cell **without** a deposit
+/// (the small circle that shows the scout has already explored the cell), `*MK1..16`
+/// for a known deposit. At `zoom <= 16` C++ uses the small `SM*MK` set and returns
+/// early for `resource_value == 0` (`survey.cpp:62-64`), so empty surveyed cells get
+/// no marker there.
+///
+/// Returns `(pixels drawn, cells with a marker)`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_resource_icons_into(
     dst: &mut RgbaBuffer,
@@ -364,9 +371,6 @@ pub fn render_resource_icons_into(
         }
 
         let entry = map.resource_at(grid_x, grid_y);
-        let Some(kind) = entry.resource_type().filter(|_| entry.amount() > 0) else {
-            continue;
-        };
 
         // `CargoMap & mask`: team bit (or 0xFFFF with the MAXSURVEY cheat).
         if !max_survey && !entry.is_visible_to(team) {
@@ -378,34 +382,49 @@ pub fn render_resource_icons_into(
             continue;
         }
 
+        // `resource_value = min(material_type & CARGO_MASK, 16)` (`survey.cpp:39`).
+        let amount = entry.amount().min(16);
+        // Marker family by the cargo bits: gold → `GOLDMK*`, fuel → `FUELMK*`,
+        // otherwise `RAWMSK*` (`survey.cpp:41-50`). A cell without a deposit keeps
+        // the `RAWMSK0` circle.
+        let kind = entry.resource_type().unwrap_or(ResourceKind::Raw);
+
+        // C++: `Gfx_ZoomLevel > 16` — large markers, otherwise small ones. At the small
+        // zoom an empty surveyed cell has no marker at all (`survey.cpp:62-64`).
+        if zoom <= 16 && amount == 0 {
+            continue;
+        }
+
         let centre = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
-        // C++: `Gfx_ZoomLevel > 16` — large markers, otherwise small ones.
-        let image = if zoom > 16 {
-            markers.big(kind, entry.amount())
+        let (image, num, den) = if zoom > 16 {
+            // Large marker — `zoom/64` (`WindowManager_RescaleSimpleImage`,
+            // `Gfx_MapScalingFactor`).
+            (markers.big(kind, amount), zoom, 64)
         } else {
-            markers.small(kind, entry.amount())
+            // Small marker — `zoom/16`.
+            (markers.small(kind, amount), zoom, 16)
         };
 
-        if let Some(image) = image {
-            // Scale of the original: large marker — `zoom/64`, small — `zoom/16`.
-            let (num, den) = if zoom > 16 { (zoom, 64) } else { (zoom, 16) };
-            let drawn = blit_marker(dst, image, palette, centre, num, den);
-
-            if drawn > 0 {
-                painted += drawn;
-                cells += 1;
-            }
+        let drawn = if let Some(image) = image {
+            blit_marker(dst, image, palette, centre, num, den)
         } else if let Some(icon) = markers.icon(kind) {
             // Fallback: the `I_*` interface icon at the center of the cell (not
-            // used in the original, but better than a colored dot).
-            let hotspot = (i32::from(icon.width) / 2, i32::from(icon.height) / 2);
-            let drawn = blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1);
-
-            if drawn > 0 {
-                painted += drawn;
-                cells += 1;
+            // used in the original, but better than nothing). Only for a known
+            // deposit — an empty cell has no interface icon.
+            if amount == 0 {
+                0
+            } else {
+                let hotspot = (i32::from(icon.width) / 2, i32::from(icon.height) / 2);
+                blit_marker_at(dst, icon, palette, centre, hotspot, 1, 1)
             }
+        } else {
+            0
+        };
+
+        if drawn > 0 {
+            painted += drawn;
+            cells += 1;
         }
     }
 
@@ -640,10 +659,61 @@ mod tests {
             (0, 0),
             "клетка не разведана другой командой"
         );
-        assert_eq!(
-            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 1, true).1,
-            1,
+        // `GameManager_MaxSurvey` — the cheat draws the marker on **every** land
+        // cell of the view (`Survey_RenderMarkers`: `mask = 0xFFFF`).
+        assert!(
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 1, true)
+                .1
+                > 1,
             "чит MAXSURVEY (max_survey) показывает маркеры всех клеток"
+        );
+    }
+
+    /// `Survey_RenderMarker` (`survey.cpp:32-82`) — the surveyed-but-empty cell:
+    /// `min(CargoMap & CARGO_MASK, 16) == 0` still gets `RAWMSK0` (the "already
+    /// explored" circle) at `zoom > 16`, and nothing at `zoom <= 16`.
+    #[test]
+    fn a_surveyed_empty_cell_gets_the_circle_marker() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
+
+        if !path.is_file() {
+            return;
+        }
+
+        let archive = max_assets::ResArchive::open(&path).expect("MAX.RES");
+        let markers = max_assets::ResourceMarkers::load(&archive);
+
+        let mut resources = ResourceMap::new();
+        // Surveyed by RED, but no deposit: `CargoMap` has only the team bit.
+        resources.set(52, 53, ResourceMapEntry::new(0, None, 0b1000));
+        let map = Map::from_parts(uniform_map(Surface::LAND).surface, resources);
+        let mut palette = [[0u8, 0, 0, 255]; 256];
+
+        for (index, entry) in palette.iter_mut().enumerate() {
+            *entry = [index as u8, 255 - index as u8, 128, 255];
+        }
+
+        // Native zoom (64 > 16): the big `RAWMSK0` circle — 38×38 pixels.
+        let viewport = Viewport::new(448, 448);
+        let mut buffer = RgbaBuffer::new(448, 448);
+        let (painted, cells) =
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 0, false);
+
+        assert!(painted > 0, "кружок разведанной пустой клетки нарисован");
+        assert_eq!(cells, 1, "ровно одна разведанная клетка в кадре");
+        assert_eq!(
+            render_resource_icons_into(&mut buffer, &map, &viewport, &markers, &palette, 1, false),
+            (0, 0),
+            "чужая разведка кружок не рисует"
+        );
+
+        // Zoom 16: C++ returns early for `resource_value == 0` (`survey.cpp:62-64`).
+        let small = Viewport::with_center(448, 448, (52 * 64 + 32, 53 * 64 + 32), 16);
+        assert_eq!(
+            render_resource_icons_into(&mut buffer, &map, &small, &markers, &palette, 0, false),
+            (0, 0),
+            "на малом масштабе пустая клетка маркера не получает"
         );
     }
 

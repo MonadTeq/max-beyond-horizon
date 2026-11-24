@@ -150,6 +150,58 @@
 
 ### Исправлено
 
+- **Выключенный/паузный завод больше не списывает RAW и не продвигает стройку
+  (экономика).** Оракул: `cargo.cpp:88-95` (`Cargo_GetNetProduction`: списание только
+  при `ORDER_BUILD` и `ORDER_STATE != UNIT_READY`), `unitinfo.cpp:2905`
+  (`UnitInfo::UpdateProduction` — то же условие), `production_manager.cpp:677-711`
+  (`ValidateIndustry` останавливает стройку при нехватке), `game_manager.cpp:8076-8094`
+  (`GameManager_SpawnNewUnits` двигает `build_time` платной стройки).
+  Корень: порт останавливает стройку, **не выходя** из `ORDER_BUILD`, — ставит
+  `build_paused`; `ProductionManager::charge_units` решал вопрос списания по списку
+  пауз текущей оптимизации и не смотрел на сам флаг, а `spawn_units` двигал
+  `build_time` вообще без проверки заказа: выключенный (`ORDER_POWER_OFF`) или
+  снятый с очереди завод выпускал юнита без оплаты, а «осиротевшая» пауза
+  (комплекс не попал в таблицу команд) оплачивалась.
+  Исправление: единый предикат `production::is_construction_running`
+  (`ORDER_BUILD`, не `UNIT_READY`, не `build_paused`, `build_time > 0`, очередь
+  непуста) — по нему `charge_units` списывает RAW из комплекса, `spawn_units`
+  продвигает стройку, а панель UNIT рисует строку `USAGE` (раньше условие было
+  продублировано). Выключенный/паузный завод не платит и не выпускает юнита,
+  очередь и `build_time` сохраняются; после снятия паузы стройка продолжается и
+  снова платит. **CRC/снапшот:** меняется только у партий, где завод был
+  выключен или на паузе (в фикстуре SAVE1 таких нет — эталонные дайджесты не
+  сдвинулись); новый тест — `max_core/tests/construction_economy.rs::
+  an_off_or_paused_factory_spends_no_raw_and_does_not_advance`.
+
+- **Кружки survey: разведанная клетка без ресурса снова помечается (визуал).**
+  Оракул: `survey.cpp:123-155` (`Survey_RenderMarkers` зовёт `Survey_RenderMarker`
+  для **каждой** разведанной не-AIR клетки), `survey.cpp:32-82`
+  (`Survey_RenderMarker`: `resource_value = min(CargoMap & CARGO_MASK, 16)`,
+  при `Gfx_ZoomLevel > 16` — `RAWMSK0/FUELMK0/GOLDMK0 + resource_value`, то есть
+  `*MK0` — кружок уже исследованной клетки; при `<= 16` — малые `SM*MK` и ранний
+  выход для `resource_value == 0`), `drawmap.cpp:1065` (`DrawMap_RenderSurveyDisplay`).
+  Корень: `max_render::map_render::render_resource_icons_into` пропускал клетки без
+  месторождения (`entry.resource_type().filter(|_| entry.amount() > 0)`), поэтому
+  оверлей показывал только иконки ресурсов, а «след разведки» на пустых клетках
+  отсутствовал.
+  Исправление: маркер решается по маске разведки, семейство — по битам груза
+  (`Gold` → `GOLDMK*`, `Fuel` → `FUELMK*`, иначе `RAWMSK*`), индекс —
+  `min(amount, 16)`: пустая разведанная клетка получает `*MK0` (кружок) при
+  масштабе > 16 и ничего — при `<= 16`; порядок «сначала маска, потом ресурс» как
+  в C++. Только презентация. Golden-кадры `survey`, `survey-button`, `portrait`,
+  `panels/panel-survey` пересняты (0 дрейфа); новые тесты —
+  `max_app/tests/survey_circles.rs` (2 кадровых, требуют `MAX.RES`),
+  `max_render::map_render::tests::a_surveyed_empty_cell_gets_the_circle_marker`.
+
+- **`assert site=drawn` (QA-раннер) снова проверяет отрисовку площадки.** Оракул:
+  `unitinfogroup.cpp:59` (`UnitInfoGroup::IsRelevant` не рисует `ORDER_IDLE`).
+  Корень: проверка «прятала» декаль снятием бита видимости команды, но свой юнит
+  виден всегда (`vision::presented_visible` возвращает `true` для команды игрока
+  — поведение `d62a8a7`), поэтому оба кадра совпадали и `production.qa` падал на
+  `site=drawn` при нарисованной площадке. Исправление: декаль скрывается так же,
+  как в оракуле, — переводом в `ORDER_IDLE` с восстановлением заказа/состояния;
+  `qa_run production.qa` — PASS (1859 кадров, 30 PNG), остальные golden — PASS.
+
 - **Погрузка в транспорт: авиатранспорт не брал юнита на борт (`ORDER_LOAD` не
   выдавался).** Оракул: `airpath.cpp:281-283` (`AirPath::Execute` → `Paths_FinishMove`)
   и `airpath.cpp:408-456` (`Paths_FinishMove`: `UnitsManager_LoadUnit`, затем ветка

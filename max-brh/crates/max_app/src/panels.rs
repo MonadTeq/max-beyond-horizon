@@ -2117,12 +2117,10 @@ fn factory_raw_usage_row(unit: &UnitInfo) -> Option<StatRow> {
     }
 
     // `Cargo_GetNetProduction`/`ProductionManager::charge_units`: raw is charged
-    // only while the factory builds, before the unit is ready and while not paused.
-    if unit.orders != UnitOrder::Build
-        || unit.state == UnitOrderState::UnitReady
-        || unit.build_paused
-        || unit.build_list.is_empty()
-    {
+    // only while the construction runs — `ORDER_BUILD`, not `UNIT_READY`, not
+    // paused. The predicate is shared with the simulation, so "off" means the same
+    // in the panel and in the economy.
+    if !max_core::production::is_construction_running(unit) {
         return None;
     }
 

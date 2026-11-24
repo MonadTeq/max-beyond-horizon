@@ -461,3 +461,138 @@ fn paused_build_resumes_when_materials_arrive() {
         "после подвоза стройка доходит до конца"
     );
 }
+
+/// An **off** (switched off) or **paused** factory spends no RAW and does not advance.
+///
+/// Oracle:
+/// * `cargo.cpp:88-95` — `Cargo_GetNetProduction` charges a factory only in
+///   `ORDER_BUILD` and not in `ORDER_STATE_UNIT_READY`;
+/// * `unitinfo.cpp:2905` — `UnitInfo::UpdateProduction` charges only
+///   `ORDER_BUILD` as well;
+/// * `production_manager.cpp:677-711` — `ValidateIndustry` stops (pauses) a
+///   construction whose complex cannot pay;
+/// * `game_manager.cpp:8076-8094` — `GameManager_SpawnNewUnits` advances
+///   `build_time` only for the construction that was charged for.
+///
+/// The port stops a construction **without** leaving `ORDER_BUILD`: it marks the
+/// factory `build_paused`. A paused factory must therefore be handled exactly like a
+/// unit that is not in `ORDER_BUILD`: no RAW is spent and nothing is produced.
+#[test]
+fn an_off_or_paused_factory_spends_no_raw_and_does_not_advance() {
+    let mut state = economy_state(0);
+    let factory = state
+        .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(20, 20), 0)
+        .expect("training hall");
+    let dump = state
+        .spawn_unit(
+            UnitType::MaterialStorage,
+            TeamId::RED,
+            Point::new(22, 20),
+            0,
+        )
+        .expect("MaterialStorage");
+    state.unit_mut(dump).expect("MaterialStorage").storage = 20;
+    power_the_complex(&mut state, factory);
+
+    let mut manager = state.production_manager(TeamId::RED);
+    manager.enqueue(factory, UnitType::Infantry).expect("queue");
+    manager.commit(factory).expect("build");
+    drop(manager);
+
+    // The first turn is paid: 1 RAW leaves the complex and the construction advances.
+    production_turn(&mut state);
+    assert_eq!(
+        state
+            .snapshot()
+            .unit(dump)
+            .expect("MaterialStorage")
+            .storage,
+        19,
+        "включённый завод платит 1 RAW в ход"
+    );
+    assert_eq!(
+        state.snapshot().unit(factory).expect("factory").build_time,
+        1
+    );
+
+    // Switched off: C++ charges only `ORDER_BUILD` (`cargo.cpp:88-95`), so the
+    // factory neither pays nor advances — the queue and `build_time` are kept.
+    state.set_order(factory, UnitOrder::PowerOff, UnitOrderState::Init);
+    let events = production_turn(&mut state);
+    assert_eq!(
+        state
+            .snapshot()
+            .unit(dump)
+            .expect("MaterialStorage")
+            .storage,
+        19,
+        "выключенный завод не списывает RAW"
+    );
+    assert_eq!(
+        state.snapshot().unit(factory).expect("factory").build_time,
+        1,
+        "выключенный завод не продвигает стройку"
+    );
+    assert_eq!(count_type(&state, UnitType::Infantry), 0, "юнит не появился");
+    assert_eq!(
+        state.production_manager(TeamId::RED).queue(factory),
+        vec![UnitType::Infantry],
+        "очередь сохранена"
+    );
+    assert!(
+        events.iter().all(|event| event.kind != ProductionEventKind::Spawned),
+        "выключенный завод ничего не выпускает: {events:?}"
+    );
+
+    // Paused (C++ `ValidateIndustry`): the port keeps `ORDER_BUILD` and sets
+    // `build_paused`. The pause decision belongs to the turn, so the charge step must
+    // trust the flag even when the optimizer of this call did not re-decide it
+    // (the complex is not in the team's complex table — the optimizer body below
+    // does not see it). No RAW, no progress.
+    let mut unit = state.snapshot().unit(factory).expect("factory").clone();
+    unit.orders = UnitOrder::Build;
+    unit.state = UnitOrderState::ExecutingOrder;
+    unit.build_paused = true;
+    state.write_unit(factory, unit);
+    state.team_units_table_mut()[0].complexes.clear();
+
+    let events = production_turn(&mut state);
+    assert_eq!(
+        state
+            .snapshot()
+            .unit(dump)
+            .expect("MaterialStorage")
+            .storage,
+        19,
+        "завод на паузе не списывает RAW"
+    );
+    assert_eq!(
+        state.snapshot().unit(factory).expect("factory").build_time,
+        1,
+        "завод на паузе не продвигает стройку"
+    );
+    assert_eq!(count_type(&state, UnitType::Infantry), 0);
+    assert!(
+        events.iter().all(|event| event.kind != ProductionEventKind::Spawned),
+        "завод на паузе ничего не выпускает: {events:?}"
+    );
+
+    // The pause is released — the construction resumes and pays again.
+    state.unit_mut(factory).expect("factory").build_paused = false;
+    let events = production_turn(&mut state);
+    assert_eq!(
+        state
+            .snapshot()
+            .unit(dump)
+            .expect("MaterialStorage")
+            .storage,
+        18,
+        "после снятия паузы RAW снова списывается"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.kind == ProductionEventKind::Spawned),
+        "после снятия паузы стройка завершается: {events:?}"
+    );
+}

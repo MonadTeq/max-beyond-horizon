@@ -4405,19 +4405,33 @@ impl QaRunner {
                 }
 
                 // A frame with all decals against a frame without one: if the decal
-                // is actually drawn, its pixels will disappear (`IsRelevant`:
-                // `ORDER_IDLE` is not drawn).
+                // is actually drawn, its pixels will disappear. A decal is hidden the
+                // way the oracle hides it — `UnitInfoGroup::IsRelevant`
+                // (`unitinfogroup.cpp:59`) does not draw a unit in `ORDER_IDLE`. The
+                // per-team visibility bit is not usable here: an **own** unit is
+                // always visible (`vision::presented_visible` returns `true` for the
+                // player's own team), so clearing the bit left both frames identical.
                 let full = self.app.render_frame();
                 let mut ok = true;
                 let mut parts = Vec::new();
 
                 for (id, unit_type) in &decals {
+                    let prior = self
+                        .app
+                        .universe
+                        .unit_mut(*id)
+                        .map(|unit| (unit.orders, unit.state));
+
                     if let Some(unit) = self.app.universe.unit_mut(*id) {
-                        unit.set_visible_to_team(team, false);
+                        unit.orders = max_core::enums::UnitOrder::Idle;
                     }
                     let hidden = self.app.render_frame();
-                    if let Some(unit) = self.app.universe.unit_mut(*id) {
-                        unit.set_visible_to_team(team, true);
+
+                    if let (Some((orders, state)), Some(unit)) =
+                        (prior, self.app.universe.unit_mut(*id))
+                    {
+                        unit.orders = orders;
+                        unit.state = state;
                     }
 
                     let own = full
@@ -4630,8 +4644,9 @@ impl QaRunner {
                 )
             }
             Assertion::ResourceIcons(cmp, expected) => {
-                // Frame counter: how many cells with the resource icon are drawn
-                // (`Survey_RenderMarkers`) — only surveyed cells.
+                // Frame counter: how many cells with a survey marker are drawn
+                // (`Survey_RenderMarkers`) — every surveyed cell, including the
+                // `*MK0` circle of an explored cell without a resource.
                 let (_, stats) = self.app.render_frame_with_stats();
                 let actual = i64::from(stats.resource_icon_cells);
                 let expected = i64::from(expected);

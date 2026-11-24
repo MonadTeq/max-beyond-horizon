@@ -672,8 +672,9 @@ pub struct RenderStats {
     /// How many resource marker pixels were drawn ([`Self::resource_icon_cells`]
     /// — how many cells).
     pub resource_icons: u32,
-    /// How many **cells** with the resource icon were drawn (`Survey_RenderMarkers`,
-    /// `survey.cpp:123`): icons are visible only on surveyed cells.
+    /// How many survey markers were drawn (`Survey_RenderMarkers`,
+    /// `survey.cpp:123`): every **surveyed** cell of the view gets one — `*MK1..16`
+    /// for a known deposit, `*MK0` for an explored cell without a resource.
     pub resource_icon_cells: u32,
     /// How many units were drawn with sprites.
     pub units_drawn: usize,
@@ -1761,7 +1762,7 @@ impl<D: Dispatcher> App<D> {
         self.marker_color_index
     }
 
-    /// Resource icons — `DrawMap_RenderSurveyDisplay` (`drawmap.cpp:1065`) +
+    /// Survey markers — `DrawMap_RenderSurveyDisplay` (`drawmap.cpp:1065`) +
     /// `Survey_RenderMarkers` (`survey.cpp:123`).
     ///
     /// C++ (`game_manager.cpp:991-995`): `GameManager_RenderSurveyIndicator`
@@ -1770,9 +1771,11 @@ impl<D: Dispatcher> App<D> {
     /// (`Access_IsSurveyorOverlayActive`, `access.cpp:341`: a selected
     /// `SURVEYOR` of own team not in `ORDER_IDLE`). Inside
     /// `Survey_RenderMarkers` the mask is the team `hash_team_id` (the `MAXSURVEY` cheat
-    /// gives `0xFFFF` and is not enabled in the port), so the icon appears only on
+    /// gives `0xFFFF` and is not enabled in the port), so a marker appears only on
     /// a **surveyed** cell (`Survey_SurveyArea` sets the bit when the scout
-    /// passes by).
+    /// passes by): the `*MK1..16` amount of a known deposit, or the `*MK0` circle
+    /// of an explored cell **without** a resource (`Survey_RenderMarker`,
+    /// `survey.cpp:52-73`).
     fn draw_resource_icons(
         &self,
         frame: &mut RgbaBuffer,

@@ -291,6 +291,29 @@ pub fn is_factory(unit_type: UnitType) -> bool {
     FACTORIES.contains(&unit_type)
 }
 
+/// Whether the unit's construction is **running** this turn — the oracle's charge
+/// condition (`UnitInfo::UpdateProduction`, `unitinfo.cpp:2905`;
+/// `Cargo_GetNetProduction`, `cargo.cpp:88-91`): `ORDER_BUILD`, not
+/// `ORDER_STATE_UNIT_READY`, not switched off and not paused.
+///
+/// The port stops a construction **without** leaving `ORDER_BUILD`: on a shortage the
+/// power optimizer sets `build_paused` (C++ `ProductionManager::ValidateIndustry`,
+/// `production_manager.cpp:677-711`). A unit may also be switched off explicitly
+/// (`ORDER_POWER_OFF`/`ORDER_DISABLE`/`ORDER_HALT_BUILDING*`). Such a turn spends no
+/// raw material and does not advance (`GameManager_SpawnNewUnits`,
+/// `game_manager.cpp:8078`, advances only the construction that was paid for).
+///
+/// This one predicate is shared by the per-turn charge ([`ProductionManager::charge_units`]),
+/// the spawn step ([`ProductionManager::spawn_units`]) and the `USAGE` row of the
+/// info panel, so "the factory is off" means the same everywhere.
+pub fn is_construction_running(unit: &UnitInfo) -> bool {
+    unit.orders == UnitOrder::Build
+        && unit.state != UnitOrderState::UnitReady
+        && !unit.build_paused
+        && unit.build_time > 0
+        && !unit.build_list.is_empty()
+}
+
 /// A mobile builder (`CONSTRCT`/`ENGINEER`).
 pub fn is_mobile_builder(unit_type: UnitType) -> bool {
     MOBILE_BUILDERS.contains(&unit_type)
@@ -1679,11 +1702,7 @@ impl<'a> ProductionManager<'a> {
                     continue;
                 }
 
-                if matches!(
-                    unit.orders,
-                    UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2 | UnitOrder::Disable
-                ) || unit.state == UnitOrderState::UnitReady
-                {
+                if unit.state == UnitOrderState::UnitReady {
                     continue;
                 }
 
@@ -1729,17 +1748,28 @@ impl<'a> ProductionManager<'a> {
 
                 let cost = cost_per_turn(unit.unit_type, build_rate);
 
-                // A factory the optimizer has already paused (no
-                // power/fuel/workers/materials) does not pay this turn and
-                // does not advance (C++ `ValidateIndustry` → `BUILD_ABORT`; the port —
-                // a pause with the queue preserved).
-                if let Some((_, shortage)) = pause_reason.iter().find(|(unit, _)| *unit == id) {
-                    events.push(ProductionEvent {
-                        builder: id,
-                        unit_type: unit.build_list[0],
-                        spawned: None,
-                        kind: pause_event_kind(*shortage),
-                    });
+                // A construction the power optimizer paused (C++
+                // `ProductionManager::ValidateIndustry`, `production_manager.cpp:677-711`)
+                // stays in `ORDER_BUILD` but is marked `build_paused`: it spends no RAW
+                // this turn and does not advance (`GameManager_SpawnNewUnits`,
+                // `game_manager.cpp:8078`), the queue and `build_time` are kept.
+                // The pause decision of this very turn carries the reason; a pause
+                // left over without one is still honoured (silently) — a paused
+                // factory never pays.
+                if unit.build_paused {
+                    paused.push(id);
+
+                    if let Some((_, shortage)) =
+                        pause_reason.iter().find(|(unit_id, _)| *unit_id == id)
+                    {
+                        events.push(ProductionEvent {
+                            builder: id,
+                            unit_type: unit.build_list[0],
+                            spawned: None,
+                            kind: pause_event_kind(*shortage),
+                        });
+                    }
+
                     continue;
                 }
 
@@ -1813,6 +1843,18 @@ impl<'a> ProductionManager<'a> {
                     unit.orders,
                     UnitOrder::HaltBuilding | UnitOrder::HaltBuilding2
                 ) {
+                    continue;
+                }
+
+                // Only a **running** construction advances: a stationary factory that
+                // was switched off (`ORDER_POWER_OFF`/`ORDER_DISABLE`), is ready
+                // (`UNIT_READY`) or was paused by the power optimizer (`build_paused`)
+                // spends no RAW and produces nothing — `GameManager_SpawnNewUnits`
+                // (`game_manager.cpp:8078`) advances the construction that
+                // `Cargo_GetNetProduction` charged for ([`is_construction_running`]).
+                if unit.build_paused
+                    || (is_factory(unit.unit_type) && !is_construction_running(&unit))
+                {
                     continue;
                 }
 

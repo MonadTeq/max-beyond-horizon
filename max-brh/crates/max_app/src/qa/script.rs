@@ -330,8 +330,9 @@ pub enum Assertion {
     ConstructionSiteDrawn,
     /// `assert digest=HEX`: CRC16 of the state snapshot (`App::digest`).
     Digest(u16),
-    /// `assert resource-icons=N`: how many cells with the resource icon are drawn
-    /// (`Survey_RenderMarkers`): only surveyed cells.
+    /// `assert resource-icons=N`: how many cells with a survey marker are drawn
+    /// (`Survey_RenderMarkers`): every surveyed cell — a known deposit (`*MK1..16`)
+    /// or the `*MK0` circle of an explored cell without a resource.
     ResourceIcons(Cmp, u32),
     /// `assert survey-overlay=yes|no`: whether showing resource icons is enabled
     /// (`GameManager_RenderSurveyIndicator`: the SURVEY button or the selected
