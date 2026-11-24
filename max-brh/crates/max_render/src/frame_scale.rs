@@ -379,4 +379,31 @@ mod tests {
         assert_eq!(FrameScale::native(639, 479).scale(), 1);
         assert_eq!(FrameScale::native(100_000, 100_000).scale(), MAX_SCALE);
     }
+
+    /// Task 1.4.2 / golden gate: upscaling is a pure presentation transform.
+    ///
+    /// The 640×480 frame stays the reference (the golden is rendered into it,
+    /// never into a scaled buffer), and every window/DPI profile produces a
+    /// derived image without touching a single source byte.
+    #[test]
+    fn upscale_does_not_touch_the_source_frame() {
+        let frame = coded_frame();
+        let before = frame.pixels().to_vec();
+        let native = FrameScale::native(FRAME_WIDTH, FRAME_HEIGHT);
+
+        assert_eq!(native.scale(), 1);
+        assert_eq!(native.upscale(&frame).pixels(), before.as_slice());
+
+        for (width, height) in [(1280, 960), (1920, 1080), (2560, 1440), (3840, 2160)] {
+            let scale = FrameScale::native(width, height);
+            let window = scale.upscale(&frame);
+
+            assert_eq!((window.width(), window.height()), (width, height));
+            assert_eq!(
+                frame.pixels(),
+                before.as_slice(),
+                "the source frame changed at {width}x{height}"
+            );
+        }
+    }
 }

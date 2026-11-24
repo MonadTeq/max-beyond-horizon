@@ -38,6 +38,7 @@ pub mod frame_scale;
 pub mod layout;
 pub mod map_render;
 pub mod palette;
+pub mod presentation;
 pub mod sprite_atlas;
 pub mod terrain;
 pub mod text;
@@ -49,6 +50,7 @@ pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use presentation::{PresentationState, ScreenGeometry};
 pub use layout::{
     AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,
     HITS_BUTTON, MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON,

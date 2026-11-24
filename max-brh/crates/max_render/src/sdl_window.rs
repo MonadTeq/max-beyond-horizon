@@ -11,15 +11,35 @@
 //! a build from source:
 //!
 //! ```text
-//! # option 1 — system SDL3 (Linux: apt install libsdl3-dev; Windows: vcpkg):
+//! # option 1 РІР‚вЂќ system SDL3 (Linux: apt install libsdl3-dev; Windows: vcpkg):
 //! cargo run -p max_render --features sdl --example window
 //!
-//! # option 2 — SDL3 is built from source (cmake required; docker/CI):
+//! # option 2 РІР‚вЂќ SDL3 is built from source (cmake required; docker/CI):
 //! cargo run -p max_render --features sdl-from-source --example window
 //! ```
 //!
 //! Running without the `sdl` feature gives a compilation error in the calling code
-//! (the module simply does not exist) — this is deliberate: SDL must not leak into pure tests.
+//! (the module simply does not exist) РІР‚вЂќ this is deliberate: SDL must not leak into pure tests.
+//!
+//! # High DPI, fullscreen and focus (task 1.4.2)
+//!
+//! The window is created with `SDL_WINDOW_HIGH_PIXEL_DENSITY`, so the renderer owns
+//! a real pixel drawable: at 150% Windows scaling a 640Р“вЂ”480-point window has a
+//! 960Р“вЂ”720-pixel output. [`FrameScale`] is computed from the **pixel** output
+//! ([`ScreenGeometry`]), the frame stays nearest-neighbour and letterboxed, and a
+//! mouse point is mapped points РІвЂ вЂ™ pixels РІвЂ вЂ™ frame. That keeps the picture crisp
+//! instead of letting the OS stretch a 640Р“вЂ”480 back buffer bilinearly.
+//!
+//! `Alt+Enter` toggles borderless desktop fullscreen, as in the C++ oracle
+//! (`Svga_ToggleFullscreen`, `input.cpp`); `--fullscreen` opens the window in it.
+//! A fullscreen transition, a DPI/display-scale change, a resize and a monitor
+//! move only recompute the geometry РІР‚вЂќ the logical 640Р“вЂ”480 frame is unchanged.
+//!
+//! Focus/minimize/occlusion change **drawing only** ([`PresentationState`]):
+//! [`SdlWindow::present`] skips the upload while the window is hidden, but
+//! [`SdlWindow::poll_input`] keeps returning `running = true` and no simulation,
+//! pause or network state is touched (the oracle also keeps the loop alive on
+//! `SDL_EVENT_WINDOW_FOCUS_LOST`; `input.cpp:277-288`).
 
 use std::collections::HashMap;
 
@@ -35,6 +55,7 @@ use sdl3::EventPump;
 
 use crate::buffer::RgbaBuffer;
 use crate::frame_scale::FrameScale;
+use crate::presentation::{PresentationState, ScreenGeometry};
 
 /// A window key in UI terms: `max_app` does not depend on SDL types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,9 +82,9 @@ pub enum WindowKey {
     PageDown,
     /// Printable ASCII character (SDL reports the base layout: `a`, `0`, `.`).
     Char(char),
-    /// Printable ASCII character with Alt held (`Alt+P` — pause in the game).
+    /// Printable ASCII character with Alt held (`Alt+P` РІР‚вЂќ pause in the game).
     Alt(char),
-    /// Any other key (modifiers, F-keys, …).
+    /// Any other key (modifiers, F-keys, РІР‚В¦).
     Other,
 }
 
@@ -95,7 +116,7 @@ pub enum WindowInput {
     },
 }
 
-/// Translates an SDL key with modifiers: `Alt+<printable>` → [`WindowKey::Alt`]
+/// Translates an SDL key with modifiers: `Alt+<printable>` РІвЂ вЂ™ [`WindowKey::Alt`]
 /// (C++ `GNW_KB_KEY_LALT_P`).
 fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
     let alt = modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD);
@@ -127,10 +148,21 @@ fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
     }
 }
 
+/// `Alt+Enter` / `Alt+KpEnter` РІР‚вЂќ the fullscreen shortcut of the C++ oracle
+/// (`input.cpp:307-310` РІвЂ вЂ™ `Svga_ToggleFullscreen`).
+///
+/// Handled in [`SdlWindow::poll_input`] as a presentation action: it is not
+/// forwarded to the UI as a key, so a menu cannot interpret it as `Enter`.
+pub fn is_toggle_fullscreen_shortcut(code: Keycode, modifiers: Mod) -> bool {
+    let alt = modifiers.intersects(Mod::LALTMOD | Mod::RALTMOD);
+
+    alt && matches!(code, Keycode::Return | Keycode::Return2 | Keycode::KpEnter)
+}
+
 /// Window/frame output initialization error.
 #[derive(Debug)]
 pub struct WindowError {
-    /// The stage at which the error occurred (`init`, `video`, `window`, …).
+    /// The stage at which the error occurred (`init`, `video`, `window`, РІР‚В¦).
     pub stage: &'static str,
     /// SDL message.
     pub message: String,
@@ -155,7 +187,7 @@ impl std::error::Error for WindowError {}
 
 /// SDL3 window with a streaming texture for an RGBA8 frame.
 ///
-/// The texture is created on every [`SdlWindow::present`] — the `sdl3` crate yields a
+/// The texture is created on every [`SdlWindow::present`] РІР‚вЂќ the `sdl3` crate yields a
 /// `Texture<'creator>` that cannot be stored next to its `TextureCreator` in
 /// one structure without `unsafe` (and `unsafe` is forbidden in this crate). For
 /// the client this does not matter: SDL reuses the driver buffer, and the frame is
@@ -165,11 +197,20 @@ pub struct SdlWindow {
     creator: TextureCreator<WindowContext>,
     events: EventPump,
     title: String,
-    /// Logical frame size (640×480 in UI mode).
+    /// Logical frame size (640Р“вЂ”480 in UI mode).
     base_size: (u32, u32),
-    /// Current layout of the frame in the window (integer scale + bars).
-    frame_scale: FrameScale,
-    /// Cursor cache: key (`CursorId | frame << 8`) → SDL cursor.
+    /// Window points / drawable pixels / frame layout in pixels.
+    geometry: ScreenGeometry,
+    /// Focus/minimize/occlusion РІР‚вЂќ drawing decisions only.
+    presentation: PresentationState,
+    /// The window is in (borderless desktop) fullscreen.
+    fullscreen: bool,
+    /// Display scale reported by SDL at the last layout refresh.
+    display_scale: f32,
+    /// Refresh rate of the display at creation (Hz; diagnostics only).
+    display_refresh_rate: f32,
+    /// A layout or visibility change asks for one extra frame.
+    /// Cursor cache: key (`CursorId | frame << 8`) РІвЂ вЂ™ SDL cursor.
     cursors: HashMap<u32, Cursor>,
     /// Which key is currently installed (the SDL cursor lives in this cache).
     active_cursor: Option<u32>,
@@ -179,16 +220,18 @@ pub struct SdlWindow {
 }
 
 impl SdlWindow {
-    /// Creates a `width × height` window with the title `title`.
+    /// Creates a `width Р“вЂ” height` window with the title `title`.
     pub fn new(title: &str, width: u32, height: u32) -> Result<Self, WindowError> {
         Self::new_scaled(title, width, height, Some(1))
     }
 
-    /// Creates a `width*scale × height*scale` window; `scale = None` — pick an
-    /// integer scale for the desktop (the default, item F).
+    /// Creates a `width*scale Р“вЂ” height*scale` window (points); `scale = None` РІР‚вЂќ
+    /// pick an integer scale for the desktop (the default, item F).
     ///
-    /// The window is resizable; [`Self::present`] recomputes
-    /// [`FrameScale`] every frame and outputs the frame nearest-neighbour with black bars.
+    /// The window requests `SDL_WINDOW_HIGH_PIXEL_DENSITY`: the drawable is the
+    /// real pixel buffer (at 150% DPI a 640Р“вЂ”480-point window has 960Р“вЂ”720 pixels),
+    /// and [`Self::present`] lays the frame out in those pixels nearest-neighbour
+    /// with black bars. The window is resizable.
     pub fn new_scaled(
         title: &str,
         width: u32,
@@ -220,6 +263,7 @@ impl SdlWindow {
         let window = video
             .window(title, window_width, window_height)
             .resizable()
+            .high_pixel_density()
             .position_centered()
             .build()
             .map_err(|error| WindowError::new("window", error))?;
@@ -228,7 +272,18 @@ impl SdlWindow {
         let events = sdl
             .event_pump()
             .map_err(|error| WindowError::new("event_pump", error))?;
-        let (actual_width, actual_height) = canvas.window().size();
+        let window_points = canvas.window().size();
+        let output_pixels = canvas
+            .output_size()
+            .unwrap_or_else(|_| canvas.window().size_in_pixels());
+        let display_scale = canvas.window().display_scale();
+        let display_refresh_rate = canvas
+            .window()
+            .get_display()
+            .ok()
+            .and_then(|display| display.get_mode().ok())
+            .map(|mode| mode.refresh_rate)
+            .unwrap_or(0.0);
 
         Ok(Self {
             canvas,
@@ -236,16 +291,27 @@ impl SdlWindow {
             events,
             title: title.to_owned(),
             base_size: (width, height),
-            frame_scale: FrameScale::fit(actual_width, actual_height, width, height),
+            geometry: ScreenGeometry::fit(window_points, output_pixels, width, height),
+            presentation: PresentationState::new(),
+            fullscreen: false,
+            display_scale,
+            display_refresh_rate,
             cursors: HashMap::new(),
             active_cursor: None,
             _sdl: sdl,
         })
     }
 
-    /// Window size in pixels.
+    /// Window size in screen coordinates (points): what SDL mouse events carry.
     pub fn size(&self) -> (u32, u32) {
         self.canvas.window().size()
+    }
+
+    /// Drawable size in pixels (`SDL_GetRenderOutputSize`).
+    pub fn output_size(&self) -> (u32, u32) {
+        self.canvas
+            .output_size()
+            .unwrap_or_else(|_| self.canvas.window().size_in_pixels())
     }
 
     /// Logical frame size.
@@ -253,29 +319,131 @@ impl SdlWindow {
         self.base_size
     }
 
-    /// Current integer frame scale.
+    /// Current integer frame scale (in drawable pixels).
     pub fn frame_scale(&self) -> FrameScale {
-        self.frame_scale
+        self.geometry.frame_scale()
+    }
+
+    /// Current geometry: window points, drawable pixels, frame layout.
+    pub fn geometry(&self) -> ScreenGeometry {
+        self.geometry
+    }
+
+    /// Pixels per point at the last layout refresh (`1.0` at 100% DPI).
+    pub fn dpi_scale(&self) -> f32 {
+        self.display_scale
+    }
+
+    /// Display refresh rate reported by SDL (Hz; `0.0` if unknown).
+    pub fn display_refresh_rate(&self) -> f32 {
+        self.display_refresh_rate
+    }
+
+    /// Whether the window currently has the input focus.
+    pub fn is_focused(&self) -> bool {
+        self.presentation.is_focused()
+    }
+
+    /// Whether the window is minimized.
+    pub fn is_minimized(&self) -> bool {
+        self.presentation.is_minimized()
+    }
+
+    /// Whether a frame should be uploaded to the window.
+    ///
+    /// A hidden/occluded window still runs its simulation and its network loop;
+    /// only the GPU upload is skipped (task 1.4.2, alt-tab gate).
+    pub fn should_present(&self) -> bool {
+        self.presentation.should_draw()
+    }
+
+    /// Whether the window is in borderless desktop fullscreen.
+    pub fn is_fullscreen(&self) -> bool {
+        self.fullscreen
+    }
+
+    /// Enters or leaves borderless desktop fullscreen.
+    ///
+    /// Matches the oracle (`Svga_ToggleFullscreen`): the window is sized to the
+    /// display bounds first, then switched, so leaving fullscreen restores a
+    /// sane window. The logical frame is unchanged: only the geometry (and with
+    /// it the integer scale and the letterbox) is recomputed.
+    pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<(), WindowError> {
+        if fullscreen == self.fullscreen {
+            return Ok(());
+        }
+
+        if fullscreen {
+            let bounds = self
+                .canvas
+                .window()
+                .get_display()
+                .ok()
+                .and_then(|display| display.get_bounds().ok());
+
+            if let Some(bounds) = bounds {
+                self.canvas
+                    .window_mut()
+                    .set_size(bounds.width(), bounds.height())
+                    .map_err(|error| WindowError::new("fullscreen_size", error))?;
+            }
+        }
+
+        self.canvas
+            .window_mut()
+            .set_fullscreen(fullscreen)
+            .map_err(|error| WindowError::new("fullscreen", error))?;
+        self.fullscreen = fullscreen;
+        self.refresh_layout();
+        eprintln!(
+            "SDL: fullscreen={fullscreen}, Р С•Р С”Р Р…Р С• {}x{} РЎвЂљР С•РЎвЂЎР ВµР С” / {}x{} Р С—Р С‘Р С”РЎРѓР ВµР В»Р ВµР в„–, Р СР В°РЎРѓРЎв‚¬РЎвЂљР В°Р В± {}",
+            self.size().0,
+            self.size().1,
+            self.output_size().0,
+            self.output_size().1,
+            self.geometry.scale()
+        );
+        Ok(())
+    }
+
+    /// Toggles fullscreen; returns the new state.
+    pub fn toggle_fullscreen(&mut self) -> Result<bool, WindowError> {
+        self.set_fullscreen(!self.fullscreen)?;
+        Ok(self.fullscreen)
     }
 
     /// Recomputes the layout for the current window size and frame size.
     pub fn update_frame_scale(&mut self, frame_width: u32, frame_height: u32) -> FrameScale {
         let (window_width, window_height) = self.size();
+        let output = self.output_size();
 
-        if (frame_width, frame_height) != self.frame_scale.frame_size()
-            || (window_width, window_height) != self.frame_scale.window_size()
+        if (frame_width, frame_height) != self.geometry.frame_size()
+            || (window_width, window_height) != self.geometry.window_points()
+            || output != self.geometry.output_pixels()
         {
             self.base_size = (frame_width, frame_height);
-            self.frame_scale =
-                FrameScale::fit(window_width, window_height, frame_width, frame_height);
+            self.geometry = ScreenGeometry::fit(
+                (window_width, window_height),
+                output,
+                frame_width,
+                frame_height,
+            );
         }
 
-        self.frame_scale
+        self.geometry.frame_scale()
     }
 
-    /// Window point → frame coordinates (for clicks at scale ≠ 1).
+    /// Refreshes geometry from the current window/drawable sizes and display scale.
+    fn refresh_layout(&mut self) {
+        let (width, height) = self.base_size;
+
+        self.display_scale = self.canvas.window().display_scale();
+        self.geometry = ScreenGeometry::fit(self.size(), self.output_size(), width, height);
+    }
+
+    /// Window point (points) РІвЂ вЂ™ frame coordinates (for clicks at scale РІвЂ°В  1).
     pub fn window_to_frame(&self, x: i32, y: i32) -> Option<(i32, i32)> {
-        self.frame_scale.window_to_frame(x, y)
+        self.geometry.window_to_frame(x, y)
     }
 
     /// Window title.
@@ -311,7 +479,7 @@ impl SdlWindow {
 
         if !self.cursors.contains_key(&key) {
             if width == 0 || height == 0 {
-                return Err(WindowError::new("cursor", "нулевой размер курсора"));
+                return Err(WindowError::new("cursor", "Р Р…РЎС“Р В»Р ВµР Р†Р С•Р в„– РЎР‚Р В°Р В·Р СР ВµРЎР‚ Р С”РЎС“РЎР‚РЎРѓР С•РЎР‚Р В°"));
             }
 
             let expected = width as usize * height as usize * 4;
@@ -319,7 +487,7 @@ impl SdlWindow {
             if rgba.len() < expected {
                 return Err(WindowError::new(
                     "cursor",
-                    format!("кадр курсора короче: {} < {expected}", rgba.len()),
+                    format!("Р С”Р В°Р Т‘РЎР‚ Р С”РЎС“РЎР‚РЎРѓР С•РЎР‚Р В° Р С”Р С•РЎР‚Р С•РЎвЂЎР Вµ: {} < {expected}", rgba.len()),
                 ));
             }
 
@@ -357,15 +525,23 @@ impl SdlWindow {
     ///
     /// The frame is not stretched over the whole window: [`FrameScale`] computes an integer
     /// scale and centers it, and black bars remain around it. Thus every
-    /// pixel of the 640×480 frame remains a square `N×N` block on any
+    /// pixel of the 640Р“вЂ”480 frame remains a square `NР“вЂ”N` block on any
     /// monitor (item F), and the mouse is translated back through
     /// [`Self::window_to_frame`].
+    ///
+    /// The upload is skipped while the window is minimized/occluded: a hidden
+    /// window is not drawn, but the caller's loop keeps running (no state reset).
     pub fn present(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
         if buffer.is_empty() {
             return Ok(());
         }
 
         let scale = self.update_frame_scale(buffer.width(), buffer.height());
+
+        if !self.should_present() {
+            return Ok(());
+        }
+
         let mut texture = self
             .creator
             .create_texture_streaming(PixelFormat::RGBA32, buffer.width(), buffer.height())
@@ -406,29 +582,32 @@ impl SdlWindow {
 
     /// Polls the event queue and returns the events to the UI layer.
     ///
-    /// Mouse coordinates are translated from the window to the logical frame through
-    /// [`FrameScale`]: at scale 2 a click in a 1280×960 window arrives at the UI as
-    /// a click in a 640×480 frame (item F). A click on a black bar outside the frame yields
-    /// `(-1, -1)` — the UI ignores it.
+    /// Mouse coordinates are translated from window points to the logical frame
+    /// through [`Self::window_to_frame`] (points РІвЂ вЂ™ pixels РІвЂ вЂ™ frame): at 150% DPI a
+    /// click in a 640Р“вЂ”480-point window still arrives at the UI as a 640Р“вЂ”480-frame
+    /// point. A click on a black bar outside the frame yields `(-1, -1)` РІР‚вЂќ the UI
+    /// ignores it.
     ///
     /// `running == false` means the window was closed (`Quit`); Esc does **not** close
-    /// the window at this level — the UI decides itself (in the menu — exit, in a subscreen —
+    /// the window at this level РІР‚вЂќ the UI decides itself (in the menu РІР‚вЂќ exit, in a subscreen РІР‚вЂќ
     /// back). For the old "Esc closes the window" behavior there is [`Self::poll`].
+    ///
+    /// `Alt+Enter` toggles fullscreen here (presentation only, the oracle's
+    /// `Svga_ToggleFullscreen`) and does not reach the UI as a key. Focus,
+    /// minimize, occlusion, resize, DPI and monitor changes update the
+    /// presentation state/geometry only.
     pub fn poll_input(&mut self) -> (bool, Vec<WindowInput>) {
         let mut running = true;
         let mut inputs = Vec::new();
-        // The window may have been resized since the previous frame — update the layout before
+        // The window may have been resized since the previous frame РІР‚вЂќ update the layout before
         // recomputing the mouse coordinates.
-        let (window_width, window_height) = self.size();
-        self.frame_scale = FrameScale::fit(
-            window_width,
-            window_height,
-            self.base_size.0,
-            self.base_size.1,
-        );
-        let frame_scale = self.frame_scale;
+        self.refresh_layout();
+        let mut geometry = self.geometry;
+        // Drain the queue first: the iterator borrows `self.events`, while the
+        // handlers below need `&mut self` (fullscreen toggle, layout refresh).
+        let events: Vec<sdl3::event::Event> = self.events.poll_iter().collect();
 
-        for event in self.events.poll_iter() {
+        for event in events {
             match event {
                 sdl3::event::Event::Quit { .. } => running = false,
                 sdl3::event::Event::KeyDown {
@@ -436,9 +615,20 @@ impl SdlWindow {
                     repeat: false,
                     keymod,
                     ..
+                } if is_toggle_fullscreen_shortcut(code, keymod) => {
+                    if let Err(error) = self.toggle_fullscreen() {
+                        eprintln!("SDL: {error}");
+                    }
+                    geometry = self.geometry;
+                }
+                sdl3::event::Event::KeyDown {
+                    keycode: Some(code),
+                    repeat: false,
+                    keymod,
+                    ..
                 } => inputs.push(WindowInput::Key(window_key_mod(code, keymod))),
                 sdl3::event::Event::MouseMotion { x, y, .. } => {
-                    let (x, y) = frame_scale
+                    let (x, y) = geometry
                         .window_to_frame(x.round() as i32, y.round() as i32)
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseMove { x, y });
@@ -449,7 +639,7 @@ impl SdlWindow {
                     y,
                     ..
                 } => {
-                    let (x, y) = frame_scale
+                    let (x, y) = geometry
                         .window_to_frame(x.round() as i32, y.round() as i32)
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseClick { x, y });
@@ -460,18 +650,58 @@ impl SdlWindow {
                     y,
                     ..
                 } => {
-                    let (x, y) = frame_scale
+                    let (x, y) = geometry
                         .window_to_frame(x.round() as i32, y.round() as i32)
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseRightClick { x, y });
                 }
-                // P4 (TC-1107): alt-tab/minimize/restore do not
-                // stop the loop. SDL3 sends Window events, no input comes
-                // from them, the window stays alive, and the next frame is drawn as
-                // usual. The branch is explicit so that the behavior is visible and covered by
-                // the test [`window_event_is_input_neutral`].
-                sdl3::event::Event::Window { win_event, .. }
-                    if window_event_is_input_neutral(win_event) => {}
+                // P4 (TC-1107), 1.4.2: alt-tab/minimize/restore do not stop the loop.
+                // Presentation state only; the geometry is refreshed when the
+                // drawable or the display changes. An explicit branch so that the
+                // behavior is visible and covered by the tests.
+                sdl3::event::Event::Window { win_event, .. } => {
+                    match win_event {
+                        WindowEvent::FocusLost => {
+                            self.presentation.focus_lost();
+                            eprintln!(
+                                "SDL: Р С•Р С”Р Р…Р С• Р С—Р С•РЎвЂљР ВµРЎР‚РЎРЏР В»Р С• РЎвЂћР С•Р С”РЎС“РЎРѓ РІР‚вЂќ РЎвЂ Р С‘Р С”Р В» Р С‘ РЎРѓР С‘Р СРЎС“Р В»РЎРЏРЎвЂ Р С‘РЎРЏ Р С—РЎР‚Р С•Р Т‘Р С•Р В»Р В¶Р В°РЎР‹РЎвЂљРЎРѓРЎРЏ, \
+                                 Р С”Р В°Р Т‘РЎР‚ Р Р…Р Вµ РЎР‚Р С‘РЎРѓРЎС“Р ВµРЎвЂљРЎРѓРЎРЏ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р С—РЎР‚Р С‘ РЎРѓР Р†Р С•РЎР‚Р В°РЎвЂЎР С‘Р Р†Р В°Р Р…Р С‘Р С‘"
+                            );
+                        }
+                        WindowEvent::FocusGained => {
+                            self.presentation.focus_gained();
+                            // A focused window is visible: do not stay in the
+                            // "occluded" state if the expose event was missed.
+                            self.presentation.exposed();
+                            eprintln!("SDL: РЎвЂћР С•Р С”РЎС“РЎРѓ Р Р†Р С•Р В·Р Р†РЎР‚Р В°РЎвЂ°РЎвЂР Р… РІР‚вЂќ Р С”Р В°Р Т‘РЎР‚ Р С—Р ВµРЎР‚Р ВµРЎР‚Р С‘РЎРѓР С•Р Р†РЎвЂ№Р Р†Р В°Р ВµРЎвЂљРЎРѓРЎРЏ");
+                        }
+                        WindowEvent::Minimized | WindowEvent::Hidden => {
+                            self.presentation.minimized();
+                            eprintln!("SDL: Р С•Р С”Р Р…Р С• РЎРѓР Р†РЎвЂРЎР‚Р Р…РЎС“РЎвЂљР С•/РЎРѓР С”РЎР‚РЎвЂ№РЎвЂљР С• РІР‚вЂќ Р С”Р В°Р Т‘РЎР‚РЎвЂ№ Р Р…Р Вµ Р Р†РЎвЂ№Р Р†Р С•Р Т‘РЎРЏРЎвЂљРЎРѓРЎРЏ");
+                        }
+                        WindowEvent::Restored
+                        | WindowEvent::Exposed
+                        | WindowEvent::Shown
+                        | WindowEvent::Maximized => {
+                            self.presentation.restored();
+                            self.presentation.exposed();
+                        }
+                        WindowEvent::Occluded => self.presentation.occluded(),
+                        WindowEvent::Resized(..)
+                        | WindowEvent::PixelSizeChanged(..)
+                        | WindowEvent::DisplayChanged(..) => {
+                            self.refresh_layout();
+                            geometry = self.geometry;
+                        }
+                        WindowEvent::EnterFullscreen => self.fullscreen = true,
+                        WindowEvent::LeaveFullscreen => {
+                            self.fullscreen = false;
+                            self.refresh_layout();
+                            geometry = self.geometry;
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
@@ -495,11 +725,11 @@ impl SdlWindow {
 }
 
 /// P4 (TC-1107): window events that carry no input and must not
-/// stop the loop — focus loss/gain (alt-tab), minimize,
+/// stop the loop РІР‚вЂќ focus loss/gain (alt-tab), minimize,
 /// restore, show/hide/redraw, cursor enter/leave.
 ///
 /// With them the window stays alive: `poll_input` returns `running = true`, and
-/// the next frame is drawn as usual. An explicit predicate — so that this behavior
+/// the next frame is drawn as usual. An explicit predicate РІР‚вЂќ so that this behavior
 /// is visible in the code and is checked by a test without a real window.
 pub fn window_event_is_input_neutral(event: WindowEvent) -> bool {
     matches!(
@@ -539,7 +769,7 @@ mod tests {
         ] {
             assert!(
                 window_event_is_input_neutral(event),
-                "{event:?} не должен останавливать цикл или давать ввод"
+                "{event:?} Р Р…Р Вµ Р Т‘Р С•Р В»Р В¶Р ВµР Р… Р С•РЎРѓРЎвЂљР В°Р Р…Р В°Р Р†Р В»Р С‘Р Р†Р В°РЎвЂљРЎРЉ РЎвЂ Р С‘Р С”Р В» Р С‘Р В»Р С‘ Р Т‘Р В°Р Р†Р В°РЎвЂљРЎРЉ Р Р†Р Р†Р С•Р Т‘"
             );
         }
     }
@@ -554,9 +784,49 @@ mod tests {
         ] {
             assert!(
                 !window_event_is_input_neutral(event),
-                "{event:?} не должен считаться нейтральным"
+                "{event:?} Р Р…Р Вµ Р Т‘Р С•Р В»Р В¶Р ВµР Р… РЎРѓРЎвЂЎР С‘РЎвЂљР В°РЎвЂљРЎРЉРЎРѓРЎРЏ Р Р…Р ВµР в„–РЎвЂљРЎР‚Р В°Р В»РЎРЉР Р…РЎвЂ№Р С"
             );
         }
     }
-}
 
+    #[test]
+    fn alt_enter_is_the_fullscreen_shortcut_only_with_alt() {
+        for code in [Keycode::Return, Keycode::Return2, Keycode::KpEnter] {
+            assert!(is_toggle_fullscreen_shortcut(code, Mod::LALTMOD));
+            assert!(is_toggle_fullscreen_shortcut(code, Mod::RALTMOD));
+            assert!(!is_toggle_fullscreen_shortcut(code, Mod::NOMOD));
+            assert!(!is_toggle_fullscreen_shortcut(
+                code,
+                Mod::LSHIFTMOD | Mod::RSHIFTMOD
+            ));
+        }
+
+        // Alt + a letter is a game key (`Alt+P` РІР‚вЂќ pause), not fullscreen.
+        assert!(!is_toggle_fullscreen_shortcut(Keycode::P, Mod::LALTMOD));
+        // Enter without Alt is an ordinary UI key.
+        assert!(!is_toggle_fullscreen_shortcut(Keycode::Return, Mod::NOMOD));
+    }
+
+    #[test]
+    fn focus_minimize_and_occlusion_change_drawing_only() {
+        use crate::presentation::PresentationState;
+
+        let mut state = PresentationState::new();
+
+        assert!(state.should_draw());
+        state.focus_lost();
+        assert!(!state.is_focused());
+        // Focus loss does not hide the window: the loop still draws it.
+        assert!(state.should_draw());
+        state.minimized();
+        assert!(!state.should_draw());
+        state.focus_gained();
+        assert!(state.should_draw());
+        state.occluded();
+        assert!(!state.should_draw());
+        state.exposed();
+        assert!(state.should_draw());
+        // No pause/state methods exist on the presentation state: it cannot
+        // reset a match by construction.
+    }
+}

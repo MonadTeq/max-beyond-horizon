@@ -124,6 +124,11 @@ struct Cli {
     turn_wait_secs: Option<u32>,
     /// UI window scale: `0`/absent — fit to the desktop (item F).
     window_scale: Option<u32>,
+    /// Open the window in borderless desktop fullscreen (`--fullscreen`; the
+    /// runtime `Alt+Enter` toggle is handled by the SDL window layer).
+    fullscreen: bool,
+    /// Print the 60 Hz presentation statistics (`PRESENT: …`) to stderr.
+    fps_stats: bool,
     /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
 }
@@ -167,6 +172,8 @@ impl Cli {
             join_retry_timeout_secs: None,
             turn_wait_secs: None,
             window_scale: None,
+            fullscreen: false,
+            fps_stats: false,
             record: None,
         };
         let mut mode_set = false;
@@ -268,6 +275,12 @@ impl Cli {
                 }
                 "--scale" => {
                     cli.window_scale = Some(parse_u32(&mut args, "--scale")?);
+                }
+                "--fullscreen" => {
+                    cli.fullscreen = true;
+                }
+                "--fps" => {
+                    cli.fps_stats = true;
                 }
                 "--record" => {
                     cli.record = Some(PathBuf::from(
@@ -669,7 +682,14 @@ async fn run_connect(cli: &Cli) -> Result<()> {
     };
 
     let report = if cli.sdl {
-        connect_interactive(&mut app, &options, &cli.config, cli.window_scale).await?
+        connect_interactive(
+            &mut app,
+            &options,
+            &cli.config,
+            cli.window_scale,
+            cli.fullscreen,
+        )
+        .await?
     } else {
         run_network(&mut app, &options).await?
     };
@@ -876,9 +896,13 @@ impl max_app::net::FrameSink for WindowSink {
         app.update_visual_units(1.0 / 60.0);
         let buffer = app.render_frame();
 
-        if let Err(error) = self.window.present(&buffer) {
-            eprintln!("SDL: {error}");
-            return false;
+        // Presentation only: a hidden window is not drawn, the lockstep loop
+        // keeps running (barriers/timers are not tied to focus).
+        if self.window.should_present() {
+            if let Err(error) = self.window.present(&buffer) {
+                eprintln!("SDL: {error}");
+                return false;
+            }
         }
 
         self.window.poll()
@@ -891,33 +915,45 @@ async fn connect_interactive(
     options: &NetworkOptions,
     config: &AppConfig,
     scale: Option<u32>,
+    fullscreen: bool,
 ) -> Result<NetworkReport> {
     #[cfg(feature = "sdl")]
     {
-        let window = max_render::SdlWindow::new_scaled(
+        let mut window = max_render::SdlWindow::new_scaled(
             "M.A.X. — max_app (R2.4)",
             config.screen_width,
             config.screen_height,
             normalized_window_scale(scale),
         )
         .map_err(|error| anyhow!("{error}"))?;
-        let mut sink = WindowSink { window };
+
+        if fullscreen {
+            if let Err(error) = window.set_fullscreen(true) {
+                eprintln!("SDL: полноэкранный режим недоступен ({error})");
+            }
+        }
 
         println!(
-            "SDL: кадр {}x{}, окно {}x{} (масштаб {}); Esc/закрытие — выход",
+            "SDL: кадр {}x{}, окно {}x{} точек / {}x{} пикселей (DPI×{:.2}, масштаб {}, \
+             fullscreen={}); Esc/закрытие — выход",
             config.screen_width,
             config.screen_height,
-            sink.window.size().0,
-            sink.window.size().1,
-            sink.window.frame_scale().scale()
+            window.size().0,
+            window.size().1,
+            window.output_size().0,
+            window.output_size().1,
+            window.dpi_scale(),
+            window.frame_scale().scale(),
+            window.is_fullscreen()
         );
+        let mut sink = WindowSink { window };
 
         run_network_with_sink(app, options, Some(&mut sink)).await
     }
 
     #[cfg(not(feature = "sdl"))]
     {
-        let _ = (app, options, config, scale);
+        let _ = (app, options, config, scale, fullscreen);
         bail!(
             "--sdl требует сборки с feature sdl (входит в default-features): \
              cargo run -p max_app -- --connect ... --join ... --sdl"
@@ -1029,6 +1065,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
         normalized_window_scale(cli.window_scale),
     )
     .map_err(|error| anyhow!("{error}"))?;
+    if cli.fullscreen {
+        // Presentation only: the 640×480 frame is unchanged, the geometry is
+        // recomputed for the display (task 1.4.2).
+        if let Err(error) = window.set_fullscreen(true) {
+            eprintln!("UI: полноэкранный режим недоступен ({error}); окно остаётся оконным");
+        }
+    }
     let mut ctx = UiContext::new(
         Box::new(HorizonMenuClient::new(
             &config.horizon_host,
@@ -1115,6 +1158,15 @@ fn run_ui(cli: &Cli) -> Result<()> {
         .or_else(|| config.max_res.parent().map(std::path::Path::to_path_buf))
         .unwrap_or_default();
     let mut last_frame = std::time::Instant::now();
+    // 1.4.2: presentation clock. The simulation advances in fixed 60 Hz steps
+    // (`FixedStepClock`), the loop draws one frame per `FramePacer` period. A
+    // 144 Hz display therefore still ticks the simulation at exactly 60 Hz;
+    // `snapshot_bytes` does not depend on the refresh rate.
+    let mut step_clock = max_app::presentation::FixedStepClock::new();
+    let mut pacer = max_app::presentation::FramePacer::at_60hz();
+    let mut frame_stats = max_app::presentation::FrameStats::default();
+    let mut was_focused = window.is_focused();
+    let mut logged_frames = 0u64;
     // The reconnect policy shared by `--connect` and `--ui`.
     let mut reconnect = ReconnectPolicy::default();
     if let Some(attempts) = cli.reconnect_attempts {
@@ -1128,13 +1180,19 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let join_retry = join_retry_policy(cli);
 
     println!(
-        "UI: кадр {}x{}, окно {}x{} (масштаб {}); меню — мышь/стрелки, Enter; \
+        "UI: кадр {}x{}, окно {}x{} точек / {}x{} пикселей (DPI×{:.2}, масштаб {}, \
+         дисплей {:.0} Гц, fullscreen={}); меню — мышь/стрелки, Enter; \
          в игре — LMB выбор, RMB движение, клик по врагу — атака, End Turn; Esc — выход",
         config.screen_width,
         config.screen_height,
         window.size().0,
         window.size().1,
-        window.frame_scale().scale()
+        window.output_size().0,
+        window.output_size().1,
+        window.dpi_scale(),
+        window.frame_scale().scale(),
+        window.display_refresh_rate(),
+        window.is_fullscreen()
     );
 
     // QA layer 2.5: recording a manual game into a `.qa` script. We write the same
@@ -1155,6 +1213,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
     };
 
     loop {
+        let frame_started = std::time::Instant::now();
+
         if let Some(recorder) = recorder.as_mut() {
             recorder.begin_frame();
         }
@@ -1164,6 +1224,19 @@ fn run_ui(cli: &Cli) -> Result<()> {
         if !running {
             break;
         }
+
+        // 1.4.2 alt-tab gate: focus is presentation only. On regain the step
+        // clock and the frame cadence restart from "now", so the time spent
+        // away neither resets the match nor turns into a burst of ticks.
+        let focused = window.is_focused();
+
+        if focused && !was_focused {
+            step_clock.reset();
+            last_frame = std::time::Instant::now();
+            pacer.resync(last_frame);
+        }
+
+        was_focused = focused;
 
         for event in events {
             let input = input_event(event);
@@ -1335,8 +1408,15 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
 
         // M-SP: local match tick, turn timer and AI turns.
-        let frame_dt = last_frame.elapsed().as_secs_f32().clamp(0.0, 0.25);
+        //
+        // 1.4.2: `frame_dt` is presentation time (credits, camera, visible
+        // movement); the simulation runs a whole number of fixed 60 Hz steps.
+        // The same scenario therefore yields the same `snapshot_bytes` at 60 Hz,
+        // 144 Hz or after a DPI change.
+        let frame_seconds = last_frame.elapsed().as_secs_f64().clamp(0.0, 0.25);
         last_frame = std::time::Instant::now();
+        let frame_dt = frame_seconds as f32;
+        let simulation_steps = step_clock.plan(frame_seconds);
 
         // Menu screen animation (`Credits`): the credits scroll with the real
         // `dt`, and when it reaches the top of the area the screen closes itself
@@ -1374,7 +1454,18 @@ fn run_ui(cli: &Cli) -> Result<()> {
         }
 
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {
-            let update = app.local_update(frame_dt);
+            // Fixed-step simulation: a slow or fast render frame only decides
+            // how many 60 Hz steps run, never how much time one tick covers.
+            let mut update = max_app::local::LocalUpdate::default();
+
+            for _ in 0..simulation_steps {
+                let step = app.local_update(max_app::presentation::SIMULATION_DT);
+
+                update.ticked |= step.ticked;
+                update.turn_closed |= step.turn_closed;
+                update.ai_started |= step.ai_started;
+                update.finished |= step.finished;
+            }
 
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
                 let tick = app.ticks();
@@ -1527,7 +1618,28 @@ fn run_ui(cli: &Cli) -> Result<()> {
         window
             .present(&buffer)
             .map_err(|error| anyhow!("{error}"))?;
-        std::thread::sleep(std::time::Duration::from_millis(16));
+
+        // 1.4.2: 60 Hz frame budget evidence. The pacer sleeps one period after
+        // the frame; the stats count how many frames exceeded 16.67 ms.
+        frame_stats.record(frame_started.elapsed());
+
+        // `--fps` is the interactive 60 Hz probe: a line per second is useful for
+        // a manual run; the profile environment keeps the 10-second cadence.
+        let stats_interval = if cli.fps_stats { 60 } else { 600 };
+
+        if (cli.fps_stats || max_app::profile::enabled())
+            && frame_stats.frames - logged_frames >= stats_interval
+        {
+            logged_frames = frame_stats.frames;
+            eprintln!(
+                "UI: {} dropped_steps={} steps_now={}",
+                frame_stats.summary(),
+                step_clock.dropped_steps(),
+                simulation_steps
+            );
+        }
+
+        pacer.wait();
     }
 
     finish_recording(&mut recorder)?;
@@ -1755,9 +1867,14 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         };
         self.screen.render(&mut self.buffer, view);
 
-        if let Err(error) = self.window.present(&self.buffer) {
-            eprintln!("SDL: {error}");
-            return false;
+        // 1.4.2 alt-tab gate: while the window is minimized/occluded the frame
+        // is not uploaded, but the network loop keeps ticking — barrier
+        // timeouts and turn timers are not affected by focus.
+        if self.window.should_present() {
+            if let Err(error) = self.window.present(&self.buffer) {
+                eprintln!("SDL: {error}");
+                return false;
+            }
         }
 
         true
@@ -1778,9 +1895,11 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         };
         self.screen.render(&mut self.buffer, view);
 
-        if let Err(error) = self.window.present(&self.buffer) {
-            eprintln!("SDL: {error}");
-            return false;
+        if self.window.should_present() {
+            if let Err(error) = self.window.present(&self.buffer) {
+                eprintln!("SDL: {error}");
+                return false;
+            }
         }
 
         true
@@ -1916,6 +2035,10 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     --turn-wait N        окно ввода в фазе PLAY сессии, секунды (0 — сразу)
     --scale N            масштаб окна: кадр 640x480 умножается на N (0/нет —
                          подобрать под рабочий стол, nearest-neighbour)
+    --fullscreen         окно в безрамочном полноэкранном режиме на весь монитор
+                         (Alt+Enter переключает в игре; рендер тот же кадр)
+    --fps                печатать статистику 60 Гц (`PRESENT: …`) в stderr
+                          раз в 600 кадров (бюджет 16.67 мс)
     --seed N             seed ГПСЧ для --new-game
     --raw/--fuel/--gold/--derelicts N   уровни ресурсов 0..=2 (по умолчанию 1/1/1/0)
     --world N            планета 0..=23 (по умолчанию 0 — Snowcrab)
@@ -1977,6 +2100,21 @@ mod tests {
 
         assert_eq!(cli.mode, Mode::Ui);
         assert_eq!(cli.config.mode, AppMode::Ui);
+    }
+
+    #[test]
+    fn fullscreen_and_fps_flags_are_parsed() {
+        let cli = parse(&["--ui", "--fullscreen", "--fps", "--scale", "2"])
+            .expect("--fullscreen/--fps разбираются");
+
+        assert!(cli.fullscreen);
+        assert!(cli.fps_stats);
+        assert_eq!(cli.window_scale, Some(2));
+
+        // Defaults: windowed, no presentation statistics.
+        let cli = parse(&[]).expect("пустой список аргументов разбирается");
+        assert!(!cli.fullscreen);
+        assert!(!cli.fps_stats);
     }
 
     #[test]

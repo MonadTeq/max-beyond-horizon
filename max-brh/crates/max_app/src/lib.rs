@@ -63,6 +63,7 @@ pub mod panels;
 pub mod portrait;
 pub mod preferences;
 pub mod pregame;
+pub mod presentation;
 pub mod profile;
 pub mod qa;
 pub mod render;
@@ -140,6 +141,10 @@ pub use preferences::{
     PreferencesVariant,
 };
 pub use pregame::{PreGameFlow, PreGameStage, PreGameStep};
+pub use presentation::{
+    FixedStepClock, FramePacer, FrameStats, PresentationState, MAX_STEPS_PER_FRAME, SIMULATION_DT,
+    SIMULATION_HZ,
+};
 pub use profile::{format_ns, Meter, MeterStats, ProfileSnapshot, FRAME_BUDGET_NS};
 pub use render::{
     draw_unit_sprites, draw_unit_sprites_with_angle, draw_unit_sprites_with_base, unit_frame_index,
