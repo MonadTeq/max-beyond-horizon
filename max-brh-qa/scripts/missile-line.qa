@@ -11,12 +11,22 @@
 #   из пикселя (`>> 6`);
 # * `Paths_DrawMissile` (`airpath.cpp:362-406`) ставит три частицы следа на
 #   отрезке «старый пиксель → новый пиксель», поэтому хвост тоже лежит на линии;
-# * выстрел строго **по диагонали** (dx = -3, dy = +4, 5 клеток): 8-дирекционный
+# * выстрел строго **по диагонали** (`fire_on` — (26,21), dx = −3, dy = +3): 8-дирекционный
 #   клеточный маршрут (как у обычных юнитов) уводил бы снаряд с этой прямой, и
 #   `assert missile-line` (отклонение ≤ 1.5 px) падал бы.
 #
-# Кадры `missile-line-1..4`/`missile-line-impact` — golden
+# Кадры `missile-line-1`/`missile-line-2`/`missile-line-impact` — golden
 # `max-brh-qa/golden/missile-line`.
+#
+# Триаж 2026-11-24 (pre-existing red): после AI-порта фазы A сценарий устарел —
+# `ai A.4` (f2fd36d) переписал подход ИИ к цели (`ai/tasks/combat.rs:665-689`):
+# `KillUnit` теперь ведёт юнита на «огневую позицию» (`AiAttack_ChooseSiteForAttacker`),
+# а не шагает в клетку цели. Из-за этого танк-цель за тик ДО выстрела уходит
+# (26,22) → (26,21), прицельная клетка `fire_on` становится (26,21), и выстрел
+# идёт по диагонали −3/+3 (4 кадра полёта, `m_length = distance/4`), а не −3/+4
+# (5 кадров). Снаряд по-прежнему идёт по пиксельной прямой (отклонение 0.00 px,
+# `assert missile-line`), меняются только длина полёта и эталоны кадров.
+# Поэтому в сценарии два кадра в полёте (шаги 2 и 3) вместо трёх.
 
 # --- Главное меню → партия (Turn Based, таймер без лимита) -----------------
 assert screen=MainMenu
@@ -42,9 +52,10 @@ assert screen=InGame
 assert turn=1
 tick 5
 
-# --- Геометрия: ракетчик (29,18) и цель (26,22) — dx=-3, dy=+4 ------------
+# --- Геометрия: ракетчик (29,18) и цель-танк (26,22) -----------------------
 # Клетки задаются явно (`spawn at`, QA-only): сценарий не зависит от того, куда
-# авто-спавн поставит юнитов.
+# авто-спавн поставит юнитов. Клетка прицеливания (`fire_on`) вычисляется в момент
+# выстрела: после A.4 танк-цель уходит на огневую позицию (26,21) (см. триаж выше).
 spawn at 29 18 Missile Crawler
 spawn at 26 22 enemy Tank
 tick 1
@@ -52,10 +63,13 @@ select type Missile Crawler
 assert selected
 click enemy Tank
 assert log=Attack:
-# Наведение/отдача: `wait firing` (см. combat-tb.qa) ждёт кадр выстрела.
+# Наведение/отдача: `wait firing` (см. combat-tb.qa) ждёт кадр выстрела. На этом
+# же кадре `PrepareFire` ставит `ROCKET` в список частиц, `UnitsManager_InitUnitPath`
+# строит `AirPath`, и первый пиксельный шаг уже сделан (список `Particle`
+# обрабатывается после `MobileLandSea` в обходе `UnitsManager_ProcessOrders`).
 wait firing
 
-# Первый тик строит `AirPath` (INIT) и делает пиксельный шаг; частицы следа
+# Первый тик после кадра выстрела — второй пиксельный шаг; частицы следа
 # ставятся на отрезке «старый пиксель → новый».
 tick 1
 assert unit-count Rocket>=1
@@ -63,16 +77,16 @@ assert trail=on
 assert missile-line
 shot missile-line-1
 
-# Снаряд идёт по той же прямой (5 клеток дистанции: dx=-3, dy=+4).
+# Снаряд идёт по той же прямой: прицельная клетка `fire_on` — (26,21),
+# диагональ −3/+3, `m_length` = 4 кадра (`UnitsManager_GetMissilePath`:
+# `length = distance/4`), шаг — 48 px по каждой оси.
 tick 1
 assert missile-line
 shot missile-line-2
-tick 1
-assert missile-line
-shot missile-line-3
 
-# Попадание: `Paths_FinishMove` наносит удар в клетке цели и снимает снаряд.
-tick 4
+# Попадание: `Paths_FinishMove` наносит удар в клетке цели и снимает снаряд;
+# 2 кадра — кадры взрыва попадания, след уже лёг по линии.
+tick 3
 assert unit-count Rocket=0
 shot missile-line-impact
 assert screen=InGame

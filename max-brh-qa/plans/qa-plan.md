@@ -64,7 +64,9 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
      после достройки) → завод → INFANTRY за 2 хода;
   6. `save-load.qa` — P3: два хода → `save_v70` (настоящий V70) → окно
      `Save Game` (`key s`, кадр `save-menu`) → `load` в свежем состоянии →
-     `assert turn=3`, `assert units=14` → `end_turn` после загрузки;
+     `assert turn=3`, `assert units=20` (после `ai A.3` ИИ начинает стройку на
+     своём ходу: +6 юнитов-декалей площадок; в сейве и после загрузки те же 20) →
+     `end_turn` после загрузки;
   7. `soak-100.qa` — P4: 100 ходов человек+ИИ, снимки/`mem` каждые 20 ходов,
      `assert turn=101`, V70-сейв на 100-м ходу;
   8. `edge-cases.qa` — P4 TC-1106/1111/1112: 50+50 кликов (меню/карта),
