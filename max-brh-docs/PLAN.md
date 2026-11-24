@@ -188,3 +188,18 @@
   ТЗ: `development/game-universe-stage-{a,b,c}.md`. **Horizon-smoke (Docker) —
   релизный гейт владельца** (qa-plan.md слой 4), условие запуска — перед каждым
   релизом, не реже чем перед merge в main.
+
+## 8. Backlog (не блокеры, с условием пересмотра)
+
+- **Пп. 3–7 B2 (техдолг):** lloc per-click, parent_unit, uto_survey,
+  uild_time, enemy_halt — pre-existing гэпы без носителя в 08/11/54; десинк-риска
+  не создают. **Условие пересмотра:** при касании механик (alloc/research, unit
+  parenting, survey, build timing, enemy halt). Не чинить пакетом; решать по одному
+  с привязкой к механике. Решение владельца «отложить» (2026-11-24).
+- **Флакающие P2P-гейты:** gate_g_split_brain…, gate_v_killed_host… — тайминг-
+  чувствительны под полной нагрузкой suite (проходят изолированно). Стабилизация —
+  отдельным пунктом.
+- **P2P/host UI** (Host/Join Network Game) — в самый последний момент, после
+  H1–H5 драйвера/транспорта.
+- **1.4.1 остатки:** C1/C2 анимации, C3/C4 MVE, D2 музыка, B6 debug-Preferences —
+  полировка, по плану.
