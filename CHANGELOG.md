@@ -150,6 +150,35 @@
 
 ### Исправлено
 
+- **Погрузка в транспорт: авиатранспорт не брал юнита на борт (`ORDER_LOAD` не
+  выдавался).** Оракул: `airpath.cpp:281-283` (`AirPath::Execute` → `Paths_FinishMove`)
+  и `airpath.cpp:408-456` (`Paths_FinishMove`: `UnitsManager_LoadUnit`, затем ветка
+  `AIRTRANS` — `parent` стоит на клетке прибытия, в отсеке есть место →
+  `SetOrder(ORDER_LOAD)`/`SetOrderState(ORDER_STATE_INIT)`), `units_manager.cpp:5027-5076`
+  (`UnitsManager_LoadUnit`), `game_manager.cpp:6807-6842` (`CURSOR_LOAD` — заказ
+  перелёта с `parent = пассажир`), `units_manager.cpp:3092-3116`/`:4131-4179`
+  (`ProcessOrderLoad`/`ProgressLoading`), `unitinfo.cpp:5161` (`ProcessLoading`),
+  `access.cpp:1555` (`Access_GetUnit2`).
+  Корень: в порте `air_path_execute` по достижении конечной клетки сразу звал
+  `BlockedOnPathRequest` — `Paths_FinishMove` (и `UnitsManager_LoadUnit`) вообще не были
+  портированы, поэтому авиатранспорт после перелёта к пассажиру оставался в
+  `ORDER_AWAIT` с `parent = пассажир`, пассажир не попадал в отсек: погрузка не
+  начиналась ни при каком расстоянии. Наземный/морской транспорт грузит другой веткой
+  (`ORDER_MOVE_TO_UNIT` → `ORDER_IDLE`/`ORDER_STATE_PREPARE_STORE` + сжатие →
+  `UnitsManager_FinishUnitScaling`) — она работала.
+  Исправление: порт `Paths_FinishMove` (`max_core::unit_order`: `paths_finish_move`),
+  `UnitsManager_LoadUnit` (`load_unit`) и `access::get_unit2`; на прибытии
+  авиатранспорта с пассажиром-`parent` на клетке и свободным отсеком выдаётся
+  `ORDER_LOAD/INIT`. **Поведение законно меняется:** самолёт, завершивший ход над
+  своей посадочной площадкой/ангаром, теперь садится (`ORDER_LAND/INIT`) — до этого
+  порт просто останавливал юнита.
+  Тесты: `unit_order::tests::air_transport_loads_passenger_on_arrival`,
+  `unit_order::tests::air_unit_lands_on_landing_pad_after_move` и
+  `max_app/tests/air_transport_load.rs` (путь игрока: пункт `load` → клик по
+  пассажиру → перелёт → погрузка). Валидация: `cargo check --workspace`,
+  `cargo test -p max_core -p max_app --no-default-features` — зелёные;
+  `qa_run move-input`/`cargo-full` + `qa_golden_check` — PASS (0 пкс).
+
 - **Windows-PowerShell-скрипты сборки не парсились в PowerShell 5.1.**
   `pe-subsystem.ps1` и `build-windows-ui.ps1` лежали в UTF-8 **без BOM**, а
   Windows PowerShell 5.1 читает такой файл как ANSI: кириллица в строках ломала

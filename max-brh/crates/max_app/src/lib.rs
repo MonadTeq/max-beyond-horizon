@@ -90,7 +90,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use max_core::crc;
 use max_core::deploy::TeamDeployment;
-use max_core::enums::{GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState};
+use max_core::enums::{
+    unit_flags, GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState,
+};
 use max_core::events::ApplyOutcome;
 use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
@@ -658,12 +660,14 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// Each point stores the movement direction toward it (`VisualStep.angle`),
     /// so that the sprite turns at the turn cell, not earlier.
     visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
-    /// Frame-side vision of the local player's team — the scan coverage and the
-    /// explored cells computed from the **visual** anchors, so the radar (the
-    /// minimap fog and the unit dots) moves on arrival, not earlier
+    /// Frame-side vision of the local player's team — the live scan coverage
+    /// computed from the **visual** anchors, so the radar (the minimap fog and the
+    /// unit dots) moves on arrival, not earlier
     /// (`Access_UpdateMapStatus` is called from `UnitInfo::Move` when the sprite
-    /// crosses into the cell, `unitinfo.cpp:1787-1816`). Frame-only: it is not
-    /// part of the snapshot/CRC, and `dt = 0` copies the simulation exactly.
+    /// crosses into the cell, `unitinfo.cpp:1787-1816`). The fog closes when the
+    /// last scanner leaves (`Access_OnCellHidden`, `access.cpp:576`) — there is no
+    /// explored memory. Frame-only: it is not part of the snapshot/CRC, and
+    /// `dt = 0` copies the simulation exactly.
     vision: vision::VisionView,
     /// Visual frame clock of units (`FrameAnimation`).
     ///
@@ -676,6 +680,14 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// uses as a counter. `dt = 0` (QA/headless) — the static C++ frame,
     /// deterministically.
     frame_anims: std::collections::HashMap<UnitId, FrameAnim>,
+    /// Flight-bob clock of the hovering air units (`UnitInfo::ShakeAir`).
+    ///
+    /// `UnitInfo::Animate` shifts the sprite of a `HOVERING` unit by one pixel
+    /// every second order tick and the shadow by twice that amount
+    /// (`unitinfo.cpp:4636-4678`). The port keeps the C++ 64-step counter from
+    /// real `dt`; frame-only, not part of the snapshot/CRC, and `dt = 0`
+    /// (QA/headless) leaves the sprite at rest.
+    hover_anims: std::collections::HashMap<UnitId, HoverAnim>,
     /// Palette cycle clock (`World::InitColorCycles` +
     /// `World::UpdateColorAnimations`): 11 DAC slot ranges that
     /// rotate at 2/6/8/9/10 fps. It is they that make the building beacons blink
@@ -754,6 +766,27 @@ struct GrowthAnim {
     start: f32,
     /// Animation seconds; after [`GROWTH_ANIM_SECONDS`] — full size.
     elapsed: f32,
+}
+
+/// Flight-bob clock of one hovering air unit — `UnitInfo::ShakeAir`.
+///
+/// C++ (`unitinfo.cpp:4636-4678`): every `Animate()` call (one order tick,
+/// [`ORDER_TICK_SECONDS`]) advances the 6-bit `moved` counter and on every even
+/// tick shifts the sprite by one pixel along `DIRECTION_OFFSETS[moved / 8]`,
+/// alternating sign every four ticks; the shadow moves three times as far.
+/// The offsets add up to a 2-pixel swing and cancel at the end of each 8-tick
+/// block. Frame only — not part of the snapshot/CRC.
+#[derive(Debug, Clone, Copy, Default)]
+struct HoverAnim {
+    /// Seconds since the last `ShakeAir` step.
+    elapsed: f32,
+    /// C++ `moved` counter, `0..64`.
+    step: u8,
+}
+
+/// Whether the unit hovers (`UnitInfo::Animate`: `flags & HOVERING`).
+fn is_hovering_unit(unit: &UnitInfo) -> bool {
+    unit.flags & unit_flags::HOVERING != 0
 }
 
 /// Seconds per frame of the builder working cycle.
@@ -933,6 +966,7 @@ impl<D: Dispatcher> App<D> {
             visual_paths: std::collections::HashMap::new(),
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
+            hover_anims: std::collections::HashMap::new(),
             color_cycles: max_render::palette::ColorCycles::new(),
             cycle_palette: None,
             growth_anims: std::collections::HashMap::new(),
@@ -3182,6 +3216,7 @@ impl<D: Dispatcher> App<D> {
         self.visual_units.clear();
         self.visual_goals.clear();
         self.visual_paths.clear();
+        self.hover_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
         self.vision.reset();
@@ -3208,9 +3243,10 @@ impl<D: Dispatcher> App<D> {
 
     /// Frame-side vision of the local player's team ([`vision::VisionView`]).
     ///
-    /// The scan coverage and the explored cells of the **visual** anchors of the
-    /// frame; `VisionView::follow_visual() == false` means the values are a copy of
-    /// the simulation (`dt = 0`, QA/headless, `GameManager_AllVisible`).
+    /// The **live** scan coverage of the **visual** anchors of the frame (no
+    /// explored memory — the original's fog also closes on `Access_OnCellHidden`);
+    /// `VisionView::follow_visual() == false` means the values are a copy of the
+    /// simulation (`dt = 0`, QA/headless, `GameManager_AllVisible`).
     pub fn vision(&self) -> &vision::VisionView {
         &self.vision
     }
@@ -3218,11 +3254,12 @@ impl<D: Dispatcher> App<D> {
     /// Whether a unit is drawn by the frame (`DrawMap_RenderUnits` /
     /// `DrawMap_RenderMiniMapUnitList`: `IsVisibleToTeam(GameManager_PlayerTeam)`).
     ///
-    /// Delegates to [`vision::presented_visible`]: the simulation flag is the
-    /// authority, and while the frame follows the visual anchors a foreign unit also
-    /// has to be inside the scan of an own unit **at its visual cell** — the radar
-    /// of a moving unit then reveals the enemy when the sprite arrives, not when the
-    /// simulation cell did (`Access_UpdateMapStatus`, `access.cpp:762`).
+    /// Delegates to [`vision::presented_visible`]: stealth stays gated by the
+    /// simulation flag, and while the frame follows the visual anchors a foreign
+    /// unit also has to be inside the **current** scan of an own unit at its visual
+    /// cell — the radar of a moving unit reveals the enemy when the sprite arrives
+    /// and hides it again when the scan leaves (`Access_UpdateMapStatus`,
+    /// `access.cpp:762`; `Access_OnCellHidden`, `access.cpp:576`).
     pub fn presented_visible(&self, unit: &UnitInfo) -> bool {
         vision::presented_visible(self.state_ref(), &self.vision, unit)
     }
@@ -3278,6 +3315,21 @@ impl<D: Dispatcher> App<D> {
                 sentry_step: anim.sentry_step,
             })
             .unwrap_or_default()
+    }
+
+    /// Flight-bob offset of a unit for drawing, in map pixels.
+    ///
+    /// A port of `UnitInfo::ShakeAir` (`unitinfo.cpp:4636-4678`, see
+    /// [`render::shake_air_offset`]): a hovering aircraft swings up to two pixels
+    /// along the rotating direction. The shadow is shifted three times as far by
+    /// the renderer (`shadow_offset -= 2 * offset` on top of
+    /// `OffsetDrawZones(offset)`). `(0, 0)` for a grounded unit and for `dt = 0`
+    /// frames — the goldens do not drift. Frame only, not part of the snapshot/CRC.
+    pub fn hover_offset(&self, id: UnitId) -> (i32, i32) {
+        self.hover_anims
+            .get(&id)
+            .map(|anim| crate::render::shake_air_offset(anim.step))
+            .unwrap_or((0, 0))
     }
 
     /// Snapshot of the system palette with palette cycles (`None` — no changes).
@@ -3400,6 +3452,7 @@ impl<D: Dispatcher> App<D> {
 
         if !(dt > 0.0) {
             self.frame_anims.clear();
+            self.hover_anims.clear();
             self.growth_anims.clear();
             return;
         }
@@ -3453,6 +3506,36 @@ impl<D: Dispatcher> App<D> {
                 anim.sentry_elapsed = 0.0;
                 anim.sentry_step = 0;
             }
+        }
+
+        // Flight bob of hovering air units — `UnitInfo::ShakeAir`. C++
+        // calls it from `UnitInfo::Animate` once per order tick and only with
+        // `settings["effects"]` enabled (`unitinfo.cpp:5056-5062`), so the clock
+        // follows [`ORDER_TICK_SECONDS`] of real frame time.
+        if effects {
+            self.hover_anims
+                .retain(|id, _| state.unit(*id).is_some_and(is_hovering_unit));
+
+            for id in &ids {
+                let Some(unit) = state.unit(*id) else {
+                    continue;
+                };
+
+                if !is_hovering_unit(unit) {
+                    continue;
+                }
+
+                let anim = self.hover_anims.entry(*id).or_default();
+
+                anim.elapsed += dt;
+
+                while anim.elapsed >= ORDER_TICK_SECONDS {
+                    anim.elapsed -= ORDER_TICK_SECONDS;
+                    anim.step = (anim.step + 1) & 0x3F;
+                }
+            }
+        } else {
+            self.hover_anims.clear();
         }
 
         // "Growth": start from the simulation `scaler_adjust` (C++ 2^-n).

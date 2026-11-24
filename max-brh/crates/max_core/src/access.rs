@@ -3,7 +3,7 @@
 //! Oracle: `max-cpp-port/src/access.cpp` (`Access_IsAccessible`,
 //! `Access_GetModifiedSurfaceType`, `Access_GetAttackTarget`,
 //! `Access_GetAttackTarget2`, `Access_GetTeamUnit`,
-//! `Access_GetActiveUnitWithFlags`, `Access_GetReceiverUnit`,
+//! `Access_GetActiveUnitWithFlags`, `Access_GetReceiverUnit`, `Access_GetUnit2`,
 //! `Access_CanReceiveUnits`, `Access_GetStoredUnitCount`,
 //! `Access_IsWithinAttackRange`, `Access_GetSquaredDistance`,
 //! `Access_GetApproximateDistance`, `Access_GetValidAttackTargetTypes`,
@@ -1092,6 +1092,31 @@ pub(crate) fn get_receiver_unit(state: &GameState, unit: &UnitInfo, grid: Point)
     }
 
     None
+}
+
+/// `Access_GetUnit2` (`access.cpp:1555`) — another selectable, non-flying and
+/// non-ground-cover unit of the team on the cell; a tape reports its own parent.
+///
+/// Used by `UnitsManager_LoadUnit` (`units_manager.cpp:5034`): a landing pad accepts an
+/// aircraft only when no other unit occupies its cell.
+pub(crate) fn get_unit2(state: &GameState, grid: Point, team: TeamId) -> Option<UnitId> {
+    let result = state.units_at(grid).iter().copied().find(|id| {
+        state.unit(*id).is_some_and(|other| {
+            other.team == team
+                && other.flags & SELECTABLE != 0
+                && other.flags & (HOVERING | GROUND_COVER) == 0
+                && other.unit_type != UnitType::LandingPad
+                && other.orders != UnitOrder::Idle
+                && !other.id.is_no_id()
+        })
+    });
+
+    let unit = state.unit(result?)?;
+    if unit.unit_type == UnitType::LargeTape || unit.unit_type == UnitType::SmallTape {
+        unit.parent_unit
+    } else {
+        result
+    }
 }
 
 /// `Access_GetStoredUnitCount` (`access.cpp:1291`).

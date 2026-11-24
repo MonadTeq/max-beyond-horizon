@@ -41,8 +41,8 @@ use max_core::unit_values::{
 };
 use max_core::universe::StateRef;
 use max_core::victory::{
-    cargo_life_consumption_rate, cargo_power_consumption_rate, cargo_type_of, CargoType,
-    NetProduction,
+    cargo_life_consumption_rate, cargo_power_consumption_rate, cargo_raw_consumption_rate,
+    cargo_type_of, CargoType, NetProduction,
 };
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::layout;
@@ -2094,6 +2094,62 @@ fn greenhouse_rows(state: StateRef<'_>, unit: &UnitInfo, rows: &mut [Option<Stat
     );
 }
 
+/// Port enhancement (not in the oracle): the `USAGE` row of a unit-producing factory
+/// shows the raw material it **actually** spends per turn.
+///
+/// The original fills the `USAGE` row with the worker (`DrawInfoDisplayType1`) or
+/// power (`DrawInfoDisplayType2`) need of the factory. This enhancement replaces
+/// that row for the five factories with the real raw charge: the same
+/// `Cargo_GetRawConsumptionRate(type, rate)` that the production manager deducts
+/// from the complex every turn (`charge_units`, `cargo.cpp:140`) at the effective
+/// rate `min(build_rate, BuildMenu_GetMaxPossibleBuildRate)`.
+///
+/// A factory that is **off** — not in `ORDER_BUILD`, waiting for the finished unit
+/// to leave, or paused by the power optimizer — spends no raw, so the `USAGE` row
+/// is not drawn at all (`None`). The condition is exactly the
+/// `Cargo_GetNetProduction` charging condition (`cargo.cpp:88-95`): `ORDER_BUILD`,
+/// not `UNIT_READY`, not `build_paused`.
+///
+/// Presentation only: the row is computed from the state and never written back.
+fn factory_raw_usage_row(unit: &UnitInfo) -> Option<StatRow> {
+    if !max_core::production::is_factory(unit.unit_type) {
+        return None;
+    }
+
+    // `Cargo_GetNetProduction`/`ProductionManager::charge_units`: raw is charged
+    // only while the factory builds, before the unit is ready and while not paused.
+    if unit.orders != UnitOrder::Build
+        || unit.state == UnitOrderState::UnitReady
+        || unit.build_paused
+        || unit.build_list.is_empty()
+    {
+        return None;
+    }
+
+    // The rate is capped by the remaining turns like `charge_units`
+    // (`max_possible_build_rate` with the unlimited storage of a building).
+    let max_rate = max_core::production::max_possible_build_rate(
+        unit.unit_type,
+        i32::from(unit.build_time),
+        i32::from(i16::MAX),
+    );
+    let rate = i32::from(unit.build_rate.max(1)).min(max_rate.max(1)).max(1);
+    let cost = cargo_raw_consumption_rate(unit.unit_type, rate);
+
+    if cost <= 0 {
+        return None;
+    }
+
+    // The panel always prints `current/base`; the actual per-turn charge is both.
+    Some(StatRow {
+        label: StatLabel::Usage,
+        icon: StatIcon::Raw,
+        current: cost,
+        base: cost,
+        factor: 1,
+    })
+}
+
 /// Complex stock — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
 /// `Cargo_GetCargoCapacity`: the sum of `storage` and `ATTRIB_STORAGE` of stationary
 /// units of the same complex with the same cargo type (the `_(d28b)` «Total» row).
@@ -2140,6 +2196,10 @@ fn complex_cargo(state: StateRef<'_>, unit: &UnitInfo, cargo_type: CargoType) ->
 /// [`power_rows`] if `ATTRIB_STORAGE == 0`, [`greenhouse_rows`] for `GREENHSE`
 /// or [`life_rows`], and the complex stock row [`complex_cargo`] for own
 /// stationary storages (`RAW`/`FUEL`/`GOLD`).
+///
+/// Port enhancement: for an own unit-producing factory the `USAGE` row is replaced
+/// by [`factory_raw_usage_row`] — the actual raw per turn while the factory is on,
+/// no `USAGE` row while it is off.
 ///
 /// A row with a zero base or zero factor remains empty — exactly like
 /// `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`).
@@ -2225,6 +2285,13 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
         greenhouse_rows(state, unit, &mut rows);
     } else {
         life_rows(state, unit, player_team, &mut rows);
+    }
+
+    // Port enhancement: the `USAGE` row of a unit-producing factory is the actual
+    // raw per turn; a factory that is off shows no `USAGE` row. Overrides the
+    // worker/power `Usage` line written by `life_rows`/`power_rows` above.
+    if own && max_core::production::is_factory(unit.unit_type) {
+        rows[1] = factory_raw_usage_row(unit);
     }
 
     // Complex stock — `_(d28b)` over row 3.
@@ -2678,10 +2745,12 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
     let combined = minimap_palette(palette, world.palette());
     let dark = darkening_table(&combined);
 
-    // 1. FOV: `Access_UpdateMinimapFogOfWar` — unexplored cells are darker. The
-    // debug `--no-fow` mode lifts the shading (`GameManager_AllVisible`).
+    // 1. FOV: `Access_UpdateMinimapFogOfWar` — cells with `HeatMap::complete == 0`
+    // are darker; the fog **closes** again when the last scanner leaves
+    // (`Access_OnCellHidden`, `access.cpp:576-584`). The debug `--no-fow` mode
+    // lifts the shading (`GameManager_AllVisible`).
     //
-    // While the frame follows the visual anchors, the explored memory is the
+    // While the frame follows the visual anchors, the live coverage is the
     // frame-side one ([`crate::vision::VisionView`]): the radar of a moving unit
     // reveals the cells it has **visibly** reached, as
     // `Access_UpdateMapStatus` does on the cell crossing in `UnitInfo::Move`
@@ -2699,13 +2768,13 @@ fn draw_minimap<D: max_core::universe::Dispatcher>(
     let mut layer = Vec::with_capacity((map_width * map_height) as usize);
 
     for (index, &color) in minimap.iter().enumerate() {
-        let explored = if follow_visual {
-            vision.explored_mask().get_index(index)
+        let covered = if follow_visual {
+            vision.covered_mask().get_index(index)
         } else {
             heat.get(index).is_some_and(|cell| cell.complete > 0)
         };
 
-        layer.push(if all_visible || explored {
+        layer.push(if all_visible || covered {
             color
         } else {
             dark[usize::from(color)]
@@ -3736,26 +3805,59 @@ mod tests {
         assert_eq!(rows[2].expect("Speed").text(), "7/7");
     }
 
-    /// A factory: `Hits/Usage/Total` of workers (`DrawInfoDisplayType1`), without `Speed`.
+    /// A factory: `Hits/USAGE(RAW)/Total` of workers (`DrawInfoDisplayType1`),
+    /// without `Speed`.
+    ///
+    /// Port enhancement: the `USAGE` row of a producing factory is the **actual raw
+    /// per turn** (`Cargo_GetRawConsumptionRate`, `SI_RAW`), not the worker need;
+    /// while the factory is off the row is empty.
     #[test]
-    fn training_hall_panel_shows_worker_usage_and_total() {
+    fn factory_panel_shows_raw_usage_only_while_producing() {
         let mut state = stats_state();
         let unit = deployed(&mut state, UnitType::TrainingHall);
         let rows = rows_for(StateRef::from(&state), &unit, TeamId::RED);
 
+        // Off (no build order): no USAGE row; row 3 (`Total` of workers) still
+        // reports the complex's worker balance `0/1`.
         assert_eq!(
             labels(&rows),
-            [Some("Hits"), Some("Usage"), Some("Total"), None],
-            "C++: ATTRIB_STORAGE 0 → Type1 (life 1), Speed 0 — пропущен"
+            [Some("Hits"), None, Some("Total"), None],
+            "выключенный завод: USAGE не отображается"
         );
         assert!(rows
             .iter()
             .flatten()
             .all(|row| row.label != StatLabel::Speed));
-        // `Cargo_GetNetProduction` without an order = 0; the base life_need = 1.
-        assert_eq!(rows[1].expect("Usage").text(), "0/1");
-        assert_eq!(rows[1].expect("Usage").color(), RED);
-        assert_eq!(rows[2].expect("Total").text(), "0/1");
+
+        // Producing: USAGE = raw per turn at `build_rate = 1`
+        // (`Cargo_GetRawConsumptionRate(TRAINHAL, 1) = 1`).
+        let mut producing = unit.clone();
+        producing.orders = UnitOrder::Build;
+        producing.state = UnitOrderState::BuildInProgress;
+        producing.build_time = 4;
+        producing.build_rate = 1;
+        producing.build_list = vec![UnitType::Infantry];
+        let rows = rows_for(StateRef::from(&state), &producing, TeamId::RED);
+
+        let usage = rows[1].expect("Usage raw");
+        assert_eq!(usage.label, StatLabel::Usage);
+        assert_eq!(usage.icon, StatIcon::Raw, "расход RAW — SI_RAW");
+        assert_eq!(usage.text(), "1/1", "1 RAW в ход при build_rate = 1");
+        assert_eq!(usage.color(), GREEN);
+
+        // 2× rate: `Cargo_GetRawConsumptionRate(1 * 2 → 4)` — the actual rate.
+        let mut fast = producing.clone();
+        fast.build_rate = 2;
+        let rows = rows_for(StateRef::from(&state), &fast, TeamId::RED);
+
+        assert_eq!(rows[1].expect("Usage raw").text(), "4/4");
+
+        // Paused by a shortage: the factory spends nothing — no USAGE row.
+        let mut paused = producing.clone();
+        paused.build_paused = true;
+        let rows = rows_for(StateRef::from(&state), &paused, TeamId::RED);
+
+        assert_eq!(rows[1], None, "пауза: фактического расхода нет");
     }
 
     /// A power plant: `Hits/Power/Total` (`DrawInfoDisplayType2`).

@@ -218,8 +218,10 @@ fn stat_rows_draw_the_pip_icons() {
     );
 }
 
+/// Port enhancement: the USAGE row of a unit-producing factory shows the actual
+/// raw per turn while it builds, and is absent while the factory is off.
 #[test]
-fn training_hall_panel_frame_replaces_speed_with_usage_and_total() {
+fn factory_panel_frame_shows_raw_usage_only_while_producing() {
     let Some(mut app) = app() else {
         return;
     };
@@ -228,13 +230,34 @@ fn training_hall_panel_frame_replaces_speed_with_usage_and_total() {
     app.select_unit(None);
     let baseline = row_counts(&app.render_frame(), &palette);
 
-    // Factory: Type1 (`life = 1`) — Hits/Usage/Total, row 4 is empty.
+    // A factory that is off: Hits and the complex `Total` of workers, but no USAGE.
     let hall = spawn(&mut app, UnitType::TrainingHall, Point::new(26, 22));
     app.select_unit(Some(hall));
-    let rows = row_counts(&app.render_frame(), &palette);
+    let off_rows = row_counts(&app.render_frame(), &palette);
 
-    assert!(rows[0] > baseline[0], "Hits: {rows:?}");
-    assert!(rows[1] > baseline[1], "Usage: {rows:?}");
-    assert!(rows[2] > baseline[2], "Total: {rows:?}");
-    assert_eq!(rows[3], baseline[3], "Shots у завода пуст: {rows:?}");
+    assert!(off_rows[0] > baseline[0], "Hits: {off_rows:?}");
+    assert_eq!(
+        off_rows[1], baseline[1],
+        "выключенный завод: USAGE не отображается: {off_rows:?}"
+    );
+    assert!(off_rows[2] > baseline[2], "Total (рабочие): {off_rows:?}");
+    assert_eq!(off_rows[3], baseline[3], "Shots у завода пуст: {off_rows:?}");
+
+    // The same factory while producing: the USAGE row appears (raw per turn).
+    {
+        let unit = app.universe_mut().unit_mut(hall).expect("завод");
+
+        unit.orders = max_core::enums::UnitOrder::Build;
+        unit.state = max_core::enums::UnitOrderState::BuildInProgress;
+        unit.build_time = 4;
+        unit.build_rate = 1;
+        unit.build_list = vec![UnitType::Infantry];
+    }
+    let on_rows = row_counts(&app.render_frame(), &palette);
+
+    assert!(
+        on_rows[1] > baseline[1],
+        "включённый завод: строка USAGE с расходом RAW: {on_rows:?}"
+    );
+    assert_eq!(on_rows[3], baseline[3], "Shots у завода пуст: {on_rows:?}");
 }

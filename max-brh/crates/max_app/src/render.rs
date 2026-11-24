@@ -29,6 +29,7 @@ use max_render::terrain::PaletteRgba;
 use max_render::viewport::draw_order;
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
+use max_core::geo::Point;
 use max_core::unit::UnitPresentation;
 use max_core::universe::{Dispatcher, StateRef};
 
@@ -804,6 +805,63 @@ pub fn draw_unit_sprites_with_angle(
     )
 }
 
+/// `UnitInfo::ShakeAir` (`unitinfo.cpp:4636-4678`) — the hovering flight bob.
+///
+/// C++ calls `Animate()` once per order tick for airborne units (`HOVERING`);
+/// `ShakeAir` advances the 6-bit `moved` counter and, on every **even** tick,
+/// applies `OffsetDrawZones(±DIRECTION_OFFSETS[moved / 8])`:
+///
+/// ```text
+/// distance = moved / 8;                       // 0..7, one direction per 8 ticks
+/// if (moved >= distance * 8 + 4)   offset = -DIRECTION_OFFSETS[distance];
+/// else                             offset = +DIRECTION_OFFSETS[distance];
+/// ```
+///
+/// The offsets add up inside an 8-tick block (two even ticks per half) and cancel
+/// out at the end of the block: the hull swings at most **2 px** along the current
+/// direction. The shadow is shifted on top of the hull by `shadow_offset -= 2 *
+/// offset` (`unitinfo.cpp:4666-4667`), i.e. its absolute motion is three times
+/// the hull's.
+///
+/// Returns the hull offset in map pixels for `moved` (`0..64`) — the same
+/// absolute offset that the cumulative `OffsetDrawZones` calls produce.
+pub fn shake_air_offset(moved: u8) -> (i32, i32) {
+    let distance = usize::from(moved / 8) % max_core::geo::DIRECTION_OFFSETS.len();
+    let within_block = moved % 8;
+    let direction = max_core::geo::DIRECTION_OFFSETS[distance];
+    let mut dx = 0;
+    let mut dy = 0;
+
+    for step in 0..=u32::from(within_block) {
+        if step & 1 != 0 {
+            continue;
+        }
+
+        // The first half of the block pushes out, the second half pulls back.
+        let sign = if step < 4 { 1 } else { -1 };
+
+        dx += sign * i32::from(direction.x);
+        dy += sign * i32::from(direction.y);
+    }
+
+    (dx, dy)
+}
+
+/// Presentation shadow offset of a bobbing hovering unit.
+///
+/// `UnitInfo::ShakeAir` (`unitinfo.cpp:4666-4667`) applies the hull's
+/// `OffsetDrawZones(offset)` **and** `shadow_offset -= 2 * offset`; the hull
+/// anchor is moved by `offset` by the renderer, so subtracting `2 * offset` from
+/// the stored value places the shadow `3 * offset` from its base while the hull
+/// moves `offset`. Sign convention: the stored value is negated by
+/// [`shadow_render_offset`], hence the same `-=`.
+pub fn bobbed_shadow_offset(presentation: &UnitPresentation, bob: (i32, i32)) -> Point {
+    Point::new(
+        presentation.shadow_offset.x - (2 * bob.0) as i16,
+        presentation.shadow_offset.y - (2 * bob.1) as i16,
+    )
+}
+
 /// Shadow shift handed to the sprite renderer — `UnitInfo::RenderShadow`
 /// (`unitinfo.cpp:3067`: `point -= shadow_offset`).
 ///
@@ -1542,13 +1600,21 @@ impl<D: Dispatcher> App<D> {
             let (world_x, world_y) = effect_pixel_anchor(unit)
                 .or_else(|| missile_pixel_anchor(unit))
                 .unwrap_or_else(|| unit_anchor_world(unit, (grid_x, grid_y)));
+            // Flight bob (`UnitInfo::ShakeAir`, `unitinfo.cpp:4636-4678`): a
+            // hovering aircraft sways by up to two pixels along a rotating
+            // direction, the shadow by three times as much (see `hover_offset`).
+            // `dt = 0` (QA/headless) — zero, the goldens do not drift.
+            let (bob_x, bob_y) = self.hover_offset(visible[index]);
             // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
             // the constructor shifts by 8 px per tick toward the 2×2 tape center, 32 px in total
             // (half a cell) — to the center of the construction site. This is a frame
             // shift of the sprite, the builder grid does not change.
             let (tape_offset_x, tape_offset_y) =
                 crate::buildsite::tape_center_offset(self.state_ref(), unit);
-            let anchor = viewport.world_to_screen(world_x + tape_offset_x, world_y + tape_offset_y);
+            let anchor = viewport.world_to_screen(
+                world_x + tape_offset_x + bob_x,
+                world_y + tape_offset_y + bob_y,
+            );
 
             let image_base = image_base_for(
                 unit,
@@ -1579,11 +1645,19 @@ impl<D: Dispatcher> App<D> {
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
             // Presentation fields (shadow/brightness) — a separate table
             // `GameState::presentation` (phase 5.3/B), not `UnitInfo`.
-            let presentation = self
+            let mut presentation = self
                 .state_ref()
                 .presentation(visible[index])
                 .cloned()
                 .unwrap_or_default();
+            // `UnitInfo::ShakeAir` shifts `shadow_offset -= 2 * offset` on top of the
+            // hull's `OffsetDrawZones(offset)`. The anchor above already carries
+            // `offset`, so the stored value takes `-2 * offset` and the shadow ends
+            // up three times as far from its base as the hull.
+            if bob_x != 0 || bob_y != 0 {
+                presentation.shadow_offset =
+                    bobbed_shadow_offset(&presentation, (bob_x, bob_y));
+            }
             let drawn = self.assets().and_then(|assets| {
                 // Frame palette: a snapshot with palette cycles or the original
                 // system palette (`dt = 0` — no changes).
@@ -1981,6 +2055,51 @@ mod tests {
         // A takeoff step of `Take()`: `shadow_offset -= 16` → a smaller shift.
         presentation.shadow_offset = Point::new(-32, -32);
         assert_eq!(shadow_render_offset(&presentation), (32, 32));
+    }
+
+    /// `UnitInfo::ShakeAir` (`unitinfo.cpp:4636-4678`): the hull swings at most
+    /// two pixels along the rotating direction, the offsets cancel in each 8-tick
+    /// block, and the shadow moves three times as far (`shadow_offset -= 2 * offset`
+    /// on top of the hull's `OffsetDrawZones(offset)`).
+    #[test]
+    fn the_flight_bob_follows_shake_air() {
+        // First block: north. Two even ticks out, two even ticks back.
+        assert_eq!(shake_air_offset(0), (0, -1));
+        assert_eq!(shake_air_offset(1), (0, -1));
+        assert_eq!(shake_air_offset(2), (0, -2));
+        assert_eq!(shake_air_offset(3), (0, -2));
+        assert_eq!(shake_air_offset(4), (0, -1));
+        assert_eq!(shake_air_offset(5), (0, -1));
+        assert_eq!(shake_air_offset(6), (0, 0));
+        assert_eq!(shake_air_offset(7), (0, 0));
+        // Second block: north-east.
+        assert_eq!(shake_air_offset(8), (1, -1));
+        assert_eq!(shake_air_offset(10), (2, -2));
+        assert_eq!(shake_air_offset(14), (0, 0));
+        // Last block: north-west — the `moved / 8` direction index wraps.
+        assert_eq!(shake_air_offset(56), (-1, -1));
+        assert_eq!(shake_air_offset(62), (0, 0));
+
+        // The shadow: the hull anchor carries `offset`, the stored value takes
+        // `-2 * offset`, so the shadow ends `3 * offset` from its base.
+        let mut presentation = UnitPresentation::new();
+        presentation.shadow_offset = Point::new(-64, -64);
+        assert_eq!(
+            bobbed_shadow_offset(&presentation, (0, -2)),
+            Point::new(-64, -60),
+            "shadow_offset -= 2 * offset"
+        );
+        let bobbing = bobbed_shadow_offset(&presentation, (0, -2));
+        assert_eq!(
+            (-bobbing.x, -bobbing.y),
+            (64, 60),
+            "the shadow moves 3 × 2 px north of its base"
+        );
+        assert_eq!(
+            bobbed_shadow_offset(&presentation, (0, 0)),
+            presentation.shadow_offset,
+            "no bob — the stored shadow offset is unchanged"
+        );
     }
 
     #[test]

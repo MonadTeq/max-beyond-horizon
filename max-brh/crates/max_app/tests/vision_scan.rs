@@ -1,17 +1,21 @@
-//! Frame-side vision (item 2a): the radar of a moving unit must move with the
-//! **sprite**, not with the simulation cell.
+//! Frame-side vision: the radar of a moving unit must move with the **sprite**,
+//! not with the simulation cell, and the fog must **close** when the scanner
+//! leaves (no explored memory).
 //!
 //! Oracle: `Access_UpdateMapStatus` (`max-cpp-port/src/access.cpp:762`) is called from
 //! `UnitInfo::Move` exactly when the sprite crosses into the next cell
 //! (`unitinfo.cpp:1787-1816`: `grid_x = x / GFX_MAP_TILE_SIZE` and then
 //! `Access_UpdateMapStatus(this, true)` / `(old copy, false)`), so in the original the
 //! scan — and with it the minimap fog and the enemy dots — moves on **arrival**.
+//! `HeatMap::complete` is live (`heatmap.cpp:56-141`), `Access_OnCellHidden`
+//! (`access.cpp:576`) darkens the fog and `UnitInfo::Draw(team)` hides the units of a
+//! cell that just became hidden (`unitinfo.cpp:2842-2870`) — the fog is not a memory.
 //!
 //! The port's simulation advances a whole cell per tick while the frame walks the same
 //! cells at `VISUAL_CELLS_PER_SECOND` (`App::update_visual_units`), so the simulation
 //! scan of a moving unit is ahead of its sprite. [`App::vision`] is the frame-side
-//! copy that follows the visual anchors; these tests pin the difference and the
-//! convergence on arrival.
+//! copy that follows the visual anchors; these tests pin the difference, the
+//! convergence on arrival and the closing fog.
 
 use max_app::{App, AppConfig};
 use max_core::enums::UnitType;
@@ -137,7 +141,7 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
         "враг не должен рисоваться до прибытия спрайта"
     );
     assert!(
-        !app.vision().explored(ex, ey),
+        !app.vision().covers(ex, ey),
         "туман на миникарте не должен открываться раньше прибытия"
     );
 
@@ -164,16 +168,74 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
         "после прибытия враг виден"
     );
     assert!(
-        app.vision().explored(ex, ey),
-        "клетка врага попала в открытый туман миникарты"
+        app.vision().covers(ex, ey),
+        "клетка врага попала в текущий скан миникарты"
     );
 }
 
-/// A unit the simulation shows although **no** own scan covers it (spotted by fire,
-/// `apply_damage` → `SpotByTeam`, `combat.rs:122`) must stay on the frame: the
-/// frame-side vision only delays scan coverage, it never hides such a unit.
+/// The fog is **live**: a unit outside the current scan is not drawn even if the
+/// simulation flag still says `visible` — the original clears it through
+/// `Access_OnCellHidden` → `UnitInfo::Draw(team)` (`access.cpp:576-607`,
+/// `unitinfo.cpp:2842-2870`). The port must not mutate the simulation flag
+/// (it is part of `snapshot_bytes`/CRC), so the frame keeps the live answer.
 #[test]
-fn a_unit_spotted_outside_the_scan_stays_visible() {
+fn the_fog_closes_when_the_scanner_leaves() {
+    let (mut app, mover, enemy) = scenario();
+
+    // The tank walks to (21,20); on arrival the enemy at (25,20) is in its scan.
+    app.update_visual_units(1.0 / 60.0);
+    step_simulation(&mut app, mover);
+
+    for _ in 0..120 {
+        app.update_visual_units(1.0 / 60.0);
+
+        if app.presented_visible(app.state_ref().unit(enemy).expect("враг")) {
+            break;
+        }
+    }
+
+    let enemy_unit = app.state_ref().unit(enemy).expect("враг").clone();
+    let x = i32::from(enemy_unit.grid.x);
+    let y = i32::from(enemy_unit.grid.y);
+
+    assert!(app.vision().covers(x, y), "враг в текущем скане");
+    assert!(app.presented_visible(&enemy_unit), "враг виден в скане");
+
+    // The simulation moves the scanner far away (a teleport for the frame too).
+    let mut unit = app.state_ref().unit(mover).cloned().expect("юнит");
+    unit.grid = Point::new(20, 30);
+    app.universe_mut().write_unit(mover, unit);
+
+    let snapshot = app.snapshot();
+    app.update_visual_units(1.0 / 60.0);
+
+    let enemy_unit = app.state_ref().unit(enemy).expect("враг").clone();
+
+    assert!(
+        enemy_unit.is_visible_to_team(TeamId::RED),
+        "флаг симуляции остаётся true (его сбрасывает только оракул Draw/CRC — не трогаем)"
+    );
+    assert!(
+        !app.vision().covers(x, y),
+        "скан ушёл: клетка снова под туманом"
+    );
+    assert!(
+        !app.presented_visible(&enemy_unit),
+        "враг снова скрыт — туман закрывается, а не остаётся разведанным"
+    );
+    assert_eq!(
+        app.snapshot(),
+        snapshot,
+        "кадр не меняет снапшот/CRC — правка только презентационная"
+    );
+}
+
+/// A unit the simulation shows although **no** own scan covers it (spotted by
+/// `Access_GetAttackTarget(..., mode=true)` → `SpotByTeam`, `access.cpp:2018`) is
+/// hidden by the frame: the manual rule is «видно только то, что реально попадает
+/// в зону scan». Its simulation flag stays untouched (CRC).
+#[test]
+fn a_unit_spotted_outside_the_scan_is_not_drawn() {
     let (mut app, _mover, enemy) = scenario();
 
     app.update_visual_units(1.0 / 60.0);
@@ -182,6 +244,7 @@ fn a_unit_spotted_outside_the_scan_stays_visible() {
     spotted.set_visible_to_team(TeamId::RED, true);
     app.universe_mut().write_unit(enemy, spotted);
 
+    let snapshot = app.snapshot();
     app.update_visual_units(1.0 / 60.0);
 
     let spotted = app.state_ref().unit(enemy).cloned().expect("враг");
@@ -194,8 +257,13 @@ fn a_unit_spotted_outside_the_scan_stays_visible() {
         "собственный скан до клетки не достаёт (проверка сценария)"
     );
     assert!(
-        app.presented_visible(&spotted),
-        "враг, замеченный огнём вне скана, не должен исчезать"
+        !app.presented_visible(&spotted),
+        "юнит вне текущего скана не рисуется (живой туман)"
+    );
+    assert_eq!(
+        app.snapshot(),
+        snapshot,
+        "флаг симуляции не меняется — только презентация"
     );
 }
 
@@ -233,8 +301,8 @@ fn zero_frame_time_reads_the_simulation_scan_verbatim() {
 
     assert_eq!(
         app.vision()
-            .explored(i32::from(enemy_unit.grid.x), i32::from(enemy_unit.grid.y)),
+            .covers(i32::from(enemy_unit.grid.x), i32::from(enemy_unit.grid.y)),
         heat,
-        "туман dt = 0 — heat map команды"
+        "туман dt = 0 — живая heat map команды"
     );
 }

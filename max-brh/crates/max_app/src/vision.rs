@@ -13,12 +13,17 @@
 //! frame shows the radar ahead of the unit — the manual defect «радар (scan)
 //! смещается раньше прибытия юнита».
 //!
-//! This module therefore keeps a frame-only copy of the player's scan:
+//! This module therefore keeps a frame-only copy of the player's **current**
+//! coverage:
 //!
 //! * [`VisionView::covered`] — the cells covered by the own units' scan at their
-//!   **visual** anchor (the cell the sprite stands in);
-//! * [`VisionView::explored`] — the cumulative (monotone) union, the minimap fog
-//!   memory (`Access_UpdateMinimapFogOfWar`).
+//!   **visual** anchor (the cell the sprite stands in). This is the only vision
+//!   state: the original keeps no explored memory. `HeatMap::complete` is
+//!   incremented/decremented live (`heatmap.cpp:56-141`), `Access_OnCellHidden`
+//!   (`access.cpp:576`) darkens `MinimapFov` and clears `visible_to_team` of the
+//!   units in the cell, and `Access_UpdateMinimapFogOfWar` (`access.cpp:896`)
+//!   darkens every cell with `complete == 0`. A scanner that leaves therefore
+//!   closes the fog and hides the enemy again — «туман закрывается».
 //!
 //! It never writes to the simulation, is not part of `snapshot_bytes`/CRC and is
 //! rebuilt from the simulation for `dt <= 0` (QA/headless frames), so the golden
@@ -26,6 +31,7 @@
 
 use std::collections::BTreeMap;
 
+use max_core::enums::unit_flags;
 use max_core::geo::{Point, MAP_TILES};
 use max_core::unit::{UnitId, UnitInfo};
 use max_core::universe::StateRef;
@@ -96,13 +102,6 @@ impl CellMask {
         self.get_index(y as usize * max_core::geo::MAP_WIDTH as usize + x as usize)
     }
 
-    /// `self |= other`.
-    pub fn union_with(&mut self, other: &CellMask) {
-        for (word, add) in self.words.iter_mut().zip(other.words.iter()) {
-            *word |= *add;
-        }
-    }
-
     /// Number of set cells (tests/diagnostics).
     pub fn count(&self) -> usize {
         self.words
@@ -120,15 +119,17 @@ impl CellMask {
 /// Frame-side vision of the local player's team (see the module docs).
 #[derive(Debug, Clone, Default)]
 pub struct VisionView {
-    /// Scan coverage of the own units at their visual anchors (current frame).
+    /// Live scan coverage of the own units at their visual anchors (current frame).
+    ///
+    /// There is deliberately **no** cumulative "explored" mask: the original's
+    /// `MinimapFov` is rebuilt from the live `HeatMap::complete` counts, so the
+    /// fog closes when the last scanner leaves (`access.cpp:576-584/896-910`).
     covered: CellMask,
-    /// Cumulative union of [`Self::covered`] — the minimap fog memory.
-    explored: CellMask,
     /// The visual cell of every own unit (the anchor the coverage was built from).
     anchors: BTreeMap<UnitId, (i16, i16)>,
-    /// `true` when the masks describe the **visual** anchors of this frame.
+    /// `true` when the mask describes the **visual** anchors of this frame.
     ///
-    /// `false` — the masks are a copy of the simulation (headless/QA frames with
+    /// `false` — the mask is a copy of the simulation (headless/QA frames with
     /// `dt <= 0`, before the first frame, or `GameManager_AllVisible`): the
     /// presentation then reads the simulation values exactly, which keeps the
     /// golden frames byte-identical.
@@ -152,88 +153,50 @@ impl VisionView {
         self.covered.get(x, y)
     }
 
-    /// Whether `(x, y)` was ever covered (the minimap fog is off there).
-    pub fn explored(&self, x: i32, y: i32) -> bool {
-        self.explored.get(x, y)
-    }
-
     /// Coverage mask of the frame (tests/diagnostics).
     pub fn covered_mask(&self) -> &CellMask {
         &self.covered
     }
 
-    /// Explored mask of the frame (tests/diagnostics).
-    pub fn explored_mask(&self) -> &CellMask {
-        &self.explored
-    }
-
     /// Drops the frame state: the next frame reseeds from the simulation.
     pub fn reset(&mut self) {
         self.covered.clear();
-        self.explored.clear();
         self.anchors.clear();
         self.follow_visual = false;
     }
 
     /// Copies the **simulation** state — `dt <= 0` (QA/headless) and the first frame.
     ///
-    /// `explored` is the player team's heat map (`complete > 0`,
-    /// `Access_UpdateMinimapFogOfWar`), `covered` — the cells of the enemies that
-    /// the simulation currently reports as visible to the player's team (the exact
-    /// value the presentation reads without [`Self::follow_visual`]).
+    /// `covered` is the player team's live coverage — every heat map cell with
+    /// `complete > 0` (`HeatMap::IsVisible`), the exact value the presentation
+    /// reads without [`Self::follow_visual`].
     pub fn reset_from_sim(&mut self, state: StateRef<'_>) {
         self.covered.clear();
-        self.explored.clear();
         self.anchors.clear();
         self.follow_visual = false;
 
-        self.seed_explored(state);
-
-        let player = state.player_team();
-
-        // The current coverage: the cells of enemies the simulation shows to the
-        // player's team. This is exactly «visible right now» for the frame code
-        // that reads the mask in the `!follow_visual` branch.
-        for id in state.unit_ids_in_order() {
-            let Some(unit) = state.unit(id) else {
-                continue;
-            };
-
-            if unit.team != player && unit.is_visible_to_team(player) {
-                self.covered
-                    .set(i32::from(unit.grid.x), i32::from(unit.grid.y));
-            }
-        }
-    }
-
-    /// Seeds [`Self::explored`] with the player team's heat map (`complete > 0`,
-    /// `Access_UpdateMinimapFogOfWar`): cells explored before the frame started
-    /// following the visual anchors must not go dark again.
-    fn seed_explored(&mut self, state: StateRef<'_>) {
         let player = state.player_team();
 
         if let Some(map) = state.ai().heat_maps.get(usize::from(player.0)) {
             for (index, cell) in map.cells().iter().enumerate() {
                 if cell.complete > 0 {
-                    self.explored.set_index(index);
+                    self.covered.set_index(index);
                 }
             }
         }
     }
 
-    /// Rebuilds the masks from the frame's visual anchors.
+    /// Rebuilds the mask from the frame's visual anchors.
     ///
     /// `anchors` — the visual cell of the own units (a fractional position is
     /// rounded to the cell the sprite stands in, exactly like the renderer picks
     /// the drawing cell). Units without an entry keep their simulation cell.
+    ///
+    /// The mask is cleared first: it is the **current** scan, not a history
+    /// (`Access_UpdateMapStatus(unit, false)` removes the old coverage when the
+    /// sprite crosses a cell border, `access.cpp:782-784/847`).
     pub fn rebuild(&mut self, state: StateRef<'_>, anchors: &BTreeMap<UnitId, (i16, i16)>) {
         let player = state.player_team();
-
-        // The first frame after a reset/`dt <= 0` path: the cells explored before
-        // must stay explored (the fog is a memory — `Access_UpdateMinimapFogOfWar`).
-        if !self.follow_visual {
-            self.seed_explored(state);
-        }
 
         self.covered.clear();
         self.anchors.clear();
@@ -263,9 +226,6 @@ impl VisionView {
 
             Self::add_scan(&mut self.covered, anchor, scan);
         }
-
-        let covered = self.covered.clone();
-        self.explored.union_with(&covered);
     }
 
     /// Adds the scan coverage of a unit anchored at `anchor` to `mask`
@@ -290,16 +250,25 @@ impl VisionView {
 /// Whether the frame draws a foreign unit (`DrawMap_RenderUnits` /
 /// `DrawMap_RenderMiniMapUnitList`).
 ///
-/// The simulation flag (`visible_to_team`) is the authority. While the view follows
-/// the visual anchors, a foreign unit additionally has to be inside the scan of an
-/// own unit **at its visual cell** — the radar of a moving unit then reveals the
-/// enemy on arrival, not when its simulation cell did (`Access_UpdateMapStatus` is
-/// called on the cell crossing in `UnitInfo::Move`, `unitinfo.cpp:1787-1816`).
+/// The original stores the answer in `visible_to_team`, which the live heat map
+/// maintains: `Access_OnCellRevealed` spots the units of a newly covered cell and
+/// `Access_OnCellHidden` (`access.cpp:576-607`) calls `UnitInfo::Draw(team)` for
+/// every unit in a cell whose `complete` dropped to zero — `Draw` sets
+/// `visible_to_team[team] = false` (`unitinfo.cpp:2842-2870`). A unit that leaves
+/// the scan is therefore **not drawn** even though its simulation flag in the
+/// port still says `true` (the port keeps the simulation untouched: changing the
+/// flag would change the snapshot/CRC).
 ///
-/// A unit that the simulation shows although **no** own unit covers its cell is
-/// never hidden: that visibility does not come from the scan but from
-/// `UnitInfo::SpotByTeam` on fire (`apply_damage`, `combat.rs:122`) or a revealed
-/// mine, and the original keeps such a unit on the map.
+/// The frame therefore draws a foreign unit only while the own units' **current**
+/// scan (at the visual anchors) covers its cell:
+///
+/// * `is_visible_to_team` stays the gate for stealth: a land mine or a commando
+///   inside the scan is not spotted by `DrawStealth` and must stay hidden, while
+///   a unit spotted by fire outside the scan is hidden as well — the manual rule
+///   «видно только то, что реально попадает в зону scan»;
+/// * for a `BUILDING` any of its 2×2 cells counts, like
+///   `HeatMap::IsVisible(unit)` (`heatmap.cpp:170-181`) behind
+///   `Access_IsVisibleOnHeatMap` (`access.cpp:538`).
 pub fn presented_visible(state: StateRef<'_>, view: &VisionView, unit: &UnitInfo) -> bool {
     let player = state.player_team();
 
@@ -315,43 +284,22 @@ pub fn presented_visible(state: StateRef<'_>, view: &VisionView, unit: &UnitInfo
         return true;
     }
 
+    covered_now(view, unit)
+}
+
+/// Whether the frame's live scan covers the unit's cell (2×2 for buildings).
+fn covered_now(view: &VisionView, unit: &UnitInfo) -> bool {
     let x = i32::from(unit.grid.x);
     let y = i32::from(unit.grid.y);
 
-    if view.covers(x, y) {
-        return true;
+    if unit.flags & unit_flags::BUILDING != 0 {
+        view.covers(x, y)
+            || view.covers(x + 1, y)
+            || view.covers(x, y + 1)
+            || view.covers(x + 1, y + 1)
+    } else {
+        view.covers(x, y)
     }
-
-    // Not covered at the frame's anchors: either a moving scanner is still behind
-    // (hide until it arrives) or the cell is not covered by any own scan at all
-    // (spotted by fire) — the latter must stay visible.
-    !scan_covers_now(state, x, y)
-}
-
-/// Whether any own unit's scan covers the cell at its **simulation** cell
-/// (`Access_IsWithinScanRange` with the `grid` of `Access_UpdateMapStatus`).
-fn scan_covers_now(state: StateRef<'_>, x: i32, y: i32) -> bool {
-    let player = state.player_team();
-
-    for id in state.unit_ids_in_order() {
-        let Some(unit) = state.unit(id) else {
-            continue;
-        };
-
-        if unit.team != player {
-            continue;
-        }
-
-        let Some(scan) = state.scan_radius(unit) else {
-            continue;
-        };
-
-        if max_core::is_within_scan_range_at(unit.grid, x, y, scan) {
-            return true;
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -372,20 +320,6 @@ mod tests {
         assert!(!mask.get(-1, 0));
         assert!(!mask.get(0, 200));
         assert_eq!(mask.count(), 1);
-    }
-
-    #[test]
-    fn cell_mask_union_is_monotone() {
-        let mut left = CellMask::new();
-        let mut right = CellMask::new();
-
-        left.set(1, 1);
-        right.set(2, 2);
-        left.union_with(&right);
-
-        assert!(left.get(1, 1));
-        assert!(left.get(2, 2));
-        assert!(right.get(2, 2) && !right.get(1, 1));
     }
 
     #[test]

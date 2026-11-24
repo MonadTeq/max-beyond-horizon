@@ -5,14 +5,16 @@
 //! `UnitsManager_ProcessUnitOrders`, 32 `UnitsManager_ProcessOrder*` functions,
 //! `UnitsManager_EndAttack`, `UnitsManager_PinAttackTargets`,
 //! `UnitsManager_ScaleUnit`, `UnitsManager_NewOrderWhileScaling`,
-//! `UnitsManager_FinishUnitScaling`), `unitinfo.cpp` (`UnitInfo::RestoreOrders`,
+//! `UnitsManager_FinishUnitScaling`, `UnitsManager_LoadUnit`), `unitinfo.cpp`
+//! (`UnitInfo::RestoreOrders`,
 //! `ExecuteMove`, `Move`, `MoveFinished`, `BlockedOnPathRequest`, `StopMove`,
 //! `StopMovement`, `Land`, `Take`, `ProcessLanding`, `ProcessLoading`,
 //! `ProcessUnloading`, `PositionInTape`, `UpdateAngle`, `StartBuilding`,
 //! `CancelBuilding`,
 //! `PowerUp`, `PowerDown`, `Reload`, `Repair`, `Transfer`, `Upgrade`,
 //! `CheckIfDestroyed`), `groundpath.cpp` (`GroundPath::Execute`,
-//! `GroundPath::UpdateUnitAngle`, `CancelMovement`), `paths.cpp`
+//! `GroundPath::UpdateUnitAngle`, `CancelMovement`),
+//! `airpath.cpp` (`AirPath::Execute`, `Paths_FinishMove`), `paths.cpp`
 //! (`Paths_GetAngle`, `Paths_UpdateAngle`,
 //! `Paths_CalculateStep`), DESIGN.md §5.2.
 //!
@@ -1410,7 +1412,9 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
                 ctx.world.destroy_unit(ctx.id);
             }
         } else {
-            ctx.blocked_on_path_request(true);
+            // `AirPath::Execute` (`airpath.cpp:281-283`): the last pixel step calls
+            // `Paths_FinishMove` — the arrival is not a plain "blocked" end of move.
+            paths_finish_move(ctx);
         }
         return false;
     }
@@ -1450,6 +1454,102 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     ctx.unit.in_transit = true;
     ctx.unit.moved = 0;
     true
+}
+
+/// `Paths_FinishMove` (`airpath.cpp:408-456`) — the air path is exhausted
+/// (`m_length == 0`): the unit lands into a bay, starts loading into a transport, or
+/// finishes its move.
+///
+/// The port used to go straight to [`OrderContext::blocked_on_path_request`], which is
+/// the last resort of the C++ function only: an air transport that reached the passenger
+/// it was sent to load stayed in `ORDER_AWAIT` with `parent = passenger` and the
+/// passenger was never taken aboard.
+///
+/// Divergence from C++: the `path->GetEndX() != grid_x` branch (re-requesting an air path
+/// for the rest of a speed-limited route) is not reachable here — [`air_path_execute`]
+/// reaches its end cell along `path.end_x/end_y` or stops earlier on `speed == 0`, so
+/// "at the path end" always means "at the order destination".
+fn paths_finish_move(ctx: &mut OrderContext<'_>) {
+    // `unit->Redraw()` — the shadow of a hovering aircraft; the presentation layer
+    // recomputes it from `HOVERING` (`air_shadow_offset`).
+    ctx.unit.path = None;
+
+    // `if (!UnitsManager_LoadUnit(unit)) { … unit->BlockedOnPathRequest(); }`
+    if load_unit(ctx) {
+        return;
+    }
+
+    if ctx.unit.unit_type == UnitType::AirTransport {
+        if let Some(passenger_id) = ctx.unit.parent_unit {
+            if i32::from(ctx.unit.storage)
+                < ctx
+                    .unit
+                    .base_values
+                    .get_attribute(crate::unit_values::ATTRIB_STORAGE)
+            {
+                if access::get_team_unit(ctx.world, ctx.unit.grid, ctx.unit.team, MOBILE_LAND_UNIT)
+                    == Some(passenger_id)
+                {
+                    // `unit->SetOrder(ORDER_LOAD); unit->SetOrderState(ORDER_STATE_INIT)`
+                    // (plain setters in C++, not `UnitsManager_SetNewOrder`).
+                    ctx.unit.orders = UnitOrder::Load;
+                    ctx.unit.state = UnitOrderState::Init;
+
+                    return;
+                }
+            } else {
+                // The hold is full: the transport is no longer waiting for this passenger.
+                ctx.unit.parent_unit = None;
+            }
+        }
+    }
+
+    ctx.blocked_on_path_request(true);
+}
+
+/// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`) — an air unit that finished its
+/// path over its own landing pad or hangar starts landing instead of stopping.
+///
+/// Returns `true` when the order was taken over; the caller then skips the rest of
+/// `Paths_FinishMove`.
+fn load_unit(ctx: &mut OrderContext<'_>) -> bool {
+    let grid = ctx.unit.grid;
+    let Some(shop_id) = access::get_receiver_unit(ctx.world, &ctx.unit, grid) else {
+        return false;
+    };
+    let Some(shop) = ctx.other(shop_id) else {
+        return false;
+    };
+
+    if shop.unit_type == UnitType::LandingPad
+        && access::get_unit2(ctx.world, grid, ctx.unit.team).is_none()
+    {
+        ctx.unit.parent_unit = None;
+        ctx.unit.orders = UnitOrder::Land;
+        ctx.unit.state = UnitOrderState::Init;
+
+        return true;
+    }
+
+    if shop.unit_type == UnitType::Hangar && ctx.unit.orders == UnitOrder::MoveToUnit {
+        let stored_units = access::get_stored_unit_count(ctx.world, &shop);
+        let storable_units = shop
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_STORAGE);
+
+        if stored_units == storable_units {
+            ctx.unit.orders = UnitOrder::Await;
+            ctx.unit.state = UnitOrderState::ExecutingOrder;
+        } else {
+            ctx.unit.parent_unit = Some(shop_id);
+            ctx.unit.orders = UnitOrder::Land;
+            ctx.unit.state = UnitOrderState::Init;
+        }
+
+        return true;
+    }
+
+    false
 }
 
 /// `BuilderPath::Execute` (`builderpath.cpp`) — the builder's step to the target.
@@ -4139,6 +4239,109 @@ mod tests {
         assert_eq!(unit.orders, UnitOrder::Await);
         assert!(unit.parent_unit.is_none());
         assert!(state.unit(carrier).unwrap().storage >= 0);
+    }
+
+    /// `Paths_FinishMove` (`airpath.cpp:430-443`): the air transport reached the
+    /// passenger it was sent to load — `CURSOR_LOAD` gives it `ORDER_MOVE/INIT` to the
+    /// passenger cell with `parent = passenger` (`game_manager.cpp:6814-6818`). On
+    /// arrival the transport takes `ORDER_LOAD/INIT` (not merely `BlockedOnPathRequest`)
+    /// and the passenger goes into the cargo bay.
+    #[test]
+    fn air_transport_loads_passenger_on_arrival() {
+        let (mut state, passenger, transport) = state_with_air_transport_and_passenger();
+        state.unit_mut(transport).unwrap().parent_unit = Some(passenger);
+        order_move_to(&mut state, transport, Point::new(10, 10));
+
+        let mut saw_load = false;
+        for _ in 0..160 {
+            state.tick();
+            let transport_unit = state.unit(transport).expect("transport");
+            saw_load |= transport_unit.orders == UnitOrder::Load;
+        }
+
+        assert!(
+            saw_load,
+            "the air transport must take ORDER_LOAD on arrival at the passenger cell"
+        );
+
+        let transport_unit = state.unit(transport).expect("transport");
+        assert_eq!(transport_unit.storage, 1, "passenger occupies a cargo bay");
+        assert_eq!(transport_unit.orders, UnitOrder::Await);
+        assert_eq!(transport_unit.state, UnitOrderState::ExecutingOrder);
+        assert!(
+            transport_unit.parent_unit.is_none(),
+            "`ProcessLoading` clears the transport parent"
+        );
+
+        let passenger_unit = state.unit(passenger).expect("passenger");
+        assert_eq!(
+            passenger_unit.parent_unit,
+            Some(transport),
+            "passenger parent is the transport"
+        );
+        assert_eq!(passenger_unit.orders, UnitOrder::Idle);
+    }
+
+    /// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`), the first branch of
+    /// `Paths_FinishMove` (`airpath.cpp:430`): an aircraft that finishes its path over
+    /// an own landing pad starts landing (`ORDER_LAND/INIT`) instead of stopping.
+    #[test]
+    fn air_unit_lands_on_landing_pad_after_move() {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+        state
+            .spawn_unit(
+                UnitType::LandingPad,
+                TeamId::RED,
+                Point::new(10, 10),
+                STATIONARY | SELECTABLE,
+            )
+            .expect("landing pad");
+        let aircraft = state
+            .spawn_unit(
+                UnitType::Fighter,
+                TeamId::RED,
+                Point::new(10, 13),
+                MOBILE_AIR_UNIT | SELECTABLE | UPGRADABLE,
+            )
+            .expect("aircraft");
+
+        order_move_to(&mut state, aircraft, Point::new(10, 10));
+
+        let mut saw_land = false;
+        for _ in 0..160 {
+            state.tick();
+            saw_land |= state.unit(aircraft).map(|unit| unit.orders) == Some(UnitOrder::Land);
+        }
+
+        assert!(saw_land, "the aircraft must take ORDER_LAND over the pad");
+    }
+
+    fn state_with_air_transport_and_passenger() -> (GameState, UnitId, UnitId) {
+        let mut state = GameState::new();
+        state.teams[0].team_type = TeamKind::Player;
+        state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+        let passenger = state
+            .spawn_unit(
+                UnitType::Tank,
+                TeamId::RED,
+                Point::new(10, 10),
+                MOBILE_LAND_UNIT | SELECTABLE | UPGRADABLE,
+            )
+            .expect("passenger");
+        let transport = state
+            .spawn_unit(
+                UnitType::AirTransport,
+                TeamId::RED,
+                Point::new(10, 13),
+                MOBILE_AIR_UNIT | SELECTABLE | UPGRADABLE,
+            )
+            .expect("transport");
+
+        (state, passenger, transport)
     }
 
     #[test]
