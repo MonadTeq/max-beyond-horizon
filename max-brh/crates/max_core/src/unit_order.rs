@@ -393,6 +393,26 @@ pub fn take(unit: &mut UnitInfo) -> bool {
     }
 }
 
+/// `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`) — the shadow shift of the unit.
+///
+/// In C++ the shadow is drawn at `point - shadow_offset` (`RenderShadow`,
+/// `unitinfo.cpp:3067`), so a **hovering aircraft** (`MOBILE_AIR_UNIT` +
+/// `HOVERING`) gets `shadow_offset = (-64, -64)` — the shadow one cell
+/// down-right of the hull, which is what makes a flying aircraft look airborne;
+/// every other unit has `(0, 0)` (the shadow under the hull). The value is stored
+/// in [`max_types::unit::UnitPresentation::shadow_offset`] (the C++ `UnitInfo`
+/// field, also in the V70 save) and is **not** part of the snapshot/CRC.
+pub fn air_shadow_offset(flags: u32) -> Point {
+    if flags & MOBILE_AIR_UNIT != 0 && flags & HOVERING != 0 {
+        Point::new(
+            -(GFX_MAP_TILE_SIZE as i16),
+            -(GFX_MAP_TILE_SIZE as i16),
+        )
+    } else {
+        Point::ZERO
+    }
+}
+
 /// `UnitInfo::PowerUp` (`unitinfo.cpp:5094`).
 ///
 /// TODO(P3): `Cargo_UpdateResourceLevels` (complex mining/power levels).
@@ -923,6 +943,49 @@ pub fn paths_calculate_step(
     }
 }
 
+/// `Paths_TakeStep` (`airpath.cpp:458`) — charging one cell of **air** movement.
+///
+/// `AirPath::Execute` spends `speed` not per pixel but once per
+/// `m_length % max_velocity == 0` step (`airpath.cpp:272-278`): `m_length` counts
+/// quarter-cells (`Paths_GetAirPath`: `length = steps_distance * max_velocity`,
+/// `max_velocity = 4`), so exactly **one** `speed` point is spent per crossed cell.
+/// In the port's one-cell-per-tick model ([`air_path_execute`]) the call therefore
+/// happens once per cell — the aircraft flies `speed` cells, then the `speed == 0`
+/// check at the top of `AirPath::Execute` (`airpath.cpp:186-199`) stops it.
+///
+/// Unlike [`paths_calculate_step`] (ground: `Paths_CalculateStep`, `paths.cpp:292`)
+/// there is no `move_fraction`/`max_velocity` recalculation and no "not enough
+/// speed" branch. `real_time` — the `GameManager_RealTime` debug setting: the step
+/// costs nothing.
+pub fn paths_take_step(unit: &mut UnitInfo, cost: i32, real_time: bool) {
+    let cost = if real_time { 0 } else { cost };
+
+    unit.speed = i32::from(unit.speed).wrapping_sub(cost) as u16;
+
+    if unit.group_speed != 0 {
+        let group_speed = i32::from(unit.group_speed) - cost;
+        unit.group_speed = group_speed.max(1) as u16;
+    }
+
+    let base = unit.base_values;
+
+    if base.get_attribute(ATTRIB_MOVE_AND_FIRE) == 0 {
+        let rounds = base.get_attribute(ATTRIB_ROUNDS);
+        let speed = base.get_attribute(ATTRIB_SPEED);
+
+        // C++ divides by `ATTRIB_SPEED` unguarded; the port keeps the
+        // `speed != 0` guard of [`paths_calculate_step`] (a type table entry with
+        // zero speed would be a data error, not a rule).
+        if speed != 0 {
+            let shots = (rounds * i32::from(unit.speed)) / speed;
+
+            if shots < i32::from(unit.shots) {
+                unit.shots = shots as u8;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Order processing context
 // ---------------------------------------------------------------------------
@@ -971,6 +1034,50 @@ impl<'a> OrderContext<'a> {
     /// `UnitsManager_ScaleUnit` for the current unit.
     pub fn scale(&mut self, state: UnitOrderState) -> bool {
         self.set_new_order(UnitOrder::AwaitScaling, state)
+    }
+
+    /// `UnitInfo::Land` (`unitinfo.cpp:3829`) including the presentation part.
+    ///
+    /// C++ `Land()` shifts `shadow_offset` by `+8` on every animation step
+    /// (`unitinfo.cpp:3848-3849`) and on the final step clears `HOVERING` and calls
+    /// `Redraw()` (`:1452-1459`), which sets the offset from the flag — `(-64, -64)`
+    /// for a hovering aircraft, `(0, 0)` otherwise. The offset lives in
+    /// [`max_types::unit::UnitPresentation`] (the C++ `UnitInfo` field, V70), so the
+    /// update goes through the presentation table, not [`UnitInfo`].
+    pub(crate) fn land(&mut self) -> bool {
+        let result = land(&mut self.unit);
+        let flags = self.unit.flags;
+
+        if let Some(presentation) = self.world.presentation_mut(self.id) {
+            if result {
+                // `Redraw()` on the final step.
+                presentation.shadow_offset = air_shadow_offset(flags);
+            } else {
+                presentation.shadow_offset.x += 8;
+                presentation.shadow_offset.y += 8;
+            }
+        }
+
+        result
+    }
+
+    /// `UnitInfo::Take` (`unitinfo.cpp:3862`) including the presentation part.
+    ///
+    /// C++ `Take()` shifts `shadow_offset` by `-16` per animation step
+    /// (`unitinfo.cpp:3879-3880`): four steps accumulate `-64`, the final step only
+    /// sets `HOVERING` (no `Redraw`), which is exactly the `Redraw()` value of a
+    /// hovering aircraft.
+    pub(crate) fn take(&mut self) -> bool {
+        let result = take(&mut self.unit);
+
+        if !result {
+            if let Some(presentation) = self.world.presentation_mut(self.id) {
+                presentation.shadow_offset.x -= 16;
+                presentation.shadow_offset.y -= 16;
+            }
+        }
+
+        result
     }
 
     /// `RestoreOrders` of the current unit.
@@ -1308,18 +1415,35 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
         return false;
     }
 
-    if ctx.unit.is_air() && (ctx.unit.speed == 0 || ctx.unit.engine == 0) {
-        // C++ `AirPath::Execute` (`airpath.cpp:186-199`): the speed and
-        // engine check is **inside** `if (unit->flags & MOBILE_AIR_UNIT)`. For
+    if ctx.unit.is_air() {
+        // C++ `AirPath::Execute` (`airpath.cpp:186-199`): the speed and engine
+        // check is **inside** `if (unit->flags & MOBILE_AIR_UNIT)`, and the speed
+        // compared is the usable one (with a group order — `group_speed - 1`). For
         // projectiles (`MISSILE_UNIT`, `speed = 0` from `SC_ATTRI`) there is no
         // such check — they fly by `m_length` and finish with `Paths_FinishMove`.
-        ctx.unit.state = UnitOrderState::ExecutingOrder;
-        ctx.move_finished(true);
-        return false;
+        let mut speed = ctx.unit.speed;
+
+        if ctx.unit.group_speed > 0 {
+            speed = ctx.unit.group_speed - 1;
+        }
+
+        if speed == 0 || ctx.unit.engine == 0 {
+            ctx.unit.state = UnitOrderState::ExecutingOrder;
+            ctx.move_finished(true);
+            return false;
+        }
     }
 
     if paths_update_angle(&mut ctx.unit, paths_get_angle(dx, dy)) {
         return false;
+    }
+
+    if ctx.unit.is_air() {
+        // `Paths_TakeStep(unit, 1)` (`airpath.cpp:272-278`): one `speed` point per
+        // crossed cell. Without it an aircraft flew its whole `speed` allowance on
+        // every order and never ran out of it within a turn (defect 3 of the
+        // manual 1.2 run).
+        paths_take_step(&mut ctx.unit, 1, ctx.world.real_time);
     }
 
     ctx.unit.state = UnitOrderState::InTransition;
@@ -1600,8 +1724,16 @@ fn perform_auto_survey(ctx: &mut OrderContext<'_>) {
     if team_type == crate::team::TeamKind::Computer || team_type == crate::team::TeamKind::Remote {
         ctx.unit.auto_survey = false;
     } else {
-        // `Ai_EnableAutoSurvey` (`ai.cpp:184`) creates `TaskAutoSurvey`.
-        ctx.world.ai_enable_auto_survey(ctx.id);
+        // C++ `UnitsManager_PerformAutoSurvey` (`units_manager.cpp:2584-2603`):
+        // `if (!unit->GetTask()) Ai_EnableAutoSurvey(unit);` — the task is created
+        // **once**; the surveyor then owns it and is re-entered through the
+        // "movement finished" reminder. The port used to create a fresh
+        // `TaskAutoSurvey` on every tick (two tasks per move), so the surveyor
+        // accumulated tasks and lost the spiral state.
+        if ctx.world.ai.task_manager.unit_task(ctx.id).is_none() {
+            ctx.world.ai_enable_auto_survey(ctx.id);
+        }
+
         schedule_delayed_tasks(ctx.world, ctx.id, false);
     }
 }
@@ -2777,7 +2909,7 @@ fn process_order_unload(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ProgressUnloading` (`units_manager.cpp:4035`).
 fn progress_unloading(ctx: &mut OrderContext<'_>) {
-    let landed = land(&mut ctx.unit);
+    let landed = ctx.land();
     if !landed {
         return;
     }
@@ -2809,7 +2941,7 @@ fn progress_unloading(ctx: &mut OrderContext<'_>) {
 
 /// `UnitInfo::ProcessUnloading` (`unitinfo.cpp:5184`).
 fn process_unloading(ctx: &mut OrderContext<'_>) {
-    if take(&mut ctx.unit) {
+    if ctx.take() {
         ctx.unit.orders = UnitOrder::Await;
         ctx.unit.state = UnitOrderState::ExecutingOrder;
         ctx.unit.parent_unit = None;
@@ -2874,7 +3006,7 @@ fn process_order_land(ctx: &mut OrderContext<'_>) {
 
 /// `UnitInfo::ProcessLanding` (`unitinfo.cpp:5139`).
 fn process_landing(ctx: &mut OrderContext<'_>) {
-    if land(&mut ctx.unit) {
+    if ctx.land() {
         if ctx.unit.parent_unit.is_some() {
             ctx.unit.orders = UnitOrder::Idle;
             ctx.unit.state = UnitOrderState::Store;
@@ -2900,7 +3032,7 @@ fn process_order_take_off(ctx: &mut OrderContext<'_>) {
             ctx.unit.moved = 0;
             ctx.unit.state = UnitOrderState::FinishTakeOff;
 
-            if take(&mut ctx.unit) {
+            if ctx.take() {
                 let id = ctx.id;
                 remove_from_list(ctx.world, id, ctx.unit.unit_list);
                 ctx.world.add_to_draw_list(id);
@@ -2908,7 +3040,7 @@ fn process_order_take_off(ctx: &mut OrderContext<'_>) {
             }
         }
         UnitOrderState::FinishTakeOff => {
-            if take(&mut ctx.unit) {
+            if ctx.take() {
                 let id = ctx.id;
                 remove_from_list(ctx.world, id, ctx.unit.unit_list);
                 ctx.world.add_to_draw_list(id);
@@ -2958,7 +3090,7 @@ fn progress_loading(ctx: &mut OrderContext<'_>) {
         return;
     }
 
-    if !land(&mut ctx.unit) {
+    if !ctx.land() {
         return;
     }
 
@@ -2995,7 +3127,7 @@ fn progress_loading(ctx: &mut OrderContext<'_>) {
 
 /// `UnitInfo::ProcessLoading` (`unitinfo.cpp:5161`).
 fn process_loading(ctx: &mut OrderContext<'_>) {
-    if take(&mut ctx.unit) {
+    if ctx.take() {
         ctx.unit.orders = UnitOrder::Await;
         ctx.unit.state = UnitOrderState::ExecutingOrder;
         ctx.unit.parent_unit = None;
@@ -4667,6 +4799,80 @@ mod tests {
         assert!(paths_calculate_step(&mut infantry, 4, false, false, false));
         assert_eq!(infantry.max_velocity, 4);
         assert_eq!(infantry.velocity, 4);
+    }
+
+    /// `Paths_TakeStep` (`airpath.cpp:458`): one `speed` point per air cell, the
+    /// group speed never drops below 1, shots follow the remaining speed for
+    /// `MOVE_AND_FIRE == 0`, and `GameManager_RealTime` makes the step free.
+    #[test]
+    fn paths_take_step_charges_air_movement() {
+        fn fighter() -> UnitInfo {
+            let mut unit = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(1));
+            unit.base_values.set_attribute(ATTRIB_SPEED, 24);
+            unit.base_values.set_attribute(ATTRIB_ROUNDS, 2);
+            unit.base_values.set_attribute(ATTRIB_MOVE_AND_FIRE, 1);
+            unit.speed = 3;
+            unit.shots = 2;
+            unit
+        }
+
+        // One point per cell: after three cells the aircraft has no speed left.
+        let mut unit = fighter();
+        for expected in [2, 1, 0] {
+            paths_take_step(&mut unit, 1, false);
+            assert_eq!(unit.speed, expected);
+        }
+
+        // `MOVE_AND_FIRE` units keep their rounds.
+        assert_eq!(unit.shots, 2);
+
+        // The group speed is floored at 1 (`airpath.cpp:465-473`).
+        let mut group = fighter();
+        group.group_speed = 1;
+        paths_take_step(&mut group, 1, false);
+        assert_eq!(group.group_speed, 1, "group speed never reaches 0");
+
+        // `MOVE_AND_FIRE == 0`: `shots = rounds * speed / speed_attr` only ever
+        // decreases (`airpath.cpp:477-484`).
+        let mut ground_attack = fighter();
+        ground_attack
+            .base_values
+            .set_attribute(ATTRIB_MOVE_AND_FIRE, 0);
+        ground_attack.base_values.set_attribute(ATTRIB_SPEED, 4);
+        ground_attack.base_values.set_attribute(ATTRIB_ROUNDS, 4);
+        ground_attack.speed = 4;
+        ground_attack.shots = 4;
+        paths_take_step(&mut ground_attack, 2, false);
+        assert_eq!(ground_attack.speed, 2);
+        assert_eq!(ground_attack.shots, 2, "4 * 2 / 4");
+
+        // `GameManager_RealTime` (debug): the step costs nothing.
+        let mut real_time = fighter();
+        real_time.group_speed = 5;
+        paths_take_step(&mut real_time, 2, true);
+        assert_eq!(real_time.speed, 3, "speed kept");
+        assert_eq!(real_time.group_speed, 5, "group speed kept");
+    }
+
+    /// `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`): only a hovering aircraft has
+    /// a non-zero shadow shift, and it is exactly one cell (`GFX_MAP_TILE_SIZE`).
+    #[test]
+    fn air_shadow_offset_follows_the_hovering_flag() {
+        assert_eq!(air_shadow_offset(0), Point::ZERO);
+        assert_eq!(
+            air_shadow_offset(MOBILE_AIR_UNIT),
+            Point::ZERO,
+            "an aircraft on the ground has no shift"
+        );
+        assert_eq!(
+            air_shadow_offset(MOBILE_AIR_UNIT | HOVERING),
+            Point::new(-GFX_MAP_TILE_SIZE as i16, -GFX_MAP_TILE_SIZE as i16)
+        );
+        assert_eq!(
+            air_shadow_offset(HOVERING | MOBILE_LAND_UNIT),
+            Point::ZERO,
+            "a non-air unit never gets the air shadow"
+        );
     }
 
     /// `UnitInfo::Land`/`Take` animation counters are 6-bit and saturate at the

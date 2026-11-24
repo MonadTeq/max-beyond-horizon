@@ -75,7 +75,7 @@ pub use tasks::{TaskCtx, TaskKind};
 pub use threat::{HeatMap, ThreatMap, ZoneWalker};
 pub use weight::WeightTable;
 
-use crate::enums::{AiStrategy, CautionLevel, Opponent, PlayMode, UnitOrder};
+use crate::enums::{AiStrategy, CautionLevel, Opponent, PlayMode, UnitOrder, UnitType};
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::Point;
 use crate::team::{TeamId, TeamKind};
@@ -516,23 +516,44 @@ pub(crate) fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
 }
 
 impl GameState {
-    /// `Ai_EnableAutoSurvey` without the `tasks_enabled` check.
+    /// `TaskAutoSurvey::TaskAutoSurvey` (`taskautosurvey.cpp:35-58`) — the task
+    /// itself (`Ai_EnableAutoSurvey`, `ai.cpp:184`, only creates it).
+    ///
+    /// The survey spiral is centred on the team's **mining station** (the first
+    /// `MININGST` in the stationary list), falling back to the unit's own cell —
+    /// that is how the original keeps the scout working around the deposit instead
+    /// of walking off in one direction. All spiral cursors start empty:
+    /// `radius = 0` (the "look for a known deposit first" mode), `direction = 0`,
+    /// `current_radius = 0`, `continue_search = false`, `location_found = false`.
+    /// Previously the port started in the spiral mode with `radius = 6` and
+    /// `current_radius = 1`, which made the surveyor hop over ring corners.
     pub fn ai_enable_auto_survey(&mut self, unit: UnitId) {
         let Some(info) = self.unit(unit).cloned() else {
             return;
         };
 
+        let mut central_site = info.grid;
+
+        for id in self.unit_list(crate::unit::UnitListKind::Stationary).to_vec() {
+            let Some(other) = self.unit(id) else { continue };
+
+            if other.team == info.team && other.unit_type == UnitType::MiningStation {
+                central_site = other.grid;
+                break;
+            }
+        }
+
         let kind = TaskKind::AutoSurvey {
-            central_site: info.grid,
+            central_site,
             unit: Some(unit),
-            radius: 6,
+            radius: 0,
             direction: 0,
             position: info.grid,
             destination: info.grid,
             direction2: 0,
-            continue_search: true,
+            continue_search: false,
             location_found: false,
-            current_radius: 1,
+            current_radius: 0,
         };
 
         self.ai_append_task(info.team, None, task::TASK_PRIORITY_AUTO_SURVEY, kind);

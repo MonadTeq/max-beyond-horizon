@@ -547,3 +547,84 @@ fn unit_status_voice_matches_cpp_chain() {
     assert_eq!(start, "V_START");
     assert_eq!(status, Some("V_M093"));
 }
+
+/// `Auto` of the surveyor menu — `UnitsManager_Popup_OnClick_Auto`
+/// (`units_manager.cpp:590-606`): it flips `auto_survey`, creates
+/// `TaskAutoSurvey` at once and returns a `SENTRY` surveyor to `AWAIT`
+/// (`PerformAutoSurvey` only inspects `ORDER_AWAIT`/`ORDER_MOVE`, so a parked
+/// sentry would never survey — defect 2 of the manual 1.2 run).
+#[test]
+fn auto_item_enables_auto_survey_and_leaves_sentry() {
+    let (mut app, team) = local_app();
+
+    if !app.local_active() {
+        return;
+    }
+
+    let center = Point::new(
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
+    );
+    let Some(surveyor) = spawn(&mut app, UnitType::Surveyor, team, center) else {
+        return;
+    };
+
+    // The C++ stance: a surveyor parked in `ORDER_SENTRY`.
+    app.universe_mut()
+        .set_order(surveyor, UnitOrder::Sentry, UnitOrderState::ExecutingOrder);
+    assert_eq!(
+        app.state_ref().unit(surveyor).expect("surveyor").orders,
+        UnitOrder::Sentry
+    );
+
+    app.hud_mut().select(Some(surveyor));
+    assert!(app.open_unit_menu(), "меню разведчика открывается");
+
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(max_app::unitmenu::ItemId::Auto))
+        .expect("пункт auto");
+
+    app.activate_unit_menu_item(index);
+
+    let unit = app.state_ref().unit(surveyor).expect("surveyor");
+    assert!(unit.auto_survey, "Auto включил `auto_survey`");
+    assert!(
+        app.state_ref()
+            .ai()
+            .task_manager
+            .unit_task(surveyor)
+            .is_some(),
+        "`Ai_EnableAutoSurvey` создаёт `TaskAutoSurvey` сразу"
+    );
+    assert!(
+        app.hud().pending.iter().any(|command| {
+            matches!(command, max_core::input::Command::Order(packet)
+                if matches!(&packet.payload, max_core::input::OrderPayload::P1(p1)
+                    if p1.order == UnitOrder::Await
+                        && p1.state == UnitOrderState::ExecutingOrder))
+        }),
+        "SENTRY → AWAIT идёт приказом (пакет 08/P1)"
+    );
+
+    // Switching Auto off removes the task again (`unit->RemoveTasks()`).
+    app.open_unit_menu();
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(max_app::unitmenu::ItemId::Auto))
+        .expect("пункт auto");
+    app.activate_unit_menu_item(index);
+
+    assert!(
+        !app.state_ref().unit(surveyor).expect("surveyor").auto_survey,
+        "повторный пункт выключает Auto"
+    );
+    assert!(
+        app.state_ref()
+            .ai()
+            .task_manager
+            .unit_task(surveyor)
+            .is_none(),
+        "`unit->RemoveTasks()` снимает задачу"
+    );
+}

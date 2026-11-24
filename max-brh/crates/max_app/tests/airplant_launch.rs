@@ -203,6 +203,19 @@ fn app_launches_the_fighter_out_of_the_air_plant() {
         "самолёт в воздухе (`ORDER_TAKE_OFF`)"
     );
     assert!(unit.parent_unit.is_none(), "самолёт больше не в заводе");
+
+    // `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`): a hovering aircraft draws its
+    // shadow one cell down-right of the hull — the airborne look (defect 1 of the
+    // manual 1.2 run: aircraft were drawn like parked ground units).
+    let presentation = app
+        .state_ref()
+        .presentation(fighter)
+        .expect("presentation of the fighter");
+    assert_eq!(
+        presentation.shadow_offset,
+        Point::new(-64, -64),
+        "hovering aircraft: `shadow_offset = (-GFX_MAP_TILE_SIZE, -GFX_MAP_TILE_SIZE)`"
+    );
 }
 
 #[test]

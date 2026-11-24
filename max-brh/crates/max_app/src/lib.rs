@@ -2059,20 +2059,59 @@ impl<D: Dispatcher> App<D> {
                 }
             }
             unitmenu::ItemId::Auto => {
-                // B2 audit — documented exception (no packet carrier): `auto_survey`
-                // is not part of any order payload (P1–P5 carry order/state/parent/
-                // target/cargo/mining/build fields only), so no `Command` can toggle
-                // it. C++ flips the unit flag the same way and does not transmit it
-                // either (`unitinfo.cpp` serializes it only into the V70 save,
-                // `remote.cpp` never touches it): it is the owner's local control
-                // flag for its own surveyor.
+                // `UnitsManager_Popup_OnClick_Auto` (`units_manager.cpp:590-606`):
+                //   1. flip `unit->auto_survey`;
+                //   2. a `SENTRY` surveyor goes back to `AWAIT` — otherwise
+                //      `UnitsManager_PerformAutoSurvey` (`:2584-2603`), which only
+                //      looks at `ORDER_AWAIT`/`ORDER_MOVE`, would never run and the
+                //      Auto mode did nothing (defect 2 of the manual 1.2 run);
+                //   3. on — `Ai_EnableAutoSurvey(unit)` creates `TaskAutoSurvey`
+                //      right away; off — `unit->RemoveTasks()`.
+                //
+                // `auto_survey` itself is not part of any order payload (P1–P5 carry
+                // order/state/parent/target/cargo/mining/build fields only) — C++ does
+                // not transmit it either (`unitinfo.cpp` serializes it only into the
+                // V70 save, `remote.cpp` never touches it): it is the owner's local
+                // control flag for its own surveyor, flipped here as in C++. The order
+                // change and the task bookkeeping do go through the command/state
+                // channels.
+                let Some(order) = self.state_ref().unit(unit_id).map(|unit| unit.orders) else {
+                    return Some("Auto: юнит исчез".to_string());
+                };
+                let toggled_on = !self
+                    .state_ref()
+                    .unit(unit_id)
+                    .is_some_and(|unit| unit.auto_survey);
+
+                // 1. `unit->auto_survey = !unit->auto_survey`.
                 let Some(unit) = self.universe.unit_mut(unit_id) else {
                     return Some("Auto: юнит исчез".to_string());
                 };
-                unit.auto_survey = !unit.auto_survey;
-                let enabled = unit.auto_survey;
+                unit.auto_survey = toggled_on;
 
-                if enabled {
+                // 2. `if (unit->GetOrder() == ORDER_SENTRY) SetNewOrder(AWAIT, …)`.
+                if order == max_core::enums::UnitOrder::Sentry {
+                    match unitmenu::p1_order(
+                        self.state_ref(),
+                        unit_id,
+                        max_core::enums::UnitOrder::Await,
+                        max_core::enums::UnitOrderState::ExecutingOrder,
+                    ) {
+                        Some(command) => self.hud.pending.push(command),
+                        None => return Some("Auto: юнит исчез".to_string()),
+                    }
+                }
+
+                // 3. On — `Ai_EnableAutoSurvey(unit)` creates `TaskAutoSurvey` right
+                // away (the surveyor re-enters it through the "movement finished"
+                // reminder); off — `unit->RemoveTasks()`.
+                if toggled_on {
+                    self.universe.ai_enable_auto_survey(unit_id);
+                } else {
+                    self.universe.ai_remove_unit_tasks(unit_id);
+                }
+
+                if toggled_on {
                     "Auto: авто-разведка включена".to_string()
                 } else {
                     "Auto: авто-разведка выключена".to_string()

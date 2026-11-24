@@ -1311,7 +1311,7 @@ impl GameState {
         let mut unit = UnitInfo::new(unit_type, team, id);
         // C++ `UnitInfo::UnitInfo`: presentation fields (`brightness = 255`,
         // zeros) are created with the unit and live parallel to the slot (F5.3/B).
-        let presentation = UnitPresentation::new();
+        let mut presentation = UnitPresentation::new();
         // Type flags — from the `SC_UNITS` table (`Unit::m_flags`); explicit caller
         // flags are merged with them (a P3-compatible input).
         // The C++ code below (`DeployUnit`, `UnitInfo::SetPosition`) reads the already
@@ -1327,6 +1327,13 @@ impl GameState {
         // with the bits already set — they are honoured.
         let merged_flags = flags | crate::access::unit_type_flags(unit_type);
         unit.flags = merged_flags;
+
+        // `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`) on the first draw: a unit
+        // that is born hovering (a V70/`DeployUnit(..., is_existing_unit)` aircraft,
+        // or a test/QA spawn with `HOVERING`) gets the air shadow shift, everything
+        // else the zero offset. Only the presentation table is touched — the
+        // simulation fields (and the snapshot/CRC) do not change.
+        presentation.shadow_offset = crate::unit_order::air_shadow_offset(merged_flags);
 
         // `UnitsManager_DeployUnit` (`units_manager.cpp:2443-2450`): for turrets
         // `UpdateTurretAngle(angle)`, for a spinning turret `image_index_max`

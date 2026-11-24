@@ -614,95 +614,321 @@ fn search_execute(
 // `TaskAutoSurvey`
 // ---------------------------------------------------------------------------
 
-/// `TaskAutoSurvey::EndTurn` — circles around the center.
-fn auto_survey_end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) {
+/// `TransporterMap::Search` of `TaskAutoSurvey` (`taskautosurvey.cpp:77`:
+/// `TransporterMap map(&*unit, 2, CAUTION_LEVEL_AVOID_ALL_DAMAGE)`).
+///
+/// The C++ `TransporterMap` flood-fills the map from the unit with transports
+/// chained in. `TransporterMap` is not ported (see the module docs and
+/// `ai-port-status.md`), so the same decision is expressed with the port's
+/// building blocks: the cell is enterable (`Access_IsAccessible` with
+/// `AccessModifier_EnemySameClassBlocks` — the modifier `TaskFindMines` uses) and
+/// free of the known damage potential (`CAUTION_LEVEL_AVOID_ALL_DAMAGE`, exactly
+/// `TransporterMap::Init`).
+fn auto_survey_can_reach(
+    ctx: &TaskCtx<'_>,
+    unit: &UnitInfo,
+    map: Option<&crate::ai::ThreatMap>,
+    site: Point,
+) -> bool {
+    is_inside_map(site)
+        && is_safe(map, site)
+        && ctx.accessible(
+            unit.unit_type,
+            unit.team,
+            site,
+            crate::access::ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS,
+        )
+}
+
+/// `survey_is_visited` for the auto-survey (`TaskAutoSurvey::Execute`:
+/// `!(ResourceManager_CargoMap[...] & hash_team_id)`).
+fn auto_survey_is_known(ctx: &TaskCtx<'_>, team: TeamId, site: Point) -> bool {
+    ctx.world
+        .map
+        .resources
+        .get(site.x, site.y)
+        .is_visible_to(team.0)
+}
+
+/// `UnitsManager_SetNewOrder(&*unit, ORDER_MOVE, ORDER_STATE_INIT)`
+/// (`taskautosurvey.cpp:102`, `:219`) with the target written into the order data
+/// (C++ `unit->move_to_grid_x/y = destination`).
+fn issue_survey_move(ctx: &mut TaskCtx<'_>, unit: UnitId, destination: Point) {
+    let mut data = ctx.order_data(unit);
+    data.move_to = destination;
+    ctx.set_order_data(unit, data);
+
+    if let Some(mut info) = ctx.unit(unit) {
+        info.target_grid = destination;
+        ctx.write_unit(unit, info);
+    }
+
+    ctx.set_new_order(unit, crate::enums::UnitOrder::Move, crate::enums::UnitOrderState::Init);
+}
+
+/// `TaskAutoSurvey::Execute` (`taskautosurvey.cpp:68-238`).
+///
+/// Two modes, selected by `radius`:
+///
+/// * `radius == 0` — the "known deposit" pass: over the `grid ± 5` square
+///   (`:177-180`, the C++ bounds are exclusive on `lrx`/`lry`) look for a cell the
+///   team **already surveyed** that has materials (`cargo & hash_team_id` and
+///   `cargo & 0x1F`, `:189`); for each, check its 3×3 neighbours for an unsurveyed
+///   non-air cell, and if there is one, drive **onto the surveyed deposit cell**
+///   (`destination = position`, `:201-203`);
+/// * `radius > 0` — the outward spiral (`:79-171`): walk the ring
+///   `direction`/`current_radius` around the mine, prefer unsurveyed reachable
+///   cells "away from" the unit's approach direction (`direction2`, `:132-142`),
+///   nudge the destination one cell further out from the mining station
+///   (`:151-161`), and after a full ring either move (`location_found`), start a
+///   wider ring (`continue_search`) or give up (`:96-122`).
+///
+/// Giving up clears `unit->auto_survey` and the unit's tasks (`:116-117`) — in
+/// C++ that is what ends the Auto mode; the port used to leave the flag on and
+/// spawned a fresh task every tick.
+///
+/// The C++ time budget (`TickTimer_HaveTimeToThink() || loop_count < 20`,
+/// `:85`) is not modeled: the port runs the search synchronously (the same
+/// simplification as `find_search_destination`, see the module docs).
+fn auto_survey_execute(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
+    let spiral_mode = matches!(&*kind, TaskKind::AutoSurvey { radius, .. } if *radius != 0);
     let TaskKind::AutoSurvey {
-        central_site,
-        unit,
+        central_site: _,
+        unit: slot,
         radius,
+        direction,
         position,
         destination,
+        direction2: _,
         continue_search,
         location_found,
         current_radius,
-        ..
     } = kind
     else {
-        return;
+        return false;
     };
 
-    let Some(unit_id) = *unit else {
-        ctx.remove_self(header.id);
-        return;
-    };
-
-    let Some(info) = ctx.unit(unit_id) else {
-        ctx.remove_self(header.id);
-        return;
-    };
-
-    if info.orders != crate::enums::UnitOrder::Await
-        && info.orders != crate::enums::UnitOrder::Sentry
-    {
-        return;
+    if *slot != Some(unit) {
+        return false;
     }
 
-    if !*location_found {
-        let mut site = Point::new(central_site.x, central_site.y);
+    // `unit->IsReadyForOrders(this) && GameManager_IsActiveTurn(m_team) && unit->speed > 0`
+    let Some(info) = ctx.unit(unit) else {
+        return false;
+    };
 
-        let max_radius = (*radius as i16).max(1);
-        let mut found = false;
-        let mut r: i16 = *current_radius as i16;
+    if !is_ready_for_task(ctx, header, unit)
+        || !ctx.world.is_active_turn(info.team)
+        || info.speed == 0
+    {
+        return false;
+    }
 
-        while r <= max_radius && !found {
-            let mut dy = -r;
-            while dy <= r && !found {
-                let mut dx = -r;
-                while dx <= r && !found {
-                    let candidate = Point::new(central_site.x + dx, central_site.y + dy);
+    if spiral_mode {
+        return auto_survey_spiral(kind, ctx, header, unit);
+    }
 
-                    if is_inside_map(candidate)
-                        && ctx.accessible(
-                            info.unit_type,
-                            info.team,
-                            candidate,
-                            crate::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-                        )
-                    {
-                        site = candidate;
-                        found = true;
+    // `TransporterMap map(&*unit, 2, CAUTION_LEVEL_AVOID_ALL_DAMAGE)` — the threat
+    // part of its flood fill.
+    let map = damage_map(ctx.world, info.team, &info);
+
+    // `Rect bounds`: `ulx = max(1, grid_x - 5)`, `lrx = min(size.x - 1, grid_x + 6)`
+    // (exclusive in the C++ loop), the same for `y` (`taskautosurvey.cpp:177-180`).
+    let grid_x = i32::from(info.grid.x);
+    let grid_y = i32::from(info.grid.y);
+    let ulx = (grid_x - 5).max(1);
+    let lrx = (grid_x + 6).min(i32::from(MAP_WIDTH) - 1);
+    let uly = (grid_y - 5).max(1);
+    let lry = (grid_y + 6).min(i32::from(MAP_HEIGHT) - 1);
+
+    *location_found = false;
+    let mut minimum_distance = i32::MAX;
+
+    let mut x = ulx;
+
+    while x < lrx {
+        let mut y = uly;
+
+        while y < lry {
+            let site = Point::new(x as i16, y as i16);
+            let cargo = ctx.world.map.resources.get(site.x, site.y);
+
+            // `(cargo_at_site & hash_team_id) && (cargo_at_site & 0x1F)`.
+            if cargo.is_visible_to(info.team.0) && cargo.amount() != 0 {
+                let distance = crate::access::squared_distance(info.grid, site);
+
+                if !*location_found || minimum_distance > distance {
+                    for index_x in (x - 1)..=(x + 1) {
+                        for index_y in (y - 1)..=(y + 1) {
+                            let inner = ctx.world.map.resources.get(index_x as i16, index_y as i16);
+
+                            // An unsurveyed neighbour that is not open air — the
+                            // deposit can still hide something (`:198-199`).
+                            if inner.is_visible_to(info.team.0)
+                                || surface_type(ctx.world, Point::new(index_x as i16, index_y as i16))
+                                    == crate::access::SURFACE_TYPE_AIR
+                            {
+                                continue;
+                            }
+
+                            if auto_survey_can_reach(ctx, &info, map.as_ref(), site) {
+                                *location_found = true;
+                                *destination = site;
+                                minimum_distance = distance;
+                            }
+                        }
+                    }
+                }
+            }
+
+            y += 1;
+        }
+
+        x += 1;
+    }
+
+    if *location_found {
+        // `move_to = destination; radius = 0; SetNewOrder(ORDER_MOVE, ORDER_STATE_INIT)`.
+        *radius = 0;
+        let target = *destination;
+        issue_survey_move(ctx, unit, target);
+    } else {
+        // `position = (grid_x - 1, grid_y + 1); radius = 1; direction = 0;
+        //  current_radius = 0; continue_search = false` (`:222-227`) — switch to
+        // the spiral mode on the next call.
+        *position = Point::new(info.grid.x.saturating_sub(1), info.grid.y.saturating_add(1));
+        *radius = 1;
+        *direction = 0;
+        *current_radius = 0;
+        *continue_search = false;
+    }
+
+    true
+}
+
+/// The spiral half of `TaskAutoSurvey::Execute` (`taskautosurvey.cpp:79-171`).
+fn auto_survey_spiral(
+    kind: &mut TaskKind,
+    ctx: &mut TaskCtx<'_>,
+    header: TaskHeader,
+    unit: UnitId,
+) -> bool {
+    let TaskKind::AutoSurvey {
+        central_site,
+        unit: _,
+        radius,
+        direction,
+        position,
+        destination,
+        direction2,
+        continue_search,
+        location_found,
+        current_radius,
+    } = kind
+    else {
+        return false;
+    };
+
+    let Some(info) = ctx.unit(unit) else {
+        return false;
+    };
+
+    let map = damage_map(ctx.world, info.team, &info);
+
+    // `target_direction = UnitsManager_GetTargetAngle(unit->grid - central_site)`
+    // (`:82-83`): the direction the unit approached the centre from.
+    let target_direction = crate::combat::get_target_angle(
+        i32::from(info.grid.x) - i32::from(central_site.x),
+        i32::from(info.grid.y) - i32::from(central_site.y),
+    ) & 0x7;
+
+    loop {
+        let step = DIRECTION_OFFSETS[usize::from(*direction) & 0x7];
+        *position = Point::new(position.x.saturating_add(step.x), position.y.saturating_add(step.y));
+        *current_radius = current_radius.saturating_add(1);
+
+        if *current_radius >= (*radius).saturating_mul(2) {
+            *current_radius = 0;
+            *direction = direction.saturating_add(2);
+
+            if *direction >= 8 {
+                if *location_found {
+                    *radius = 0;
+                    let target = *destination;
+                    issue_survey_move(ctx, unit, target);
+
+                    return true;
+                } else if *continue_search {
+                    // The ring was not empty: widen the spiral (`:108-114`).
+                    *direction = 0;
+                    *continue_search = false;
+                    *radius = radius.saturating_add(1);
+                    *position = Point::new(
+                        position.x.saturating_sub(1),
+                        position.y.saturating_add(1),
+                    );
+                } else {
+                    // Nothing left to survey: Auto off + `RemoveTasks()` (`:115-122`).
+                    if let Some(mut info) = ctx.unit(unit) {
+                        info.auto_survey = false;
+                        ctx.write_unit(unit, info);
                     }
 
-                    dx += 1;
+                    ctx.tm.remove_unit_tasks(ctx.world, unit);
+                    ctx.remove_self(header.id);
+
+                    return false;
                 }
-                dy += 1;
             }
-            r += 1;
         }
 
-        *position = site;
-        *destination = site;
-        *location_found = found;
+        if is_inside_map(*position) {
+            *continue_search = true;
 
-        if found {
-            *current_radius = r as u16;
-            let priority = ctx.priority_of(header.id);
-            let move_kind = TaskKind::move_to(unit_id, site, 0, CautionLevel::AvoidNextTurnsFire);
-            ctx.append_task(info.team, Some(header.id), priority, move_kind);
-        } else {
-            *continue_search = false;
-            ctx.remove_self(header.id);
+            if !auto_survey_is_known(ctx, info.team, *position) {
+                let mut direction_difference = (crate::combat::get_target_angle(
+                    i32::from(position.x) - i32::from(info.grid.x),
+                    i32::from(position.y) - i32::from(info.grid.y),
+                ) - target_direction
+                    + 8)
+                    & 0x7;
+
+                if direction_difference > 4 {
+                    direction_difference = 8 - direction_difference;
+                }
+
+                if !*location_found || direction_difference > i32::from(*direction2) {
+                    if auto_survey_can_reach(ctx, &info, map.as_ref(), *position) {
+                        *location_found = true;
+                        *destination = *position;
+                        *direction2 = direction_difference as u16;
+
+                        // `backup_position = position + DIRECTION_OFFSETS[
+                        //  GetTargetAngle(position - central_site)]` (`:151-161`):
+                        // step one cell away from the mining station while that
+                        // cell is still reachable.
+                        let backup_direction = crate::combat::get_target_angle(
+                            i32::from(position.x) - i32::from(central_site.x),
+                            i32::from(position.y) - i32::from(central_site.y),
+                        ) & 0x7;
+                        let offset = DIRECTION_OFFSETS[backup_direction as usize];
+                        let backup = Point::new(
+                            position.x.saturating_add(offset.x),
+                            position.y.saturating_add(offset.y),
+                        );
+
+                        if auto_survey_can_reach(ctx, &info, map.as_ref(), backup) {
+                            *destination = backup;
+                        }
+                    }
+                }
+            }
         }
-
-        return;
-    }
-
-    let dx = i32::from(info.grid.x) - i32::from(destination.x);
-    let dy = i32::from(info.grid.y) - i32::from(destination.y);
-
-    if dx * dx + dy * dy <= 1 {
-        *location_found = false;
-        *current_radius = current_radius.saturating_add(1);
     }
 }
 
@@ -760,7 +986,7 @@ fn find_mines_request_sweepers(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, heade
 // ---------------------------------------------------------------------------
 
 /// `Init` for search classes.
-pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> bool {
+pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) -> bool {
     match kind {
         TaskKind::Explore {
             obtain_requests, ..
@@ -771,7 +997,15 @@ pub fn init(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, _header: TaskHeader) -> 
             true
         }
         TaskKind::Survey { .. } | TaskKind::FindMines { .. } => true,
-        TaskKind::AutoSurvey { .. } => true,
+        TaskKind::AutoSurvey { unit: Some(unit), .. } => {
+            // `TaskAutoSurvey::Init` (`taskautosurvey.cpp:66`): `unit->AddTask(this)` —
+            // the surveyor owns the task, which is what
+            // `UnitsManager_PerformAutoSurvey` re-enters through the
+            // "movement finished" reminder.
+            ctx.attach(header.id, *unit);
+            true
+        }
+        TaskKind::AutoSurvey { unit: None, .. } => true,
         _ => false,
     }
 }
@@ -789,10 +1023,8 @@ pub fn begin_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader
             abstract_search_end_turn(kind, ctx, header);
             true
         }
-        TaskKind::AutoSurvey { .. } => {
-            auto_survey_end_turn(kind, ctx, header);
-            true
-        }
+        // `TaskAutoSurvey` does not override `Task::BeginTurn`/`EndTurn`
+        // (both are empty): the spiral runs only from `Execute`.
         _ => false,
     }
 }
@@ -802,10 +1034,6 @@ pub fn end_turn(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeader) 
     match kind {
         TaskKind::Survey { .. } | TaskKind::Explore { .. } | TaskKind::FindMines { .. } => {
             abstract_search_end_turn(kind, ctx, header);
-            true
-        }
-        TaskKind::AutoSurvey { .. } => {
-            auto_survey_end_turn(kind, ctx, header);
             true
         }
         _ => false,
@@ -829,10 +1057,7 @@ pub fn execute(
 
             search_execute(kind, ctx, header, unit)
         }
-        TaskKind::AutoSurvey { .. } => {
-            auto_survey_end_turn(kind, ctx, header);
-            true
-        }
+        TaskKind::AutoSurvey { .. } => auto_survey_execute(kind, ctx, header, unit),
         _ => false,
     }
 }
@@ -894,7 +1119,14 @@ pub fn remove_self(kind: &mut TaskKind, ctx: &mut TaskCtx<'_>, header: TaskHeade
             ctx.remove_self(header.id);
             true
         }
-        TaskKind::AutoSurvey { .. } => {
+        TaskKind::AutoSurvey { unit, .. } => {
+            // `TaskAutoSurvey::RemoveSelf` (`taskautosurvey.cpp:240-249`):
+            // `if (unit) unit->RemoveTasks();` — the Auto mode ends together with the
+            // task, otherwise `UnitsManager_PerformAutoSurvey` would restart it.
+            if let Some(unit) = *unit {
+                ctx.tm.remove_unit_tasks(ctx.world, unit);
+            }
+
             ctx.set_parent(header.id, None);
             ctx.remove_self(header.id);
             true

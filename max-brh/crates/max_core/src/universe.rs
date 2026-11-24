@@ -2066,6 +2066,21 @@ impl<D: Dispatcher> GameUniverse<D> {
             .with_task_manager(|task_manager, _| task_manager.attach_task_to_unit(unit, task));
     }
 
+    /// `UnitInfo::RemoveTasks` (`unitinfo.cpp:1325`) — drop every AI task of the
+    /// unit. C++ calls it from `UnitsManager_Popup_OnClick_Auto`
+    /// (`units_manager.cpp:602`) when the Auto mode is switched off and from
+    /// `TaskAutoSurvey::Execute` when there is nothing left to survey.
+    pub fn ai_remove_unit_tasks(&mut self, unit: UnitId) {
+        self.state
+            .with_task_manager(|task_manager, world| task_manager.remove_unit_tasks(world, unit));
+    }
+
+    /// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — create `TaskAutoSurvey` for the unit
+    /// (`UnitsManager_Popup_OnClick_Auto`, `units_manager.cpp:598-599`).
+    pub fn ai_enable_auto_survey(&mut self, unit: UnitId) {
+        self.state.ai_enable_auto_survey(unit);
+    }
+
     /// `GameState::add_to_draw_list` (`game.rs:1117`) — the V70 draw-list writer.
     pub fn add_to_draw_list(&mut self, id: UnitId) {
         self.state.add_to_draw_list(id);

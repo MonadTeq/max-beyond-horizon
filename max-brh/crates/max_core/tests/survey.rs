@@ -12,11 +12,12 @@
 //! `0xFFFF`.
 
 use max_core::access;
-use max_core::enums::{Surface, UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{PlayMode, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::{Point, MAP_HEIGHT, MAP_WIDTH};
 use max_core::map::{ResourceKind, ResourceMapEntry};
 use max_core::team::TeamId;
 use max_core::team::TeamKind;
+use max_core::unit::UnitId;
 use max_core::universe::GameUniverse;
 
 /// Game: the whole map is land, each cell has 8 materials, RED is a human,
@@ -254,5 +255,189 @@ fn render_mask_matches_the_cpp_hash_team_id() {
     assert!(
         !known(&state, 64, 64, 1),
         "ORDER_DISABLE не обновляет карту ресурсов"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `TaskAutoSurvey` (`taskautosurvey.cpp`) — the Auto mode of a surveyor
+// ---------------------------------------------------------------------------
+
+/// The same playable state as [`land_state_with_resources`], but with an
+/// **active turn** and `PlayMode::TurnBased`: `UnitsManager_PerformAutoSurvey`
+/// (`units_manager.cpp:2585-2587`) needs both (`GameManager_PlayMode !=
+/// PLAY_MODE_UNKNOWN`, `GameManager_IsActiveTurn`).
+fn auto_survey_state() -> GameUniverse {
+    let mut state = land_state_with_resources();
+    state.set_play_mode(PlayMode::TurnBased);
+    state.set_active_turn_team(TeamId::RED);
+    state
+}
+
+/// Land map with a single deposit at `(24..26, 24..26)` and no other materials —
+/// the `TaskAutoSurvey` scenario (the C++ surveyor looks for a **known** deposit,
+/// not for any surveyed cell).
+fn deposit_state() -> GameUniverse {
+    let mut state = GameUniverse::default();
+
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            let _ = state.map_mut().surface.set(x, y, Surface::LAND);
+            state.map_mut().resources.set(x, y, ResourceMapEntry::NONE);
+        }
+    }
+
+    for y in 24..=26 {
+        for x in 24..=26 {
+            state.map_mut().resources.set(
+                x,
+                y,
+                ResourceMapEntry::new(8, Some(ResourceKind::Raw), 0),
+            );
+        }
+    }
+
+    state.teams_mut()[0].team_type = TeamKind::Player;
+    state.teams_mut()[1].team_type = TeamKind::Computer;
+    state.team_units_table_mut()[0] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.team_units_table_mut()[1] = max_core::TeamUnits::with_clan(max_core::TeamClan::Random);
+    state.set_play_mode(PlayMode::TurnBased);
+    state.set_active_turn_team(TeamId::RED);
+    state
+}
+
+/// Enables the `Auto` unit-menu toggle (`UnitInfo::auto_survey`).
+fn enable_auto_survey(state: &mut GameUniverse, id: UnitId) {
+    let Some(unit) = state.unit_mut(id) else {
+        panic!("unit");
+    };
+
+    unit.auto_survey = true;
+}
+
+/// Number of AI tasks (`TaskManager::GetTaskCount`).
+fn task_count(state: &GameUniverse) -> usize {
+    state.snapshot().ai().task_manager.task_count()
+}
+
+#[test]
+fn auto_survey_drives_the_scout_to_a_known_deposit_and_reveals_it() {
+    let mut state = deposit_state();
+
+    // The deposit centre is already surveyed by RED — the "known deposit" of
+    // `TaskAutoSurvey::Execute` (`taskautosurvey.cpp:189`); its arms are not.
+    let entry = state
+        .snapshot()
+        .map()
+        .resources
+        .get(25, 25)
+        .with_team_visible(0);
+    state.map_mut().resources.set(25, 25, entry);
+
+    let surveyor = state
+        .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+        .expect("surveyor");
+    enable_auto_survey(&mut state, surveyor);
+
+    // The scout starts away from the deposit: its 3×3 does not cover it.
+    assert!(known(&state, 25, 25, 0), "the deposit centre is known");
+    assert!(!known(&state, 24, 26, 0), "the deposit arms are unknown");
+
+    // One turn of the Auto mode: `PerformAutoSurvey` creates the task, the task
+    // issues `ORDER_MOVE` to the known deposit and the scout drives there.
+    let mut moved = false;
+
+    for _ in 0..40 {
+        state.tick();
+
+        let unit = state.snapshot().unit(surveyor).expect("surveyor").clone();
+
+        if unit.grid != Point::new(20, 20) {
+            moved = true;
+        }
+
+        if unit.speed == 0 {
+            break;
+        }
+    }
+
+    assert!(
+        moved,
+        "the surveyor must drive to the known deposit (Auto mode)"
+    );
+
+    let position = state.snapshot().unit(surveyor).expect("surveyor").grid;
+    assert!(
+        (i32::from(position.x) - 25).abs() <= 2 && (i32::from(position.y) - 25).abs() <= 2,
+        "the scout moves toward the deposit (20,20) → (25,25), now {position:?}"
+    );
+
+    // The deposit's arms are now surveyed, so the resource icons appear there.
+    assert!(
+        known(&state, 24, 26, 0) || known(&state, 26, 24, 0) || known(&state, 24, 25, 0),
+        "the trip must reveal the deposit cells around (25,25)"
+    );
+
+    // Exactly one task owns the scout: C++ `if (!unit->GetTask())
+    // Ai_EnableAutoSurvey(unit)` (`units_manager.cpp:2594-2596`). The port used to
+    // create a new task on every tick.
+    assert_eq!(task_count(&state), 1, "one AutoSurvey task, no task leak");
+}
+
+#[test]
+fn auto_survey_ends_when_everything_is_surveyed_and_clears_the_flag() {
+    let mut state = auto_survey_state();
+
+    // The whole map is already surveyed: the spiral finds nothing to look at and
+    // `TaskAutoSurvey::Execute` gives up (`taskautosurvey.cpp:115-122`).
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            let entry = state.snapshot().map().resources.get(x, y).with_team_visible(0);
+            state.map_mut().resources.set(x, y, entry);
+        }
+    }
+
+    let surveyor = state
+        .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+        .expect("surveyor");
+    enable_auto_survey(&mut state, surveyor);
+
+    for _ in 0..8 {
+        state.tick();
+
+        if !state.snapshot().unit(surveyor).expect("surveyor").auto_survey {
+            break;
+        }
+    }
+
+    let unit = state.snapshot().unit(surveyor).expect("surveyor");
+    assert!(!unit.auto_survey, "the Auto mode turns itself off");
+    assert_eq!(unit.grid, Point::new(20, 20), "nothing left to survey — no move");
+    assert_eq!(task_count(&state), 0, "the task is removed with the Auto mode");
+}
+
+#[test]
+fn auto_survey_needs_the_surveyors_speed() {
+    let mut state = auto_survey_state();
+
+    let surveyor = state
+        .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(20, 20), 0)
+        .expect("surveyor");
+    enable_auto_survey(&mut state, surveyor);
+
+    {
+        let unit = state.unit_mut(surveyor).expect("surveyor");
+        unit.speed = 0;
+    }
+
+    // `UnitsManager_PerformAutoSurvey` (`units_manager.cpp:2587`): `unit->speed`
+    // must be non-zero, so no task is created and the scout stays put.
+    for _ in 0..5 {
+        state.tick();
+    }
+
+    assert_eq!(task_count(&state), 0, "no task without speed");
+    assert_eq!(
+        state.snapshot().unit(surveyor).expect("surveyor").grid,
+        Point::new(20, 20)
     );
 }

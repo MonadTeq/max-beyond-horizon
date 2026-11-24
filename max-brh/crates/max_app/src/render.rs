@@ -796,6 +796,22 @@ pub fn draw_unit_sprites_with_angle(
     )
 }
 
+/// Shadow shift handed to the sprite renderer — `UnitInfo::RenderShadow`
+/// (`unitinfo.cpp:3067`: `point -= shadow_offset`).
+///
+/// [`UnitPresentation::shadow_offset`] stores the C++ value verbatim (`(-64, -64)`
+/// for a hovering aircraft, see `max_core::unit_order::air_shadow_offset`), while
+/// [`SpriteRenderer::draw_unit_scaled`] places the shadow at `anchor + offset`;
+/// hence the sign flip. A flying aircraft therefore gets its shadow one cell
+/// down-right of the hull — the original's "airborne" look that the port was
+/// missing (defect 1 of the manual 1.2 run: aircraft drawn like parked units).
+pub fn shadow_render_offset(presentation: &UnitPresentation) -> (i32, i32) {
+    (
+        -i32::from(presentation.shadow_offset.x),
+        -i32::from(presentation.shadow_offset.y),
+    )
+}
+
 /// [`draw_unit_sprites_with_angle`] with the unit frame clock.
 ///
 /// `animation` — [`FrameAnimation`] from [`crate::App::unit_animation`]:
@@ -869,10 +885,13 @@ pub fn draw_unit_sprites_with_animation(
         level,
     );
 
-    let shadow_offset = (
-        i32::from(presentation.shadow_offset.x),
-        i32::from(presentation.shadow_offset.y),
-    );
+    // `UnitInfo::RenderShadow` (`unitinfo.cpp:3067`): `point -= shadow_offset`.
+    // `UnitPresentation::shadow_offset` keeps the C++ sign convention (a hovering
+    // aircraft has `(-64, -64)`, see `max_core::unit_order::air_shadow_offset`), and
+    // the sprite renderer places the shadow at `anchor + offset`, so the value is
+    // negated here — the shadow of a flying aircraft lands one cell **down-right**
+    // of the hull, which is the original's "airborne" look.
+    let shadow_offset = shadow_render_offset(presentation);
     let mut stats = UnitSpriteStats::default();
 
     stats.unit = renderer
@@ -1905,6 +1924,30 @@ pub fn write_ppm(path: impl AsRef<Path>, buffer: &RgbaBuffer) -> io::Result<()> 
 mod tests {
     use super::*;
     use crate::AppConfig;
+
+    /// `UnitInfo::RenderShadow` (`unitinfo.cpp:3067`: `point -= shadow_offset`):
+    /// the presentation keeps the C++ sign, the sprite renderer adds the offset,
+    /// so a hovering aircraft (C++ `(-64, -64)`) draws its shadow one cell
+    /// **down-right** of the hull.
+    #[test]
+    fn the_air_shadow_is_drawn_below_and_right_of_the_hull() {
+        use max_core::geo::Point;
+
+        let mut presentation = UnitPresentation::new();
+        assert_eq!(shadow_render_offset(&presentation), (0, 0), "shadow under the hull");
+
+        // `UnitInfo::Redraw` for `MOBILE_AIR_UNIT | HOVERING`.
+        presentation.shadow_offset = Point::new(-64, -64);
+        assert_eq!(
+            shadow_render_offset(&presentation),
+            (64, 64),
+            "a flying aircraft's shadow is one cell down-right (airborne look)"
+        );
+
+        // A takeoff step of `Take()`: `shadow_offset -= 16` → a smaller shift.
+        presentation.shadow_offset = Point::new(-32, -32);
+        assert_eq!(shadow_render_offset(&presentation), (32, 32));
+    }
 
     #[test]
     fn frame_index_uses_the_given_body_angle_and_power_on_offset() {
