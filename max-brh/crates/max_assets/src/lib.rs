@@ -19,7 +19,9 @@
 //! - MVE — Interplay video (`INTROFLC` → `maxint.mve`): video formats `0x06`/`0x10`/`0x11`
 //!   and the audio track (`ALLOC_AUDIO_BUFFERS`/`AUDIO_FRAME`) — module [`mve`];
 //! - SCE/MPS — missions; FON — fonts; MSC — music, ordinary PCM16 WAV
-//!   (module [`wav`], `D2` of the client).
+//!   (module [`wav`], `D2` of the client);
+//! - mission descriptors — `PATCHES.RES` `SC_*` (XOR-obfuscated JSON),
+//!   the mission registry and mission-file resolution — module [`mission`].
 //!
 //! The crate parses bytes into structured data; it contains no render specifics.
 //! Format errors are returned as values ([`ResError`], [`WrlError`],
@@ -31,6 +33,7 @@ pub mod cursor;
 pub mod flic;
 pub mod image;
 pub mod markers;
+pub mod mission;
 pub mod mve;
 pub mod res;
 pub mod sprite;
@@ -47,6 +50,10 @@ pub use flic::{
 };
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
 pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};
+pub use mission::{
+    xor_decode, Media, MediaResource, MissionDescriptor, MissionRegistry, StoryBlock, TextBlock,
+    DEFAULT_LANGUAGE, GENERIC_TABLE, MISSION_CATEGORY_COUNT, MISSION_RESOURCE_TAGS,
+};
 pub use mve::{
     Mve, MveAudioChunk, MveAudioFormat, MveDecoder, MveError, MveInfo, AUDIO_HEADER_SIZE,
     AUDIO_TRACKS, DEFAULT_AUDIO_FORMAT, DEFAULT_FRAME_DELAY_US, FILE_HEADER_SIZE,
