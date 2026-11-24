@@ -36,6 +36,8 @@ pub const ENET_VERSION: u32 = 0x010312;
 pub const ENET_PACKET_FLAG_RELIABLE: u32 = 1 << 0;
 /// `ENET_HOST_ANY` bind address.
 pub const ENET_HOST_ANY: u32 = 0;
+/// `ENET_PORT_ANY` — the OS picks a free ephemeral port.
+pub const ENET_PORT_ANY: u16 = 0;
 /// Channels used by the protocol: 0 = TP handshake, 1 = APPL game data.
 pub const CHANNEL_COUNT: usize = 2;
 /// Peer slots per host (`enet_host_create(..., 32, 2, 0, 0)`).
@@ -292,12 +294,33 @@ impl std::fmt::Debug for Host {
 }
 
 impl Host {
-    /// Creates a client host (`enet_host_create(nullptr, peer_count, channels,
-    /// 0, 0)`).
+    /// Creates a client host bound to an ephemeral local port
+    /// (`enet_host_create(&{ENET_HOST_ANY, ENET_PORT_ANY}, peer_count,
+    /// channels, 0, 0)`).
+    ///
+    /// The C++ client passes a NULL address, which tells ENet not to bind at
+    /// creation; the socket is then bound implicitly by the first datagram
+    /// send (the `CONNECT` command). That is invisible on POSIX — `recvfrom`
+    /// on an unbound UDP socket returns `EAGAIN`, so `enet_host_service`
+    /// reports "no event" — but Windows fails every receive with `WSAEINVAL`
+    /// until the socket is bound, so `enet_host_service` returns `-1`
+    /// (a service error) for a freshly created client host.
+    ///
+    /// Binding the wildcard address with port 0 here asks the OS for exactly
+    /// the same ephemeral port the implicit bind would pick later, only at a
+    /// deterministic point: the socket can be serviced (and sees "no event")
+    /// from the moment the host exists, on every platform. ENet keeps the
+    /// negative return of `enet_host_service` reserved for real failures, so
+    /// the wrapper does not reinterpret it as an empty poll.
     pub fn client(channels: usize) -> Result<Self, EnetError> {
         initialize()?;
-        // SAFETY: a null address means "any local port", as in the C++ client.
-        let ptr = unsafe { enet_host_create(std::ptr::null(), PEER_COUNT, channels, 0, 0) };
+        let address = ENetAddress {
+            host: ENET_HOST_ANY,
+            port: ENET_PORT_ANY,
+        };
+        // SAFETY: `address` is valid for the duration of the call; ENet copies
+        // it into the host.
+        let ptr = unsafe { enet_host_create(&address, PEER_COUNT, channels, 0, 0) };
         NonNull::new(ptr)
             .map(|ptr| Self { ptr })
             .ok_or(EnetError::HostCreate)
@@ -328,6 +351,9 @@ impl Host {
     }
 
     /// Services the host for up to `timeout_ms`; `None` means no event.
+    ///
+    /// A negative ENet result is a transport failure, never an idle poll; an
+    /// idle, correctly bound host reports `0` ("no event").
     pub fn service(&mut self, timeout_ms: u32) -> Result<Option<Event>, EnetError> {
         let mut raw = ENetEvent {
             event_type: ENET_EVENT_TYPE_NONE,
@@ -460,6 +486,14 @@ mod tests {
         assert_eq!(address.host.to_ne_bytes(), [127, 0, 0, 1]);
     }
 
+    /// A client host must be serviceable before it sends anything.
+    ///
+    /// Windows regression: with the C++ `NULL` address ENet left the UDP
+    /// socket unbound until the first send, and `WSARecvFrom` on an unbound
+    /// socket fails with `WSAEINVAL` (10022), which ENet surfaces as
+    /// `enet_host_service(...) == -1` — `Service(-1)` from this wrapper.
+    /// [`Host::client`] now binds an ephemeral port eagerly, so the very first
+    /// poll reports "no event" on every platform.
     #[test]
     fn service_with_zero_timeout_returns_no_event() {
         let mut host = Host::client(CHANNEL_COUNT).unwrap();
