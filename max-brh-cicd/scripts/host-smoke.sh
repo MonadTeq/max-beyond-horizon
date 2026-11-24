@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native P2P host smoke — `PLAN-host-mode.md` §5 H5, gate (е).
+# Native P2P host smoke — `PLAN-host-mode.md` §5 H5, gate (e).
 #
 # Spawns native headless `max-brh` processes on 127.0.0.1 — one `--host` and
 # `clients - 1` direct `--connect` guests — and plays `--turns` turns of the P2P
