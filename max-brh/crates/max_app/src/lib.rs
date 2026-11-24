@@ -763,14 +763,15 @@ pub const BUILD_MARKER_FRAME_SECONDS: f32 = 0.1;
 /// `dt`: 1/30 s per frame, 16 RADAR frames — a revolution in ~0.53 s.
 pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 
-/// Speed and enablement of the mine drill frames.
+/// Whether the mine drill frames `1..15` are advanced.
 ///
 /// The DOS capture (`max-original-dasm/formats/unit-animation.md` §7.2) showed
-/// that when idle the mine body is static; the drill frames `1..15` are enabled only
-/// after a separate capture of active extraction. Factories have no time-based frames
-/// at all: the `image_base` ↔ `image_base + 1` change follows the order
-/// (`UnitInfo::StartBuilding`/`SpawnNewUnit`), and the blinking comes from the palette
-/// cycles [`render::MINING_DRILL_FRAMES_ENABLED`] / [`App::color_cycles`].
+/// that when idle the mine body is static; the 16 body frames are **eight clan
+/// variants × two state frames** (`UnitInfo::UnitInfo`, `unitinfo.cpp:281-283`),
+/// not a drill animation. Frames `16..23` are complex connectors. The visible
+/// activity of an active mine is the palette cycle of the drill indicator
+/// (`World::InitColorCycles`), so [`render::MINING_DRILL_FRAMES_ENABLED`] stays
+/// `false` — see [`crate::render::MINING_DRILL_FRAMES_ENABLED`] for the evidence.
 pub use crate::render::MINING_DRILL_FRAMES_ENABLED;
 
 /// Duration of the visual unit "growth", seconds.
@@ -3203,8 +3204,7 @@ impl<D: Dispatcher> App<D> {
         ((zoom as f32) * scale).round().max(1.0) as u32
     }
 
-    /// Visual frame animation clock: builder, `ANIMATED` buildings,
-    /// the intermediate cycle of working factories and "growth".
+    /// Visual frame animation clock: builder, `ANIMATED` buildings and "growth".
     ///
     /// Like [`App::update_visual_units`], this is **frame only**: `frame_anims`/
     /// `growth_anims` are not part of the snapshot/CRC and do not affect the simulation.

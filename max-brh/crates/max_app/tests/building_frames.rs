@@ -190,6 +190,113 @@ fn random_clan_falls_back_to_clan_one_frame_pair() {
     assert_eq!(image_base_for(&unit, Some(TeamClan::AxisInc)), 14);
 }
 
+/// The 16-frame `MININGST` body block is **eight clan variants × two state frames**,
+/// not a drill animation: every frame has the same alpha silhouette (nothing moves),
+/// each even frame carries a distinct clan emblem and each pair differs only in
+/// palette indices (off/on). Frames `16..23` are complex connectors. Therefore
+/// `MINING_DRILL_FRAMES_ENABLED` must stay `false`: a "drill" cycle over `1..15`
+/// would repaint the mine with another clan's emblem. Oracle:
+/// `UnitInfo::UnitInfo` (`unitinfo.cpp:281-283`) sets
+/// `image_base = (team_clan - 1) * sizeof(uint16_t)`; DOS capture §7.2 never saw
+/// a `0 → 1 → … → 15` transition.
+#[test]
+fn mining_station_body_frames_are_eight_clan_pairs_not_a_drill_cycle() {
+    use max_app::render::MINING_DRILL_FRAMES_ENABLED;
+    use max_assets::sprite::SpriteFrame;
+
+    let Some(assets) = game_assets() else {
+        return;
+    };
+    let sprite = assets.sprite(UnitType::MiningStation).expect("MININGST");
+    assert_eq!(sprite.sheet.len(), 24, "16 body frames + 8 connectors");
+    // Compile-time lock: flipping the switch to `true` must not build (see the
+    // constant's documentation for why these frames are clan variants).
+    const {
+        assert!(
+            !MINING_DRILL_FRAMES_ENABLED,
+            "MININGST has no drill frames: the switch would draw another clan's body"
+        )
+    };
+
+    let body: Vec<&SpriteFrame> = (0..16)
+        .map(|index| sprite.sheet.frame(index).expect("body frame"))
+        .collect();
+    let first = body[0];
+    assert_eq!((first.width, first.height), (116, 108), "mine body size");
+    let silhouette: Vec<bool> = first.pixels.iter().map(|pixel| pixel.is_some()).collect();
+
+    // Nothing moves: the 16 frames are pixel-identical in alpha (a drill would
+    // change the silhouette).
+    for (index, frame) in body.iter().enumerate() {
+        assert_eq!(
+            (frame.width, frame.height),
+            (first.width, first.height),
+            "frame {index}: body size"
+        );
+        let mask: Vec<bool> = frame.pixels.iter().map(|pixel| pixel.is_some()).collect();
+        assert_eq!(
+            mask, silhouette,
+            "frame {index}: the silhouette must not move"
+        );
+    }
+
+    // Eight different clan emblems: all even frames (`image_base`) are distinct.
+    for left in (0..16).step_by(2) {
+        for right in (left + 2..16).step_by(2) {
+            assert_ne!(
+                body[left].pixels, body[right].pixels,
+                "clan frames {left} and {right} must differ (clan emblem)"
+            );
+        }
+    }
+
+    // Each pair is the off/on state of one clan: palette indices differ.
+    for base in (0..16).step_by(2) {
+        assert_ne!(
+            body[base].pixels,
+            body[base + 1].pixels,
+            "clan {}: off/on frames differ",
+            base / 2 + 1
+        );
+    }
+
+    // C++ `image_base = (clan - 1) * 2`: clan 1..8 -> 0, 2, ..., 14; powered-on = +1.
+    let mut pairs = std::collections::BTreeSet::new();
+    for (index, clan) in TeamClan::ALL.iter().skip(1).enumerate() {
+        let expected = (index as i16) * 2;
+        let powered = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
+        let base = image_base_for(&powered, Some(*clan));
+        assert_eq!(base, expected, "{clan:?}: image_base");
+        assert!(
+            pairs.insert(base),
+            "{clan:?}: clan frame pair must be unique"
+        );
+
+        // Time never advances a mine body: any frame clock gives the clan's on-frame.
+        for animation in [
+            FrameAnimation::default(),
+            FrameAnimation {
+                builder_step: 2,
+                sentry_step: 99,
+            },
+        ] {
+            assert_eq!(
+                unit_frame_index_with_animation(
+                    &powered,
+                    base,
+                    sprite.sheet.len(),
+                    16,
+                    0,
+                    animation,
+                    true
+                ),
+                base as usize + 1,
+                "{clan:?}: a mine never cycles the body"
+            );
+        }
+    }
+}
+
 /// An idle mine **does not advance frames** — DOS capture §7.2
 /// (`max-original-dasm/formats/unit-animation.md`): a powered-on one stands on
 /// `image_base + 1`, a powered-off one — on `image_base`. The eight frames `16..23` —

@@ -2,6 +2,27 @@
 
 ### Добавлено
 
+- **C1/C2 — кадры «дрели» шахты и цикл завода: закрыто по оракулу (визуал не
+  менялся).** В C++-оракуле (`max-cpp-port`, `711b3de`) нет ни `frames.cpp`, ни
+  `MINING_DRILL_FRAMES_ENABLED`; 16 кадров корпуса `MININGST` — это **8 клановых
+  пар** `выкл`/`вкл` (`image_base = (clan - 1) * 2`, `unitinfo.cpp:281-283`) с
+  одинаковым alpha-силуэтом и восемью эмблемами, кадры 16..23 — коннекторы.
+  Включение «дрели» нарисовало бы шахту эмблемой другого клана, поэтому
+  `render::MINING_DRILL_FRAMES_ENABLED` остаётся `false`; активность даёт
+  палитровый цикл индикатора 21–24 (6 fps). У завода кадрового цикла нет:
+  `UnitInfo::StartBuilding` держит `image_base + 1`,
+  `SpawnNewUnit`/`CancelBuilding` — `image_base`, видимое мигание — палитровые
+  циклы 9–30 (промежуточная формула 1/30 с удалена ранее). Убраны устаревшие
+  комментарии про «промежуточный цикл кадров», документация константы
+  переписана. Тесты-замки:
+  `building_frames::mining_station_body_frames_are_eight_clan_pairs_not_a_drill_cycle`
+  (alpha/эмблемы/пары/`image_base` кланов) и расширенный
+  `building_animation::animation_clock_does_not_change_the_snapshot` (шахта +
+  работающий завод: `snapshot_bytes` не меняется). QA `production`/`ai-turn`/
+  `allocate` — PASS, golden-кадры байт-в-байт как до правки;
+  `check_render_readonly.py`/`check_comments_language.py` — PASS. Подробности —
+  §44 `max-brh-docs/analysis/visual-1to1-status.md`.
+
 - **B6 — debug-секция Preferences (C++ `invalid`, `OptionsMenu`).** В игровом
   варианте диалога (`PREFSPIC`) появились шесть отладочных контролов оракула:
   `Disable Fire` (`disable_fire`) и `Real Time` (`real_time`) — чекбоксы, и четыре

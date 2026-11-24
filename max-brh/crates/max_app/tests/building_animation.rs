@@ -336,6 +336,8 @@ fn radar_sentry_animation_advances_with_real_dt() {
 
 /// The visual frame clock is not part of the snapshot/CRC: dt moves only
 /// frames (and palette cycles), while the match state remains byte-for-byte the same.
+/// Both animated-looking cases are covered: a powered-on mine (static body, palette
+/// beacons) and a working factory (`image_base + 1`, palette blinking).
 #[test]
 fn animation_clock_does_not_change_the_snapshot() {
     let Some(mut app) = app_with_assets() else {
@@ -351,6 +353,16 @@ fn animation_clock_does_not_change_the_snapshot() {
         unit.orders = UnitOrder::PowerOn;
         unit.state = UnitOrderState::ExecutingOrder;
     }
+    let factory = app
+        .universe_mut()
+        .spawn_unit(UnitType::TrainingHall, TeamId::RED, Point::new(44, 40), 0)
+        .expect("training hall");
+    {
+        let unit = app.universe_mut().unit_mut(factory).expect("factory");
+        unit.orders = UnitOrder::Build;
+        unit.state = UnitOrderState::ExecutingOrder;
+        unit.build_list.push(UnitType::Infantry);
+    }
 
     let before = app.state_ref().snapshot_bytes();
     for _ in 0..12 {
@@ -365,6 +377,11 @@ fn animation_clock_does_not_change_the_snapshot() {
         app.unit_animation(mine),
         max_app::render::FrameAnimation::default(),
         "корпус шахты статичен"
+    );
+    assert_eq!(
+        app.unit_animation(factory),
+        max_app::render::FrameAnimation::default(),
+        "у работающего завода нет кадровых часов — только палитра"
     );
     assert!(
         app.color_cycles().step_counts().iter().any(|&steps| steps > 0),

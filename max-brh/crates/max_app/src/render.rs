@@ -64,15 +64,22 @@ pub const BUILDER_WORK_FRAME_STEP: usize = 8;
 /// How many different frames are in the constructor working cycle (`+16`, `+24`, `+32`).
 pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 
-/// Whether the mine drill frame advance is enabled (frames `1..15`).
+/// Whether the mine drill frames `1..15` are advanced.
 ///
-/// **Deliberately disabled:** the DOS capture (`max-original-dasm/formats/
-/// unit-animation.md` §7.2) showed that when idle the mine body is always frame 0
-/// (powered on — `image_base + 1`), not a single transition `0 → 1 → … → 15` over
-/// ~118 s of game time. Frames 1..15 (drill positions) probably play
-/// only during active extraction (§7.4) — this requires a separate
-/// capture of active extraction/turn processing. They can only be enabled after
-/// such a capture: the constant is the only handle of the rule.
+/// **There are no drill frames, so this cannot be enabled.** `MININGST` has 16 body
+/// frames in `MAX.RES`, but they are **eight clan variants × two state frames**:
+/// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:281-283`) sets
+/// `image_base = (team_clan - 1) * sizeof(uint16_t)`, i.e. frames `0/1`, `2/3`, …,
+/// `14/15` are the same mine body with the eight clan emblems (`image_base` — off,
+/// `+1` — on). All 16 frames have an identical alpha mask; only the palette indices
+/// change (the emblem recolour and the on-state beacon/indicator slots). Frames
+/// `16..23` are complex connectors (`D_MINING.connector_image_base = 16`), not
+/// drilling particles. The DOS capture (`max-original-dasm/formats/unit-animation.md`
+/// §7.2) saw no `0 → 1 → … → 15` transition in ~118 s; the visible activity of a
+/// working mine is the palette cycle of the drill indicator (slots 21–24,
+/// `World::InitColorCycles`, §7.3). Advancing this block would repaint the mine
+/// with another clan's emblem, so the switch stays `false` and documents the
+/// closed question.
 pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 
 /// Unit frame clock (drawing only, not part of the snapshot/CRC).
@@ -564,7 +571,7 @@ pub fn unit_frame_index_for_animation(
     )
 }
 
-/// Unit frame with all C++ frame-by-frame animations and the intermediate cycle.
+/// Unit frame with all C++ frame-by-frame animations (builder and `ANIMATED`).
 ///
 /// `image_count` — the number of body sprite frames (the index bound);
 /// `sentry_frames` — `Unit::GetFrameInfo().image_count` (`D_*`), i.e.
@@ -791,9 +798,10 @@ pub fn draw_unit_sprites_with_angle(
 /// [`draw_unit_sprites_with_angle`] with the unit frame clock.
 ///
 /// `animation` — [`FrameAnimation`] from [`crate::App::unit_animation`]:
-/// the builder (`+16 → +24 → +32`), the `ANIMATED` building (`ProcessOrderSentry`) and
-/// the **intermediate** frame cycle of a working factory. The HUD and tests pass
-/// [`FrameAnimation::default()`] (the static C++ frame, as with `dt = 0`).
+/// the builder (`+16 → +24 → +32`) and the `ANIMATED` building
+/// (`ProcessOrderSentry`). Mines and factories have **no** time-based frame cycle
+/// (they hold the C++ state frame; the blinking is the palette). The HUD and tests
+/// pass [`FrameAnimation::default()`] (the static C++ frame, as with `dt = 0`).
 ///
 /// `effects` — `settings["effects"]`; `false` disables frame-by-frame animations,
 /// as in C++.
@@ -1505,11 +1513,12 @@ impl<D: Dispatcher> App<D> {
             // it at the real speed; otherwise the frame would "run ahead" and the unit
             // would face sideways while moving straight.
             let body_angle = self.visual_angle(visible[index]).unwrap_or(unit.angle);
-            // Frame-by-frame animation of the builder, `ANIMATED` buildings and the intermediate
-            // full frame cycle of working mines/factories — the visual clock of
-            // `App` (real `dt`), they are not part of the snapshot/CRC. `dt = 0`
-            // (QA/headless) gives the static C++ frame (`+16` for the builder,
-            // the base/powered-on building frame) — so the goldens do not drift.
+            // Frame-by-frame animation of the builder and `ANIMATED` buildings — the
+            // visual clock of `App` (real `dt`), not part of the snapshot/CRC. Mines and
+            // factories are **not** advanced by time (oracle `unitinfo.cpp:2768` holds
+            // `image_base + 1`; DOS capture §7.2): their blinking comes from the palette
+            // cycles. `dt = 0` (QA/headless) gives the static C++ frame (`+16` for the
+            // builder, the base/powered-on building frame) — so the goldens do not drift.
             let animation = self.unit_animation(visible[index]);
             // Complex connectors (`UnitInfo::RenderWithConnectors`): the stored
             // mask from the save ∪ computed by neighbors (see [`drawn_connector_mask`]).
