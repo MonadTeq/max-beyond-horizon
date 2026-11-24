@@ -35,7 +35,7 @@
 
 use crate::enums::{PlayMode, UnitOrder, UnitOrderState, UnitType};
 use crate::geo::{PathStep, Point};
-use crate::team::TeamId;
+use crate::team::{ResearchTopicInfo, TeamId};
 
 /// Size of the command array in network structures (`TRANSPORT_MAX_TEAM_COUNT`).
 pub const MAX_TEAM_COUNT: usize = 4;
@@ -413,6 +413,52 @@ pub struct Packet53ComplexSummary {
     pub complexes: Vec<ComplexSummaryEntry>,
 }
 
+/// Packet **09** — team state: gold, upgrade spending, research allocation, name.
+///
+/// Oracle: `Remote_SendNetPacket_09` / `Remote_ReceiveNetPacket_09`
+/// (`max-cpp-port/src/remote.cpp:2067/2088`). Wire layout (little endian, byte for
+/// byte):
+///
+/// | Field | Type |
+/// |---|---|
+/// | type | `u8` (`0x59` = `TRANSPORT_APPL_PACKET_ID` + 9) |
+/// | team | `u16` |
+/// | gold | `u32` |
+/// | gold_spent_on_upgrades | `u32` |
+/// | research_topics | 96 B — 8 × { `i32` research_level, `i32` turns_to_complete, `i32` allocation } |
+/// | name | `SmartString` — `u16` length (including the NUL) + bytes + NUL |
+///
+/// The oracle sends it as `REMOTE_MULTICAST` from `UpgradeMenu::CommitUpgradeChanges`
+/// (`upgrademenu.cpp:97-101`), `ResearchMenu_OnClick_Done`
+/// (`researchmenu.cpp:558-560`), `OptionsMenu` (`optionsmenu.cpp:558`) and the AI
+/// (`aiplayer.cpp:370/2518`) — a *broadcast* packet, not a local one: gold and the
+/// research allocation are part of the team state, so they travel the same channel
+/// as the simulation commands.
+///
+/// Receive semantics (oracle): validate the team index, then assign `gold`,
+/// `gold_spent_on_upgrades` and the whole `research_topics` array.
+///
+/// The port (`max_core::events::apply_packet_09`) performs those assignments and
+/// additionally treats the `allocation` field as the *research menu target*: the
+/// owner's own `Done` now travels through this packet instead of writing
+/// `GameState`, so the receiver runs the same per-center loop C++ runs inline in
+/// `ResearchMenu_OnClick_Done` (`GameState::set_research_allocation`). A packet that
+/// repeats the current array (the gold-only upgrade commit) skips the loop. See the
+/// apply function for the full rationale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Packet09TeamState {
+    /// `team u16` (`Remote_IsValidTeamIndex` — 0..3).
+    pub team: TeamId,
+    /// `team_units->GetGold()` — the absolute gold value (not a delta).
+    pub gold: u32,
+    /// `stats_gold_spent_on_upgrades` — the absolute cumulative value (not a delta).
+    pub gold_spent_on_upgrades: u32,
+    /// 8 research topics in `RESEARCH_TOPIC_*` order (96 raw bytes on the wire).
+    pub research: [ResearchTopicInfo; crate::enums::RESEARCH_TOPIC_COUNT],
+    /// Team name (`SmartString` from `settings[menu_team_name_setting[team]]`).
+    pub name: String,
+}
+
 /// Packet **10** — upgrade of a unit type of the team.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet10UpgradeUnitType {
@@ -504,6 +550,8 @@ pub enum PacketKind {
     FinishedTurn = 0x06,
     /// Order to a unit.
     OrderUnit = 0x08,
+    /// Team state (gold/upgrade spending/research allocation).
+    TeamState = 0x09,
     /// Unit type upgrade.
     UpgradeUnitType = 0x0A,
     /// Order to a complex.
@@ -563,6 +611,8 @@ pub enum Command {
     ComplexOrder(Packet11ComplexOrder),
     /// 53.
     ComplexSummary(Packet53ComplexSummary),
+    /// 09.
+    TeamState(Packet09TeamState),
     /// 10.
     UpgradeUnitType(Packet10UpgradeUnitType),
     /// 20.
@@ -593,6 +643,7 @@ impl Command {
             Self::Chat(_) => PacketKind::Chat,
             Self::ComplexOrder(_) => PacketKind::ComplexOrder,
             Self::ComplexSummary(_) => PacketKind::ComplexSummary,
+            Self::TeamState(_) => PacketKind::TeamState,
             Self::UpgradeUnitType(_) => PacketKind::UpgradeUnitType,
             Self::UpgradeUnit(_) => PacketKind::UpgradeUnit,
             Self::Rename(_) => PacketKind::Rename,
@@ -762,6 +813,19 @@ mod tests {
         });
         assert!(!chat.affects_simulation());
         assert_eq!(PacketKind::Chat as u8, 0x12);
+
+        // Packet 09 is a *simulation* command: gold and the research allocation
+        // are part of the team state (`remote.cpp:2067-2107`).
+        let team_state = Command::TeamState(Packet09TeamState {
+            team: TeamId(0),
+            gold: 1,
+            gold_spent_on_upgrades: 2,
+            research: [ResearchTopicInfo::default(); crate::enums::RESEARCH_TOPIC_COUNT],
+            name: "RED".into(),
+        });
+        assert_eq!(team_state.kind(), PacketKind::TeamState);
+        assert_eq!(PacketKind::TeamState as u8, 0x09);
+        assert!(team_state.affects_simulation());
     }
 
     #[test]

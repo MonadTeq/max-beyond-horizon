@@ -2002,6 +2002,10 @@ impl GameState {
     ///
     /// Returns the actual allocation (C++ does not guarantee the sum equals the number
     /// of centers if the target exceeds the number of centers).
+    ///
+    /// This is the port of the whole `Done` handler; packet 09 carries the same
+    /// `target` array, so [`crate::events::apply_packet_09`] delegates here and the
+    /// owner and the peers run identical code.
     pub fn set_research_allocation(
         &mut self,
         team: TeamId,

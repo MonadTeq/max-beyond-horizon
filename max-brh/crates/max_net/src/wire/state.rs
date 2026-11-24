@@ -39,7 +39,10 @@ const MAX_UNITS_PER_CHUNK: usize = 30;
 /// `(1440 - 7 - 478) / 47 = 20`.
 const MAX_UNITS_LAST_CHUNK: usize = 20;
 
-/// One research topic in packet 09/54: `i32 level, i32 turns, i32 allocation`.
+/// One research topic in the packet-54 tail: `i32 level, i32 turns, i32 allocation`.
+///
+/// Packet 09 carries the same 96-byte array, but as a simulation command
+/// (`Command::TeamState` → `wire::command`), so it does not use this DTO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResearchTopicWire {
     /// Research level.
@@ -228,21 +231,6 @@ pub struct StateSync {
     pub tail: Option<StateSyncTail>,
 }
 
-/// Packet 09 — team state (gold, research, name).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TeamState {
-    /// Team index.
-    pub team: TeamId,
-    /// Gold.
-    pub gold: u32,
-    /// Gold spent on upgrades.
-    pub gold_spent_on_upgrades: u32,
-    /// Research topics (8 × 12 bytes).
-    pub research: [ResearchTopicWire; RESEARCH_TOPIC_COUNT],
-    /// Team name (`SmartString`).
-    pub name: String,
-}
-
 /// Packet 17 — full game options (`GameManager_GameState` + 38 × i32).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameOptions {
@@ -339,29 +327,6 @@ pub fn decode_state_sync(r: &mut Reader<'_>) -> WireResult<StateSync> {
     })
 }
 
-/// Decodes packet 09.
-pub fn decode_team_state(r: &mut Reader<'_>) -> WireResult<TeamState> {
-    let team = TeamId(r.read_u16()? as u8);
-    let gold = r.read_u32()?;
-    let gold_spent_on_upgrades = r.read_u32()?;
-    let mut research = [ResearchTopicWire::default(); RESEARCH_TOPIC_COUNT];
-    for topic in &mut research {
-        *topic = ResearchTopicWire {
-            research_level: r.read_i32()?,
-            turns_to_complete: r.read_i32()?,
-            allocation: r.read_i32()?,
-        };
-    }
-    let name = r.read_smart_string()?;
-    Ok(TeamState {
-        team,
-        gold,
-        gold_spent_on_upgrades,
-        research,
-        name,
-    })
-}
-
 /// Decodes packet 17.
 pub fn decode_game_options(r: &mut Reader<'_>) -> WireResult<GameOptions> {
     let team = TeamId(r.read_u16()? as u8);
@@ -426,19 +391,6 @@ pub fn encode_state_sync(packet: &StateSync, w: &mut Writer) -> WireResult<()> {
         });
     }
     Ok(())
-}
-
-/// Encodes packet 09.
-pub fn encode_team_state(packet: &TeamState, w: &mut Writer) -> WireResult<()> {
-    w.write_u16(u16::from(packet.team.0));
-    w.write_u32(packet.gold);
-    w.write_u32(packet.gold_spent_on_upgrades);
-    for topic in &packet.research {
-        w.write_i32(topic.research_level);
-        w.write_i32(topic.turns_to_complete);
-        w.write_i32(topic.allocation);
-    }
-    w.write_smart_string(&packet.name)
 }
 
 /// Encodes packet 17.

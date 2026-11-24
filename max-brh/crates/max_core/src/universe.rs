@@ -169,9 +169,12 @@ pub enum RoutedCommand {
     /// Apply locally only (`00`/`52`/`45`, single-player).
     Local(Command),
     /// Apply locally and broadcast to peers
-    /// (`06`/`08`/`10`/`11`/`12`/`14`/`18`/`20`/`38`/`41`/`43`/`50`; the route
+    /// (`06`/`08`/`09`/`10`/`11`/`12`/`14`/`18`/`20`/`38`/`41`/`43`/`50`; the route
     /// table is ADR §2, `game-universe-facade.md`). Packet `53` is **not** here:
     /// it is a `Local` barrier/projection packet like `00`/`01`/`45`/`52`.
+    /// Packet `09` is the team state (gold, upgrade spending, research allocation):
+    /// C++ sends it as `REMOTE_MULTICAST` (`remote.cpp:2085`) because those fields
+    /// are part of the simulated team state and enter the CRC.
     Broadcast(Command),
     /// Drop (a forbidden order of an inactive command and the like).
     Drop,
@@ -1622,6 +1625,11 @@ impl<D: Dispatcher> GameUniverse<D> {
 
     /// `GameState::set_research_allocation` (`game.rs:2014`); returns the actual
     /// allocation.
+    ///
+    /// The research menu does **not** call this writer any more: its `Done` produces
+    /// packet 09 (`Command::TeamState`, allocation = the menu target) and
+    /// `events::apply_packet_09` delegates here. The writer stays as the documented
+    /// core API for tests and configuration scripts.
     pub fn set_research_allocation(
         &mut self,
         team: TeamId,

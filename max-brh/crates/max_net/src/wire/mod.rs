@@ -33,10 +33,10 @@ pub use network::{
 };
 pub use reader::{Reader, WireError, WireName, WireResult, Writer};
 pub use state::{
-    decode_audit, decode_game_options, decode_save_request, decode_state_sync, decode_team_state,
+    decode_audit, decode_game_options, decode_save_request, decode_state_sync,
     encode_audit, encode_game_options, encode_save_request, encode_state_sync, encode_team_param,
-    encode_team_state, state_sync_for, GameOptions, ResearchTopicWire, SaveRequest, StateSync,
-    StateSyncTail, TeamState, UnitState, STATE_SYNC_UNITS_PER_PACKET, UNIT_END,
+    state_sync_for, GameOptions, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, UnitState,
+    STATE_SYNC_UNITS_PER_PACKET, UNIT_END,
 };
 
 use max_types::input::Command;
@@ -53,7 +53,7 @@ pub const MAX_APPL_PACKET_NUMBER: u8 = 0x36;
 /// One decoded APPL packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Packet {
-    /// Packets 00/01/06/08/0A/0B/0C/0D/0E/12/14/26/29/2B/2D/32/34/35 mapped
+    /// Packets 00/01/06/08/09/0A/0B/0C/0D/0E/12/14/26/29/2B/2D/32/34/35 mapped
     /// to the simulation command model.
     Command(Command),
     /// Lobby packets (28/44/29/47/30/37/36/35/33/26/31/32/05/34).
@@ -134,8 +134,6 @@ pub enum Packet {
         /// Counter.
         counter: u32,
     },
-    /// 09 — team state (gold/research/name).
-    TeamState(TeamState),
     /// 17 — full game options.
     GameOptions(GameOptions),
     /// 16 — save request.
@@ -166,7 +164,6 @@ impl Packet {
             Self::PauseRelease { .. } => 0x28,    // 40
             Self::CancelSite { .. } => 0x2A,      // 42
             Self::DelayedReaction { .. } => 0x2E, // 46
-            Self::TeamState(_) => 0x09,           // 09
             Self::GameOptions(_) => 0x11,         // 17
             Self::SaveRequest(_) => 0x10,         // 16
             Self::Unknown { kind, .. } => *kind,
@@ -203,8 +200,8 @@ impl Packet {
     pub fn decode_body(kind: u8, r: &mut Reader<'_>) -> WireResult<Self> {
         match kind {
             // Commands (max_types::input::Command).
-            0x00 | 0x01 | 0x06 | 0x08 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x12 | 0x14 | 0x26
-            | 0x29 | 0x2B | 0x2D | 0x32 | 0x34 | 0x35 => {
+            0x00 | 0x01 | 0x06 | 0x08 | 0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x12 | 0x14
+            | 0x26 | 0x29 | 0x2B | 0x2D | 0x32 | 0x34 | 0x35 => {
                 Ok(Self::Command(command::decode_command(kind, r)?))
             }
             // Lobby.
@@ -260,8 +257,6 @@ impl Packet {
             }),
             // 54 state sync.
             0x36 => Ok(Self::StateSync(decode_state_sync(r)?)),
-            // 09 team state.
-            0x09 => Ok(Self::TeamState(decode_team_state(r)?)),
             // 17 game options.
             0x11 => Ok(Self::GameOptions(decode_game_options(r)?)),
             // 16 save request.
@@ -349,7 +344,6 @@ impl Packet {
                 Ok(())
             }
             Self::StateSync(packet) => encode_state_sync(packet, w),
-            Self::TeamState(packet) => encode_team_state(packet, w),
             Self::GameOptions(packet) => {
                 encode_game_options(packet, w);
                 Ok(())
@@ -370,12 +364,13 @@ mod tests {
     use max_types::geo::{PathStep, Point};
     use max_types::input::{
         ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
-        Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet11ComplexOrder,
-        Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit,
-        Packet38Move, Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier, Packet50StopUnit,
-        Packet52EndTurnBarrier, Packet53ComplexSummary, PayloadP1, PayloadP2, PayloadP3, PayloadP4,
-        PayloadP5,
+        Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet09TeamState,
+        Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed, Packet14DeployUnit,
+        Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished, Packet43Rename,
+        Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier, Packet53ComplexSummary,
+        PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
     };
+    use max_types::team::ResearchTopicInfo;
 
     fn round_trip(packet: Packet) -> Vec<u8> {
         let bytes = packet.encode().expect("encode");
@@ -1158,5 +1153,45 @@ mod tests {
         let seed = Packet::Command(Command::Seed(Packet13Seed { seed: 1 }));
         assert_eq!(seed.wire_type(), Some(0x5D));
         assert_eq!(seed.kind(), 0x0D);
+    }
+
+    /// Packet 09 is byte-pinned against the oracle layout
+    /// (`Remote_SendNetPacket_09`, `remote.cpp:2067-2086`):
+    /// `type u8 | team u16 | gold u32 | gold_spent u32 | 8 × (i32, i32, i32) |
+    /// SmartString(u16 len incl. NUL + bytes + NUL)`.
+    #[test]
+    fn packet_09_matches_the_oracle_byte_layout() {
+        let research = core::array::from_fn(|index| ResearchTopicInfo {
+            research_level: index as u32,
+            turns_to_complete: index as u32 * 3,
+            allocation: index as u32 * 5,
+        });
+        let packet = Packet::Command(Command::TeamState(Packet09TeamState {
+            team: TeamId::GREEN,
+            gold: 300,
+            gold_spent_on_upgrades: 15,
+            research,
+            name: "GREEN".to_string(),
+        }));
+
+        // The frame below is the oracle's field dump, assembled by hand.
+        let mut expected = Vec::new();
+        expected.push(0x59); // REMOTE_PACKET_09 = TRANSPORT_APPL_PACKET_ID + 9
+        expected.extend_from_slice(&1u16.to_le_bytes()); // team GREEN
+        expected.extend_from_slice(&300u32.to_le_bytes()); // gold
+        expected.extend_from_slice(&15u32.to_le_bytes()); // stats_gold_spent_on_upgrades
+        for index in 0..8i32 {
+            expected.extend_from_slice(&index.to_le_bytes()); // research_level
+            expected.extend_from_slice(&(index * 3).to_le_bytes()); // turns_to_complete
+            expected.extend_from_slice(&(index * 5).to_le_bytes()); // allocation
+        }
+        expected.extend_from_slice(&6u16.to_le_bytes()); // SmartString length incl. NUL
+        expected.extend_from_slice(b"GREEN\0");
+
+        let bytes = round_trip(packet);
+        assert_eq!(bytes, expected, "packet 09 frame: {bytes:02X?}");
+        // 1 type + 2 team + 4 gold + 4 spent + 96 research + 2 length + 6 name = 115.
+        assert_eq!(bytes.len(), 115, "packet 09 frame size");
+        assert_eq!(bytes[0], super::TRANSPORT_APPL_PACKET_ID + 9);
     }
 }

@@ -388,7 +388,8 @@ pub struct HudState {
     pub log: MessageLog,
     /// Chat input line (packet 18): active while the player types a message.
     pub chat: ChatInput,
-    /// Orders not yet passed to the network/simulation (38/08/18 from input).
+    /// Orders not yet passed to the network/simulation (38/08/18 from input,
+    /// 10/09 from the upgrade and research screens — the whole UI command channel).
     pub pending: Vec<Command>,
     /// HUD button under the cursor.
     pub hover_button: Option<HudButton>,

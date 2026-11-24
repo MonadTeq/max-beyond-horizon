@@ -24,7 +24,7 @@ UI-мутации меню пишут в `&mut universe` напрямую, ло�
 | Локальный игровой цикл | ⚠️ замкнут, но вторым каналом (прямой `universe.tick`, приказы `apply_now`) |
 | Ввод в игру | ⚠️ два пути (`online=false` → `apply_now`; `online=true` → `submit`) |
 | End Turn | ⚠️ локальный ✅; demo-путь прямой `set_game_state`+`finish_turn` |
-| Меню-мутации | ❌ прямой доступ (`menu.commit(&mut universe)`, `unit_mut`) |
+| Меню-мутации | ⚠️ `UpgradeMenu`/`ResearchMenu` — пакетами 09/10 (командный канал); alloc/parent/auto_survey/build_time — аудированные исключения (отдельный трек, §3 B2-таблица) |
 | Аудио | ✅ из событий фасада |
 | Рекордер/QA | ✅ |
 | Детерминизм (digest/golden) | ✅ |
@@ -32,7 +32,9 @@ UI-мутации меню пишут в `&mut universe` напрямую, ло�
 ## 2. Ключевые «разобщённые» места
 
 1. **Широкий публичный канал фасада** (`apply_now`+`set_*`+`*_mut`) + `App.universe` = `pub`.
-2. **UI-мутации мимо командного канала** (меню-коммиты).
+2. **UI-мутации мимо командного канала** (меню-коммиты) — для `UpgradeMenu` (золото +
+   `gold_spent_on_upgrades`) и `ResearchMenu` (распределение исследований) **закрыто
+   packet 09**; остальные пути аудированы и задокументированы в §3 (B2-таблица).
 3. **`end_turn` demo-путь** — прямой `set_game_state`+`finish_turn`.
 4. **Два скелета цикла** (локальный vs сетевой) + `online: bool`.
 5. **Конфигурация мира** — легитимный install-путь, но не отделён от UI-пути.
@@ -58,6 +60,39 @@ UI-мутации меню пишут в `&mut universe` напрямую, ло�
   `submit`/`apply_now` — не только видимые в меню. Если после B останется хоть один путь
   мутации вне командного канала, детерминизм не гарантирован.
 - **Вне B:** C1/C2 (структура цикла), `handle_session_input` (протокол), C3 (install-API).
+
+#### B2 — статус аудита (2026-11-24, PACKET 09)
+
+Packet **09** (состояние команды: `gold`, `gold_spent_on_upgrades`,
+`research_topics`) добавлен как `Command::TeamState` — broadcast, бит-в-байт по
+оракулу (`remote.cpp:2067/2088`, раскладка в
+[`../architecture/client/protocol.md`](../architecture/client/protocol.md) §8.4).
+Пп.1–2 закрыты, остальные пути проклассифицированы:
+
+| № | Путь | Где | Статус |
+|---|---|---|---|
+| 1 | `UpgradeMenu` commit: `gold` + `gold_spent_on_upgrades` | `App::commit_upgrade_menu` | **закрыт** — `Command::TeamState` (09) |
+| 2 | `ResearchMenu` commit: `research_topics[].allocation` + пересборка центров | `App::commit_research_menu` | **закрыт** — `Command::TeamState` (09) |
+| 3 | `AllocMenu` per-click: добыча/сдача комплекса, `balance`, `complex_mut` | `allocmenu.rs:288`, `App::optimize_allocation`/`reduce_production_allocation`/`allocation_balance` | **отдельный трек**: носителя нет — 11 несёт только итоги комплекса, 08/P5 — четыре поля шахты, у `Balance` пакета нет; C++ пишет так же напрямую (`allocmenu.cpp:790-792`) |
+| 4 | `parent_unit` при открытии X-FER | `lib.rs:1631` | **отдельный трек**: пакета «только parent» нет (поле едет в 08/P3 при `Done`), C++ пишет при открытии окна и сохраняет после `Cancel` |
+| 5 | `auto_survey` (тумблер `Auto`) | `lib.rs:1909` | **отдельный трек**: поля нет в 08 (только V70 save), C++ тоже переключает локально |
+| 6 | `build_time` (обломки `ORDER_CLEAR`) | `lib.rs:2014` | **отдельный трек**: `build_time` есть только в P4, а `clear` собирает P3 |
+| 7 | `enemy_halt` | `preferences.rs:1897` | **install/preferences**: не входит в `snapshot_bytes`, пишется из `Preferences` |
+| 8 | save meta (V70 header/preferences/camera) | `saveload.rs:950` | **не симуляция**: заголовок сейва, вне snapshot/CRC |
+| 9 | RNG-ролл `stealth_dice_roll` | `ui.rs:3199` | **не мутация**: значение едет в 08/P3, RNG расходуется как в C++ |
+| 10 | install мира (карта/ресурсы/стартовые юниты, `--new-game`, load) | `local.rs:693-706`, `net.rs:2142`, `App::load_save_bytes` | **install-API**, не UI (Stage C3) |
+
+Гейты packet 09:
+
+- раскладка бит-в-байт — `max_net/src/wire/mod.rs::packet_09_matches_the_oracle_byte_layout`;
+- класс маршрута (broadcast, не local) —
+  `net/dispatcher.rs::dispatcher_routes_simulation_broadcast_barriers_local_and_seed_drop`;
+- семантика применения (золото/траты/пересборка/выключение центров) —
+  `max_core/tests/team_state.rs`;
+- **гейт эквивалентности** «одиночная игра == broadcast → пир» —
+  `max_app/tests/channel_equivalence.rs::upgrade_menu_commit_matches_the_broadcast_apply_on_a_peer`
+  и `research_menu_commit_matches_the_broadcast_apply_on_a_peer` (сравнение
+  `snapshot_bytes`).
 
 ### Stage C — Единый скелет цикла (C1/C2)
 - **C1** общий шаг сессии `poll input → приказ → tick → render` (dispatcher-generic).

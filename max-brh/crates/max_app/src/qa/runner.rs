@@ -1719,7 +1719,9 @@ impl QaRunner {
                 if app.research_menu().is_none() {
                     return Err("research done: меню не открыто".to_string());
                 }
-                app.commit_research_menu()
+                // QA drives an offline (demo/local) match: the packet-09 command is
+                // flushed immediately, like `upgrade done`.
+                app.commit_research_menu(false)
                     .unwrap_or_else(|| "распределение применено".to_string())
             }
             ResearchCommand::Cancel => {

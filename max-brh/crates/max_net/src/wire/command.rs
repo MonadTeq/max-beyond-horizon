@@ -15,16 +15,19 @@ use max_types::geo::{PathStep, Point};
 use max_types::input::{
     Command, ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload,
     Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order,
-    Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed,
-    Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished,
-    Packet43Rename, Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier,
-    Packet53ComplexSummary, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
-    UPGRADE_VALUE_COUNT,
+    Packet09TeamState, Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply,
+    Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move,
+    Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier, Packet50StopUnit,
+    Packet52EndTurnBarrier, Packet53ComplexSummary, PayloadLevel, PayloadP1, PayloadP2, PayloadP3,
+    PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
 };
-use max_types::team::TeamId;
+use max_types::team::{ResearchTopicInfo, TeamId};
 use max_types::unit::UnitId;
 
 use super::reader::{Reader, WireError, WireResult, Writer, MAX_VECTOR_LEN};
+
+/// Number of research topics in packet 09 (C++ `RESEARCH_TOPIC_COUNT`).
+const RESEARCH_TOPIC_COUNT: usize = max_types::enums::RESEARCH_TOPIC_COUNT;
 
 /// Reads a `u16` team index into [`TeamId`].
 fn read_team(r: &mut Reader<'_>) -> WireResult<TeamId> {
@@ -267,6 +270,51 @@ fn read_packet_08(r: &mut Reader<'_>) -> WireResult<Command> {
 fn write_packet_08(w: &mut Writer, packet: &Packet08Order) -> WireResult<()> {
     w.write_u16(packet.unit.0);
     write_order_payload(w, &packet.payload)
+}
+
+// ---------------------------------------------------------------------------
+// Packet 09 — team state (gold / upgrade spending / research allocation)
+// ---------------------------------------------------------------------------
+//
+// Oracle: `Remote_SendNetPacket_09` / `Remote_ReceiveNetPacket_09`
+// (`remote.cpp:2067/2088`). The research array is written as its raw in-memory
+// struct bytes: 8 × { i32 level, i32 turns, i32 allocation } = 96 bytes.
+
+fn read_packet_09(r: &mut Reader<'_>) -> WireResult<Command> {
+    let team = read_team(r)?;
+    let gold = r.read_u32()?;
+    let gold_spent_on_upgrades = r.read_u32()?;
+
+    let mut research = [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT];
+    for topic in &mut research {
+        *topic = ResearchTopicInfo {
+            research_level: r.read_i32()? as u32,
+            turns_to_complete: r.read_i32()? as u32,
+            allocation: r.read_i32()? as u32,
+        };
+    }
+
+    let name = r.read_smart_string()?;
+
+    Ok(Command::TeamState(Packet09TeamState {
+        team,
+        gold,
+        gold_spent_on_upgrades,
+        research,
+        name,
+    }))
+}
+
+fn write_packet_09(w: &mut Writer, packet: &Packet09TeamState) -> WireResult<()> {
+    write_team(w, packet.team);
+    w.write_u32(packet.gold);
+    w.write_u32(packet.gold_spent_on_upgrades);
+    for topic in &packet.research {
+        w.write_i32(topic.research_level as i32);
+        w.write_i32(topic.turns_to_complete as i32);
+        w.write_i32(topic.allocation as i32);
+    }
+    w.write_smart_string(&packet.name)
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +728,7 @@ pub fn decode_command(kind: u8, r: &mut Reader<'_>) -> WireResult<Command> {
         0x01 => read_packet_01(r),
         0x06 => read_packet_06(r),
         0x08 => read_packet_08(r),
+        0x09 => read_packet_09(r),
         0x0A => read_packet_10(r),
         0x0B => read_packet_11(r),
         0x0C => read_packet_12(r),
@@ -716,6 +765,7 @@ pub fn encode_command(command: &Command, w: &mut Writer) -> WireResult<()> {
             Ok(())
         }
         Command::Order(packet) => write_packet_08(w, packet),
+        Command::TeamState(packet) => write_packet_09(w, packet),
         Command::UpgradeUnitType(packet) => {
             write_team(w, packet.team);
             w.write_u16(packet.unit_type as u16);

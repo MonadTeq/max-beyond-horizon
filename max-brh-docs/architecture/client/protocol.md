@@ -576,6 +576,30 @@ material i16, fuel i16, gold i16, power i16, workers i16, buildings i16`.
 пиры реплицируют): `type, team u16, turn i32, complex_count u16, complex_count ×
 {complex_id u16, 6×i16}`.
 
+**09 — состояние команды** (`C→S multicast`, broadcast): `type u8 (0x59), team u16,
+gold u32, gold_spent_on_upgrades u32, research_topics 96 B (8 × {research_level i32,
+turns_to_complete i32, allocation i32}), team_name SmartString`. Отправитель —
+`UpgradeMenu::CommitUpgradeChanges` (`upgrademenu.cpp:97-101`),
+`ResearchMenu_OnClick_Done` (`researchmenu.cpp:558-560`), `OptionsMenu`
+(`optionsmenu.cpp:558`) и AI (`aiplayer.cpp:370/2518`); транспорт —
+`REMOTE_MULTICAST`. Приёмник (`Remote_ReceiveNetPacket_09`, `remote.cpp:2088`)
+проверяет team-индекс и присваивает `gold` (`SetGold`), абсолютное
+`stats_gold_spent_on_upgrades` и весь массив `research_topics`, а строку пишет в
+`settings[menu_team_name_setting[team]]`.
+
+Поля `gold`/`gold_spent_on_upgrades` — **абсолютные** значения, не дельты.
+В порте пакет — `Command::TeamState` (`max_types::input::Packet09TeamState`,
+кодек `max_net::wire::command`, бит-в-байт), применяется
+`max_core::events::apply_packet_09`. Поле `allocation` несёт **цель меню**
+исследования (`ResearchMenu::Done`), и приёмник выполняет тот же цикл
+`ResearchMenu_OnClick_Done` (`GameState::set_research_allocation`), поэтому
+владелец и пиры сходятся байт-в-байт (гейт
+`max_app/tests/channel_equivalence.rs`); `research_level`/`turns_to_complete`
+информативны — цикл пересчитывает их из цели. В C++ владелец прогоняет цикл
+**до** отправки и кладёт в пакет результат; раскладка при этом та же, а
+приёмник применяет цель/результат одинаково (цикл идемпотентен для уже
+распределённых центров).
+
 **10 — апгрейд типа юнита команды**: `type, team u16, unit_type u16`, затем
 13 значений `u16` в фиксированном порядке: `turns, hits, armor, attack, speed,
 range, rounds, move_and_fire, scan, storage, ammo, attack_radius, agent_adjust`.

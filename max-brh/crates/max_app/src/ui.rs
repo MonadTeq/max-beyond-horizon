@@ -1878,7 +1878,7 @@ where
 
     // Research screen (P7) — modal, like `ResearchMenu::Run`.
     if app.research_menu().is_some() {
-        return session_research_menu_input(app, event);
+        return session_research_menu_input(app, event, online);
     }
 
     // Mine extraction allocation (C++ `AllocMenu`, window `ALLOCFRM`) —
@@ -2624,11 +2624,15 @@ where
 
 /// Input in the open research screen (modal screen P7).
 ///
-/// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: the center allocation is written
-/// into `GameState` ([`max_core::game::GameState::set_research_allocation`]) and
-/// picked up by `finish_turn` (`ResearchMenu_NewTurn`). `Cancel`/`Esc` —
+/// `Done`/`Enter` — `ResearchMenu_OnClick_Done`: the commit becomes packet **09**
+/// ([`max_app::App::commit_research_menu`]) — a broadcast command applied by the
+/// simulation (`events::apply_packet_09`), not a direct facade write. `Cancel`/`Esc` —
 /// close without changes. `Help` — `RESEARCH_SETUP`.
-fn session_research_menu_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+fn session_research_menu_input<D: Dispatcher>(
+    app: &mut App<D>,
+    event: InputEvent,
+    online: bool,
+) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -2636,7 +2640,7 @@ where
 
     match action {
         Some(ResearchAction::Done) => {
-            if let Some(line) = app.commit_research_menu() {
+            if let Some(line) = app.commit_research_menu(online) {
                 app.hud_mut().push_log(line);
             }
         }

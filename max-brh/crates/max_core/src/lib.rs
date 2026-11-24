@@ -156,11 +156,12 @@ pub use max_types::geo::{
 pub use hash::{MapHash, MapHashObject, UnitHash};
 pub use max_types::input::{
     Command, ComplexSummaryEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
-    Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet10UpgradeUnitType,
-    Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed, Packet14DeployUnit, Packet18Chat,
-    Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier,
-    Packet50StopUnit, Packet52EndTurnBarrier, Packet53ComplexSummary, PacketKind, PayloadLevel,
-    PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
+    Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet09TeamState,
+    Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed,
+    Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished,
+    Packet43Rename, Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier,
+    Packet53ComplexSummary, PacketKind, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4,
+    PayloadP5, UPGRADE_VALUE_COUNT,
 };
 pub use max_types::map::{Map, MapSize, ResourceKind, ResourceMap, ResourceMapEntry, SurfaceMap};
 pub use order::Order;

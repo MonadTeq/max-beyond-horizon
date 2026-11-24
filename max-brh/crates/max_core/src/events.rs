@@ -46,7 +46,8 @@ use crate::game::GameState;
 use crate::geo::Point;
 use crate::input::{
     is_valid_order, is_valid_team_index, Command, MovePathData, OrderPayload, Packet08Order,
-    PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
+    Packet09TeamState, PayloadLevel, PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
+    UPGRADE_VALUE_COUNT,
 };
 use crate::team::{TeamId, TeamKind};
 use crate::unit::{AirPath, GroundPath, UnitId, UnitInfo, UnitListKind, UnitPath};
@@ -205,6 +206,7 @@ pub(crate) fn apply_command(state: &mut GameState, command: &Command) -> ApplyOu
         Command::Chat(chat) => apply_packet_18(state, chat),
         Command::ComplexOrder(order) => apply_packet_11(state, order),
         Command::ComplexSummary(summary) => apply_packet_53(state, summary),
+        Command::TeamState(team_state) => apply_packet_09(state, team_state),
         Command::UpgradeUnitType(upgrade) => apply_packet_10(state, upgrade),
         Command::UpgradeUnit(upgrade) => apply_packet_20(state, upgrade),
         Command::Rename(rename) => apply_packet_43(state, rename),
@@ -963,6 +965,75 @@ fn apply_packet_12(
     state.teams[packet.team.0 as usize].stats_gold_spent_on_upgrades =
         packet.gold_spent_on_upgrades;
     state.mission_supplies[packet.team.0 as usize] = Some(packet.clone());
+    ApplyOutcome::Applied
+}
+
+// ---------------------------------------------------------------------------
+// 09 — team state (gold / upgrade spending / research allocation)
+// ---------------------------------------------------------------------------
+
+/// `Remote_ReceiveNetPacket_09` (`remote.cpp:2088-2107`).
+///
+/// Oracle order: validate the team index (`Remote_IsValidTeamIndex`), then assign
+/// the absolute gold (`SetGold`), the absolute cumulative
+/// `stats_gold_spent_on_upgrades` and the research topics.
+///
+/// **Research assignment.** Packet 09 is what carries `ResearchMenu_OnClick_Done`
+/// over the command channel (the port's UI may not write the simulation): the
+/// `allocation` entry of every topic is the **menu target** the player committed,
+/// and applying it is exactly the C++ loop
+/// ([`GameState::set_research_allocation`]): each powered-on `RESEARCH` center keeps
+/// its topic while the count lasts, moves to the first topic with room, or is
+/// powered off. `research_level`/`turns_to_complete` are informational here — the
+/// same loop recomputes them from the target, so a sender that puts the *resulting*
+/// values in those fields (the oracle does) is applied identically.
+///
+/// The `team_units.gold` / `stats_gold_spent_on_upgrades` / array writes are the
+/// oracle's field-by-field assignment; the loop only runs when the packet's array
+/// differs from the current one, so a gold-only commit (the upgrade menu copies the
+/// team state verbatim) never touches the centers.
+///
+/// **Team name.** C++ writes the `SmartString` into
+/// `settings[menu_team_name_setting[team]]`; the team name is a UI preference, not
+/// simulation state, and `max_core` does not own preferences. The field stays in the
+/// packet for wire compatibility and is applied by the application layer.
+fn apply_packet_09(state: &mut GameState, packet: &Packet09TeamState) -> ApplyOutcome {
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    let index = packet.team.0 as usize;
+
+    let Some(team_units) = state.team_units.get_mut(index) else {
+        return ApplyOutcome::Ignored;
+    };
+
+    team_units.gold = packet.gold;
+
+    let (targets, research_changed) = {
+        let Some(team) = state.teams.get_mut(index) else {
+            return ApplyOutcome::Ignored;
+        };
+
+        team.stats_gold_spent_on_upgrades = packet.gold_spent_on_upgrades;
+
+        let mut targets = [0u32; crate::enums::RESEARCH_TOPIC_COUNT];
+        for (slot, incoming) in targets.iter_mut().zip(packet.research.iter()) {
+            *slot = incoming.allocation;
+        }
+
+        // A packet that repeats the current array is a gold-only commit (the
+        // upgrade screen copies the team state verbatim): the loop is skipped, so
+        // buying an upgrade never touches the research centers. Any difference
+        // (`allocation`, and the level/turns the loop recomputes) is a research
+        // commit and takes the `Done` path.
+        (targets, team.research_topics != packet.research)
+    };
+
+    if research_changed {
+        state.set_research_allocation(packet.team, targets);
+    }
+
     ApplyOutcome::Applied
 }
 

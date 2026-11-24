@@ -23,15 +23,15 @@
 
 use max_app::App;
 use max_app::AppConfig;
-use max_core::enums::{TeamClan, UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{ResearchTopic, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::events::{command_move_linear, command_order_p1, payload_p1_for, ApplyOutcome};
 use max_core::geo::Point;
 use max_core::input::{
-    Command, OrderPayload, Packet08Order, Packet10UpgradeUnitType, Packet18Chat,
+    Command, OrderPayload, Packet08Order, Packet09TeamState, Packet10UpgradeUnitType, Packet18Chat,
     Packet41MoveFinished, Packet50StopUnit, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
 };
 use max_core::research::upgrade_packet_values;
-use max_core::team::{TeamId, TeamKind, TeamUnits};
+use max_core::team::{ResearchTopicInfo, TeamId, TeamKind, TeamUnits};
 use max_core::unit::UnitId;
 use max_core::universe::{GameUniverse, LocalDispatcher};
 
@@ -232,6 +232,35 @@ fn ui_commands(
                 values: upgrade_values,
             }),
         ),
+        (
+            "09 team state (gold)",
+            Command::TeamState(Packet09TeamState {
+                team: TeamId::RED,
+                gold: 400,
+                gold_spent_on_upgrades: 12,
+                research: universe.snapshot().teams()[TeamId::RED.0 as usize].research_topics,
+                name: "RED".to_string(),
+            }),
+        ),
+        (
+            "09 team state (research)",
+            Command::TeamState(Packet09TeamState {
+                team: TeamId::RED,
+                gold: 400,
+                gold_spent_on_upgrades: 12,
+                research: {
+                    let mut topics =
+                        universe.snapshot().teams()[TeamId::RED.0 as usize].research_topics;
+                    topics[ResearchTopic::Shots as usize] = ResearchTopicInfo {
+                        research_level: 0,
+                        turns_to_complete: 16,
+                        allocation: 1,
+                    };
+                    topics
+                },
+                name: "RED".to_string(),
+            }),
+        ),
     ]
 }
 
@@ -349,4 +378,194 @@ fn app_flush_orders_matches_a_queued_tick() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Packet 09 — the menu commits (SDL/UI Stage B, B2)
+// ---------------------------------------------------------------------------
+
+/// The duel fixture as an [`App`] with gold and the RED tank selected — the state
+/// in which a player opens the upgrades screen.
+fn economy_app() -> App {
+    let mut app = App::new(AppConfig::default());
+    app.universe = duel().0;
+    app.universe
+        .team_units_mut(TeamId::RED)
+        .expect("RED economy")
+        .gold = 500;
+    let red = app
+        .state_ref()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter_map(|id| app.state_ref().unit(id))
+        .find(|unit| unit.team == TeamId::RED && unit.unit_type == UnitType::Tank)
+        .map(|unit| unit.id)
+        .expect("RED tank");
+    app.hud_mut().select(Some(red));
+    app
+}
+
+/// Runs `UpgradeMenu::Done` through the UI: buy one attack upgrade of `Infantry`.
+fn commit_upgrade_ui(app: &mut App, online: bool) -> Vec<Command> {
+    assert!(app.open_upgrade_menu(), "upgrades screen opens");
+    let index = app
+        .upgrade_menu()
+        .expect("menu")
+        .unit_types
+        .iter()
+        .position(|unit_type| *unit_type == UnitType::Infantry)
+        .expect("Infantry is listed");
+    assert!(app.upgrade_menu_select(index));
+    assert!(app.upgrade_menu_adjust(0, true), "attack upgrade is bought");
+    assert!(app.commit_upgrade_menu(online).is_some(), "commit closes the screen");
+
+    app.take_outgoing_orders()
+}
+
+/// SDL/UI Stage B equivalence gate for the upgrades screen: the single-player
+/// commit (`flush_orders` → `apply_now`) and the networked commit
+/// (`Command::TeamState` broadcast, applied by the peer on its own queue) must
+/// leave byte-identical state. A difference means the team economy still mutates
+/// outside the command channel.
+#[test]
+fn upgrade_menu_commit_matches_the_broadcast_apply_on_a_peer() {
+    // Single player: the UI commit flushes the packet immediately.
+    let mut single = economy_app();
+    assert!(commit_upgrade_ui(&mut single, false).is_empty(), "flush empties the queue");
+    for _ in 0..TICKS {
+        single.tick();
+    }
+
+    // Network: the same UI actions leave packet 09 (and 10) in the outgoing queue.
+    let mut owner = economy_app();
+    let commands = commit_upgrade_ui(&mut owner, true);
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::TeamState(_))),
+        "the upgrade commit emits packet 09: {commands:?}"
+    );
+
+    let mut peer = economy_app();
+    for command in commands.clone() {
+        assert_eq!(
+            owner.submit(command.clone()),
+            max_core::universe::SubmitOutcome::Accepted
+        );
+        assert_eq!(
+            peer.submit(command),
+            max_core::universe::SubmitOutcome::Accepted,
+            "the peer replays the same broadcast frames"
+        );
+    }
+
+    for _ in 0..TICKS {
+        owner.tick();
+        peer.tick();
+    }
+
+    assert_eq!(
+        single.state_ref().snapshot_bytes(),
+        owner.state_ref().snapshot_bytes(),
+        "single-player gold change must equal the networked owner's after the broadcast"
+    );
+    assert_eq!(
+        owner.state_ref().snapshot_bytes(),
+        peer.state_ref().snapshot_bytes(),
+        "the broadcast must leave the peer byte-identical (09 is simulation state)"
+    );
+}
+
+/// The duel fixture as an [`App`] with a powered-on research center of RED selected.
+fn research_app() -> App {
+    let mut app = App::new(AppConfig::default());
+    app.universe = duel().0;
+    let id = app
+        .universe
+        .spawn_unit(
+            UnitType::ResearchCentre,
+            TeamId::RED,
+            Point::new(20, 20),
+            0,
+        )
+        .expect("research center");
+    let mut unit = app.state_ref().unit(id).cloned().expect("unit");
+    unit.orders = UnitOrder::PowerOn;
+    unit.state = UnitOrderState::ExecutingOrder;
+    unit.research_topic = ResearchTopic::Attack;
+    app.universe.write_unit(id, unit);
+    app.universe
+        .update_research_progress(TeamId::RED, ResearchTopic::Attack, 1);
+    app.hud_mut().select(Some(id));
+    app
+}
+
+/// Runs `ResearchMenu::Done` through the UI: move the only center from Attack to
+/// Shots.
+fn commit_research_ui(app: &mut App, online: bool) -> Vec<Command> {
+    assert!(app.open_research_menu(), "research screen opens");
+    assert!(
+        app.research_menu_adjust(ResearchTopic::Attack as usize, false),
+        "Attack releases the center"
+    );
+    assert!(
+        app.research_menu_adjust(ResearchTopic::Shots as usize, true),
+        "Shots takes the center"
+    );
+    assert!(app.commit_research_menu(online).is_some(), "Done closes the screen");
+
+    app.take_outgoing_orders()
+}
+
+/// SDL/UI Stage B equivalence gate for the research screen: the single-player
+/// commit and the networked commit (packet 09 broadcast → peer apply) must leave
+/// byte-identical state, including the per-center reassignment.
+#[test]
+fn research_menu_commit_matches_the_broadcast_apply_on_a_peer() {
+    let mut single = research_app();
+    assert!(commit_research_ui(&mut single, false).is_empty());
+    for _ in 0..TICKS {
+        single.tick();
+    }
+
+    let mut owner = research_app();
+    let commands = commit_research_ui(&mut owner, true);
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::TeamState(_))),
+        "the research commit emits packet 09: {commands:?}"
+    );
+
+    let mut peer = research_app();
+    for command in commands.clone() {
+        assert_eq!(
+            owner.submit(command.clone()),
+            max_core::universe::SubmitOutcome::Accepted
+        );
+        assert_eq!(
+            peer.submit(command),
+            max_core::universe::SubmitOutcome::Accepted
+        );
+    }
+
+    for _ in 0..TICKS {
+        owner.tick();
+        peer.tick();
+    }
+
+    assert_eq!(
+        single.state_ref().snapshot_bytes(),
+        owner.state_ref().snapshot_bytes(),
+        "single-player research change must equal the networked owner's"
+    );
+    assert_eq!(
+        owner.state_ref().snapshot_bytes(),
+        peer.state_ref().snapshot_bytes(),
+        "the peer must reassign the center exactly like the owner (09 apply)"
+    );
+
+    let allocation = owner.state_ref().research_allocation(TeamId::RED);
+    assert_eq!(allocation[ResearchTopic::Attack as usize], 0);
+    assert_eq!(allocation[ResearchTopic::Shots as usize], 1);
 }

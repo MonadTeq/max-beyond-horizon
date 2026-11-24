@@ -65,7 +65,7 @@ Clans), CargoMenu (иконки, портрет, описания, pips, мод�
 |---|---|---|
 | E1 | Симуляционный апдейт коннекторов комплекса (`UnitsManager_UpdateConnectors`) | **сделано (2026-11-21)**: §40 — `max_core::complex` (UpdateConnectors/AttachComplex/DetachComplex/RemoveConnections), общий запас комплекса для завода и x-fer |
 | E2 | `find_build_site` fallback | оставлен для ИИ/тестов |
-| E3 | Пакет 09 (золото/распределение команды) для Upgrade/ResearchMenu | не отправляется (как и в C++) |
+| E3 | Пакет 09 (золото/распределение команды) для Upgrade/ResearchMenu | **сделано (2026-11-24)**: `Command::TeamState` — broadcast бит-в-байт по `remote.cpp:2067/2088`; гейт эквивалентности `channel_equivalence.rs` |
 
 ## Порядок работ
 

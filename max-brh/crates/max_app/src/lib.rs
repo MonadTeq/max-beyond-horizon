@@ -89,7 +89,7 @@ use max_core::enums::{GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState
 use max_core::events::ApplyOutcome;
 use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
-use max_core::input::Command;
+use max_core::input::{Command, Packet09TeamState};
 use max_core::rng::Randomizer;
 use max_core::save::SaveFile;
 use max_core::setup::{
@@ -1079,20 +1079,17 @@ impl<D: Dispatcher> App<D> {
 
     /// Commits the changes (`CommitUpgradeChanges`) and closes the screen.
     ///
-    /// SDL/UI Stage B (B2): the menu produces packet-**10** records
-    /// ([`upgrademenu::UpgradeMenu::commit`]) and the application turns them into
-    /// `Command::UpgradeUnitType` in [`hud::HudState::pending`] — the command
-    /// channel. In a local/demo match the queue is flushed right away, so `Done`
-    /// still shows the new values on the same frame; in a network match the
-    /// commands are submitted by the session driver (`net::flush_hud_orders`).
-    ///
-    /// **Documented exception (protocol gap):** the team economy side of the C++
-    /// commit — `team_units->SetGold(team_gold)` and
-    /// `stats_gold_spent_on_upgrades += start_gold - team_gold`
-    /// (`upgrademenu.cpp:94-101`) — is carried by packet **09**, which does not
-    /// exist in the Rust protocol (`max-brh-docs/architecture/client/protocol.md`
-    /// §8.4). It therefore stays the direct write below; closing that path needs a
-    /// protocol decision (a team-state command), not a UI change.
+    /// SDL/UI Stage B (B2): the menu is read-only; the application turns its records
+    /// into the command channel. Packet-**10** records go to
+    /// [`hud::HudState::pending`] as `Command::UpgradeUnitType` (the type upgrades),
+    /// and the team economy side (`UpgradeMenu::CommitUpgradeChanges`,
+    /// `upgrademenu.cpp:94-101`) goes there as packet **09** —
+    /// `Command::TeamState` with the absolute `gold` and `gold_spent_on_upgrades`,
+    /// exactly the fields the oracle sends (`Remote_SendNetPacket_09`,
+    /// `remote.cpp:2067`). In a local/demo match the queue is flushed right away, so
+    /// `Done` still shows the new values on the same frame; in a network match the
+    /// commands are submitted by the session driver (`net::flush_hud_orders`) as a
+    /// broadcast.
     pub fn commit_upgrade_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.upgrade_menu.take()?;
         let changed = menu.commit();
@@ -1107,19 +1104,33 @@ impl<D: Dispatcher> App<D> {
             ));
         }
 
-        if !online && !changed.is_empty() {
-            self.flush_orders();
-        }
+        // Team economy (C++ `stats_gold_spent_on_upgrades += start_gold - team_gold`,
+        // then `SetGold(team_gold)`, then 09). The packet carries absolute values:
+        // the current cumulative spending plus this commit's difference.
+        let research = self
+            .state_ref()
+            .teams()
+            .get(menu.team.0 as usize)
+            .map(|team| team.research_topics)
+            .unwrap_or_default();
+        let spent = self
+            .state_ref()
+            .teams()
+            .get(menu.team.0 as usize)
+            .map(|team| team.stats_gold_spent_on_upgrades)
+            .unwrap_or(0)
+            .saturating_add(menu.start_gold.saturating_sub(menu.gold));
 
-        // Documented protocol gap above: packet 09 is absent, so the team economy
-        // side of `CommitUpgradeChanges` is still a local write.
-        if let Some(units) = self.universe.team_units_mut(menu.team) {
-            units.gold = menu.gold;
-        }
-        let spent = menu.start_gold.saturating_sub(menu.gold);
-        if let Some(team) = self.universe.team_mut(menu.team) {
-            team.stats_gold_spent_on_upgrades =
-                team.stats_gold_spent_on_upgrades.saturating_add(spent);
+        self.hud.pending.push(Command::TeamState(Packet09TeamState {
+            team: menu.team,
+            gold: menu.gold,
+            gold_spent_on_upgrades: spent,
+            research,
+            name: self.team_state_name(menu.team),
+        }));
+
+        if !online {
+            self.flush_orders();
         }
 
         let gold = self
@@ -1137,6 +1148,27 @@ impl<D: Dispatcher> App<D> {
                 changed.len()
             )
         })
+    }
+
+    /// `menu_team_name_setting[team]` for packet 09 (`remote.cpp:2077-2083`).
+    ///
+    /// The oracle reads the name from `settings.json` and asserts it is non-empty;
+    /// the port keeps the same value in the local match's team names (edited by the
+    /// in-game `OptionsMenu`) and falls back to the canonical `menu_team_names[]`
+    /// entry. It never returns an empty string, so the `SmartString` on the wire is
+    /// always the same shape as the oracle's.
+    fn team_state_name(&self, team: TeamId) -> String {
+        let name = self
+            .local
+            .as_ref()
+            .map(|local| local.display_name(team))
+            .unwrap_or_default();
+
+        if name.is_empty() {
+            crate::local::team_name(team).to_string()
+        } else {
+            name
+        }
     }
 
     /// Input in the open upgrades screen — like `AbstractUpgradeMenu::ProcessKey`.
@@ -1227,20 +1259,64 @@ impl<D: Dispatcher> App<D> {
         self.research_menu = None;
     }
 
-    /// `ResearchMenu_OnClick_Done`: apply the center allocation to
-    /// `GameState` (`set_research_allocation`) and close the screen.
+    /// `ResearchMenu_OnClick_Done`: emit packet **09** with the committed research
+    /// allocation and close the screen.
     ///
-    /// **B2 audit — documented exception (protocol gap).** The allocation is not a
-    /// command: C++ broadcasts packet **09** on `Done` (`researchmenu.cpp:558-560`)
-    /// and the Rust protocol has no packet 09, so no `Command` carries
-    /// `research_topics[].allocation` (`protocol.md` §8.4). The facade writer is
-    /// therefore the only path today; see [`researchmenu::ResearchMenu::commit`].
-    pub fn commit_research_menu(&mut self) -> Option<String> {
+    /// SDL/UI Stage B (B2): the screen is read-only. C++ reassigns the centers inline
+    /// and then broadcasts `Remote_SendNetPacket_09` (`researchmenu.cpp:518-560`);
+    /// the port puts the committed allocation into `Command::TeamState` — the
+    /// `allocation` field of every topic, with the current `research_level`/
+    /// `turns_to_complete` and the unchanged gold/spending — and
+    /// `events::apply_packet_09` runs the same reassignment loop
+    /// (`GameState::set_research_allocation`) on every peer, the owner included.
+    /// Closing the screen with released centers still powers them off.
+    ///
+    /// `online` mirrors [`Self::commit_upgrade_menu`]: the demo/local path flushes
+    /// the queue immediately (`App::flush_orders`), the network driver submits it
+    /// as a broadcast (`net::flush_hud_orders`).
+    pub fn commit_research_menu(&mut self, online: bool) -> Option<String> {
         let mut menu = self.research_menu.take()?;
-        let actual = menu.commit(&mut self.universe);
-        let total: u32 = actual.iter().sum();
+        let target = menu.commit();
+        let total: u32 = target.iter().sum();
 
-        Some(format!("Research: {} center(s) assigned (Done)", total))
+        let team = menu.team;
+        let mut research = self
+            .state_ref()
+            .teams()
+            .get(team.0 as usize)
+            .map(|info| info.research_topics)
+            .unwrap_or_default();
+
+        for (topic, count) in research.iter_mut().zip(target.iter()) {
+            topic.allocation = *count;
+        }
+
+        let gold = self
+            .state_ref()
+            .team_units()
+            .get(team.0 as usize)
+            .map(|units| units.gold)
+            .unwrap_or(0);
+        let spent = self
+            .state_ref()
+            .teams()
+            .get(team.0 as usize)
+            .map(|info| info.stats_gold_spent_on_upgrades)
+            .unwrap_or(0);
+
+        self.hud.pending.push(Command::TeamState(Packet09TeamState {
+            team,
+            gold,
+            gold_spent_on_upgrades: spent,
+            research,
+            name: self.team_state_name(team),
+        }));
+
+        if !online {
+            self.flush_orders();
+        }
+
+        Some(format!("Research: {total} center(s) assigned (Done)"))
     }
 
     /// Input in the open research screen — like `ResearchMenu::Run`.

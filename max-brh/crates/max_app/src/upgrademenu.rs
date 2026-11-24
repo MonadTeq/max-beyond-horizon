@@ -31,11 +31,12 @@
 //! * The menu is opened by the `buy upg` item of the unit command menu (C++
 //!   `UnitsManager_Popup_OnClick_BuyUpgrade`, `units_manager.cpp:956`) or
 //!   by the `U` key as a shortcut for a selected unit of own team.
-//! * Network: in C++, `CommitUpgradeChanges` sends packet 09 (team state) and
-//!   packet 10 for each changed type. Packet 09 does not exist in the Rust protocol,
-//!   so in the network only packets **10** are sent (`Command::UpgradeUnitType`),
-//!   while gold/`gold_spent` are synchronized locally — the limitation is
-//!   documented in `max-brh-docs/architecture/client/protocol.md` §8.4.
+//! * Network: `CommitUpgradeChanges` sends packet **10** for each changed type and
+//!   packet **09** for the team economy (`Remote_SendNetPacket_09`,
+//!   `upgrademenu.cpp:94-101`). The screen itself is read-only; both packets are
+//!   built by `App::commit_upgrade_menu` as `Command::UpgradeUnitType` /
+//!   `Command::TeamState` in `hud.pending` — the same broadcast channel as the
+//!   simulation orders.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::access::unit_type_flags;
@@ -559,11 +560,9 @@ impl UpgradeMenu {
     /// bytes are unchanged.
     ///
     /// The team economy side of `CommitUpgradeChanges` (`SetGold` and
-    /// `stats_gold_spent_on_upgrades += start_gold - gold`) has **no** command
-    /// carrier in the Rust protocol: C++ sends packet 09 (`Remote_SendNetPacket_09`,
-    /// `upgrademenu.cpp:97-101`), which does not exist in the port
-    /// (`max-brh-docs/architecture/client/protocol.md` §8.4). `App::commit_upgrade_menu`
-    /// keeps that write and documents it at the call site.
+    /// `stats_gold_spent_on_upgrades += start_gold - gold`) is packet **09**
+    /// (`Remote_SendNetPacket_09`, `upgrademenu.cpp:97-101`): the application adds
+    /// it to the same queue as `Command::TeamState` — see `App::commit_upgrade_menu`.
     pub fn commit(&mut self) -> Vec<(UnitType, [u16; 13])> {
         let mut changed = Vec::new();
 

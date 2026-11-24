@@ -77,6 +77,6 @@ pub use session::{
 pub use wire::{
     decode_network_command, decode_remote_command, encode_network_command, encode_remote_command,
     state_sync_for, GameOptions, LobbyGameSettings, LobbyPacket, LobbyWelcome, NetAddress, NetNode,
-    Packet, Reader, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, TeamState, UnitState,
-    WireError, WireName, WireResult, Writer, STATE_SYNC_UNITS_PER_PACKET,
+    Packet, Reader, ResearchTopicWire, SaveRequest, StateSync, StateSyncTail, UnitState, WireError,
+    WireName, WireResult, Writer, STATE_SYNC_UNITS_PER_PACKET,
 };

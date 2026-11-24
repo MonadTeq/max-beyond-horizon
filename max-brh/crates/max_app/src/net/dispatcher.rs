@@ -511,6 +511,11 @@ impl NetworkDispatcher {
 impl Dispatcher for NetworkDispatcher {
     /// Simulation commands are broadcast; barriers and 53 are applied locally.
     ///
+    /// Packet 09 (team state: gold, upgrade spending, research allocation) is an
+    /// explicit broadcast: the oracle sends it as `REMOTE_MULTICAST`
+    /// (`remote.cpp:2085`) and the fields enter the CRC — routing it `Local` would
+    /// make the owner's gold/research differ from every peer.
+    ///
     /// A mid-match packet 13 (`Remote_RngSeed`) is a forbidden order: the world is
     /// seeded once at initialization (`net::initialize_game`), and a repeated
     /// `Randomizer_SetSeed` would reset the stream and diverge from the server
@@ -523,6 +528,8 @@ impl Dispatcher for NetworkDispatcher {
             | Command::CrcBarrier(_)
             | Command::ComplexSummary(_) => RoutedCommand::Local(cmd),
             Command::Seed(_) => RoutedCommand::Drop,
+            // 09 — team state, a simulation command on the broadcast channel.
+            Command::TeamState(_) => RoutedCommand::Broadcast(cmd),
             other => RoutedCommand::Broadcast(other),
         }
     }
@@ -1064,6 +1071,23 @@ mod tests {
             dispatcher.route(chat.clone()),
             RoutedCommand::Broadcast(chat),
             "18 is a broadcast command (ADR §2)"
+        );
+
+        // Packet 09 must travel the broadcast channel: the team economy is part of
+        // the simulated state (gold and research allocation enter the CRC), so a
+        // `Local` route would desync the owner from the peers.
+        let team_state = Command::TeamState(max_core::input::Packet09TeamState {
+            team: TeamId::RED,
+            gold: 500,
+            gold_spent_on_upgrades: 40,
+            research: [max_core::team::ResearchTopicInfo::default();
+                max_core::enums::RESEARCH_TOPIC_COUNT],
+            name: "RED".into(),
+        });
+        assert_eq!(
+            dispatcher.route(team_state.clone()),
+            RoutedCommand::Broadcast(team_state),
+            "09 is a broadcast command (remote.cpp:2085 REMOTE_MULTICAST)"
         );
 
         for barrier in [

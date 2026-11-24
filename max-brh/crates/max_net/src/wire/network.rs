@@ -74,10 +74,10 @@ mod tests {
     use max_types::input::{
         Command, ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload,
         Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order,
-        Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed,
-        Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished,
-        Packet43Rename, Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier,
-        Packet53ComplexSummary, PayloadP1, PayloadP2, PayloadP3, PayloadP4,
+        Packet09TeamState, Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply,
+        Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move,
+        Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier, Packet50StopUnit,
+        Packet52EndTurnBarrier, Packet53ComplexSummary, PayloadP1, PayloadP2, PayloadP3, PayloadP4,
     };
     use max_types::team::{ResearchTopicInfo, TeamId};
     use max_types::unit::UnitId;
@@ -226,6 +226,17 @@ mod tests {
                 starting_position: Point::new(20, 20),
                 proximity_alert_ack: 1,
             }),
+            Command::TeamState(Packet09TeamState {
+                team: TeamId::GREEN,
+                gold: 1234,
+                gold_spent_on_upgrades: 56,
+                research: core::array::from_fn(|index| ResearchTopicInfo {
+                    research_level: index as u32,
+                    turns_to_complete: index as u32 * 3,
+                    allocation: index as u32 * 5,
+                }),
+                name: "GREEN".to_string(),
+            }),
         ]
     }
 
@@ -331,7 +342,7 @@ mod tests {
     #[test]
     fn every_command_variant_round_trips_as_network_command() {
         let commands = all_commands();
-        assert_eq!(commands.len(), 18, "every Command variant is covered");
+        assert_eq!(commands.len(), 19, "every Command variant is covered");
 
         for command in commands {
             let dto = NetworkCommand::Command(command);

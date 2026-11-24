@@ -49,10 +49,12 @@
 //! (`UnitsManager_Popup_OnClick_Research`) with `ORDER_POWER_ON`. In the Rust client
 //! there is no unit popup menu, so the screen is opened with the `R` key for the
 //! selected powered-on `RESEARCH` center of own team (like `U` for
-//! upgrades). `Done` writes the allocation into `GameState`, and
+//! upgrades). `Done` produces packet **09** (`Command::TeamState`): the
+//! application builds it from the committed allocation
+//! ([`crate::researchmenu::ResearchMenu::commit`]) plus the current team state, and
 //! `ResearchMenu_NewTurn` (port `max_core::research::research_new_turn`) is already
-//! called from `GameState::finish_turn` — the screen and the tick use the same
-//! `research_topics`.
+//! called from `GameState::finish_turn` — the screen, the packet and the tick use
+//! the same `research_topics`.
 
 use max_assets::image::{BigImage, SimpleImage};
 use max_core::enums::{UnitOrder, UnitType, RESEARCH_TOPIC_COUNT};
@@ -300,36 +302,27 @@ impl ResearchMenu {
         Some(turns.max(0) as u32)
     }
 
-    /// `ResearchMenu_OnClick_Done`: applies the allocation to `GameState`.
+    /// `ResearchMenu_OnClick_Done`: the allocation the player committed — the
+    /// `allocation` field of every topic in packet **09**.
     ///
-    /// Returns the actual allocation (C++ may also turn centers off
-    /// if the target has fewer slots than enabled centers).
-    ///
-    /// **B2 audit — documented exception (protocol gap).** This is one of the two
-    /// UI writes that stayed on the facade writer
-    /// (`GameUniverse::set_research_allocation`) instead of the command channel:
-    /// C++ sends packet **09** (`researchmenu.cpp:558-560`,
-    /// `Remote_SendNetPacket_09`), and the Rust protocol has no packet 09
-    /// (`max-brh-docs/architecture/client/protocol.md` §8.4), so there is no
-    /// `Command` that carries `research_topics[].allocation`. Closing this path
-    /// needs a protocol decision (a team-state command), not a menu refactor.
-    pub fn commit<D: max_core::universe::Dispatcher>(
-        &mut self,
-        state: &mut max_core::universe::GameUniverse<D>,
-    ) -> [u32; RESEARCH_TOPIC_COUNT] {
+    /// The menu is read-only with respect to the simulation (SDL/UI Stage B, B2). C++
+    /// runs the reassignment loop inline and then broadcasts packet 09
+    /// (`researchmenu.cpp:518-560`, `Remote_SendNetPacket_09`); the port puts the
+    /// menu target into `Command::TeamState` ([`crate::App::commit_research_menu`]) and
+    /// every peer — the owner included — applies it through `events::apply_packet_09`,
+    /// which runs exactly that loop (`GameState::set_research_allocation`). Closing
+    /// the screen with released centers still turns them off, and the single-player
+    /// and the networked commit reach byte-identical state (stage-B gate).
+    pub fn commit(&mut self) -> [u32; RESEARCH_TOPIC_COUNT] {
         let target = self.values.map(u32::from);
-        let actual = state.set_research_allocation(self.team, target);
 
-        for (index, value) in self.values.iter_mut().enumerate() {
-            *value = actual[index].min(u32::from(u16::MAX)) as u16;
-        }
         self.free_capacity = 0;
         self.status = format!(
             "Research: {} center(s) assigned",
-            actual.iter().sum::<u32>()
+            target.iter().sum::<u32>()
         );
 
-        actual
+        target
     }
 
     /// Handles a click in the frame; returns the action.
@@ -740,7 +733,9 @@ impl ResearchMenuAssets {
 
 #[cfg(test)]
 mod tests {
-    /// Applies the menu allocation through the facade.
+    /// Applies the menu commit the way the command channel does: the menu returns the
+    /// committed allocation, packet 09 is built with it and applied by
+    /// `events::apply_packet_09`; the resulting allocation is returned.
     fn commit(
         menu: &mut ResearchMenu,
         mut universe: max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
@@ -748,7 +743,31 @@ mod tests {
         max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
         [u32; RESEARCH_TOPIC_COUNT],
     ) {
-        let actual = menu.commit(&mut universe);
+        let target = menu.commit();
+        let team = menu.team;
+        let mut research = universe.snapshot().teams()[team.0 as usize].research_topics;
+
+        for (topic, count) in research.iter_mut().zip(target.iter()) {
+            topic.allocation = *count;
+        }
+
+        let snapshot = universe.snapshot();
+        let command = max_core::input::Command::TeamState(max_core::input::Packet09TeamState {
+            team,
+            gold: snapshot.team_units()[team.0 as usize].gold,
+            gold_spent_on_upgrades: snapshot.teams()[team.0 as usize]
+                .stats_gold_spent_on_upgrades,
+            research,
+            name: "RED".to_string(),
+        });
+
+        assert_eq!(
+            universe.apply_now(command),
+            max_core::events::ApplyOutcome::Applied,
+            "packet 09 applies"
+        );
+
+        let actual = universe.snapshot().research_allocation(team);
         (universe, actual)
     }
 
