@@ -78,8 +78,9 @@ pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 /// §7.2) saw no `0 → 1 → … → 15` transition in ~118 s; the visible activity of a
 /// working mine is the palette cycle of the drill indicator (slots 21–24,
 /// `World::InitColorCycles`, §7.3). Advancing this block would repaint the mine
-/// with another clan's emblem, so the switch stays `false` and documents the
-/// closed question.
+/// with another clan's emblem, so the switch stays `false`. **Rust-port artifact, not
+/// a C++/DOS feature: do NOT enable without a separate owner decision** (oracle-true,
+/// SDL/UI C1/C2 2026-11-24).
 pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 
 /// Unit frame clock (drawing only, not part of the snapshot/CRC).

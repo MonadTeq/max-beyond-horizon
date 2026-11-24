@@ -214,7 +214,7 @@ fn mining_station_body_frames_are_eight_clan_pairs_not_a_drill_cycle() {
     const {
         assert!(
             !MINING_DRILL_FRAMES_ENABLED,
-            "MININGST has no drill frames: the switch would draw another clan's body"
+            "enabling requires a separate owner decision (oracle-true, SDL/UI C1/C2 2026-11-24)"
         )
     };
 
