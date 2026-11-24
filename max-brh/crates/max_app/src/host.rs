@@ -914,6 +914,10 @@ impl HostIo for HostHandle {
     async fn on_disconnect(&mut self) -> Result<DisconnectOutcome> {
         Ok(DisconnectOutcome::Ignored)
     }
+
+    fn is_authority(&self) -> bool {
+        true
+    }
 }
 
 /// Parameters of the host process (`--host` + the lobby-related flags).
@@ -990,6 +994,9 @@ pub struct HostGameReport {
     pub sent: PacketHistogram,
     /// Barrier packets the transport delivered to the host (gate (b)).
     pub received: PacketHistogram,
+    /// H5: desync audit rounds (23/24/49) of this run — empty when the match
+    /// never diverged.
+    pub audits: Vec<crate::net::DesyncAudit>,
     /// Final state digest (per view: it carries the host's `player_team`).
     pub digest: AppDigest,
     /// The same state projected onto the values every client shares.
@@ -1129,6 +1136,8 @@ async fn run_host_game(
     let network = NetworkOptions {
         max_turns: options.max_turns,
         host_timeout: options.host_timeout,
+        // H5: `--host` writes `desync-turn<turn>.txt` next to the process.
+        audit_dir: Some(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))),
         ..NetworkOptions::default()
     };
     // The host is headless (H3): no SDL window, so no frame sink.
@@ -1173,6 +1182,7 @@ async fn run_host_game(
         eliminations: stats.eliminations,
         sent: stats.sent,
         received: stats.received,
+        audits: stats.audits,
         digest,
         shared: SharedDigest::capture(digest),
     })

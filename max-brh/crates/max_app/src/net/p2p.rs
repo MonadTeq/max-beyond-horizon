@@ -44,6 +44,17 @@
 //! [`HostIo`] transport surface and never touches the barrier FSM
 //! ([`crate::net::dispatcher`]) directly. Packets 55/56 are transport frames and
 //! never reach `Dispatcher::route`.
+//!
+//! # H5: standalone guest reconnect and split-brain transport rules
+//!
+//! A guest that loses its ENet link while the authority is **alive** (the H5
+//! gate) does not wait for a takeover: it probes the endpoint with `TP 00`, and
+//! a live authority means an ordinary reconnect without a new lobby
+//! ([`P2pTransport::reconnect_guest`]). The successor candidate takes over only
+//! when the probe fails. A guest whose link is up but silent keeps that link —
+//! during a split-brain the ENet session still holds the delayed traffic, and
+//! the driver re-publishes the last closed and the pending barrier on
+//! `Restored`/`PeerReconnected`, so no closed barrier packet is lost.
 
 #![forbid(unsafe_code)]
 
@@ -76,6 +87,9 @@ const MIGRATION_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 const MIGRATION_WINDOW: Duration = Duration::from_secs(3);
 /// Maximum blocking wait of one transport step; the driver polls every ~2 ms.
 const STEP_MAX_WAIT: Duration = Duration::from_millis(20);
+/// Upper bound of the frames held during the test-only split-brain injection.
+#[cfg(test)]
+const BLACKOUT_MAX_FRAMES: usize = 32;
 
 /// One team the session authority removed (`TeamEliminated`, §4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -651,9 +665,18 @@ pub(crate) struct P2pTransport {
     /// Pending events produced by the transport (eliminations, etc.).
     pending: VecDeque<IoEvent>,
     /// Test-only relay breaker: while set, the host neither publishes
-    /// heartbeats/barriers nor reads guest packets (split-brain injection).
+    /// heartbeats nor reads guest packets (split-brain injection). Outgoing
+    /// game frames are held in `blackout_out` and released when the relay
+    /// heals — a break delays the lockstep traffic, it does not destroy it.
     #[cfg(test)]
     blackout: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Test-only frames produced during a `blackout` (delivered on heal).
+    #[cfg(test)]
+    blackout_out: Vec<Packet>,
+    /// Test-only link breaker: while set, the guest drops its ENet session and
+    /// takes the ordinary reconnect path (H5 standalone reconnect).
+    #[cfg(test)]
+    link_drop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl P2pTransport {
@@ -714,6 +737,10 @@ impl P2pTransport {
             pending: VecDeque::new(),
             #[cfg(test)]
             blackout: None,
+            #[cfg(test)]
+            blackout_out: Vec::new(),
+            #[cfg(test)]
+            link_drop: None,
         }
     }
 
@@ -790,6 +817,10 @@ impl P2pTransport {
             pending: VecDeque::new(),
             #[cfg(test)]
             blackout: None,
+            #[cfg(test)]
+            blackout_out: Vec::new(),
+            #[cfg(test)]
+            link_drop: None,
         }
     }
 
@@ -823,10 +854,75 @@ impl P2pTransport {
         false
     }
 
+    /// Sends one frame through the active role (no blackout gate).
+    async fn send_to_peers(&mut self, packet: Packet) -> Result<()> {
+        match self.mode {
+            P2pMode::Host => {
+                if let Some(host) = self.host.as_ref() {
+                    host.send(Recipient::Broadcast, packet)
+                        .await
+                        .context("p2p: broadcast пакета")?;
+                }
+            }
+            P2pMode::Guest => {
+                if let Some(guest) = self.guest.as_mut() {
+                    guest
+                        .send_packet_untracked(packet)
+                        .await
+                        .context("p2p: отправка пакета")?;
+                }
+            }
+            // Frozen: nothing may reach a diverged authority.
+            P2pMode::HostFailure
+            | P2pMode::SuccessorCollecting
+            | P2pMode::AwaitingTakeover
+            | P2pMode::Paused => {}
+        }
+        Ok(())
+    }
+
+    /// Releases the frames held during a test-only blackout (relay heal).
+    #[cfg(test)]
+    async fn flush_blackout(&mut self) -> Result<()> {
+        if self.blacked_out() || self.blackout_out.is_empty() {
+            return Ok(());
+        }
+        let held = std::mem::take(&mut self.blackout_out);
+        tracing::debug!(
+            "p2p: раскол устранён — отправка {} отложенных пакетов",
+            held.len()
+        );
+        for packet in held {
+            self.send_to_peers(packet).await?;
+        }
+        Ok(())
+    }
+
     /// Installs the test-only split-brain breaker (host side).
     #[cfg(test)]
     pub fn set_blackout(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.blackout = Some(flag);
+    }
+
+    /// Installs the test-only guest-link breaker (H5 standalone reconnect).
+    #[cfg(test)]
+    pub fn set_link_drop(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.link_drop = Some(flag);
+    }
+
+    /// Drops the guest ENet link if the test breaker fired.
+    #[cfg(test)]
+    fn take_link_drop(&mut self) -> bool {
+        let Some(flag) = self.link_drop.as_ref() else {
+            return false;
+        };
+        if !flag.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        if let Some(guest) = self.guest.take() {
+            guest.abort();
+        }
+        true
     }
 
     /// Whether the host may close the current barrier
@@ -955,8 +1051,15 @@ impl P2pTransport {
             HostEventKind::Verified => {
                 if self.mode == P2pMode::SuccessorCollecting {
                     self.send_proposal().await?;
+                    self.push(IoEvent::Control);
+                } else if self.mode == P2pMode::Host {
+                    // H5: a guest (re)connected to the live authority. The driver
+                    // re-publishes the last closed and the pending barrier so the
+                    // guest can catch up without waiting for the 3 s retransmit.
+                    self.push(IoEvent::PeerReconnected);
+                } else {
+                    self.push(IoEvent::Control);
                 }
-                self.push(IoEvent::Control);
             }
             HostEventKind::Connected => self.push(IoEvent::Control),
             HostEventKind::Disconnected => {
@@ -990,10 +1093,12 @@ impl P2pTransport {
     }
 
     /// Binds the session port as the new authority and starts collecting
-    /// `Accept` frames. `Ok(false)` means the old authority is alive or the
-    /// port is still held: the caller must stay paused.
-    async fn try_start_takeover(&mut self) -> Result<bool> {
-        if self.old_host_is_alive().await {
+    /// `Accept` frames. `authority_alive` is the result of the `TP 00` liveness
+    /// probe; when the old authority answers, the candidate must not bind a
+    /// second one (`PLAN-host-mode.md` §4, split-brain). `Ok(false)` means the
+    /// port is still held: the caller stays paused/reconnects.
+    async fn try_start_takeover(&mut self, authority_alive: bool) -> Result<bool> {
+        if authority_alive {
             tracing::debug!(
                 "p2p: старый хост {}:{} отвечает на TP 00 — takeover отменён (пауза)",
                 self.endpoint.host,
@@ -1176,6 +1281,13 @@ impl P2pTransport {
             return Ok(());
         }
         if self.blacked_out() {
+            return Ok(());
+        }
+        #[cfg(test)]
+        if self.take_link_drop() {
+            // H5 test hook: a lost link while the authority is alive.
+            self.enter_failure()?;
+            self.push(IoEvent::Disconnected);
             return Ok(());
         }
         let Some(guest) = self.guest.as_mut() else {
@@ -1377,8 +1489,80 @@ impl P2pTransport {
         Ok(())
     }
 
+    /// Reconnects the guest link to the session endpoint.
+    ///
+    /// This is the ordinary H5 reconnect (no lobby, no Horizon): the lockstep
+    /// point is kept, and once a heartbeat of the live authority arrives the
+    /// transport reports `Restored`, so the driver publishes its resume-54 and
+    /// the barriers continue (`protocol.md` §9.1). Returns whether a new `TP 00`
+    /// session was established.
+    async fn reconnect_guest(&mut self) -> bool {
+        self.attempts = self.attempts.saturating_add(1);
+        let mut config = self.session_config.clone();
+        config.connect_timeout = MIGRATION_CONNECT_TIMEOUT;
+        config.handshake_timeout = MIGRATION_CONNECT_TIMEOUT;
+        match Session::connect(config).await {
+            Ok(session) => {
+                let handle = session.start();
+                self.guest = Some(SessionIo::new(
+                    handle,
+                    self.session_config.clone(),
+                    self.reconnect,
+                ));
+                // The new link is fresh: do not immediately time it out with
+                // the age of the dead authority's heartbeat.
+                self.last_heartbeat = Instant::now();
+                self.accepted_takeover = false;
+                self.mode = P2pMode::AwaitingTakeover;
+                tracing::info!(
+                    "p2p: узел {} переподключён к {}:{} (попыток {})",
+                    self.roster.local_node,
+                    self.endpoint.host,
+                    self.endpoint.port,
+                    self.attempts
+                );
+                true
+            }
+            Err(error) => {
+                tracing::debug!("p2p: переподключение не удалось: {error}");
+                false
+            }
+        }
+    }
+
+    /// Polls the still-open guest link during a failure episode.
+    ///
+    /// A heartbeat of the (possibly healed) authority resumes the session. Any
+    /// other packet is **preserved** in the pending queue: during a relay break
+    /// the link is up but silent, and once it heals ENet delivers exactly the
+    /// barrier packets the client missed, so dropping them here would deadlock
+    /// the lockstep (`PLAN-host-mode.md` §4, split-brain). Returns `true` when a
+    /// heartbeat was applied.
+    async fn poll_live_link(&mut self) -> Result<bool> {
+        let Some(guest) = self.guest.as_mut() else {
+            return Ok(false);
+        };
+        let event = guest.next_io_event(Duration::from_millis(5)).await?;
+        match event {
+            IoEvent::Packet(Packet::Unknown { kind, payload })
+                if kind == max_net::HOST_HEARTBEAT_PACKET_NUMBER =>
+            {
+                if let Ok(heartbeat) = HostHeartbeat::decode_payload(&payload) {
+                    self.on_heartbeat(heartbeat);
+                    return Ok(true);
+                }
+            }
+            IoEvent::Closed | IoEvent::Disconnected => {
+                self.guest = None;
+            }
+            IoEvent::Idle => {}
+            event => self.push(event),
+        }
+        Ok(false)
+    }
+
     /// One step of the failure episode.
-    async fn failure_step(&mut self, wait: Duration) -> Result<()> {
+    async fn failure_step(&mut self, _wait: Duration) -> Result<()> {
         if self.blacked_out() {
             return Ok(());
         }
@@ -1392,66 +1576,46 @@ impl P2pTransport {
             return Ok(());
         }
 
+        // The candidate is the deterministic successor, but a lost guest link
+        // is not necessarily a lost authority (H5 standalone reconnect): probe
+        // the old host first. A live `TP 00` means the ordinary reconnect, not
+        // a takeover; only a dead endpoint starts the election.
         if self.roster.is_successor() {
             // Keep polling the old guest link for a healed heartbeat; only a
-            // successful bind proves the host is really gone.
-            if let Some(guest) = self.guest.as_mut() {
-                match guest.next_io_event(Duration::from_millis(5)).await? {
-                    IoEvent::Packet(Packet::Unknown { kind, payload })
-                        if kind == max_net::HOST_HEARTBEAT_PACKET_NUMBER =>
-                    {
-                        if let Ok(heartbeat) = HostHeartbeat::decode_payload(&payload) {
-                            self.on_heartbeat(heartbeat);
-                            return Ok(());
-                        }
-                    }
-                    IoEvent::Closed | IoEvent::Disconnected => {
-                        self.guest = None;
-                    }
-                    _ => {}
-                }
+            // failed `TP 00` probe proves the host is really gone.
+            if self.poll_live_link().await? {
+                return Ok(());
             }
-            if self.last_attempt.elapsed() >= MIGRATION_RETRY {
+            if self.last_attempt.elapsed() >= MIGRATION_RETRY && self.guest.is_none() {
+                // The old link is gone (a dead session or an aborted one), so
+                // the authority is only reachable through a new `TP 00`:
+                // a live probe means an ordinary reconnect, silence — takeover.
                 self.last_attempt = Instant::now();
-                if self.try_start_takeover().await? {
+                if self.old_host_is_alive().await {
+                    // The authority is alive: reconnect as an ordinary guest
+                    // (the successor only takes over when the host is silent).
+                    self.reconnect_guest().await;
                     return Ok(());
                 }
+                if self.try_start_takeover(false).await? {
+                    return Ok(());
+                }
+                // The port was still held (a dying authority): a reconnect may
+                // already work through the same endpoint.
+                self.reconnect_guest().await;
             }
         } else {
-            // A survivor that is not the candidate reconnects to the session
-            // endpoint: the candidate's server (or the healed old host).
-            let _ = wait;
-            if self.last_attempt.elapsed() >= MIGRATION_RETRY {
+            // A survivor that is not the candidate also keeps its live ENet
+            // session: during a relay break the session is up but silent (a
+            // split-brain, not a dead link), and only ENet's reliable queue can
+            // still deliver the packets of the other survivors when the relay
+            // heals. Reconnecting would throw that queue away.
+            if self.poll_live_link().await? {
+                return Ok(());
+            }
+            if self.last_attempt.elapsed() >= MIGRATION_RETRY && self.guest.is_none() {
                 self.last_attempt = Instant::now();
-                self.attempts = self.attempts.saturating_add(1);
-                let mut config = self.session_config.clone();
-                config.connect_timeout = MIGRATION_CONNECT_TIMEOUT;
-                config.handshake_timeout = MIGRATION_CONNECT_TIMEOUT;
-                match Session::connect(config).await {
-                    Ok(session) => {
-                        let handle = session.start();
-                        self.guest = Some(SessionIo::new(
-                            handle,
-                            self.session_config.clone(),
-                            self.reconnect,
-                        ));
-                        // The new link is fresh: do not immediately time it out
-                        // with the age of the dead authority's heartbeat.
-                        self.last_heartbeat = Instant::now();
-                        self.accepted_takeover = false;
-                        self.mode = P2pMode::AwaitingTakeover;
-                        tracing::info!(
-                            "p2p: узел {} переподключён к {}:{} (попыток {})",
-                            self.roster.local_node,
-                            self.endpoint.host,
-                            self.endpoint.port,
-                            self.attempts
-                        );
-                    }
-                    Err(error) => {
-                        tracing::debug!("p2p: переподключение не удалось: {error}");
-                    }
-                }
+                self.reconnect_guest().await;
             }
         }
         Ok(())
@@ -1597,32 +1761,21 @@ impl HostIo for P2pTransport {
     }
 
     async fn send_packet_untracked(&mut self, packet: Packet) -> Result<()> {
+        #[cfg(test)]
         if self.blacked_out() {
+            // Split-brain injection: the relay is down, so the frame is held
+            // (frame pacing 01 is dropped — it is not a lockstep fact) and
+            // released by `flush_blackout` when the relay heals.
+            if !matches!(
+                packet,
+                Packet::Command(max_core::input::Command::FrameBarrier(_))
+            ) && self.blackout_out.len() < BLACKOUT_MAX_FRAMES
+            {
+                self.blackout_out.push(packet);
+            }
             return Ok(());
         }
-        match self.mode {
-            P2pMode::Host => {
-                if let Some(host) = self.host.as_ref() {
-                    host.send(Recipient::Broadcast, packet)
-                        .await
-                        .context("p2p: broadcast пакета")?;
-                }
-            }
-            P2pMode::Guest => {
-                if let Some(guest) = self.guest.as_mut() {
-                    guest
-                        .send_packet_untracked(packet)
-                        .await
-                        .context("p2p: отправка пакета")?;
-                }
-            }
-            // Frozen: nothing may reach a diverged authority.
-            P2pMode::HostFailure
-            | P2pMode::SuccessorCollecting
-            | P2pMode::AwaitingTakeover
-            | P2pMode::Paused => {}
-        }
-        Ok(())
+        self.send_to_peers(packet).await
     }
 
     async fn clear_barriers(&mut self) -> Result<()> {
@@ -1633,6 +1786,8 @@ impl HostIo for P2pTransport {
     }
 
     async fn next_io_event(&mut self, wait: Duration) -> Result<IoEvent> {
+        #[cfg(test)]
+        self.flush_blackout().await?;
         if let Some(event) = self.pop() {
             return Ok(event);
         }
@@ -1650,6 +1805,10 @@ impl HostIo for P2pTransport {
 
     fn quorum_allows_barrier(&self) -> bool {
         P2pTransport::quorum_allows_barrier(self)
+    }
+
+    fn is_authority(&self) -> bool {
+        matches!(self.mode, P2pMode::Host)
     }
 }
 
@@ -1797,7 +1956,12 @@ mod tests {
 
         let mut transport = test_guest([10, 11, 12, 0], 11, port);
         transport.enter_failure().expect("failure state");
-        assert!(!transport.try_start_takeover().await.expect("bind attempt"));
+        // The probe says "dead", but the live authority still holds the port:
+        // binding a second authority fails and the epoch is not bumped.
+        assert!(!transport
+            .try_start_takeover(false)
+            .await
+            .expect("bind attempt"));
         assert_eq!(transport.epoch(), 1, "the epoch is not bumped");
         assert!(matches!(transport.mode, P2pMode::HostFailure));
 
@@ -1854,7 +2018,7 @@ mod tests {
         let port = free_udp_port();
         let mut candidate = test_guest([10, 11, 12, 0], 11, port);
         candidate.enter_failure().unwrap();
-        assert!(candidate.try_start_takeover().await.expect("bind"));
+        assert!(candidate.try_start_takeover(false).await.expect("bind"));
         assert!(matches!(candidate.mode, P2pMode::SuccessorCollecting));
 
         // Quorum is 2 including the candidate: one accepting survivor is
@@ -2292,6 +2456,101 @@ mod tests {
     /// 4-worker runtimes plus the rest of the suite distort the heartbeat and
     /// timeout windows these gates assert on.
     static GATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// H5: a guest whose ENet link is dropped **while the authority is alive**
+    /// reconnects on its own — no lobby, no takeover, no new authority — and
+    /// publishes resume-54, so the match finishes with zero desyncs.
+    ///
+    /// This closes the H4 gap where the deterministic successor (the only
+    /// guest of a two-player session) only ever tried a takeover: a live
+    /// authority was probed, but the successor never reconnected as a guest.
+    #[test]
+    fn gate_h5_guest_standalone_reconnect_resumes_with_resume54() {
+        run_gate("gate-h5-reconnect", || async {
+            let port = free_udp_port();
+            let nodes = [10, 11, 0, 0];
+            let handle = HostHandle::bind(HostConfig {
+                bind_ip: Ipv4Addr::LOCALHOST,
+                port,
+                heartbeat: Duration::ZERO,
+                host_timeout: HOST_TIMEOUT_MIN,
+                ..HostConfig::new(Ipv4Addr::LOCALHOST, port, gate_hash())
+            })
+            .expect("bind reconnect host");
+            let g1 = gate_connect_guest(port).await;
+
+            let host = P2pTransport::host(
+                handle,
+                P2pRoster::new(10, 10, nodes),
+                TeamId(0),
+                SessionPolicy::Pause,
+                HOST_TIMEOUT_MIN,
+                GATE_HEARTBEAT,
+            );
+            let mut g1 = P2pTransport::guest(
+                g1,
+                gate_session_config(port),
+                gate_endpoint(port),
+                P2pRoster::new(11, 10, nodes),
+                TeamId(1),
+                SessionPolicy::Pause,
+                HOST_TIMEOUT_MIN,
+                gate_reconnect(),
+            );
+            // Guest 11 is the deterministic successor; the link break must not
+            // be mistaken for a dead authority.
+            let drop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            g1.set_link_drop(drop_flag.clone());
+
+            let options = NetworkOptions {
+                tick_interval: Duration::from_millis(150),
+                ..gate_options(6)
+            };
+            let host_options = options.clone();
+            let host_fut = async move {
+                let mut app = gate_app_for(nodes, TeamId(0));
+                let mut io = host;
+                let mut sink: Option<&mut dyn crate::net::FrameSink> = None;
+                let stats = app
+                    .run_game_loop(&mut io, &host_options, &mut sink)
+                    .await
+                    .expect("host game loop");
+                io.shutdown().await;
+                (stats, SharedDigest::capture(app.digest()))
+            };
+            let guest_fut = async move {
+                let mut app = gate_app_for(nodes, TeamId(1));
+                let mut io = g1;
+                let mut sink: Option<&mut dyn crate::net::FrameSink> = None;
+                let stats = app
+                    .run_game_loop(&mut io, &options, &mut sink)
+                    .await
+                    .expect("guest game loop");
+                io.shutdown().await;
+                (stats, SharedDigest::capture(app.digest()))
+            };
+            let control = async move {
+                // Mid-match (the second slow turn), the guest's link is lost;
+                // the ENet server of the host keeps running.
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                drop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            };
+
+            let (host, guest, ()) = tokio::join!(host_fut, guest_fut, control);
+
+            assert_eq!(host.0.turns_finished, 6, "the host finished the match");
+            assert_eq!(guest.0.turns_finished, 6, "the guest finished the match");
+            assert_eq!(host.0.desyncs, 0, "H5 reconnect: no desyncs (host)");
+            assert_eq!(guest.0.desyncs, 0, "H5 reconnect: no desyncs (guest)");
+            assert_eq!(
+                guest.0.reconnects, 1,
+                "the guest restored its own link (resume-54 path)"
+            );
+            assert_eq!(host.0.migrations, 0, "the authority never changed");
+            assert_eq!(guest.0.migrations, 0, "a live host must not be taken over");
+            assert_eq!(host.1, guest.1, "the resumed match stays bit-identical");
+        });
+    }
 
     /// Runs one integration gate on a dedicated 64 MiB stack thread.
     ///

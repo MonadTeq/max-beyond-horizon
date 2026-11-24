@@ -741,6 +741,11 @@ async fn run_host(cli: &Cli) -> Result<()> {
     );
     println!("digest: {}", game.digest);
     println!("shared: {}", game.shared.to_line());
+    // H5: one line per desync audit (23/24/49); the report file is written by
+    // the host into the process directory.
+    for audit in &game.audits {
+        println!("host-audit: {}", audit.to_line());
+    }
 
     Ok(())
 }
@@ -819,6 +824,10 @@ fn print_network(report: &NetworkReport) {
     );
     println!("digest: {}", report.digest);
     println!("shared: {}", report.shared.to_line());
+    // H5: the desync audit round this guest took part in (if the CRC diverged).
+    for audit in &report.audits {
+        println!("audit: {}", audit.to_line());
+    }
 }
 
 /// One SDL window input → the UI [`InputEvent`].

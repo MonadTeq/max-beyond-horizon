@@ -16,6 +16,8 @@ Windows-сборки — **нативные MSVC-сборки** PowerShell-ск�
 | `live-smoke.sh` | живой smoke: Horizon + C++-headless + 2 Rust-клиента × N ходов | собранные `max-brh-server/target/release/horizon` и `bin/linux-server-template/max-port` |
 | `live-smoke-3.sh` | P5: живой smoke **3 клиента × N ходов** (RED/GREEN/BLUE): релей всем, 00/52/54/45, `state_checksum` у всех, 0 таймаутов | то же; Docker; `--min-players 3` создаётся автоматически |
 | `live-smoke-mixed.sh` | P5: **Rust×2 + C++-сервер как desync-оракул**; при отсутствии C++ headless client mode печатает `PARTIAL PASS`/блокер | то же; `MIXED_REQUIRE_CPP=1` — падать вместо partial |
+| `host-smoke.sh` | **нативный smoke режима хоста** (`PLAN-host-mode.md` §5 H5): спавнит N headless `max-brh` на 127.0.0.1 (1 `--host` + N−1 `--connect`), `--turns`, проверяет `desyncs=0`, `barrier_timeouts=0`, равные `shared:` digest у всех, отсутствие `desync-turn*.txt`; без Horizon/Docker/live-smoke | Git Bash/Linux, собранный `max-brh` (`--no-default-features`), данные игры в `max-original/` |
+| `host-smoke.ps1` | то же на Windows (PowerShell 5.1, `Start-Process`); те же кейсы и ассерты | Windows, Rust 1.94.0, данные игры |
 
 ## P5 smoke: 3 клиента и Rust+C++
 
@@ -47,6 +49,32 @@ probe и клиенты живут в network namespace контейнера Hor
 Логи и коды выхода: `build/smoke-logs/live3-*.log`, `live3-ai_log.txt`,
 `mixed-*.log`, `mixed-ai_log.txt`. `ai_log.txt` копируется точечно (не весь
 `session_root` — там лежит 58-МБ `max-port`).
+
+## host-smoke.sh / host-smoke.ps1: нативный smoke режима хоста (H5)
+
+Гейт (е) `PLAN-host-mode.md` §5 H5 **без Horizon и Docker**: одна нативная
+звезда из headless `max-brh` на 127.0.0.1 (`--host` + прямые гости
+`--connect`), партия `--turns` ходов. Скрипт проверяет у **всех** клиентов
+`desyncs=0`, `barrier_timeouts=0`, равный `shared:` digest и отсутствие отчёта
+десинк-аудита (`desync-turn*.txt`) и audit-строки.
+
+```sh
+# 2 и 3 клиента × 10 ходов (по умолчанию; можно явно)
+bash max-brh-cicd/scripts/host-smoke.sh all 10
+bash max-brh-cicd/scripts/host-smoke.sh 2 10
+bash max-brh-cicd/scripts/host-smoke.sh 3 10
+
+# Windows, те же кейсы
+powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\host-smoke.ps1 -Clients all -Turns 10
+```
+
+Скрипт сам собирает `max-brh` (`--no-default-features`, профиль `debug`;
+`HOST_SMOKE_PROFILE=release` — релиз) **из каталога `max-brh/`**, чтобы
+применился `max-brh/.cargo/config.toml` с 8-МБ стеком главного потока на
+Windows. Данные игры берутся из `max-original/` (`HOST_SMOKE_DATA`), логи и
+`desync-turn*.txt` — в `build/host-smoke/<N>c-<T>turns/<client>/`
+(`HOST_SMOKE_LOGS`). Готовый бинарь можно передать через `HOST_SMOKE_BIN`.
+Порт по умолчанию случайный; при занятости хост перезапускается на другом.
 
 ## build-windows-console.ps1
 

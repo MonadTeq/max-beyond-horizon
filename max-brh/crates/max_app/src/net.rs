@@ -47,6 +47,15 @@
 //! `TeamEliminated`/`PlayerEliminated` under [`crate::host::SessionPolicy`].
 //! The barrier FSM and the packet counters stay untouched.
 //!
+//! H5 adds two diagnostics on the same surface: a **standalone guest reconnect**
+//! (a lost ENet link while the authority is alive reconnects with `TP 00` and
+//! re-publishes the last closed and the pending barrier, so the peers catch up
+//! without waiting for the 3 s retransmit) and the **desync audit 23/24/49**
+//! ([`audit`], ported from `remote.cpp:880-1428`): after a packet-45 divergence
+//! the host compares every non-mining unit with its peers and writes
+//! `desync-turn<turn>.txt`, while a guest answers each 23 with 24 and waits for
+//! 49. The audit is diagnostic only and never changes the simulation bytes.
+//!
 //! # Barriers
 //!
 //! The arbiter server does not echo the client's barriers: a barrier is complete when **each
@@ -101,24 +110,29 @@
 //! variant (same ticket — Horizon `JoinGame` is not repeated). Any other
 //! `TP 03` (`Version`, `SessionTicket`) does not start the fallback.
 
+mod audit;
 pub mod dispatcher;
 pub(crate) mod p2p;
 
+pub use self::audit::{AuditMismatch, DesyncAudit};
+
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use max_core::enums::{GameStateType, Planet, PlayMode, VictoryType};
+use max_core::enums::{GameStateType, Planet, PlayMode, UnitType, VictoryType};
 use max_core::game::{PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use max_core::geo::Point;
 use max_core::input::{Command, Packet01FrameBarrier, Packet06FinishedTurn, Packet12MissionSupply};
 use max_core::setup::{ResourceLevel, TeamStart};
 use max_core::team::{TeamId, TeamKind};
+use max_core::unit::UnitId;
 use max_core::universe::RemoteCommand;
 use max_net::handshake::{DataHash, HandshakeError, RejectReason};
 use max_net::{
     complex_summary_for, state_sync_for, GameJoined, HorizonClient, LobbyGameSettings, LobbyPacket,
-    Packet, SessionConfig, SessionError, SessionEvent, SessionHandle, WireError, CLIENT_NAME,
-    HORIZON_PROTOCOL_VERSION,
+    Packet, SessionConfig, SessionError, SessionEvent, SessionHandle, UnitState, WireError,
+    CLIENT_NAME, HORIZON_PROTOCOL_VERSION,
 };
 use tokio::time::Instant;
 
@@ -192,6 +206,11 @@ pub struct NetworkOptions {
     /// The value is validated in `5..=300 s`; the host advertises its own value
     /// in every heartbeat and the guest adopts it.
     pub host_timeout: Duration,
+    /// Directory for the host's `desync-turn<turn>.txt` audit reports (H5).
+    ///
+    /// `None` — no files (the audit still runs and is reported in
+    /// [`NetworkReport::audits`]); `--host` passes the process directory.
+    pub audit_dir: Option<PathBuf>,
 }
 
 impl Default for NetworkOptions {
@@ -208,6 +227,7 @@ impl Default for NetworkOptions {
             join_retry: JoinRetryPolicy::default(),
             turn_wait: Duration::ZERO,
             host_timeout: max_net::DEFAULT_HOST_TIMEOUT,
+            audit_dir: None,
         }
     }
 }
@@ -1013,6 +1033,8 @@ pub struct NetworkReport {
     pub sent: PacketHistogram,
     /// Barrier packets the transport delivered.
     pub received: PacketHistogram,
+    /// H5: desync audit rounds (23/24/49) of this run.
+    pub audits: Vec<DesyncAudit>,
     /// Digest of the final state (per client: it carries the local view fields).
     pub digest: AppDigest,
     /// The same state projected onto the values every client shares — the
@@ -1446,6 +1468,7 @@ pub async fn run_network_with_sink(
         join_attempts,
         sent: stats.sent,
         received: stats.received,
+        audits: stats.audits,
         digest,
         shared: SharedDigest::capture(digest),
     })
@@ -1666,6 +1689,9 @@ pub(crate) enum IoEvent {
     Closed,
     /// Transport bookkeeping with no game meaning (a late `Connected`/`Verified`).
     Control,
+    /// A guest (re)connected to the host authority (H5): the driver re-publishes
+    /// the last closed and the pending barrier, so the peer catches up at once.
+    PeerReconnected,
     /// No event within the wait.
     Idle,
     /// A host heartbeat (packet 55) with the eliminations it carries (H4).
@@ -1757,6 +1783,12 @@ pub(crate) trait HostIo {
     fn quorum_allows_barrier(&self) -> bool {
         true
     }
+
+    /// Whether this transport is the session authority (the H5 desync audit is
+    /// host-driven, `remote.cpp:1357-1371`). The default is "no".
+    fn is_authority(&self) -> bool {
+        false
+    }
 }
 
 /// Guest side of [`HostIo`]: one ENet session to the host (or the server).
@@ -1788,6 +1820,13 @@ impl SessionIo {
     /// Disconnects and waits for the session task to finish.
     pub(crate) async fn shutdown(self) {
         self.handle.shutdown().await;
+    }
+
+    /// Drops the session task without a graceful disconnect (test hook for the
+    /// H5 standalone-reconnect gate).
+    #[cfg(test)]
+    pub(crate) fn abort(self) {
+        self.handle.abort();
     }
 
     /// Sends an already encoded transport frame (takeover 56).
@@ -1885,6 +1924,20 @@ pub(crate) struct GameLoopStats {
     pub(crate) sent: PacketHistogram,
     /// Barrier packets the transport delivered in this run (gate (b)).
     pub(crate) received: PacketHistogram,
+    /// H5: desync audit rounds (23/24/49) of this run.
+    pub(crate) audits: Vec<DesyncAudit>,
+}
+
+/// Outcome of one transport pump iteration of the lockstep driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PumpOutcome {
+    /// Keep waiting/playing.
+    Continue,
+    /// A peer (re)connected or the local link was restored: the barrier of the
+    /// current phase must be re-published (H5 standalone reconnect).
+    ResendBarrier,
+    /// The session ended; the driver must stop.
+    Stop,
 }
 
 // Network driver surface (stage C §4.2): the barrier FSM, the session pump and
@@ -2187,6 +2240,7 @@ impl App<NetworkDispatcher> {
         options: &NetworkOptions,
         phase: BarrierPhase,
         packets: Vec<Packet>,
+        last_closed: &mut Vec<Packet>,
     ) -> Result<WaitOutcome> {
         let mut pending = BarrierPending::new(packets, Instant::now());
         // H4: publish the lockstep position before waiting, so a takeover
@@ -2195,13 +2249,32 @@ impl App<NetworkDispatcher> {
         io.note_lockstep(position);
 
         loop {
-            if !self.pump_events(io, stats, options).await? {
-                return Ok(WaitOutcome::Stopped);
+            match self.pump_events(io, stats, options).await? {
+                PumpOutcome::Stop => return Ok(WaitOutcome::Stopped),
+                PumpOutcome::ResendBarrier => {
+                    // H5: a peer (re)connected. Peers that are at or ahead of this
+                    // barrier already hold these values (re-applying them is
+                    // idempotent), while a peer that is one phase behind gets the
+                    // packet it missed — no 3 s retransmit wait.
+                    let mut replay = last_closed.clone();
+                    replay.extend(pending.packets.iter().cloned());
+                    if !replay.is_empty() {
+                        tracing::warn!(
+                            "барьер {}: пир переподключён — повтор закрытого и текущего \
+                             барьера ({} пакет(ов))",
+                            phase.name(),
+                            replay.len()
+                        );
+                        Self::send_barrier(io, &replay).await?;
+                    }
+                }
+                PumpOutcome::Continue => {}
             }
             // H4 quorum gate: the barrier is closed only when the authority can
             // still reach a quorum (`reachable_peers + 1 >= quorum`). The FSM
             // itself is untouched — the gate is a transport predicate.
             if self.barrier_reached() && io.quorum_allows_barrier() {
+                *last_closed = pending.packets.clone();
                 return Ok(WaitOutcome::Reached);
             }
 
@@ -2246,6 +2319,8 @@ impl App<NetworkDispatcher> {
         let local_team = self.universe.dispatcher().local_team();
         let mut stats = GameLoopStats::default();
         let mut frame_counter: u8 = 0;
+        // H5: the last closed barrier batch, re-published when a peer reconnects.
+        let mut last_closed: Vec<Packet> = Vec::new();
 
         tracing::info!(
             "игровой цикл: local_team={} play_mode={:?} пиров={}",
@@ -2266,6 +2341,7 @@ impl App<NetworkDispatcher> {
                 options,
                 BarrierPhase::Begin,
                 packets,
+                &mut last_closed,
             )
             .await?
             == WaitOutcome::Stopped
@@ -2288,6 +2364,7 @@ impl App<NetworkDispatcher> {
                     options,
                     BarrierPhase::Play,
                     packets,
+                    &mut last_closed,
                 )
                 .await?
                 == WaitOutcome::Stopped
@@ -2309,8 +2386,20 @@ impl App<NetworkDispatcher> {
             let play_deadline = Instant::now() + options.turn_wait;
 
             loop {
-                if !self.pump_events(io, &mut stats, options).await? {
-                    return Ok(stats);
+                match self.pump_events(io, &mut stats, options).await? {
+                    PumpOutcome::Stop => return Ok(stats),
+                    PumpOutcome::ResendBarrier => {
+                        // H5: a peer rejoined while the turn is in play; the last
+                        // closed barrier (53) is what a lagging peer still needs.
+                        if !last_closed.is_empty() {
+                            tracing::warn!(
+                                "игра: пир переподключён — повтор последнего барьера ({} пакет(ов))",
+                                last_closed.len()
+                            );
+                            Self::send_barrier(io, &last_closed).await?;
+                        }
+                    }
+                    PumpOutcome::Continue => {}
                 }
                 self.tick();
                 self.broadcast_outgoing(io).await?;
@@ -2366,6 +2455,7 @@ impl App<NetworkDispatcher> {
                     options,
                     BarrierPhase::End,
                     packets,
+                    &mut last_closed,
                 )
                 .await?
                 == WaitOutcome::Stopped
@@ -2387,6 +2477,7 @@ impl App<NetworkDispatcher> {
                     options,
                     BarrierPhase::Sync,
                     packets,
+                    &mut last_closed,
                 )
                 .await?
                 == WaitOutcome::Stopped
@@ -2408,6 +2499,7 @@ impl App<NetworkDispatcher> {
                     options,
                     BarrierPhase::Crc,
                     packets,
+                    &mut last_closed,
                 )
                 .await?
                 == WaitOutcome::Stopped
@@ -2440,6 +2532,19 @@ impl App<NetworkDispatcher> {
                     self.universe.dispatcher().crc_checksum(),
                     peers.join(", ")
                 );
+
+                // H5: desync audit 23/24/49 (`remote.cpp:880-1428`). The authority
+                // compares every non-mining unit with its peers and writes
+                // `desync-turn<turn>.txt`; a guest answers 23 with 24 and waits for 49.
+                // Both sides stay at the same lockstep point.
+                let turn = self.state_ref().turn_counter() + 1;
+                let audit = if io.is_authority() {
+                    self.run_host_desync_audit(io, &mut stats, turn, options.audit_dir.as_deref())
+                        .await?
+                } else {
+                    self.wait_desync_audit(io, &mut stats, turn).await?
+                };
+                stats.audits.push(audit);
             }
 
             // finish_turn: 52 is closed, all peers move to the next turn.
@@ -2476,6 +2581,7 @@ impl App<NetworkDispatcher> {
                         options,
                         BarrierPhase::Begin,
                         packets,
+                        &mut last_closed,
                     )
                     .await?
                     == WaitOutcome::Stopped
@@ -2492,13 +2598,17 @@ impl App<NetworkDispatcher> {
         Ok(stats)
     }
 
-    /// Drains transport events; `false` — the session/loop is finished.
+    /// Drains transport events; [`PumpOutcome::Stop`] — the session/loop is finished.
+    ///
+    /// [`PumpOutcome::ResendBarrier`] means a peer (re)connected or the local link
+    /// was restored: the caller re-publishes the last closed and the pending
+    /// barrier, so the peer does not have to wait for the 3 s retransmit (H5).
     async fn pump_events<I: HostIo>(
         &mut self,
         io: &mut I,
         stats: &mut GameLoopStats,
         options: &NetworkOptions,
-    ) -> Result<bool> {
+    ) -> Result<PumpOutcome> {
         loop {
             let event = io.next_io_event(options.event_wait).await?;
             match event {
@@ -2555,6 +2665,9 @@ impl App<NetworkDispatcher> {
                                 self.universe.dispatcher().sync_index(),
                                 packets.len()
                             );
+                            // H5: re-publish the barrier of the current phase right
+                            // away instead of waiting for the 3 s retransmit.
+                            return Ok(PumpOutcome::ResendBarrier);
                         }
                         DisconnectOutcome::Exhausted { attempts, migrated } => {
                             stats.reconnect_attempts =
@@ -2567,12 +2680,12 @@ impl App<NetworkDispatcher> {
                                 "reconnect: переподключение не удалось за {attempts} попыт(ок) — \
                                  прогон завершён (миграция={migrated})"
                             );
-                            return Ok(false);
+                            return Ok(PumpOutcome::Stop);
                         }
                         DisconnectOutcome::Disabled => {
                             stats.reconnect_pending_state = true;
                             tracing::warn!("reconnect: автоматическое переподключение выключено");
-                            return Ok(false);
+                            return Ok(PumpOutcome::Stop);
                         }
                         DisconnectOutcome::Ignored => {
                             tracing::warn!(
@@ -2580,19 +2693,30 @@ impl App<NetworkDispatcher> {
                             );
                         }
                     }
-                    // We continue draining events from the new session already; the barrier
-                    // in wait_barrier will repeat its packet as soon as the
-                    // three-second interval expires (for it, time runs from the last
-                    // send).
                 }
-                IoEvent::Idle => return Ok(true),
-                IoEvent::Closed => return Ok(false),
+                IoEvent::Idle => return Ok(PumpOutcome::Continue),
+                IoEvent::Closed => return Ok(PumpOutcome::Stop),
+                // H5: a guest rejoined the live authority — the caller re-publishes
+                // the last closed and the pending barrier.
+                IoEvent::PeerReconnected => return Ok(PumpOutcome::ResendBarrier),
                 // Transport bookkeeping (a late `Connected`/`Verified`) carries no
                 // game meaning for the driver: keep draining.
                 IoEvent::Control => continue,
                 event => {
+                    // H5: guest side of the desync audit — answer packet 23 with
+                    // 24 before the packet reaches the simulation.
+                    if let IoEvent::Packet(packet) = &event {
+                        if !io.is_authority() {
+                            if let Some(reply) = self.audit_reply(packet) {
+                                io.send_packet_untracked(reply)
+                                    .await
+                                    .context("desync-audit: отправка 24")?;
+                                continue;
+                            }
+                        }
+                    }
                     if !self.handle_session_event(event, stats)? {
-                        return Ok(false);
+                        return Ok(PumpOutcome::Stop);
                     }
                 }
             }
@@ -2653,7 +2777,7 @@ impl App<NetworkDispatcher> {
             IoEvent::HostTimeout => {
                 tracing::warn!("хост молчит дольше host_timeout");
             }
-            IoEvent::Idle | IoEvent::Closed | IoEvent::Control => {}
+            IoEvent::Idle | IoEvent::Closed | IoEvent::Control | IoEvent::PeerReconnected => {}
         }
 
         Ok(true)
@@ -2675,6 +2799,210 @@ impl App<NetworkDispatcher> {
         } else {
             false
         }
+    }
+
+    /// H5: guest side of the desync audit — answer packet 23 with packet 24.
+    ///
+    /// `Some(reply)` for `Packet::Audit` (the comparison result is the `status`
+    /// bit), `None` for everything else. `AuditDone` (49) only logs the end.
+    fn audit_reply(&mut self, packet: &Packet) -> Option<Packet> {
+        audit::audit_reply(
+            self.universe.snapshot(),
+            self.universe.dispatcher().local_team(),
+            packet,
+        )
+    }
+
+    /// H5: host side of the desync audit (packets 23/24/49, `remote.cpp:880-1428`).
+    ///
+    /// One unit at a time: send 23, wait for every remote team's 24 (bounded by
+    /// [`audit::DESYNC_AUDIT_UNIT_TIMEOUT`]), then close the round with 49. The
+    /// report file `desync-turn<turn>.txt` is written when `audit_dir` is set.
+    async fn run_host_desync_audit<I: HostIo>(
+        &mut self,
+        io: &mut I,
+        stats: &mut GameLoopStats,
+        turn: i32,
+        audit_dir: Option<&Path>,
+    ) -> Result<DesyncAudit> {
+        let local_team = self.universe.dispatcher().local_team();
+        let own_crc = self.universe.dispatcher().crc_checksum();
+        let peers: Vec<TeamId> = self
+            .universe
+            .dispatcher()
+            .remote_teams(&self.universe)
+            .map(|team| TeamId(team as u8))
+            .collect();
+        let peer_crc: Vec<(TeamId, u16)> = peers
+            .iter()
+            .map(|&team| (team, self.state_ref().team_data_crc16()[team.0 as usize]))
+            .collect();
+        // The oracle skips MININGST: a mine is immobile and its state is fully
+        // derived from the complex totals.
+        let units: Vec<UnitId> = self
+            .universe
+            .snapshot()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter(|&unit| {
+                self.universe
+                    .snapshot()
+                    .unit(unit)
+                    .is_some_and(|unit| unit.unit_type != UnitType::MiningStation)
+            })
+            .collect();
+
+        let mut report = DesyncAudit::new(turn, peers.clone());
+        // Peers that missed their packet-24 budget once are not awaited again:
+        // otherwise a lost peer would multiply the per-unit timeout by the unit
+        // count and the guest's audit wait (30 s) would expire first.
+        let mut unresponsive: Vec<TeamId> = Vec::new();
+        tracing::warn!(
+            "десинк-аудит: старт (ход {}, юнитов {}, пиров {})",
+            turn,
+            units.len(),
+            peers.len()
+        );
+
+        'units: for unit in units {
+            let expected: Vec<TeamId> = peers
+                .iter()
+                .copied()
+                .filter(|team| !unresponsive.contains(team))
+                .collect();
+            if expected.is_empty() {
+                break;
+            }
+            let Some(state) = self
+                .universe
+                .snapshot()
+                .unit(unit)
+                .map(|unit| UnitState::from_unit(self.universe.snapshot(), unit))
+            else {
+                continue;
+            };
+            io.send_packet_untracked(Packet::Audit { unit, state })
+                .await
+                .context("desync-audit: отправка 23")?;
+            report.units = report.units.saturating_add(1);
+
+            let mut acked: Vec<TeamId> = Vec::new();
+            let deadline = Instant::now() + audit::DESYNC_AUDIT_UNIT_TIMEOUT;
+            while acked.len() < expected.len() {
+                let now = Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                let wait = (deadline - now).min(audit::DESYNC_AUDIT_EVENT_WAIT);
+                match io.next_io_event(wait).await? {
+                    IoEvent::Idle | IoEvent::Control | IoEvent::PeerReconnected => {}
+                    IoEvent::Closed => {
+                        report.aborted = true;
+                        break 'units;
+                    }
+                    IoEvent::Disconnected | IoEvent::HostTimeout => break,
+                    IoEvent::Packet(Packet::AuditAck { team, status })
+                        if expected.contains(&team) && !acked.contains(&team) =>
+                    {
+                        acked.push(team);
+                        if !status {
+                            report.mismatches.push(AuditMismatch { unit, team });
+                        }
+                    }
+                    event => {
+                        if !self.handle_session_event(event, stats)? {
+                            report.aborted = true;
+                            break 'units;
+                        }
+                    }
+                }
+            }
+            for team in expected {
+                if !acked.contains(&team) {
+                    unresponsive.push(team);
+                    report.missing_acks = report.missing_acks.saturating_add(1);
+                }
+            }
+        }
+
+        if !report.aborted {
+            io.send_packet_untracked(Packet::AuditDone {
+                team: local_team,
+                param: 1,
+            })
+            .await
+            .context("desync-audit: отправка 49")?;
+        }
+
+        if let Some(dir) = audit_dir {
+            match report.write_report(dir, own_crc, &peer_crc) {
+                Ok(path) => tracing::warn!("десинк-аудит: отчёт записан в {}", path.display()),
+                Err(error) => tracing::error!("десинк-аудит: не удалось записать отчёт: {error}"),
+            }
+        }
+
+        Ok(report)
+    }
+
+    /// H5: guest side of the desync audit — wait for the authority's 23/49.
+    ///
+    /// Every 23 is compared with the local world and answered with 24; 49 (or
+    /// the timeout) ends the wait. The guest does not write a report: the
+    /// authority aggregates the status bits into `desync-turn<turn>.txt`.
+    async fn wait_desync_audit<I: HostIo>(
+        &mut self,
+        io: &mut I,
+        stats: &mut GameLoopStats,
+        turn: i32,
+    ) -> Result<DesyncAudit> {
+        let local_team = self.universe.dispatcher().local_team();
+        let mut report = DesyncAudit::new(turn, Vec::new());
+        let deadline = Instant::now() + audit::DESYNC_AUDIT_TIMEOUT;
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                report.aborted = true;
+                break;
+            }
+            let wait = (deadline - now).min(audit::DESYNC_AUDIT_EVENT_WAIT);
+            match io.next_io_event(wait).await? {
+                IoEvent::Idle | IoEvent::Control | IoEvent::PeerReconnected => {}
+                IoEvent::Closed => {
+                    report.aborted = true;
+                    break;
+                }
+                IoEvent::Packet(Packet::AuditDone { .. }) => break,
+                IoEvent::Packet(packet @ Packet::Audit { unit, .. }) => {
+                    report.units = report.units.saturating_add(1);
+                    if let Some(reply) = self.audit_reply(&packet) {
+                        if let Packet::AuditAck { status, .. } = &reply {
+                            if !status {
+                                report.mismatches.push(AuditMismatch {
+                                    unit,
+                                    team: local_team,
+                                });
+                            }
+                        }
+                        io.send_packet_untracked(reply)
+                            .await
+                            .context("desync-audit: отправка 24")?;
+                    }
+                }
+                event => {
+                    if !self.handle_session_event(event, stats)? {
+                        report.aborted = true;
+                        break;
+                    }
+                }
+            }
+        }
+        tracing::warn!(
+            "десинк-аудит: завершён (ход {}, юнитов {}, расхождений {})",
+            turn,
+            report.units,
+            report.mismatches.len()
+        );
+        Ok(report)
     }
 
     /// Feeds one incoming APPL packet into the facade (the former packet arms).
@@ -3937,5 +4265,202 @@ mod tests {
             default_team_names: [max_net::WireName::EMPTY; 4],
             rng_seed: 0x0102_0304,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // H5: desync audit 23/24/49 (`remote.cpp:880-1428`)
+    // -----------------------------------------------------------------------
+
+    /// A scripted transport: records every sent packet (APPL or transport frame)
+    /// and replays a fixed event script. Used by the audit round tests.
+    struct ScriptedIo {
+        sent: Vec<Packet>,
+        script: std::collections::VecDeque<IoEvent>,
+        authority: bool,
+    }
+
+    #[allow(async_fn_in_trait)]
+    impl HostIo for ScriptedIo {
+        async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+            self.sent.push(packet);
+            Ok(())
+        }
+
+        async fn send_packet_untracked(&mut self, packet: Packet) -> Result<()> {
+            self.sent.push(packet);
+            Ok(())
+        }
+
+        async fn clear_barriers(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn next_io_event(&mut self, _wait: Duration) -> Result<IoEvent> {
+            // `Closed` after the script: an audit must never spin forever.
+            Ok(self.script.pop_front().unwrap_or(IoEvent::Closed))
+        }
+
+        async fn on_disconnect(&mut self) -> Result<DisconnectOutcome> {
+            Ok(DisconnectOutcome::Ignored)
+        }
+
+        fn is_authority(&self) -> bool {
+            self.authority
+        }
+    }
+
+    fn temp_audit_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "max-brh-audit-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("audit temp dir");
+        dir
+    }
+
+    /// Host round: one 23 per non-mining unit, one 24 per peer, then 49; the
+    /// `status=false` bits become the `desync-turn<turn>.txt` mismatch list.
+    #[tokio::test]
+    async fn desync_audit_host_sends_23_per_unit_aggregates_24_and_writes_a_report() {
+        let mut client = SimClient::new(TeamId::RED, &[TeamId::GREEN, TeamId::BLUE]);
+        let units: Vec<UnitId> = client.app.universe.snapshot().unit_ids_in_order();
+        assert_eq!(units.len(), 3, "the audit covers all three tanks");
+
+        let mut script = std::collections::VecDeque::new();
+        for (index, _unit) in units.iter().enumerate() {
+            script.push_back(IoEvent::Packet(Packet::AuditAck {
+                team: TeamId::GREEN,
+                status: index != 0,
+            }));
+            script.push_back(IoEvent::Packet(Packet::AuditAck {
+                team: TeamId::BLUE,
+                status: true,
+            }));
+        }
+        let mut io = ScriptedIo {
+            sent: Vec::new(),
+            script,
+            authority: true,
+        };
+
+        let dir = temp_audit_dir("host");
+        let mut stats = GameLoopStats::default();
+        let report = client
+            .app
+            .run_host_desync_audit(&mut io, &mut stats, 3, Some(&dir))
+            .await
+            .expect("host audit");
+
+        assert_eq!(report.turn, 3);
+        assert_eq!(report.units, 3);
+        assert_eq!(report.peers, vec![TeamId::GREEN, TeamId::BLUE]);
+        assert_eq!(
+            report.mismatches,
+            vec![AuditMismatch {
+                unit: units[0],
+                team: TeamId::GREEN
+            }],
+            "only the first unit differs on GREEN"
+        );
+        assert_eq!(report.missing_acks, 0);
+        assert!(!report.aborted);
+
+        let audit_packets = io
+            .sent
+            .iter()
+            .filter(|packet| matches!(packet, Packet::Audit { .. }))
+            .count();
+        assert_eq!(audit_packets, 3, "one 23 per unit");
+        assert!(
+            matches!(io.sent.last(), Some(Packet::AuditDone { param: 1, .. })),
+            "49 closes the round: {:?}",
+            io.sent.last()
+        );
+
+        let path = report.report.clone().expect("report path");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("desync-turn3.txt")
+        );
+        let text = std::fs::read_to_string(&path).expect("report text");
+        assert!(text.contains("mismatch: unit"), "{text}");
+        assert!(text.contains("units audited: 3"), "{text}");
+        assert!(
+            report.to_line().contains("mismatches=1"),
+            "{}",
+            report.to_line()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Guest round: compares each 23 with the local world, answers 24 and does
+    /// not write a report (the authority aggregates).
+    #[tokio::test]
+    async fn desync_audit_guest_answers_23_with_24_and_records_its_mismatches() {
+        let mut client = SimClient::new(TeamId::GREEN, &[TeamId::RED, TeamId::BLUE]);
+        let units: Vec<UnitId> = client.app.universe.snapshot().unit_ids_in_order();
+        let snapshot = client.app.universe.snapshot();
+
+        let mut corrupted = UnitState::from_unit(snapshot, snapshot.unit(units[0]).expect("unit"));
+        corrupted.hits = corrupted.hits.wrapping_add(1);
+        let mut script = std::collections::VecDeque::new();
+        script.push_back(IoEvent::Packet(Packet::Audit {
+            unit: units[0],
+            state: corrupted,
+        }));
+        for unit in units.iter().skip(1) {
+            let state = UnitState::from_unit(snapshot, snapshot.unit(*unit).expect("unit"));
+            script.push_back(IoEvent::Packet(Packet::Audit { unit: *unit, state }));
+        }
+        script.push_back(IoEvent::Packet(Packet::AuditDone {
+            team: TeamId::RED,
+            param: 1,
+        }));
+
+        let mut io = ScriptedIo {
+            sent: Vec::new(),
+            script,
+            authority: false,
+        };
+        let mut stats = GameLoopStats::default();
+        let report = client
+            .app
+            .wait_desync_audit(&mut io, &mut stats, 2)
+            .await
+            .expect("guest audit");
+
+        assert_eq!(report.units, 3);
+        assert_eq!(
+            report.mismatches,
+            vec![AuditMismatch {
+                unit: units[0],
+                team: TeamId::GREEN
+            }]
+        );
+        assert!(!report.aborted);
+        assert!(report.report.is_none(), "only the host writes the report");
+        assert_eq!(io.sent.len(), 3, "one 24 per audited unit");
+        assert!(io
+            .sent
+            .iter()
+            .all(|packet| matches!(packet, Packet::AuditAck { .. })));
+        assert_eq!(
+            io.sent[0],
+            Packet::AuditAck {
+                team: TeamId::GREEN,
+                status: false
+            }
+        );
+        assert_eq!(
+            io.sent[1],
+            Packet::AuditAck {
+                team: TeamId::GREEN,
+                status: true
+            }
+        );
     }
 }
