@@ -127,3 +127,6 @@ ci-run.log
 __pycache__/
 *.pyc
 
+
+.tmp/
+
