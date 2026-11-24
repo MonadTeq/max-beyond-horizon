@@ -14,6 +14,11 @@
 //! | GRID | `GameManager_DisplayButtonGrid` | `DrawMap_RenderMapTiles(..., display_button_grid)` → `DrawMap_RenderSimpleGridOverlay` / `DrawMap_RenderComplexGridOverlay` (`drawmap.cpp:922/956`) |
 //! | NAME | `GameManager_DisplayButtonNames` | `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747`): the unit name above it |
 //!
+//! `DrawMap_RenderNamesDisplay` also has two branches that are **not** part of the
+//! NAME button: the finished-research text and the blinking green
+//! «New … available» label of a factory/builder that waits for a player action
+//! ([`unit_ready_label`], palette slot `0x1F` with the blinking green cycle).
+//!
 //! All flags are regular `CTInfo::display_button_*` toggles
 //! (`GameManager_MenuClick*Button`, `game_manager.cpp:3800-3990`): a press
 //! changes the flag and toggles the `*_ON` picture (`SetRestState`), and
@@ -21,10 +26,11 @@
 //! [`crate::panels::PanelState`], a button click already toggles them
 //! ([`crate::ui`]) — here there is only drawing.
 
-use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState};
+use max_core::enums::{unit_flags, Surface, UnitOrder, UnitOrderState, UnitType};
 use max_core::unit::UnitInfo;
+use max_core::universe::StateRef;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
-use max_render::text::{draw_text_gnw_shadowed, GnwFontId};
+use max_render::text::{draw_text_gnw_shadowed, GnwFont, GnwFontId};
 use max_render::viewport::{Viewport, MAP_TILE_PIXELS};
 
 use crate::panels::UiPalette;
@@ -440,24 +446,157 @@ fn draw_hit_ammo_bars(
     painted
 }
 
-/// `DrawMap_RenderNamesDisplay` + `DrawMap_RenderTextBox` (`drawmap.cpp:692-777`).
+/// `DrawMap_RenderNamesDisplay` + `DrawMap_RenderTextBox` (`drawmap.cpp:747-777`).
 ///
-/// Font by scale: `zoom_level = Gfx_ZoomLevel`, for non-buildings `/ 2`;
-/// `>= 42` — `FONT_1`, `>= 24` — `FONT_5`, otherwise `FONT_2`. The C++ color —
-/// `GNW_TEXT_OUTLINE | COLOR_YELLOW`; the port writes yellow with a black outline.
-fn draw_unit_name(
+/// C++ draws three kinds of text over a unit of the local team, in this order:
+///
+/// 1. a powered-on `RESEARCH` whose topic is finished — `_(e3a4)`
+///    (`%s research completed`);
+/// 2. a unit in `ORDER_STATE_UNIT_READY` — `DrawMap_UnitCompletionLabels`
+///    (`_(d7d0)/(2ec0)/(7c23)`, one per grammatical gender, all
+///    `New %s available` in en-US). This is the original's "the factory has
+///    produced a unit / the builder has finished the building" marker; for a
+///    stationary parent (`parent->flags & STATIONARY`) the text moves to the
+///    parent, i.e. onto the finished building, and for a factory (the parent is
+///    the produced unit stored inside it) it stays on the factory itself;
+/// 3. `GameManager_DisplayButtonNames` — the unit name in `COLOR_YELLOW`
+///    (`DrawMap_RenderTextBox(unit, text, GNW_TEXT_OUTLINE | COLOR_YELLOW)`).
+///
+/// Branches 1–2 use `GNW_TEXT_OUTLINE | 0x1F` — palette slot 31, whose **green**
+/// channel is the blinking palette cycle (see [`ready_label_color`]) — and are
+/// **not** subject to the NAME toggle: C++ draws them for every own unit of the
+/// draw group, which is why [`draw_unit_overlays`] no longer skips them when the
+/// 3×3 panel buttons are off.
+fn draw_unit_label<D: Dispatcher>(
     frame: &mut RgbaBuffer,
+    app: &App<D>,
+    viewport: &Viewport,
+    palette: &UiPalette,
     unit: &UnitInfo,
     rect: PixelRect,
     zoom: i32,
+) -> u32 {
+    if unit.team != app.state_ref().player_team() {
+        return 0;
+    }
+
+    if let Some((text, target)) = unit_ready_label(app.state_ref(), unit) {
+        // `if (parent->flags & STATIONARY) unit = parent;` — the label goes over the
+        // finished building (the builder waits on the site); a factory keeps it on
+        // itself, because there the parent is the mobile unit held inside.
+        let (target_rect, target_building) = if target == unit.id {
+            (rect, unit.is_quad())
+        } else {
+            let Some(parent) = app.state_ref().unit(target) else {
+                return 0;
+            };
+            let visual = app
+                .visual_position(target)
+                .unwrap_or((f32::from(parent.grid.x), f32::from(parent.grid.y)));
+
+            (
+                unit_screen_rect(parent, visual, viewport).0,
+                parent.is_quad(),
+            )
+        };
+
+        return draw_map_label(
+            frame,
+            &text,
+            target_rect,
+            zoom,
+            target_building,
+            ready_label_color(app),
+            palette,
+        );
+    }
+
+    // `GameManager_DisplayButtonNames && (unit->flags & SELECTABLE) &&
+    // unit->GetUnitType() != LRGTAPE && != SMLTAPE`.
+    if !app.hud().panels.names
+        || unit.flags & unit_flags::SELECTABLE == 0
+        || matches!(unit.unit_type, UnitType::LargeTape | UnitType::SmallTape)
+    {
+        return 0;
+    }
+
+    let text = crate::panels::unit_name(unit);
+
+    draw_map_label(
+        frame,
+        &text,
+        rect,
+        zoom,
+        unit.is_quad(),
+        palette.rgba(COLOR_YELLOW),
+        palette,
+    )
+}
+
+/// The completion label of `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747-777`):
+/// the text and the unit it is drawn over.
+///
+/// `Some` for the two branches that are not the regular NAME display:
+/// 1. a powered-on `RESEARCH` whose topic is finished — `_(e3a4)`, drawn over the
+///    research center;
+/// 2. `ORDER_STATE_UNIT_READY` — `DrawMap_UnitCompletionLabels` over the parent when
+///    it is stationary (the finished building) and over the unit otherwise (the
+///    factory that holds the produced unit).
+///
+/// Both are independent of the NAME toggle in C++ (`DrawMap_RenderNamesDisplay` is
+/// called for every own unit of the draw group).
+pub fn unit_ready_label(
+    state: StateRef<'_>,
+    unit: &UnitInfo,
+) -> Option<(String, max_core::unit::UnitId)> {
+    if let Some(text) = research_completed_label(state, unit) {
+        return Some((text, unit.id));
+    }
+
+    if unit.state != UnitOrderState::UnitReady {
+        return None;
+    }
+
+    let parent = unit.parent_unit.and_then(|id| state.unit(id))?;
+    let text = NEW_UNIT_AVAILABLE.replace("{}", crate::buildmenu::unit_name(parent.unit_type));
+    let target = if parent.is_mobile() {
+        unit.id
+    } else {
+        parent.id
+    };
+
+    Some((text, target))
+}
+
+/// `DrawMap_RenderTextBox` (`drawmap.cpp:692-745`) — the text box of a unit.
+///
+/// `text_area` = the unit bounds inset by 4 px; the font depends on the zoom
+/// (`Gfx_ZoomLevel`, for non-buildings `/ 2`): `>= 42` — `FONT_1`, `>= 24` —
+/// `FONT_5`, otherwise `FONT_2`.
+///
+/// `Text_AutofitTextBox(..., horizontal_align = true)` → `Text_TextBox`: the text is
+/// split into rows by the box width (`Text_SplitText`, `text.cpp:586`), at most
+/// `height / (font_height + 1)` rows, centred as a block, every row centred; a row
+/// still wider than the box starts at the left edge and is clipped by
+/// `Text_Blit`'s `swidth` (`Text_AutofitTextBox` clips to the visible map area, not
+/// to the font). `Text_SplitText` also hyphenates a single word wider than the box —
+/// the port leaves such a word on its own row and clips it; the completion labels
+/// and unit names consist of shorter words, for which both paths are identical.
+fn draw_map_label(
+    frame: &mut RgbaBuffer,
+    text: &str,
+    rect: PixelRect,
+    zoom: i32,
+    building: bool,
+    color: Rgba,
     palette: &UiPalette,
 ) -> u32 {
-    let building = unit.is_quad();
-    // `text_area` = unit bounds, inset by 4 px (`drawmap.cpp:707-710`):
-    // `ulx = (unit->x - unit_size/2) + 4`, `lrx - ulx = unit_size - 8`, where
-    // `unit_size` 128/64 world px.
-    let text_area = PixelRect::new(rect.ulx + 4, rect.uly + 4, (rect.width - 6).max(1), (rect.height - 6).max(1));
-    let text = crate::panels::unit_name(unit);
+    let text_area = PixelRect::new(
+        rect.ulx + 4,
+        rect.uly + 4,
+        (rect.width - 6).max(1),
+        (rect.height - 6).max(1),
+    );
 
     if text.is_empty() {
         return 0;
@@ -472,27 +611,231 @@ fn draw_unit_name(
         GnwFontId::Font2.font()
     };
 
-    let width = font.text_width(&text);
+    // `Text_TextBox`: `font_height = Text_GetHeight() + 1` with `GNW_TEXT_OUTLINE`.
+    let font_height = font.height() + 1;
+    let max_rows = (text_area.height / font_height).max(1) as usize;
+    let rows = wrap_label_rows(text, font, text_area.width, max_rows);
 
-    if width > text_area.width {
+    if rows.is_empty() {
         return 0;
     }
 
-    let x = text_area.ulx + (text_area.width - width) / 2;
-    let y = text_area.uly + (text_area.height - font.height()) / 2;
+    // `vertical_align = true` (`Text_TextBox` default, used by `Text_AutofitTextBox`).
+    let mut y = text_area.uly + ((text_area.height + 1) - font_height * rows.len() as i32) / 2;
+    let mut painted = 0u32;
+
+    for row in &rows {
+        let width = font.text_width(row);
+
+        if width > text_area.width {
+            painted += draw_clipped_row(
+                frame,
+                text_area.ulx,
+                y,
+                text_area,
+                font,
+                row,
+                color,
+                palette,
+            );
+        } else if !row.is_empty() {
+            let x = text_area.ulx + (text_area.width - width) / 2;
+
+            painted += draw_text_gnw_shadowed(
+                frame,
+                x,
+                y,
+                font,
+                row,
+                color,
+                palette.rgba(COLOR_BLACK),
+                palette.rgba(COLOR_BLACK),
+            )
+            .max(0) as u32;
+        }
+
+        y += font_height;
+    }
+
+    painted
+}
+
+/// Rows of `Text_SplitText` (`text.cpp:586-698`) for the unit text box.
+///
+/// Greedy word wrap by the box width: a word goes onto the current row while
+/// `row_width + space + word_width <= width`, a `\n` is a hard break, and once
+/// `max_rows` rows exist the rest is appended to the last one (`Text_SplitText`
+/// does the same when `row_count` reached `max_row_count`).
+fn wrap_label_rows(text: &str, font: &GnwFont, width: i32, max_rows: usize) -> Vec<String> {
+    let max_rows = max_rows.max(1);
+    let space = font.char_width(' ');
+    let mut rows: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    /// Starts a new row, or appends to the last one when no rows are left.
+    fn break_row(rows: &mut Vec<String>, current: &mut String, max_rows: usize) {
+        if rows.len() < max_rows {
+            rows.push(std::mem::take(current));
+        } else if let Some(last) = rows.last_mut() {
+            if !current.is_empty() {
+                last.push(' ');
+                last.push_str(current);
+                current.clear();
+            }
+        }
+    }
+
+    for (index, segment) in text.split('\n').enumerate() {
+        if index > 0 {
+            break_row(&mut rows, &mut current, max_rows);
+        }
+
+        for word in segment.split(' ') {
+            if word.is_empty() {
+                continue;
+            }
+
+            let word_width = font.text_width(word);
+
+            if current.is_empty() {
+                current.push_str(word);
+            } else if rows.len() < max_rows
+                && font.text_width(&current) + space + word_width > width
+            {
+                // `flag || (...)`: a word that does not fit starts the next row.
+                rows.push(std::mem::take(&mut current));
+                current.push_str(word);
+            } else {
+                current.push(' ');
+                current.push_str(word);
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        break_row(&mut rows, &mut current, max_rows);
+    }
+
+    rows.retain(|row| !row.is_empty());
+    rows.truncate(max_rows);
+
+    rows
+}
+
+/// A row wider than the box: drawn into a row-sized buffer and composited back —
+/// the same visible result as `Text_Blit`'s `swidth` clipping (`text.cpp:700-743`),
+/// without writing outside the text box.
+#[allow(clippy::too_many_arguments)]
+fn draw_clipped_row(
+    frame: &mut RgbaBuffer,
+    x: i32,
+    y: i32,
+    text_area: PixelRect,
+    font: &GnwFont,
+    text: &str,
+    color: Rgba,
+    palette: &UiPalette,
+) -> u32 {
+    if text_area.width <= 0 || text_area.height <= 0 {
+        return 0;
+    }
+
+    let height = (font.height() + 1).min(text_area.height.max(1));
+    let mut boxed = RgbaBuffer::new(text_area.width as u32, height as u32);
 
     draw_text_gnw_shadowed(
-        frame,
-        x,
-        y,
+        &mut boxed,
+        0,
+        0,
         font,
-        &text,
-        palette.rgba(COLOR_YELLOW),
+        text,
+        color,
         palette.rgba(COLOR_BLACK),
         palette.rgba(COLOR_BLACK),
-    )
-    .max(0) as u32
+    );
+
+    let mut painted = 0u32;
+    let limit = (text_area.lry() + 1 - y).clamp(0, height);
+
+    for dy in 0..limit {
+        for dx in 0..boxed.width() as i32 {
+            let Some(pixel) = boxed.get(dx, dy) else {
+                continue;
+            };
+
+            if pixel.a == 0 {
+                continue;
+            }
+
+            painted += u32::from(frame.set(x + dx, y + dy, pixel));
+        }
+    }
+
+    painted
 }
+
+/// `DrawMap_UnitCompletionLabels` / `DrawMap_UnitCompletionLabels`
+/// (`_(d7d0)`, `_(2ec0)`, `_(7c23)` — selected by `Unit::GetGender`, all equal in
+/// en-US).
+const NEW_UNIT_AVAILABLE: &str = "New {} available";
+
+/// `_(e3a4)` — the finished research topic of a powered-on `RESEARCH`.
+const RESEARCH_COMPLETED: &str = "{} research completed";
+
+/// `DrawMap_RenderNamesDisplay` research branch (`drawmap.cpp:753-756`).
+///
+/// `unit->GetUnitType() == RESEARCH && unit->GetOrder() == ORDER_POWER_ON &&
+/// UnitsManager_TeamInfo[team].research_topics[topic].turns_to_complete == 0`;
+/// the topic label is `ResearchMenu_TopicLabels` ([`crate::researchmenu::TOPIC_LABELS`]).
+fn research_completed_label(state: StateRef<'_>, unit: &UnitInfo) -> Option<String> {
+    if unit.unit_type != UnitType::ResearchCentre || unit.orders != UnitOrder::PowerOn {
+        return None;
+    }
+
+    let topic = usize::from(unit.research_topic as u8);
+    let progress = state
+        .teams()
+        .get(unit.team.0 as usize)?
+        .research_topics
+        .get(topic)?;
+
+    if progress.turns_to_complete != 0 {
+        return None;
+    }
+
+    Some(RESEARCH_COMPLETED.replace("{}", crate::researchmenu::TOPIC_LABELS.get(topic)?))
+}
+
+/// Color of the completion labels — C++ palette index `0x1F`
+/// (`GNW_TEXT_OUTLINE | 0x1F`).
+///
+/// The index has no fixed RGB: its **green** channel is the single-slot palette
+/// cycle (`World::InitColorCycles`, `world.cpp:551`, 6 fps;
+/// `World::UpdateColorAnimations`, `:222-231` rotates it `63 → 31 → 15 → 7 → 63`).
+/// That cycle is exactly the original's blinking green label. The port draws RGBA,
+/// so the index is resolved through the rotated palette snapshot
+/// ([`App::animated_palette`]); before the first cycle step (`dt = 0`, QA/headless)
+/// the slot keeps the cycle's initial value `63` (the `m_color_cycle_step`
+/// constructor value) — the bright phase, so the goldens are deterministic and the
+/// label is green.
+pub fn ready_label_color<D: Dispatcher>(app: &App<D>) -> Rgba {
+    if let Some(palette) = app.animated_palette() {
+        return palette.rgba(COMPLETION_LABEL_COLOR);
+    }
+
+    let base = app
+        .assets()
+        .map(|assets| assets.system_palette.rgb(COMPLETION_LABEL_COLOR))
+        .unwrap_or([0, 0, 0]);
+    // `Color_SetSystemPaletteEntry` scales the 6-bit DAC value by 4.
+    let green = max_render::palette::single_slot_value(0).saturating_mul(4);
+
+    Rgba::from_rgb([base[0], green, base[2]])
+}
+
+/// Palette slot of the completion labels — `GNW_TEXT_OUTLINE | 0x1F`
+/// (`drawmap.cpp:756`/`:769`).
+pub const COMPLETION_LABEL_COLOR: u8 = 0x1F;
 
 /// `DrawMap_RenderUnitDisplays` (`drawmap.cpp:543`) — COLORS/STATUS/HITS/AMMO
 /// over the unit sprite, then `DrawMap_RenderNamesDisplay` (`:747`).
@@ -512,11 +855,7 @@ pub fn draw_unit_overlays<D: Dispatcher>(
     let status = panel.status;
     let hits = panel.hits;
     let ammo = panel.ammo;
-    let names = panel.names;
-
-    if !(colors || status || hits || ammo || names) {
-        return 0;
-    }
+    let displays = colors || status || hits || ammo;
 
     let status_icons = app
         .assets()
@@ -525,6 +864,9 @@ pub fn draw_unit_overlays<D: Dispatcher>(
     let zoom = viewport.zoom() as i32;
     let mut painted = 0u32;
 
+    // No early return: `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747`) also draws
+    // the completion labels when every 3×3 panel button is off — they are not
+    // part of `GameManager_DisplayButton*`.
     for id in state.unit_ids_in_order() {
         let Some(unit) = state.unit(id) else {
             continue;
@@ -542,42 +884,40 @@ pub fn draw_unit_overlays<D: Dispatcher>(
             continue;
         }
 
-        if unit.flags & unit_flags::SELECTABLE == 0 {
-            continue;
-        }
-
         let visual = app
             .visual_position(id)
             .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
         let (rect, size) = unit_screen_rect(unit, visual, viewport);
 
-        if colors && unit.is_mobile() {
-            painted += draw_color_frame(frame, rect, team_frame_color(palette, unit));
-        }
+        // `DrawMap_RenderUnitDisplays` is inside the C++ `SELECTABLE` check;
+        // `DrawMap_RenderNamesDisplay` (the labels) is not.
+        if displays && unit.flags & unit_flags::SELECTABLE != 0 {
+            if colors && unit.is_mobile() {
+                painted += draw_color_frame(frame, rect, team_frame_color(palette, unit));
+            }
 
-        if status {
-            if let Some(icons) = status_icons {
-                painted += draw_status_icons(frame, rect, unit, palette, icons);
+            if status {
+                if let Some(icons) = status_icons {
+                    painted += draw_status_icons(frame, rect, unit, palette, icons);
+                }
+            }
+
+            if zoom > 8 && (hits || ammo) {
+                painted += draw_hit_ammo_bars(
+                    frame,
+                    rect,
+                    size,
+                    unit,
+                    palette,
+                    player_team,
+                    zoom,
+                    hits,
+                    ammo,
+                );
             }
         }
 
-        if zoom > 8 && (hits || ammo) {
-            painted += draw_hit_ammo_bars(
-                frame,
-                rect,
-                size,
-                unit,
-                palette,
-                player_team,
-                zoom,
-                hits,
-                ammo,
-            );
-        }
-
-        if names && unit.team == player_team {
-            painted += draw_unit_name(frame, unit, rect, zoom, palette);
-        }
+        painted += draw_unit_label(frame, app, viewport, palette, unit, rect, zoom);
     }
 
     painted

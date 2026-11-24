@@ -500,10 +500,60 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
         }
 
         let site = self.build_site.take()?;
+
+        // `GameManager_PathBuild` (`game_manager.cpp:4583-4596`): an ENGINEER that
+        // was pointed at a cell outside its own starts a **linear `GroundPath`** to
+        // that cell (`GroundPath` + `AppendLinearSteps`) and builds the first
+        // object right where it stands — `UnitsManager_StartBuild` resets the
+        // engineer's `move_to` to its own cell. The path makes
+        // `UnitsManager_BuildNext` (`units_manager.cpp:3807`) place the same type
+        // on every next cell while raw material lasts.
+        let (site_cell, path_command) = if site.is_engineer() {
+            let builder_grid = self
+                .state_ref()
+                .unit(site.builder)
+                .map(|unit| unit.grid)
+                .unwrap_or(site.anchor);
+
+            if builder_grid != site.anchor {
+                let builder = self.state_ref().unit(site.builder).cloned();
+                let command = builder.map(|builder| {
+                    max_core::Command::Move(max_core::Packet38Move {
+                        unit: site.builder,
+                        order: builder.orders,
+                        state: builder.state,
+                        grid: builder_grid,
+                        move_to: site.anchor,
+                        group_speed: builder.group_speed,
+                        path: Some(max_core::MovePathData::Ground(
+                            max_core::pathfinding::append_linear_steps(builder_grid, site.anchor),
+                        )),
+                    })
+                });
+
+                (builder_grid, command)
+            } else {
+                (builder_grid, None)
+            }
+        } else {
+            (site.anchor, None)
+        };
+
+        // Packet 38 (path) before the 08/P4 build order: `apply_packet_08` does not
+        // touch `unit.path`, so the queue head survives the completion of every
+        // building of the route (C++ sends 38 then starts the order locally).
+        if let Some(command) = path_command {
+            if channel.is_lockstep() {
+                self.hud.pending.push(command);
+            } else {
+                self.apply_immediate(command);
+            }
+        }
+
         let command = crate::buildmenu::build_order_command(
             self.state_ref(),
             site.builder,
-            site.anchor,
+            site_cell,
             &[site.unit_type],
             false,
             site.build_rate,

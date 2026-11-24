@@ -1686,9 +1686,42 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
 
     ctx.unit.state = UnitOrderState::InProgress;
 
+    // C++ `UnitInfo::Move` (`unitinfo.cpp:1835-1844`): when a cell is completed and
+    // the order is `ORDER_BUILD` with a non-empty queue, the builder starts the next
+    // building on the cell it just entered — `UnitInfo::Build`:
+    // `IssueBuildOrder(this, &grid_x, &grid_y, *build_list[0])` (the four anchors
+    // around the builder, `units_manager.cpp:4998`), then `build_time` from
+    // `BuildMenu_GetTurnsToBuild` and `StartBuilding()` at that site. This is the
+    // repeated construction of a `Path` order (`GameManager_PathBuild`).
     if ctx.unit.orders == UnitOrder::Build && !ctx.unit.build_list.is_empty() {
-        // C++: `Access_IsAccessible(build_list[0], ...)` → `Build()`.
-        // TODO(P3/P5): site accessibility check and `UnitInfo::Build`.
+        let head = ctx.unit.build_list[0];
+
+        if let Some(site) =
+            production::initial_build_site(ctx.world, ctx.unit.team, head, ctx.unit.grid, &[ctx.id])
+        {
+            ctx.unit.target_grid = site;
+            ctx.data.move_to = site;
+            ctx.unit.build_time = production::turns_to_build(ctx.world, ctx.unit.team, head)
+                .clamp(0, i32::from(u8::MAX)) as u8;
+            ctx.unit.state = UnitOrderState::BuildInProgress;
+
+            // `DeployConstructionSiteUtilities` + `PrepareConstructionSite`.
+            let _ = production::deploy_construction_site(ctx.world, ctx.id, head, site);
+
+            if ctx.unit.unit_type == UnitType::Constructor {
+                // `StartBuilding`: the 2×2 constructor first centers on the tape.
+                ctx.set_new_order(
+                    UnitOrder::AwaitTapePositioning,
+                    UnitOrderState::TapePositioningInit,
+                );
+            }
+        } else {
+            // `UnitInfo::Build` with a path: `IssueBuildOrder` failed (no passable
+            // anchor around the builder) → `SetParent(nullptr)` +
+            // `ClearBuildListAndPath`.
+            ctx.unit.parent_unit = None;
+            clear_build_list_and_path(&mut ctx.unit);
+        }
     }
 
     if ctx.unit.has_move_order() {
@@ -2209,15 +2242,19 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
         UnitOrderState::UnitReady => {
             // C++ `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2891`):
             // `if (unit->path) UnitsManager_BuildNext(unit); else unit->Animate();`
-            // — a builder that completed a building just stands and animates;
-            // there is no automatic exit. The exit order is given by the
-            // **player** clicking a cell (`game_manager.cpp:6879-6890`:
-            // `ORDER_STATE_UNIT_READY` → `ORDER_ACTIVATE`/`IN_TRANSITION`,
-            // `ORDER_ACTIVATE` arrives here), by the AI — the task
+            // — a builder that completed a building with a **Path** queue starts the
+            // next site of the route; without a path it just stands and animates.
+            // The exit order is given by the **player** clicking a cell
+            // (`game_manager.cpp:6879-6890`: `ORDER_STATE_UNIT_READY` →
+            // `ORDER_ACTIVATE`/`IN_TRANSITION`), by the AI — the task
             // `TaskActivate` (`crate::unit_order::issue_builder_exit`).
             if ctx.unit.path.is_some() {
-                // TODO(P3): UnitsManager_BuildNext — storage/materials check.
-                clear_build_list_and_path(&mut ctx.unit);
+                // `UnitsManager_BuildNext`: continue while material is left and the
+                // route end is not reached; otherwise `ClearBuildListAndPath`
+                // (handled inside `production::build_next`).
+                ctx.sync_to_world();
+                let _ = production::build_next(ctx.world, ctx.id);
+                ctx.sync_from_world();
             } else {
                 animate(&ctx.unit);
             }

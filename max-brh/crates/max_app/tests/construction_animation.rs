@@ -195,3 +195,71 @@ fn unit_without_scaler_is_never_scaled() {
     assert_eq!(app.unit_render_zoom(unit, 64), 64);
     assert_eq!(changed_pixels(&frame, &app.render_frame()), 0);
 }
+
+/// The "growth" takes [`max_app::GROWTH_ANIM_STEPS`] C++ order ticks.
+///
+/// Oracle: `UnitsManager_ProcessOrderAwaitScaling` (`units_manager.cpp:3159-3173`)
+/// drops `scaler_adjust` by one per tick (`4 → 3 → 2 → 1 → 0`); a tick is gated by
+/// `GameManager_IsTickDue` (`game_manager.cpp:5103`) with
+/// `TIMER_FPS_TO_MS(24) = 1000 / 24 → 42 ms` (`timer.h:27`). Full size therefore
+/// comes at `4 × 42 ms = 168 ms` — not at the earlier 1 s (≈ 6× too slow).
+#[test]
+fn growth_lasts_four_order_ticks() {
+    assert_eq!(max_app::GROWTH_ANIM_STEPS, 4);
+    assert!(
+        (max_app::GROWTH_ANIM_SECONDS - 4.0 * max_app::ORDER_TICK_SECONDS).abs() < f32::EPSILON,
+        "рост = четыре тика обработки приказов"
+    );
+    assert!(
+        (max_app::GROWTH_ANIM_SECONDS - 0.168).abs() < 1e-6,
+        "C++ TIMER_FPS_TO_MS(24) = 42 мс, четыре тика = 168 мс, получено {}",
+        max_app::GROWTH_ANIM_SECONDS
+    );
+
+    let Some(mut app) = app_with_assets() else {
+        return;
+    };
+
+    app.viewport_mut().center_on_grid(40, 40);
+    let background = app.render_frame();
+    let slab = app
+        .universe_mut()
+        .spawn_unit(UnitType::LargeSlab, TeamId::RED, Point::new(40, 40), 0)
+        .expect("slab");
+    {
+        let unit = app.universe_mut().unit_mut(slab).expect("slab");
+        unit.scaler_adjust = 4;
+        unit.orders = UnitOrder::AwaitScaling;
+        unit.state = UnitOrderState::Expand;
+    }
+
+    let full = app.render_frame();
+    assert!(
+        changed_pixels(&background, &full) > 0,
+        "плита не нарисована"
+    );
+    assert_eq!(app.unit_growth_scale(slab), 1.0, "dt = 0 — полный размер");
+
+    // 8 × 20 ms = 160 ms — still inside the fourth C++ tick.
+    for _ in 0..8 {
+        app.update_visual_units(0.02);
+    }
+    let almost = app.unit_growth_scale(slab);
+    assert!(
+        almost < 1.0,
+        "через 160 мс (3.8 тика) рост ещё не закончен: {almost}"
+    );
+
+    // One more 20 ms step — the fourth tick (168 ms): full size.
+    app.update_visual_units(0.02);
+    assert_eq!(
+        app.unit_growth_scale(slab),
+        1.0,
+        "через 4 тика обработки приказов плита полного размера"
+    );
+    assert_eq!(
+        changed_pixels(&full, &app.render_frame()),
+        0,
+        "кадр полного размера совпадает с эталонным"
+    );
+}

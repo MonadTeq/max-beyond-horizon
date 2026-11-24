@@ -1664,7 +1664,7 @@ fn power_rows(
             continue;
         };
 
-        if other.complex != unit.complex {
+        if other.complex != unit.complex || other.team != unit.team {
             continue;
         }
 
@@ -1746,7 +1746,7 @@ fn life_rows(
             continue;
         };
 
-        if other.complex != unit.complex {
+        if other.complex != unit.complex || other.team != unit.team {
             continue;
         }
 
@@ -1832,6 +1832,12 @@ fn greenhouse_rows(state: StateRef<'_>, unit: &UnitInfo, rows: &mut [Option<Stat
 /// Complex stock — `Complex::GetCargoInfo` + `Cargo_GetInventory`/
 /// `Cargo_GetCargoCapacity`: the sum of `storage` and `ATTRIB_STORAGE` of stationary
 /// units of the same complex with the same cargo type (the `_(d28b)` «Total» row).
+///
+/// The team check is mandatory: C++ compares `Complex*` pointers, while the port's
+/// [`max_core::team::ComplexId`] is unique only **within a team**. Without it the
+/// `Total` row of a mine also summed the capacity of every enemy complex with the
+/// same numeric id — the starting bases of both teams own complex 2, so a mine with
+/// Cargo `12/25` showed `Total 12/50` (manual defect "mine Cargo 25, complex Total 50").
 fn complex_cargo(state: StateRef<'_>, unit: &UnitInfo, cargo_type: CargoType) -> (i32, i32) {
     let mut value = 0;
     let mut capacity = 0;
@@ -1841,7 +1847,10 @@ fn complex_cargo(state: StateRef<'_>, unit: &UnitInfo, cargo_type: CargoType) ->
             continue;
         };
 
-        if other.complex != unit.complex || cargo_type_of(other.unit_type) != cargo_type {
+        if other.complex != unit.complex
+            || other.team != unit.team
+            || cargo_type_of(other.unit_type) != cargo_type
+        {
             continue;
         }
 
@@ -2945,17 +2954,15 @@ mod tests {
 
     /// A match with real team attributes (`TeamUnits::with_clan(Random)`).
     fn stats_state() -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
-        use max_core::enums::TeamClan;
         use max_core::team::TeamUnits;
 
         let mut state = max_core::universe::GameUniverse::default();
         *state.team_units_mut(TeamId::RED).expect("RED economy") =
-            TeamUnits::with_clan(TeamClan::Random);
+            TeamUnits::with_clan(max_core::enums::TeamClan::Random);
         state.set_player_team(TeamId::RED);
 
         state
     }
-
     /// A unit in the match: `spawn_unit` + `DeployUnit` (a new unit has `storage = 0`).
     fn deployed(
         state: &mut max_core::universe::GameUniverse<max_core::universe::LocalDispatcher>,
@@ -3149,6 +3156,144 @@ mod tests {
         );
         assert_eq!(make_row(StatLabel::Hits, 0, 0, 4), None);
         assert_eq!(make_row(StatLabel::Cargo, 0, 25, 0), None);
+    }
+
+    /// Regression for the manual defect "mine Cargo 25 Raw, complex Total 50":
+    /// the `Total` row must sum `Cargo_GetCargoCapacity` of **every** complex
+    /// member (`complex.cpp:136-147`) — the mine's 25-raw buffer plus the
+    /// storage's 50, not the storage alone.
+    #[test]
+    fn complex_total_includes_the_mine_capacity() {
+        let mut state = stats_state();
+        let mine = state
+            .spawn_unit(
+                UnitType::MiningStation,
+                TeamId::RED,
+                max_core::geo::Point::new(20, 20),
+                0,
+            )
+            .expect("mine");
+        let dump = state
+            .spawn_unit(
+                UnitType::MaterialStorage,
+                TeamId::RED,
+                max_core::geo::Point::new(22, 20),
+                0,
+            )
+            .expect("storage");
+        state.unit_mut(mine).expect("mine").storage = 0;
+        state.unit_mut(dump).expect("storage").storage = 0;
+
+        let snapshot = state.snapshot();
+        assert_eq!(
+            snapshot.unit(mine).expect("mine").complex,
+            snapshot.unit(dump).expect("storage").complex,
+            "the mine and the storage must merge into one complex"
+        );
+
+        let unit = snapshot.unit(mine).expect("mine").clone();
+        let rows = rows_for(snapshot, &unit, TeamId::RED);
+
+        assert_eq!(rows[1].expect("Cargo").text(), "0/25", "mine Cargo");
+        assert_eq!(
+            rows[2].expect("Total").text(),
+            "0/75",
+            "MININGST 25 + ADUMP 50 in the complex capacity"
+        );
+    }
+
+    /// The oracle of the manual defect: `ComplexId` is unique only within a team,
+    /// while C++ compares `Complex*`. Both starting bases own complex 2, so a mine
+    /// with Cargo `12/25` showed `Total 12/50` — its own 25 plus the **enemy**
+    /// mine's 25 of the same numeric complex id.
+    #[test]
+    fn complex_total_ignores_a_foreign_complex_with_the_same_id() {
+        use max_core::team::TeamUnits;
+
+        let mut state = stats_state();
+        *state.team_units_mut(TeamId::GREEN).expect("GREEN economy") =
+            TeamUnits::with_clan(max_core::enums::TeamClan::Random);
+
+        let own_mine = state
+            .spawn_unit(
+                UnitType::MiningStation,
+                TeamId::RED,
+                max_core::geo::Point::new(20, 20),
+                0,
+            )
+            .expect("own mine");
+        let enemy_mine = state
+            .spawn_unit(
+                UnitType::MiningStation,
+                TeamId::GREEN,
+                max_core::geo::Point::new(60, 60),
+                0,
+            )
+            .expect("enemy mine");
+        state.unit_mut(own_mine).expect("mine").storage = 12;
+        state.unit_mut(enemy_mine).expect("mine").storage = 0;
+
+        let snapshot = state.snapshot();
+        assert_eq!(
+            snapshot.unit(own_mine).expect("mine").complex,
+            snapshot.unit(enemy_mine).expect("mine").complex,
+            "the fixture reproduces the numeric id collision"
+        );
+
+        let unit = snapshot.unit(own_mine).expect("mine").clone();
+        let rows = rows_for(snapshot, &unit, TeamId::RED);
+
+        assert_eq!(rows[1].expect("Cargo").text(), "12/25");
+        assert_eq!(
+            rows[2].expect("Total").text(),
+            "12/25",
+            "the enemy complex with the same id must not count"
+        );
+    }
+
+    /// The same team filter in the power/workers `Total` rows: two teams'
+    /// `POWGEN`s share a numeric complex id, only the own one is counted.
+    #[test]
+    fn power_total_ignores_a_foreign_complex_with_the_same_id() {
+        use max_core::team::TeamUnits;
+
+        let mut state = stats_state();
+        *state.team_units_mut(TeamId::GREEN).expect("GREEN economy") =
+            TeamUnits::with_clan(max_core::enums::TeamClan::Random);
+
+        let own = state
+            .spawn_unit(
+                UnitType::PowerGenerator,
+                TeamId::RED,
+                max_core::geo::Point::new(20, 20),
+                0,
+            )
+            .expect("own generator");
+        let enemy = state
+            .spawn_unit(
+                UnitType::PowerGenerator,
+                TeamId::GREEN,
+                max_core::geo::Point::new(60, 60),
+                0,
+            )
+            .expect("enemy generator");
+
+        let snapshot = state.snapshot();
+        assert_eq!(
+            snapshot.unit(own).expect("own").complex,
+            snapshot.unit(enemy).expect("enemy").complex,
+            "the fixture reproduces the numeric id collision"
+        );
+
+        let unit = snapshot.unit(own).expect("own").clone();
+        let rows = rows_for(snapshot, &unit, TeamId::RED);
+        let total = rows[2].expect("Total");
+
+        assert_eq!(
+            total.text(),
+            "0/1",
+            "only the own generator gives its 1 power"
+        );
     }
 
     /// The `Speed` row exists exactly for types with `ATTRIB_SPEED > 0` (all 93 types).

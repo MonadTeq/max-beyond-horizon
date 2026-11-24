@@ -73,6 +73,10 @@ shot ai-turn-ai-pressed
 wait 2000
 assert endturn=normal
 assert team=RED
+# `GameManager_UpdateGui` → `GameManager_ProgressBuildState` →
+# `GameManager_ReportNewUnitsMessage` (`game_manager.cpp:8103`): начало хода
+# человека открывает окно «Begin turn N.» над картой (в этот ход построек нет).
+assert hint=Begin turn
 shot ai-turn-human-again
 
 # Партия продолжается, ход счётчик вырос.

@@ -785,13 +785,35 @@ pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
 /// `false` — see [`crate::render::MINING_DRILL_FRAMES_ENABLED`] for the evidence.
 pub use crate::render::MINING_DRILL_FRAMES_ENABLED;
 
+/// Period of one C++ order-processing tick, seconds.
+///
+/// `GameManager_IsTickDue` (`game_manager.cpp:5103`) lets a tick through when
+/// `TickTimer_HaveTimeToThink(TIMER_FPS_TO_MS(24))` is `false`; the tick then
+/// re-stamps `TickTimer_LastTimeStamp` (`:5178`), so a tick is due every
+/// `TIMER_FPS_TO_MS(24) = 1000/24 ≈ 42 ms` (`timer.h:27`). All per-tick order
+/// animations (`UnitsManager_ProcessOrderAwaitScaling`, the builder frame, the
+/// `ProcessOrderSentry` step) run at this rate. Frame-only: the constant is not
+/// part of the snapshot/CRC.
+pub const ORDER_TICK_SECONDS: f32 = 0.042;
+
+/// Number of `scaler_adjust` steps of the building "growth".
+///
+/// `UnitInfo::PrepareConstructionSite` (`unitinfo.cpp:4141`) sets
+/// `scaler_adjust = 4`; `UnitsManager_ProcessOrderAwaitScaling`
+/// (`units_manager.cpp:3159-3173`) decrements it once per order tick — 4 → 3 → 2 → 1 → 0,
+/// i.e. `2^-n` = 1/16 → 1/8 → 1/4 → 1/2 → 1 (`UnitInfo::RenderSprite`,
+/// `unitinfo.cpp:3085`; [`crate::render::scaler_scale`]). Four ticks in total.
+pub const GROWTH_ANIM_STEPS: u32 = 4;
+
 /// Duration of the visual unit "growth", seconds.
 ///
-/// C++ `UnitsManager_ProcessOrderAwaitScaling` reduces `scaler_adjust` by 1
-/// per order processing tick (5 steps: 1/16 → 1). In the interactive mode the steps
-/// are smoothed by real time; `dt = 0` (QA/headless) immediately gives
-/// full size, so that the frames remain deterministic.
-pub const GROWTH_ANIM_SECONDS: f32 = 1.0;
+/// C++ takes [`GROWTH_ANIM_STEPS`] order ticks ([`ORDER_TICK_SECONDS`]) to go from
+/// `scaler_adjust = 4` to `0`, so a building is at full size at
+/// `4 × 42 ms = 168 ms` after the scale order. In the interactive mode the port
+/// smooths the same four steps linearly over this time; `dt = 0` (QA/headless)
+/// immediately gives full size, so that the frames remain deterministic.
+/// (The previous value of 1 s was ~6× slower than the oracle.)
+pub const GROWTH_ANIM_SECONDS: f32 = GROWTH_ANIM_STEPS as f32 * ORDER_TICK_SECONDS;
 
 /// Speed of the visible unit movement on the map — cells per second.
 ///

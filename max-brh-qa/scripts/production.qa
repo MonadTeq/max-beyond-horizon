@@ -220,6 +220,9 @@ shot build-work-b
 # Смена хода сбрасывает выделение (`GameManager_UpdateGuiControl`), поэтому
 # клик по строителю на ходе 2 снова показывает подсказку.
 end_turn
+# `GameManager_ReportNewUnitsMessage` (`game_manager.cpp:8103-8181`): начало хода
+# открывает окно `MESSAGE_BOX_INFO` — «Begin turn N.» (в этот ход построек ещё нет).
+assert hint=Begin turn
 select type Constructor
 assert hint=Currently building: Training Hall
 assert hint=Turns to completion: 9
@@ -247,6 +250,9 @@ assert build=closed
 assert build-ready=yes
 assert site=large
 assert builder=inside
+# Анонс начала хода: `GameManager_SpawnNewUnits` засчитал достроенное здание, и
+# `GameManager_ReportNewUnitsMessage` перечислил его в окне над картой.
+assert hint=A new Training Hall is available this turn
 # Выделение сброшено началом хода — клик по строителю даёт «Finished building».
 select type Constructor
 assert hint=Finished building Training Hall
@@ -359,6 +365,9 @@ end_turn
 end_turn
 assert unit=Infantry
 assert gold>=150
+# Анонс начала хода: завод произвёл пехоту, `GameManager_ReportNewUnitsMessage`
+# перечислил её («A new Infantry is available this turn.»).
+assert hint=A new Infantry is available this turn
 shot production-done
 
 # --- Готовый юнит стоит В ЗАВОДЕ, пока игрок не выведет его ----------------
@@ -373,6 +382,15 @@ select type Training Hall
 assert factory-ready=yes
 assert unit-stored=Infantry
 shot factory-unit-ready
+
+# Мигающая зелёная надпись на заводе (`DrawMap_RenderNamesDisplay`,
+# `drawmap.cpp:758-770`): «New Infantry available» цветом палитрового слота `0x1F`.
+# Зелёный канал слота — палитровый цикл `World::InitColorCycles` (слот 31, 6 fps):
+# `anim 200` прокручивает его на шаг (63 → 31 в 6-битных компонентах), и надпись
+# темнеет — это и есть мигание оригинала. Кадр детерминирован.
+anim 200
+assert factory-ready=yes
+shot factory-unit-label-blink
 
 # Повторный клик по заводу (`UnitsManager_Popup_InitFactories`,
 # `units_manager.cpp:869-872`) меню НЕ открывает: `PlaceNewUnit` выбирает

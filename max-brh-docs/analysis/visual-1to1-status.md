@@ -2248,8 +2248,8 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `2^-scaler_adjust` (1/16 … 1) применяется к спрайту, тени и башне через
   уменьшенный `zoom` (в C++ — делитель `Gfx_DecodeSpriteSetup`). Начальный
   масштаб берётся из **симуляционного** `scaler_adjust`; переход к полному
-  размеру сглаживается по реальному `dt` (`GROWTH_ANIM_SECONDS = 1 с`),
-  `dt = 0` — полный размер.
+  размеру сглаживается по реальному `dt` (`GROWTH_ANIM_SECONDS =
+  4 × 42 мс = 168 мс`, см. §46.1), `dt = 0` — полный размер.
 * `max_app::hud::unit_at_screen` — плита под зданием (`GROUND_COVER`) не
   забирает клик: сначала ищется не-`GROUND_COVER`, как `Access_GetTeamUnit`.
 * Отрисовка площадки — общий цикл спрайтов: декали `ORDER_AWAIT` (не
@@ -2267,11 +2267,12 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
 * `max_app/src/render.rs` (unit): цикл `unit_frame_index_for_animation`
   (`+16 → +24 → +32 → +16`, заворот `+8 >= 40` → `-16`, у инженера
   постоянный `+16`) и `scaler_scale` (`2^-n`).
-* `max_app/tests/construction_animation.rs` (3, на данных игры): два кадра с
+* `max_app/tests/construction_animation.rs` (4, на данных игры): два кадра с
   `dt > 0` различаются кадром спрайта конструктора, а `dt = 0` даёт ту же
   рабочую позу `+16`; плита с `scaler_adjust = 4` в первом кадре `dt > 0`
   меньше полной (`< 1/2` пикселей), через `GROWTH_ANIM_SECONDS` совпадает с
-  полной, `dt = 0` — сразу полная; юнит без `scaler_adjust` не масштабируется.
+  полной, `dt = 0` — сразу полная; юнит без `scaler_adjust` не масштабируется;
+  `growth_lasts_four_order_ticks` — четыре тика по 42 мс (§46.1).
 * `max_app/tests/building_frames.rs` (+2): `ENGINEER`/`CONSTRCT` рисуют
   `image_base + angle + 16` в `BUILD_IN_PROGRESS` и базовый кадр после;
   все шесть декалей (`LRG/SML` × `TAPE/SLAB/CONES`) имеют непустой спрайт.
@@ -2309,9 +2310,10 @@ Turn Based и Simultaneous Moves) и у **инженера**; приказ `ORDE
   `BuildMenu::commit` площадку не ставит, её ставит `start_building` на тике
   после LMB — как C++ `PathBuild` → `ORDER_BUILD`/`INIT` → `StartBuilding`.
 * «Вырастание»: C++ уменьшает `scaler_adjust` на 1 за тик обработки приказов
-  (5 шагов, ~5 кадров), порт берёт **начальный** масштаб `2^-scaler_adjust` из
-  состояния и доводит его до 1 по реальному `dt` за `GROWTH_ANIM_SECONDS`
-  (1 с) — визуально это то же вырастание, но сглаженное по времени интерфейса.
+  (4 шага, 4 × 42 мс = 168 мс), порт берёт **начальный** масштаб
+  `2^-scaler_adjust` из состояния и доводит его до 1 по реальному `dt` за
+  `GROWTH_ANIM_SECONDS` — визуально это то же вырастание, сглаженное по времени
+  интерфейса.
   `dt = 0` (QA/headless) сразу рисует полный размер, поэтому golden-кадры не
   зависят от числа тиков до `shot`.
 * Покадровая анимация конструктора: C++ переключает кадр на каждом втором
@@ -5268,3 +5270,88 @@ GameManager_OptimizeProduction(team, &*complex, true, true);                    
 `video_data_10_with_a_short_change_map_is_an_error`,
 `truncated_raw_video_is_an_error_without_a_panic`) фиксируют контракт формата;
 при появлении реального контейнера 0x06/0x10 нужна сверка кадров с эталоном.
+
+## 46. Ручной прогон: скорость «вырастания», зелёная надпись «готово», анонсы начала хода — **сделано** (2026-11-24)
+
+Три дефекта визуальной части из ручного прогона (QA, `plans/qa-backlog.md` §3).
+
+### 46.1 Скорость «вырастания» здания
+
+**Оракул.** `UnitsManager_ProcessOrderAwaitScaling` (`units_manager.cpp:3159-3173`)
+уменьшает `scaler_adjust` на 1 за тик обработки приказов; `UnitInfo::RenderSprite`
+(`unitinfo.cpp:3085`) рисует `2^-scaler_adjust`. Тик задаёт `GameManager_IsTickDue`
+(`game_manager.cpp:5103`): `TickTimer_HaveTimeToThink(TIMER_FPS_TO_MS(24))`, где
+`TIMER_FPS_TO_MS(fps) = 1000/fps` (`timer.h:27`) → **42 мс**. От `scaler_adjust = 4`
+(`UnitInfo::PrepareConstructionSite`, `unitinfo.cpp:4141`) до 0 — четыре тика,
+то есть **168 мс**.
+
+**Расхождение.** `GROWTH_ANIM_SECONDS` был равен 1 с — примерно в 6 раз медленнее
+оракула.
+
+**Исправление.** `max_app::{ORDER_TICK_SECONDS, GROWTH_ANIM_STEPS,
+GROWTH_ANIM_SECONDS}`: период тика 42 мс, четыре шага, длительность
+`4 × 42 мс = 168 мс`; шаги по-прежнему сглаживаются по реальному `dt`.
+
+### 46.2 Мигающая зелёная надпись «готово» над зданием
+
+**Оракул.** `DrawMap_RenderNamesDisplay` (`drawmap.cpp:747-777`), три ветки:
+
+1. включённый `RESEARCH` с завершённой темой — `_(e3a4)` «%s research completed»;
+2. `ORDER_STATE_UNIT_READY` — `DrawMap_UnitCompletionLabels`
+   (`_(d7d0)/(2ec0)/(7c23)`, en-US «New %s available»): завод, произведший юнит,
+   и строитель, закончивший здание; при `parent->flags & STATIONARY` текст
+   переезжает на здание;
+3. `GameManager_DisplayButtonNames` — имя юнита жёлтым.
+
+Ветки 1–2 не зависят от кнопки NAME и рисуются цветом `GNW_TEXT_OUTLINE | 0x1F`:
+слот 31 палитры, у которого палитровый цикл `World::InitColorCycles`
+(`world.cpp:551`) крутит **зелёный канал** `63 → 31 → 15 → 7` с частотой 6 Гц —
+это и есть мигание оригинала.
+
+**Расхождение.** Порт рисовал только имя (ветка 3) и только при включённой кнопке
+NAME; надписи «готово» не было вовсе.
+
+**Исправление.** `max_app::overlays::{unit_ready_label, ready_label_color,
+draw_unit_label}`: три ветки в порядке C++; текст переносится по словам в рамке
+юнита (`Text_SplitText`/`Text_TextBox`, `autofit`), при нехватке места строка
+обрезается по краю рамки; цвет — слот 31 **повёрнутой** палитры
+(`App::animated_palette`), при `dt = 0` — стартовая фаза цикла (63, яркий зелёный).
+
+### 46.3 Анонс начала хода
+
+**Оракул.** `GameManager_UpdateGui` → `GameManager_ProgressBuildState`
+(`game_manager.cpp:8183`) → `GameManager_SpawnNewUnits` (счётчики построенного) →
+`GameManager_ReportNewUnitsMessage` (`:8103-8181`): модельное окно
+`MESSAGE_BOX_INFO` — «Begin turn N.» и перечисление произведённого за ход
+(«a new %s»/«%i new %s», склейка « and »/«, », « is/are available this turn.»).
+Для `GAME_STATE_10_LOAD_GAME` `ProgressBuildState` не вызывается — окна нет.
+
+**Расхождение.** Порт писал события только в HUD-журнал, который в режиме
+настоящего интерфейса (`FRAMEPIC`) не рисуется, — анонса не было видно.
+
+**Исправление.** `max_app::local::new_units_message` формирует текст 1:1 (порядок
+типов — по возрастанию `unit_type`, как получается из встречной сборки C++);
+`App::report_turn_start_events` кладёт его в окно над картой (`hud.set_hint`,
+тот же `MessageManager_DrawMessage`) и в журнал; `announce = false` на загрузке
+сейва. Имена — канон UFN, множественное число —
+`max_app::unit_names::unit_plural_name` (неисчисляемые `Infantry`/`Barracks`/
+`Artillery` как в `plural_name` оракула).
+
+### 46.4 Тесты и QA
+
+* `max_app/tests/construction_animation.rs` (+`growth_lasts_four_order_ticks`):
+  длительность роста равна `4 × 42 мс`, через 160 мс рост ещё не закончен, через
+  168 мс кадр совпадает с полным размером; (4 теста).
+* `max_app/tests/unit_ready_label.rs` (6, на данных игры): надпись завода и
+  строителя (текст и цель), отсутствие надписи у чужой команды и у юнита в
+  запасе, завершённое исследование, мигание зелёного канала слота 31.
+* `max_app/tests/turn_announcement.rs` (8): текст анонса для 0/1/2/3 типов,
+  неисчисляемые имена, отсутствие анонса у пауз и бульдозера, формы
+  множественного числа.
+* `production.qa`: `assert hint=Begin turn`, `assert hint=A new Training Hall is
+  available this turn`, `assert hint=A new Infantry is available this turn`, новый
+  кадр `factory-unit-label-blink` (`anim 200` — вторая фаза мигания);
+  `ai-turn.qa`: `assert hint=Begin turn`.
+* Golden переснят для затронутых кадров (`production`, `ai-turn`; в остальных
+  наборах кадры без анонса/надписи не изменились).
+

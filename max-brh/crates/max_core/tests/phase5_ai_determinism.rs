@@ -27,16 +27,16 @@ use support::phase5::{
 
 /// Pinned `(state_checksum, replay_digest_crc, state_digest)` of the strategy
 /// scenario (A.2: clan selection + weight tables, 6 rounds).
-const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0x26ED, 0xDB7B);
+const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0xD94E, 0xB2DB);
 /// Pinned digests of the production scenario (A.3: base + first buildings, 12
 /// rounds).
-const PRODUCTION_CRCS: (u16, u16, u16) = (0x372E, 0x79A6, 0x2FAE);
+const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x2804);
 /// Pinned digests of the factory scenario (A.1/A.3: spotted enemy tank → heavy
 /// plant orders a tank, 4 rounds).
-const FACTORY_CRCS: (u16, u16, u16) = (0x1DE6, 0x25CF, 0x9F84);
+const FACTORY_CRCS: (u16, u16, u16) = (0x1DE6, 0xF849, 0x2DA9);
 /// Pinned digests of the combat scenario (A.4: spotted facility attacked, 6
 /// rounds).
-const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xE313, 0xCE5B);
+const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xECCA, 0x8536);
 /// Pinned digests of the research scenario (A.5: upgrades + powered centre, 4
 /// rounds).
 ///
@@ -47,7 +47,7 @@ const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xE313, 0xCE5B);
 const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x6407, 0x38C5);
 /// Pinned digests of the reconnaissance scenario (A.6: scout exploring, 8
 /// rounds).
-const RECON_CRCS: (u16, u16, u16) = (0x5387, 0x603B, 0xFD64);
+const RECON_CRCS: (u16, u16, u16) = (0x122B, 0x54BB, 0xF5E7);
 
 /// A.2: clan `AyersHand` resolves to `Missiles`; the base plays six rounds.
 fn strategy_scenario() -> GameUniverse {
@@ -167,8 +167,9 @@ fn assert_deterministic(
         crcs(&second),
         "{name}: packet 45 / replay digest / state digest must match"
     );
+    let actual = crcs(&first);
     assert_eq!(
-        crcs(&first),
+        actual,
         pinned,
         "{name}: pinned CRC changed; update the table in ai-port-status.md"
     );
@@ -287,3 +288,4 @@ fn production_scenario_setup() -> GameUniverse {
     green_base(&mut state, Point::new(32, 32));
     state
 }
+

@@ -609,6 +609,94 @@ pub fn team_name(team: TeamId) -> &'static str {
     }
 }
 
+/// Turn-start report — `GameManager_ReportNewUnitsMessage`
+/// (`game_manager.cpp:8103-8181`).
+///
+/// C++ counts the constructions completed by `GameManager_SpawnNewUnits`
+/// (`:8076-8094` — every `build_time <= build_rate` except the bulldozer), walks
+/// `unit_type` **down** from `UNIT_END - 1` and *prepends* every chunk, so the
+/// lowest type ends up first. A chunk is `_(c64e/8d3e/9df3)` `a new %s` for one
+/// unit or `_(5e9c/6fe5/2488)` `%i new %s` for several (`:8123-8135`); the second
+/// chunk is glued with `_(e3ee)` ` and `, the rest with `_(0a07)` `, `
+/// (`:8137-8151`). Then comes `_(a8bd)` ` is` / `_(2cd0)` ` are` and
+/// `_(e3cd)`/`_(9753)` ` available this turn.` (`:8155-8174`), the first character
+/// is uppercased, and `_(9733)` `Begin turn %i.\n` is prepended (`:8176-8180`) —
+/// with no production the message is just `Begin turn %i.`.
+///
+/// The port's names are the canon UFN ([`crate::buildmenu::unit_name`]) and their
+/// plural ([`crate::unit_names::unit_plural_name`]).
+pub fn new_units_message(turn: i32, events: &[max_core::ProductionEvent]) -> String {
+    // `counts[(*it).GetConstructedUnitType()]` — a factory spawn and a finished
+    // building are the same entry for the report; the bulldozer is skipped in C++
+    // and has its own event kind here (`RubbleCleared`).
+    let mut counts: Vec<(max_core::enums::UnitType, u32)> = Vec::new();
+
+    for event in events {
+        if !matches!(
+            event.kind,
+            max_core::ProductionEventKind::Spawned | max_core::ProductionEventKind::BuildingDone
+        ) {
+            continue;
+        }
+
+        match counts
+            .iter_mut()
+            .find(|(unit_type, _)| *unit_type == event.unit_type)
+        {
+            Some((_, count)) => *count += 1,
+            None => counts.push((event.unit_type, 1)),
+        }
+    }
+
+    // `for (unit_type = UNIT_END - 1; unit_type >= 0; --unit_type)`.
+    counts.sort_by_key(|(unit_type, _)| std::cmp::Reverse(*unit_type as u16));
+
+    let total: u32 = counts.iter().map(|(_, count)| *count).sum();
+    let mut message = String::new();
+
+    if total > 0 {
+        let mut chunks: Vec<String> = counts
+            .iter()
+            .map(|(unit_type, count)| {
+                if *count > 1 {
+                    format!(
+                        "{count} new {}",
+                        crate::unit_names::unit_plural_name(*unit_type)
+                    )
+                } else {
+                    format!("a new {}", crate::buildmenu::unit_name(*unit_type))
+                }
+            })
+            .collect();
+
+        // C++ prepends the chunks while walking the types downwards.
+        chunks.reverse();
+
+        for (index, chunk) in chunks.iter().enumerate() {
+            if index == 0 {
+                message.push_str(chunk);
+            } else if index + 1 == chunks.len() {
+                message.push_str(" and ");
+                message.push_str(chunk);
+            } else {
+                message.push_str(", ");
+                message.push_str(chunk);
+            }
+        }
+
+        message.push_str(if total == 1 { " is" } else { " are" });
+        message.push_str(" available this turn.");
+
+        // `message[0] = toupper(message[0])` (`:8156`).
+        if let Some(first) = message.chars().next() {
+            let upper: String = first.to_uppercase().collect();
+            message.replace_range(..first.len_utf8(), &upper);
+        }
+    }
+
+    format!("Begin turn {turn}.\n{message}")
+}
+
 // The local-match accessors are plain field reads on the dispatcher-agnostic
 // `App` state (stage C §4.2: the UI path is generic over the dispatcher); the turn
 // machine itself stays on `App<LocalDispatcher>` (guardrail 6).
@@ -781,7 +869,7 @@ impl App {
             self.local = Some(local);
         }
         self.universe.begin_local_round();
-        self.local_next_team();
+        self.local_next_team(true);
     }
 
     /// Round entry of a **loaded** match — `GAME_STATE_10_LOAD_GAME`
@@ -808,7 +896,10 @@ impl App {
         if !self.universe.resume_local_round() {
             self.universe.begin_local_round();
         }
-        self.local_next_team();
+        // `GameManager_UpdateGui` skips `GameManager_ProgressBuildState` for
+        // `GAME_STATE_10_LOAD_GAME` (`game_manager.cpp:2450`), so the loaded turn
+        // has no `GameManager_ReportNewUnitsMessage` window.
+        self.local_next_team(false);
     }
 
     /// Consumes [`max_core::universe::GameEvent::Turn`] notices until a team has to
@@ -829,7 +920,7 @@ impl App {
     /// The cursor is the dedicated [`App::turn_events`] position in the shared
     /// event buffer (owner decision 6): draining turn notices does not consume the
     /// combat sounds of the other cursor.
-    fn local_next_team(&mut self) {
+    fn local_next_team(&mut self, announce: bool) {
         if self.local.is_none() {
             return;
         }
@@ -847,7 +938,7 @@ impl App {
 
             match notice.event {
                 TurnEvent::Human(team) => {
-                    self.local_start_human_turn(team, notice.previous_player_team);
+                    self.local_start_human_turn(team, notice.previous_player_team, announce);
                     return;
                 }
                 TurnEvent::Computer(team) => {
@@ -885,13 +976,94 @@ impl App {
         let _profile = closing.then(|| crate::profile::finish_turn_scope(turn_counter));
 
         self.universe.end_local_turn(team);
-        self.local_next_team();
+        self.local_next_team(true);
+    }
+
+    /// Reports the production/research events of the team turn start —
+    /// `GameManager_ReportNewUnitsMessage` (`game_manager.cpp:8103-8181`) and
+    /// `ResearchMenu_NewTurn` (`ProgressBuildState`). Only the local player's
+    /// events are reported, so the journal is not flooded with foreign factories.
+    ///
+    /// `announce` — the `GameManager_ProgressBuildState` step ran for this turn
+    /// (it is skipped for `GAME_STATE_10_LOAD_GAME`); when it did, the original
+    /// shows the «Begin turn N.» window over the map, even with no production.
+    fn report_turn_start_events(&mut self, team: TeamId, announce: bool) {
+        let player = self.state_ref().player_team();
+
+        if team != player {
+            // Foreign team's economy: drop the reports (C++ messages only for the
+            // local player), the state has already advanced.
+            let _ = self.universe.take_production_events();
+            let _ = self.universe.take_research_events();
+            return;
+        }
+
+        let production = self.universe.take_production_events();
+
+        if announce {
+            // `GameManager_ReportNewUnitsMessage`: the modeless `MESSAGE_BOX_INFO`
+            // window at the top of the map area (`MessageManager_DrawMessage`).
+            let message = new_units_message(self.state_ref().turn_counter(), &production);
+            // `save_to_log = true` (`game_manager.cpp:8180`): the same text also
+            // lands in the team message log.
+            self.hud.push_log(message.replace('\n', " "));
+            self.hud.set_hint(message);
+        }
+
+        for event in &production {
+            let name = crate::buildmenu::unit_name(event.unit_type);
+
+            match event.kind {
+                max_core::ProductionEventKind::Spawned => {
+                    self.hud.push_log(format!("{name} ready"))
+                }
+                max_core::ProductionEventKind::BuildingDone => {
+                    self.hud.push_log(format!("{name} built"))
+                }
+                max_core::ProductionEventKind::PausedNoMaterials => self
+                    .hud
+                    .push_log("Production paused: not enough raw materials"),
+                max_core::ProductionEventKind::PausedNoResources => self
+                    .hud
+                    .push_log("Production paused: not enough raw materials"),
+                max_core::ProductionEventKind::PausedNoPower => {
+                    self.hud.push_log("Production paused: not enough power")
+                }
+                max_core::ProductionEventKind::PausedNoFuel => {
+                    self.hud.push_log("Production paused: not enough fuel")
+                }
+                max_core::ProductionEventKind::PausedNoWorkers => {
+                    self.hud.push_log("Production paused: not enough workers")
+                }
+                max_core::ProductionEventKind::PausedNoGold => {
+                    self.hud.push_log("Production paused: not enough gold")
+                }
+                max_core::ProductionEventKind::NoSpawnCell => self
+                    .hud
+                    .push_log("Production: no free cell near the factory"),
+                max_core::ProductionEventKind::RubbleCleared => self.hud.push_log("Rubble cleared"),
+            }
+        }
+
+        for event in self.universe.take_research_events() {
+            if event.team == player {
+                self.hud.push_log(format!(
+                    "Research complete: {:?} level {}",
+                    event.topic, event.level
+                ));
+            }
+        }
     }
 
     /// Human team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_PLAYER`): the
     /// timer, the hot-seat «Begin turn» window, the selection reset, the camera
     /// focus and the HUD log.
-    fn local_start_human_turn(&mut self, team: TeamId, previous_player_team: TeamId) {
+    fn local_start_human_turn(
+        &mut self,
+        team: TeamId,
+        previous_player_team: TeamId,
+        announce: bool,
+    ) {
         let (setup_timer, hot_seat) = self
             .local
             .as_ref()
@@ -947,6 +1119,8 @@ impl App {
                 format!("Turn {}: your move", self.state_ref().turn_counter())
             });
         }
+
+        self.report_turn_start_events(team, announce);
     }
 
     /// Computer team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_COMPUTER`):
@@ -969,6 +1143,8 @@ impl App {
             self.state_ref().turn_counter(),
             team_name(team)
         ));
+
+        self.report_turn_start_events(team, true);
     }
 
     /// `GameManager_TeamTurnFinish`, non-final branch: the production/research
@@ -982,55 +1158,11 @@ impl App {
     /// of the snapshot/CRC): taking them is the application's consumption of the
     /// core's report, not a simulation transition.
     fn local_finish_round(&mut self) {
-        // Production turn events (`GameManager_ReportNewUnitsMessage`):
-        // only for the local player, so that the log is not flooded with foreign
-        // factories.
-        let player = self.state_ref().player_team();
-        let events = self.universe.take_production_events();
-
-        for event in events.iter().filter(|event| event.builder.team() == player) {
-            let name = crate::buildmenu::unit_name(event.unit_type);
-
-            match event.kind {
-                max_core::ProductionEventKind::Spawned => {
-                    self.hud.push_log(format!("{name} ready"))
-                }
-                max_core::ProductionEventKind::BuildingDone => {
-                    self.hud.push_log(format!("{name} built"))
-                }
-                max_core::ProductionEventKind::PausedNoMaterials => self
-                    .hud
-                    .push_log("Production paused: not enough raw materials"),
-                max_core::ProductionEventKind::PausedNoResources => self
-                    .hud
-                    .push_log("Production paused: not enough raw materials"),
-                max_core::ProductionEventKind::PausedNoPower => {
-                    self.hud.push_log("Production paused: not enough power")
-                }
-                max_core::ProductionEventKind::PausedNoFuel => {
-                    self.hud.push_log("Production paused: not enough fuel")
-                }
-                max_core::ProductionEventKind::PausedNoWorkers => {
-                    self.hud.push_log("Production paused: not enough workers")
-                }
-                max_core::ProductionEventKind::PausedNoGold => {
-                    self.hud.push_log("Production paused: not enough gold")
-                }
-                max_core::ProductionEventKind::NoSpawnCell => self
-                    .hud
-                    .push_log("Production: no free cell near the factory"),
-                max_core::ProductionEventKind::RubbleCleared => self.hud.push_log("Rubble cleared"),
-            }
-        }
-
-        // `ResearchMenu_NewTurn`: completed topics (P6).
-        let research = self.universe.take_research_events();
-        for event in research.iter().filter(|event| event.team == player) {
-            self.hud.push_log(format!(
-                "Research complete: {:?} level {}",
-                event.topic, event.level
-            ));
-        }
+        // Production/research events are reported at the **team turn start**
+        // (`GameManager_ProgressBuildState` → `GameManager_ReportNewUnitsMessage`),
+        // i.e. in `local_start_human_turn`/`local_start_ai_turn`: the new round's
+        // first team has already run its economy by the time `RoundClosed` is
+        // consumed here, so draining the buffers now would misattribute them.
 
         // `ProductionManager::DrawResourceMessage` (`production_manager.cpp:792-804`):
         // «Adjustments made: …» over the map (`MESSAGE_BOX_NOTICE`).
@@ -1323,7 +1455,7 @@ impl App {
                 self.update_visual_units(dt);
                 // A pure consumer in stage A: the machine has already run inside
                 // the facade, so this only applies notices that are still unread.
-                self.local_next_team();
+                self.local_next_team(true);
                 update.ai_started = matches!(
                     self.local.as_ref().map(|local| local.phase),
                     Some(LocalPhase::AiTurn(_))

@@ -1857,13 +1857,11 @@ impl<'a> ProductionManager<'a> {
             info.stats_units_built = info.stats_units_built.saturating_add(1);
         }
 
-        // Queue accounting: `build_list.Remove(0)`, `repeat_build` returns the type.
+        // Queue accounting is **per branch**: C++ `UnitInfo::SpawnNewUnit`
+        // (`unitinfo.cpp:3489-3520`) removes the head only in the stationary
+        // (factory) branch; a mobile builder keeps its queue when it has a path
+        // (`:3536-3538` `if (!path) build_list.Clear()`), otherwise it is cleared.
         let mut builder = builder;
-        builder.build_list.remove(0);
-
-        if factory && builder.repeat_build {
-            builder.build_list.push(unit_type);
-        }
 
         let kind = if factory {
             ProductionEventKind::Spawned
@@ -1872,6 +1870,11 @@ impl<'a> ProductionManager<'a> {
         };
 
         if factory {
+            builder.build_list.remove(0);
+
+            if builder.repeat_build {
+                builder.build_list.push(unit_type);
+            }
             // `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3489-3520`), the
             // `flags & STATIONARY` branch — the built unit stays **in the factory**:
             // * `factory_unit->SetParent(this)` — the unit's parent is the factory;
@@ -1945,14 +1948,20 @@ impl<'a> ProductionManager<'a> {
             }
 
             // `this->SetParent(&*utility_unit)`: the builder is "inside" the building until
-            // leaving the site; `if (!path) build_list.Clear()` — here the builder
-            // does not move to the site (`PositionInTape` moves only the sprite),
-            // there is no path, so the queue is cleared.
+            // leaving the site. `UnitInfo::SpawnNewUnit` (`unitinfo.cpp:3536-3538`):
+            // `if (!path) build_list.Clear();` — a builder that was ordered a **Path**
+            // (`GameManager_PathBuild`, `game_manager.cpp:4583-4587`) keeps the queue
+            // head so that `UnitsManager_BuildNext` (`units_manager.cpp:3807`) can
+            // repeat the same type on the next cell of the route. The queue is
+            // cleared only when there is no path (a single building order).
             builder.parent_unit = Some(spawned);
             builder.orders = UnitOrder::Build;
             builder.state = UnitOrderState::UnitReady;
             builder.build_time = 0;
-            builder.build_list.clear();
+
+            if builder.path.is_none() {
+                builder.build_list.clear();
+            }
         }
 
         self.state.write_unit(id, builder);
@@ -1998,6 +2007,77 @@ pub(crate) fn can_afford_turn(state: &GameState, team: TeamId, unit_id: UnitId) 
 
     unit.complex
         .is_some_and(|complex| complex_raw_materials(state, team, complex) >= cost.max(0))
+}
+
+/// `UnitsManager_BuildNext(unit)` (`units_manager.cpp:3807-3824`) — the next
+/// building of a **Path** construction (`GameManager_PathBuild`).
+///
+/// Called for a mobile builder in `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` that
+/// has a path (see [`crate::unit_order`]). C++:
+///
+/// ```text
+/// unit_type = *build_list[0];
+/// turns = BuildMenu_GetTurnsToBuild(unit_type, team);
+/// if (storage >= turns * Cargo_GetRawConsumptionRate(unit_type, 1) &&
+///     (path->GetEndX() != grid_x || path->GetEndY() != grid_y)) {
+///     remove_road = type != CNCT_4W && type != ROAD && type != BRIDGE && type != WTRPLTFM;
+///     Access_DestroyUtilities(grid_x, grid_y, false, false, remove_road, remove_road);
+///     state = ORDER_STATE_IN_PROGRESS;          // move to the next cell
+/// } else {
+///     ClearBuildListAndPath();                  // no material / route finished
+/// }
+/// ```
+///
+/// Returns `true` when the builder continues along the path (the order machine
+/// then walks it and [`crate::unit_order`] starts the next site on the next
+/// cell), `false` when the queue/path were cleared.
+pub(crate) fn build_next(state: &mut GameState, builder_id: UnitId) -> bool {
+    let Some(builder) = state.unit(builder_id).cloned() else {
+        return false;
+    };
+    let Some(&unit_type) = builder.build_list.first() else {
+        return false;
+    };
+
+    let turns = turns_to_build(state, builder.team, unit_type);
+    let rate = cargo_raw_consumption_rate(builder.unit_type, 1);
+    let path_end = builder.path.as_ref().map(crate::unit::UnitPath::end);
+    let has_materials = i32::from(builder.storage) >= turns.saturating_mul(rate).max(0);
+    let route_continues = path_end.is_some_and(|(x, y)| x != builder.grid.x || y != builder.grid.y);
+
+    if has_materials && route_continues {
+        // `remove_road`/`remove_connectors` are the same expression in the oracle:
+        // a connector/road/bridge/platform is not removed under the next site.
+        let remove = !matches!(
+            unit_type,
+            UnitType::Connector | UnitType::Road | UnitType::Bridge | UnitType::WaterPlatform
+        );
+
+        crate::access::destroy_utilities(state, builder.grid, false, false, remove, remove);
+
+        if let Some(mut unit) = state.unit(builder_id).cloned() {
+            unit.state = UnitOrderState::InProgress;
+            state.write_unit(builder_id, unit);
+        }
+
+        true
+    } else {
+        // `UnitInfo::ClearBuildListAndPath` (`unitinfo.cpp:1681`).
+        let mut unit = builder;
+        unit.path = None;
+
+        if unit.parent_unit.is_some() {
+            unit.orders = UnitOrder::Build;
+            unit.state = UnitOrderState::UnitReady;
+        } else {
+            unit.orders = UnitOrder::Await;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+
+        unit.build_list.clear();
+        state.write_unit(builder_id, unit);
+        false
+    }
 }
 
 #[cfg(test)]

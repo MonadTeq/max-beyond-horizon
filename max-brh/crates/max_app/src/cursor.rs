@@ -379,6 +379,10 @@ fn resolve_tape_parent(state: StateRef<'_>, id: UnitId) -> Option<UnitId> {
 }
 
 /// `GameManager_IsValidTransferTarget` (`game_manager.cpp:6084`).
+///
+/// C++ compares `Complex*` pointers; the port's [`max_core::team::ComplexId`] is
+/// unique only within a team, so the team of the complex member is compared too —
+/// otherwise an enemy complex with the same numeric id would accept a transfer.
 pub fn is_valid_transfer_target(state: StateRef<'_>, unit1: &UnitInfo, unit2: &UnitInfo) -> bool {
     if unit1.id == unit2.id {
         return false;
@@ -390,7 +394,10 @@ pub fn is_valid_transfer_target(state: StateRef<'_>, unit1: &UnitInfo, unit2: &U
                 continue;
             };
 
-            if other.complex == Some(complex) && is_unit_next_to_position(other, unit1.grid) {
+            if other.complex == Some(complex)
+                && other.team == unit2.team
+                && is_unit_next_to_position(other, unit1.grid)
+            {
                 return true;
             }
         }

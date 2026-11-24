@@ -1761,11 +1761,18 @@ fn awac_completes_from_the_merged_complex_pot() {
 }
 
 // ---------------------------------------------------------------------------
-// `finish_turn` — production turn integration
+// `finish_turn` / team turn start — production turn integration
 // ---------------------------------------------------------------------------
 
+/// Oracle: `GameManager_TeamTurnFinish` (`game_manager.cpp:583`) only closes the
+/// round (victory check, score, `turn_counter`); the economy of a team runs at the
+/// **start of its own turn** — `GameManager_ManageEconomy` (`:2058`) then
+/// `GameManager_ProgressBuildState` (`:8183`). Previously the port ran the whole
+/// production phase in `finish_turn`, i.e. before the next turn's mining income was
+/// credited (manual defect 3: "resources are not spent/credited at the end of the
+/// turn").
 #[test]
-fn finish_turn_runs_the_production_phase() {
+fn finish_turn_closes_the_round_and_the_turn_start_runs_the_production_phase() {
     let mut state = state_with_gold(100);
     // A duel as in a game: RED is a human, GREEN is a computer, the network branch
     // is disabled (local semantics of `menu_check_end_game_conditions`).
@@ -1817,14 +1824,40 @@ fn finish_turn_runs_the_production_phase() {
         100,
         "золото команды производством не тратится"
     );
-    assert_eq!(
+
+    let dump_storage = |state: &max_core::universe::GameUniverse| {
         state
             .snapshot()
             .unit_ids_in_order()
             .into_iter()
             .filter_map(|id| state.snapshot().unit(id))
             .find(|unit| unit.unit_type == UnitType::MaterialStorage)
-            .map(|unit| unit.storage),
+            .map(|unit| unit.storage)
+    };
+
+    // Closing the round does **not** charge production (C++ `TeamTurnFinish`).
+    assert_eq!(
+        dump_storage(&state),
+        Some(20),
+        "finish_turn закрывает раунд, но не списывает сырьё"
+    );
+    assert_eq!(
+        state.snapshot().unit(factory).map(|unit| unit.build_time),
+        Some(2)
+    );
+
+    // Start of the team turn: `ManageEconomy` (income + distribution) then
+    // `ProgressBuildState` (the factory pays and advances).
+    state.manage_economy(TeamId::RED);
+    let events = state.progress_build_state(TeamId::RED);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.kind != max_core::ProductionEventKind::PausedNoMaterials),
+        "первый ход оплачен: {events:?}"
+    );
+    assert_eq!(
+        dump_storage(&state),
         Some(19),
         "ход завода списан материалами (1 за INFANTRY)"
     );

@@ -1895,6 +1895,80 @@ impl GameState {
     // End of turn (DESIGN §5.3, `game_manager.cpp:2042-2087`)
     // -----------------------------------------------------------------------
 
+    /// `GameManager_RefreshOrders` (`game_manager.cpp:838-891`), the economy part —
+    /// run when a team **ends its turn**, before the `06` packet.
+    ///
+    /// C++ order (for every complex of the team):
+    /// 1. `Access_UpdateResourcesTotal(complex)` — the complex stocks are recomputed
+    ///    from its buildings: `Cargo_GetNetProduction + Cargo_GetInventory`
+    ///    (`access.cpp:912`), i.e. **the mining of the turn is credited here**;
+    /// 2. `GameManager_OptimizeProduction(team, complex, is_player, true)` — the
+    ///    shortage is determined **after** the income and resolved by re-allocating
+    ///    production / pausing constructions (`production_manager.cpp:830-901`).
+    ///
+    /// The port runs it in [`crate::events`]' `06` application, so every peer
+    /// computes it deterministically at the same lockstep point.
+    pub(crate) fn refresh_orders(&mut self, team: TeamId) {
+        if self.teams.get(team.0 as usize).is_none() {
+            return;
+        }
+
+        let complexes: Vec<crate::team::ComplexId> = self
+            .team_units
+            .get(team.0 as usize)
+            .map(|units| {
+                units
+                    .complexes
+                    .iter()
+                    .map(|complex| complex.complex_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // `Access_UpdateResourcesTotal(complex)` for each complex.
+        self.update_complex_resources(team);
+
+        let is_player = self
+            .teams
+            .get(team.0 as usize)
+            .is_some_and(|info| info.team_type == TeamKind::Player);
+
+        // `GameManager_OptimizeProduction`: the shortage is checked on the
+        // **credited** stocks (the end-of-turn income of point 1), exactly as C++.
+        for complex in complexes {
+            let _ = crate::power::optimize_complex(self, team, complex, None, None, is_player);
+        }
+    }
+
+    /// Full start of a team's turn — C++ `GameManager_ManageEconomy` followed by
+    /// `GameManager_ProgressBuildState` (`game_manager.cpp:2058`, `:8183`).
+    ///
+    /// The order is the oracle's and it is what makes the resource timing correct:
+    /// 1. `ManageEconomy` — `OptimizeComplexes` (income credits + shortage), then
+    ///    `UpdateProductions` (`UnitInfo::UpdateProduction`: the mobile builder pays
+    ///    raw material, the complex stock is distributed over the storages,
+    ///    speed/shots are reset), then resupply and research progress;
+    /// 2. `ProgressBuildState` — `ResearchMenu_NewTurn`, then `SpawnNewUnits`
+    ///    (the factory pays from the **already credited and distributed** complex
+    ///    material and advances/complete the construction), then the complexes are
+    ///    recomputed and optimized once more.
+    ///
+    /// The previous port ran `progress_build_state` for every team at the round
+    /// close — i.e. **before** the next `manage_economy` — so a factory was charged
+    /// and judged shortage-stricken on the previous turn's storages, before this
+    /// turn's mining income had been credited (manual defect "resources are not
+    /// spent/credited at the end of the turn").
+    pub(crate) fn start_team_turn(&mut self, team: TeamId) {
+        self.manage_economy(team);
+
+        // `ResearchMenu_NewTurn(team)` is the first step of `ProgressBuildState`.
+        let research = self.advance_research(team);
+        self.research_events.extend(research);
+
+        let events = crate::production::progress_build_state(self, team);
+        self.production_events.extend(events);
+    }
+
     /// `GameManager_ManageEconomy` — updating the team's production, supply and
     /// research at the start of its turn.
     pub(crate) fn manage_economy(&mut self, team: TeamId) {
@@ -2457,10 +2531,11 @@ impl GameState {
         self.teams[slot].finished_turn = false;
 
         if entry == TeamTurnEntry::RoundStart {
-            // `GameManager_ManageEconomy(team)` at the start of the team turn
-            // (`game_manager.cpp:462-464`). The load branch skips it: the economy of
-            // the saved team was already applied before the save.
-            self.manage_economy(team);
+            // `GameManager_ManageEconomy(team)` + `GameManager_ProgressBuildState(team)`
+            // of the team turn start (`game_manager.cpp:462-464`, `:2450/2468/2484`).
+            // The load branch skips both: the economy of the saved team was already
+            // applied before the save.
+            self.start_team_turn(team);
         }
 
         // `GameManager_UpdateGui`: `GameManager_ActiveTurnTeam = team` (`:2411`).
@@ -2683,28 +2758,27 @@ impl GameState {
         self.update_score_graph();
         self.turn_counter += 1;
 
-        // `GameManager_ManageEconomy` → `GameManager_ProgressBuildState` for
-        // each playing team in RED..GRAY order (C++ `UpdateGui`): the production
-        // turn runs right after the turn switch, before AI/player turns.
-        // Call order 1:1: turn cost charging → `SpawnNewUnits`
-        // (`GroundCover → MobileLandSea → Stationary → MobileAir`).
+        // `GameManager_TeamTurnFinish` → the next round's `GameManager_UpdateGui`:
+        // in a **sequential** (local/hot-seat) match each team's
+        // `ManageEconomy`/`ProgressBuildState` pair runs at its own turn start
+        // ([`Self::start_team_turn`] from `start_team`). A **concurrent/network**
+        // match closes the round through the barrier FSM and never starts a team
+        // individually, so the C++ `TeamTurnConcurrent` pass is expanded here:
+        // `ManageEconomy` for every team, then `ProgressBuildState` for every team
+        // (`game_manager.cpp:507-522`, `Leader`/`UpdateGui`).
         self.production_events.clear();
         self.research_events.clear();
         self.industry_message = None;
 
-        for team in 0..PLAYER_TEAM_COUNT {
-            let kind = self.teams[team].team_type;
-            if kind == TeamKind::None || kind == TeamKind::Eliminated {
-                continue;
+        if self.network_game {
+            for team in 0..PLAYER_TEAM_COUNT {
+                let kind = self.teams[team].team_type;
+                if kind == TeamKind::None || kind == TeamKind::Eliminated {
+                    continue;
+                }
+
+                self.start_team_turn(TeamId(team as u8));
             }
-
-            // `GameManager_ProgressBuildState`: first `ResearchMenu_NewTurn`
-            // (P6), then `SpawnNewUnits` — the C++ order.
-            let research = self.advance_research(TeamId(team as u8));
-            self.research_events.extend(research);
-
-            let events = crate::production::progress_build_state(self, TeamId(team as u8));
-            self.production_events.extend(events);
         }
 
         false

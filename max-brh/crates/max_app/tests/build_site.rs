@@ -710,9 +710,107 @@ fn same_input_gives_the_same_site_and_digest() {
     assert_eq!(left, right, "та же последовательность — тот же результат");
 }
 
+/// `GameManager_PathBuild` (`game_manager.cpp:4566-4598`): the engineer's `Path`
+/// order attaches a **linear `GroundPath`** to the clicked cell (packet 38) and
+/// starts the first object on its own cell (packet 08/P4 with `move_to` = builder
+/// cell) — the queue head then repeats along the route
+/// (`UnitsManager_BuildNext`, `units_manager.cpp:3807`).
+#[test]
+fn engineer_path_attaches_the_route_and_builds_at_its_own_cell() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    // A free horizontal strip of four land cells for the engineer and its route.
+    let land = max_core::enums::Surface::LAND.bits();
+    let home = Point::new(22, 22);
+    let free = |app: &App, cell: Point| {
+        app.state_ref().units_at(cell).is_empty()
+            && app.state_ref().map().surface_at(cell.x, cell.y).bits() & land != 0
+    };
+    let mut start = None;
+
+    'search: for dy in -12..=12 {
+        for dx in -12..=12 {
+            let grid = Point::new(home.x + dx, home.y + dy);
+            let clear = (0..4).all(|offset| free(&app, Point::new(grid.x + offset, grid.y)));
+
+            if clear {
+                start = Some(grid);
+                break 'search;
+            }
+        }
+    }
+
+    let grid = start.expect("свободная полоса суши");
+    let engineer = app
+        .universe_mut()
+        .spawn_unit(
+            UnitType::Engineer,
+            TeamId::RED,
+            grid,
+            max_core::access::unit_type_flags(UnitType::Engineer),
+        )
+        .expect("инженер");
+    app.universe_mut().unit_mut(engineer).expect("engineer").storage = 40;
+
+    // `Path` button: `Build()` with `event_click_path_build` (1×1 site selection).
+    app.hud_mut().select(Some(engineer));
+    assert!(app.open_build_menu(), "BuildMenu открылся");
+    let index = max_core::production::buildable_units(UnitType::Engineer)
+        .iter()
+        .position(|unit_type| *unit_type == UnitType::MaterialStorage)
+        .expect("Material Storage в списке инженера");
+    assert!(app.build_menu_select(index), "выбран Material Storage");
+
+    let line = app
+        .commit_build_menu_path(max_app::SessionChannel::Local)
+        .expect("Path обработан");
+    assert!(app.build_site().is_some(), "выбор места открыт ({line})");
+
+    let target = Point::new(grid.x + 3, grid.y);
+    app.viewport_mut().center_on_grid(target.x, target.y);
+    let (x, y) = screen_point(&app, target);
+    let _ = handle_session_input(&mut app, InputEvent::MouseMove(x, y));
+    assert!(
+        app.build_site()
+            .expect("режим выбора")
+            .valid(app.state_ref()),
+        "клетка в строке инженера валидна"
+    );
+
+    app.confirm_build_site(max_app::SessionChannel::Local);
+
+    let unit = app.state_ref().unit(engineer).expect("engineer");
+    let (end_x, end_y) = unit
+        .path
+        .as_ref()
+        .map(max_core::unit::UnitPath::end)
+        .expect("Path задаёт линейный маршрут");
+    assert_eq!(
+        (end_x, end_y),
+        (target.x, target.y),
+        "маршрут ведёт до указанной клетки"
+    );
+    assert_eq!(
+        app.state_ref().order_data(engineer).move_to,
+        grid,
+        "`UnitsManager_StartBuild` сбрасывает move_to инженера на его клетку"
+    );
+    assert_eq!(
+        unit.build_list,
+        vec![UnitType::MaterialStorage],
+        "очередь Path-постройки сохранена"
+    );
+    assert_eq!(unit.orders, UnitOrder::Build);
+    assert_eq!(
+        unit.target_grid, grid,
+        "первый объект ставится на клетке инженера"
+    );
+}
+
 /// How many pixels of the area differ (any channel above the threshold).
-fn count_changed_in_rect(
-    left: &max_render::buffer::RgbaBuffer,
+fn count_changed_in_rect(    left: &max_render::buffer::RgbaBuffer,
     right: &max_render::buffer::RgbaBuffer,
     x0: i32,
     y0: i32,

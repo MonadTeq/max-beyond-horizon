@@ -571,6 +571,15 @@ fn apply_packet_06(
         return ApplyOutcome::Ignored;
     }
 
+    // `GameManager_RefreshOrders` (`game_manager.cpp:838-891`) runs right before
+    // `Remote_SendNetPacket_06`: it credits the turn's mining into the complex
+    // stocks (`Access_UpdateResourcesTotal`) and only then determines the shortage
+    // (`GameManager_OptimizeProduction`). Doing it in the `06` application keeps
+    // every peer at the same deterministic point — the end-of-turn resource
+    // processing of the oracle (manual defect "resources are not spent/credited
+    // at the end of the turn").
+    state.refresh_orders(packet.team);
+
     state.teams[packet.team.0 as usize].finished_turn = true;
 
     if state.play_mode == crate::enums::PlayMode::TurnBased {
