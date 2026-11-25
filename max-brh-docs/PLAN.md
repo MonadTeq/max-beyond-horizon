@@ -228,3 +228,9 @@
 - **Релизный кандидат 1.1.0-rc2** (2026-11-24): 1.4.1 закрыт (B6 debug-Preferences,
   C1/C2 oracle-true, C3/C4 MVE + D2 музыка, fallback видимый, не в CRC). Horizon-smoke
   зелёный, packet 09 совместим, enet-фикс, golden 132/132, ~1654 теста.
+- **Аудит тестов (интеграционные в src/):** правило зафиксировано (AGENTS.md п.7 +
+  test-organization.md). Кластеры к переносу в tests/ (при касании модулей):
+  max_core/src/universe/scenario_tests/ (фасад, документированный доступ к приватному
+  state), max_app/src/net.rs + net/{p2p,dispatcher,audit}.rs (сеть, GameUniverse+Dispatcher),
+  max_net/src/{host,session,wire}.rs (транспорт), max_app/src/lib.rs (app-level),
+  UI-меню (allocmenu/buildmenu/panels/… — GameUniverse::default() для рендера, пограничный).
