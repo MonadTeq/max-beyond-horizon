@@ -306,28 +306,38 @@ impl HeatMap {
     }
 
     /// `HeatMap::Add` without callout calls: returns `(complete_was_hidden,
-    /// sea_was_hidden, land_was_hidden)`.
+    /// sea_transition, land_transition)`.
+    ///
+    /// A **stealth transition** is a layer that passed its qualifier and was zero
+    /// before this contribution (`heatmap.cpp:67-85`): only a `CORVETTE` raises
+    /// `stealth_sea`, only `COMMANDO`/`INFANTRY` raise `stealth_land`, and the
+    /// `on_sea_revealed`/`on_land_revealed` callouts fire exactly on those
+    /// transitions. A layer that is merely still zero (every cell no corvette
+    /// covers) is *not* a transition.
     fn add_raw(&mut self, unit: &UnitInfo, grid_x: i32, grid_y: i32) -> (bool, bool, bool) {
         let Some(index) = Self::index(grid_x, grid_y) else {
             return (false, false, false);
         };
 
         let cell = &mut self.cells[index];
-        let sea_was_zero = cell.stealth_sea == 0;
-        let land_was_zero = cell.stealth_land == 0;
+
+        let mut sea_transition = false;
+        let mut land_transition = false;
 
         if unit.unit_type == UnitType::Corvette {
+            sea_transition = cell.stealth_sea == 0;
             cell.stealth_sea = cell.stealth_sea.wrapping_add(1);
         }
 
         if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
+            land_transition = cell.stealth_land == 0;
             cell.stealth_land = cell.stealth_land.wrapping_add(1);
         }
 
         let was_hidden = cell.complete == 0;
         cell.complete = cell.complete.wrapping_add(1);
 
-        (was_hidden, sea_was_zero, land_was_zero)
+        (was_hidden, sea_transition, land_transition)
     }
 
     /// `HeatMap::Remove` without callout calls: returns `complete_was_hidden`.
@@ -519,18 +529,49 @@ impl GameState {
 
     /// `UnitInfo::DrawStealth(team)` (`unitinfo.cpp:2872`) — updating
     /// unit visibility by scanning and the stealth layers.
+    ///
+    /// Two outcomes of the oracle:
+    /// * the unit is (or becomes) visible — `SpotByTeam`;
+    /// * a stealth unit sits in a cell the team has already scanned but the
+    ///   matching stealth coverage is gone (`Submarine` without sea-stealth,
+    ///   `COMMANDO` without land-stealth) — `Draw(team)`, i.e. the unit is hidden
+    ///   again. Without this branch a submarine that lost its corvette coverage
+    ///   (the corvette died or drove off while some other scan kept the cell
+    ///   covered) stayed visible to every team for the rest of the game.
     fn draw_stealth(world: &mut GameState, id: UnitId, team: TeamId) {
         let Some(unit) = world.unit(id).cloned() else {
             return;
         };
 
+        let underwater = world.is_unit_under_water(&unit);
+
         if unit.is_detected_by_team(team)
-            || (!world.is_unit_under_water(&unit)
+            || (!underwater
                 && unit.unit_type != UnitType::Infiltrator
                 && unit.unit_type != UnitType::LandMine
                 && unit.unit_type != UnitType::SeaMine)
         {
             world.spot_by_team(id, team);
+            return;
+        }
+
+        // C++ guards both stealth checks with `heat_map != nullptr` (the
+        // `ALIEN` slot has no map).
+        if heat_map_index(team).is_none() {
+            return;
+        }
+
+        let grid_x = i32::from(unit.grid.x);
+        let grid_y = i32::from(unit.grid.y);
+
+        // `(IsUnitUnderWater && heat_map && !GetStealthSea)` —
+        // `(COMMANDO && heat_map && !GetStealthLand)`.
+        let lost_cover = (underwater && world.ai_heat_map_stealth_sea(team, grid_x, grid_y) == 0)
+            || (unit.unit_type == UnitType::Infiltrator
+                && world.ai_heat_map_stealth_land(team, grid_x, grid_y) == 0);
+
+        if lost_cover {
+            Self::hide_unit_from_team(world, id, team);
         }
     }
 
@@ -742,9 +783,6 @@ impl GameState {
             return access::TARGET_CLASS_NONE;
         }
 
-        let sea_was_zero = self.ai_heat_map_stealth_sea(team, grid_x, grid_y) == 0;
-        let land_was_zero = self.ai_heat_map_stealth_land(team, grid_x, grid_y) == 0;
-
         let Some((complete_was_hidden, sea_transition, land_transition)) =
             self.with_heat_map(team, |map, _world| map.add_raw(&unit, grid_x, grid_y))
         else {
@@ -753,40 +791,39 @@ impl GameState {
 
         let mut result = access::TARGET_CLASS_NONE;
 
-        if sea_transition || (unit.unit_type == UnitType::Corvette && sea_was_zero) {
+        // `Access_UpdateMapStatusAddUnit` (`access.cpp:652-663`): the sea-stealth
+        // callout fires only when a **corvette** starts covering the cell
+        // (`HeatMap::Add`'s `m_sea_qualifier` + `stealth_sea == 0`). Gating on the
+        // raw layer value instead let *any* scanning unit announce the cell and
+        // spot every submerged unit in it, so submarines were visible to every
+        // team whose ordinary scan touched their cell.
+        if sea_transition {
             self.reveal_sea_stealth(team, grid_x, grid_y);
 
-            if unit.unit_type == UnitType::Corvette {
-                let ids: Vec<UnitId> = self
-                    .units_at(Point::new(grid_x as i16, grid_y as i16))
-                    .to_vec();
-                for other in ids {
-                    if let Some(other_unit) = self.unit(other) {
-                        if self.is_unit_under_water(other_unit) && unit.team != other_unit.team {
-                            result |= Self::attack_target_group(other_unit);
-                        }
+            let ids: Vec<UnitId> = self
+                .units_at(Point::new(grid_x as i16, grid_y as i16))
+                .to_vec();
+            for other in ids {
+                if let Some(other_unit) = self.unit(other) {
+                    if self.is_unit_under_water(other_unit) && unit.team != other_unit.team {
+                        result |= Self::attack_target_group(other_unit);
                     }
                 }
             }
         }
 
-        if land_transition
-            || (matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry)
-                && land_was_zero)
-        {
+        // The same for the land-stealth layer: `COMMANDO`/`INFANTRY` only.
+        if land_transition {
             self.reveal_land_stealth(team, grid_x, grid_y);
 
-            if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
-                let ids: Vec<UnitId> = self
-                    .units_at(Point::new(grid_x as i16, grid_y as i16))
-                    .to_vec();
-                for other in ids {
-                    if let Some(other_unit) = self.unit(other) {
-                        if other_unit.unit_type == UnitType::Infiltrator
-                            && unit.team != other_unit.team
-                        {
-                            result |= Self::attack_target_group(other_unit);
-                        }
+            let ids: Vec<UnitId> = self
+                .units_at(Point::new(grid_x as i16, grid_y as i16))
+                .to_vec();
+            for other in ids {
+                if let Some(other_unit) = self.unit(other) {
+                    if other_unit.unit_type == UnitType::Infiltrator && unit.team != other_unit.team
+                    {
+                        result |= Self::attack_target_group(other_unit);
                     }
                 }
             }

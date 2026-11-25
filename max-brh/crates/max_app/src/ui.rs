@@ -3582,7 +3582,26 @@ where
     }
 
     // Enemy: commando (cursor modes 8/9) or attack (packet 08, P3).
+    //
+    // A **visible** enemy is the inspection candidate: `GameManager_GetWindowCursor`
+    // with no selected unit returns `CURSOR_UNIT_NO_GO`, and
+    // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6903-6928`) routes the
+    // click to `GameManager_UnitSelectOther` → `GameManager_MenuUnitSelect` — the
+    // enemy is selected and its portrait/statistics are shown
+    // (`GameManager_UpdateInfoDisplay`, `game_manager.cpp:7667`).
+    //
+    // A fogged enemy keeps the port's documented simplification (`hud::unit_at_screen`
+    // does not filter by visibility): without a own selected unit the click stays a
+    // no-op, with one — the old attack path below.
+    let enemy_visible = app
+        .state_ref()
+        .unit(id)
+        .is_some_and(|unit| unit.is_visible_to_team(team));
+
     let Some(selected) = app.hud().selected else {
+        if enemy_visible {
+            return session_select_enemy(app, id, &label);
+        }
         app.hud_mut()
             .push_log("Enemy unit — select your unit first");
         return Transition::None;
@@ -3631,15 +3650,66 @@ where
         }
     }
 
-    match hud::build_attack_order(app.state_ref(), selected, id) {
-        Some(command) => {
-            app.hud_mut().preview = None;
-            app.hud_mut().pending.push(command);
-            app.hud_mut().push_log(format!("Attack: {label}"));
-            apply_session_orders(app);
+    // `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`): the click is an
+    // attack (`CURSOR_ENEMY`/`CURSOR_FAR_TARGET`) only when the selected unit can
+    // actually attack the target. On `CURSOR_UNIT_NO_GO` C++ selects the visible
+    // enemy instead (`GameManager_UpdateSelection` → `GameManager_UnitSelectOther`,
+    // `:6292-6298`) and shows its portrait/statistics. A fogged enemy keeps the
+    // port's old attack path (see above).
+    if !enemy_visible || hud::attack_cursor_active(app.state_ref(), selected, id) {
+        match hud::build_attack_order(app.state_ref(), selected, id) {
+            Some(command) => {
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!("Attack: {label}"));
+                apply_session_orders(app);
+            }
+            None => app.hud_mut().push_log("Cannot attack this unit"),
         }
-        None => app.hud_mut().push_log("Cannot attack this unit"),
+
+        return Transition::None;
     }
+
+    session_select_enemy(app, id, &label)
+}
+
+/// Selects a **visible** enemy unit for inspection — C++
+/// `GameManager_UnitSelectOther` (`game_manager.cpp:6229-6244`).
+///
+/// `GameManager_MenuUnitSelect` (`:7141`) → `GameManager_UpdateInfoDisplay`
+/// (`:7667`) then draws the enemy's portrait and its four statistic rows; the
+/// C++ gates the rows by team itself (ammo/cargo are hidden for a foreign unit,
+/// `:7688-7720`). The visibility check is C++'s: `Access_GetEnemyUnit` requires
+/// `IsVisibleToTeam`, and `UnitSelectOther` re-checks it before selecting.
+/// The unit command menu does not open for a foreign unit
+/// (`GameManager_InitPopupButtons` is reached only for the player team,
+/// `:6253-6258`; the port also rejects it in [`crate::App::open_unit_menu`]).
+fn session_select_enemy<D: Dispatcher>(
+    app: &mut App<D>,
+    id: max_core::unit::UnitId,
+    label: &str,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let team = app.player_team();
+    let visible = app
+        .state_ref()
+        .unit(id)
+        .is_some_and(|unit| unit.is_visible_to_team(team));
+
+    if !visible {
+        // C++ cannot even see such a unit under the cursor (`Access_GetEnemyUnit`
+        // filters by `IsVisibleToTeam`), so the click is not a selection.
+        app.hud_mut().push_log("Enemy unit — not visible");
+        return Transition::None;
+    }
+
+    app.close_unit_menu();
+    app.hud_mut().select(Some(id));
+    app.hud_mut().preview = None;
+    app.hud_mut().clear_hint();
+    app.hud_mut().push_log(format!("Selected {label}"));
 
     Transition::None
 }
@@ -3740,6 +3810,26 @@ where
         app.hud_mut().push_log("No unit selected — LMB selects");
         return Transition::None;
     };
+
+    // A selected **enemy** unit is an inspection target, not an order source:
+    // `GameManager_GetWindowCursor` returns `CURSOR_UNIT_NO_GO` for a foreign
+    // selected unit (`game_manager.cpp:4305-4338`, `SelectedUnit->team !=
+    // GameManager_PlayerTeam`), so the minimap/map right click gives no
+    // `ORDER_MOVE`/`ORDER_ACTIVATE`. C++ opens `UnitStats_Menu` on a right click
+    // on the selected unit itself; that modal is not ported — the corner
+    // portrait and statistics panel already show the inspected enemy.
+    let selected_own = app
+        .state_ref()
+        .unit(selected)
+        .is_some_and(|unit| unit.team == team);
+
+    if !selected_own {
+        if debug {
+            eprintln!("[rclick] result=enemy-selected selected={}", selected.0);
+        }
+        app.hud_mut().push_log("Enemy unit — no orders");
+        return Transition::None;
+    }
 
     let destination = GridPoint::new(grid_x, grid_y);
 

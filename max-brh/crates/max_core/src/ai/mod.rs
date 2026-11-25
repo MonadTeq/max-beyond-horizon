@@ -303,6 +303,19 @@ impl GameState {
         if let Some(mut info) = self.unit(id).cloned() {
             info.set_visible_to_team(team, true);
             info.spot_by_team(team);
+
+            // `UnitInfo::SpotByTeam` (`unitinfo.cpp:2825-2829`): a submarine or a
+            // personnel carrier on water is **surfaced** once spotted —
+            // `image_base = 8`, the second block of eight hull frames of `S_SUBMAR`
+            // / the carrier sprite. The renderer draws the surfaced block while the
+            // field holds 8.
+            if matches!(
+                info.unit_type,
+                UnitType::Submarine | UnitType::ArmouredPersonnelCarrier
+            ) {
+                info.image_base = 8;
+            }
+
             self.write_unit(id, info);
         }
 

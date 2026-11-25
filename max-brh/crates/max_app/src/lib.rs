@@ -700,8 +700,10 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     vision: vision::VisionView,
     /// Visual frame clock of units (`FrameAnimation`).
     ///
-    /// Two mechanisms: the builder cycle (`ProcessOrderBuild`) and the animation of
-    /// `ANIMATED` buildings (`ProcessOrderSentry`, e.g. RADAR). Factory and mine
+    /// Three mechanisms: the builder cycle (`ProcessOrderBuild`), the animation of
+    /// `ANIMATED` buildings (`ProcessOrderSentry`, e.g. RADAR) and the
+    /// `SPINNING_TURRET` radar (`SpinningTurretAdvanceAnimation`, AWAC/SCANNER).
+    /// Factory and mine
     /// frames are **not advanced** by time (DOS capture §7.2): they have state
     /// frames, and the visible blinking comes from palette cycles
     /// [`App::color_cycles`]. They are not part of the snapshot/CRC: the simulation does not store
@@ -788,7 +790,9 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
 ///
 /// Each counter lives independently: the builder advances frames at 10 Hz
 /// ([`BUILDER_ANIM_FRAME_SECONDS`]), an `ANIMATED` building — on every C++ tick
-/// ([`SENTRY_ANIM_FRAME_SECONDS`]). There are no factory frames: C++ does not
+/// ([`SENTRY_ANIM_FRAME_SECONDS`]), a `SPINNING_TURRET` radar — on every C++
+/// `UnitsManager_ProcessOrder` tick ([`SPINNING_TURRET_ANIM_FRAME_SECONDS`]).
+/// There are no factory frames: C++ does not
 /// advance them by time, the palette provides the blinking. All of them — for the frame only and
 /// not part of the snapshot/CRC.
 #[derive(Debug, Clone, Copy, Default)]
@@ -801,6 +805,10 @@ struct FrameAnim {
     sentry_elapsed: f32,
     /// `ProcessOrderSentry` tick number (ANIMATED building).
     sentry_step: u32,
+    /// Seconds since the last `SpinningTurretAdvanceAnimation` tick.
+    turret_elapsed: f32,
+    /// `SpinningTurretAdvanceAnimation` tick number (`SPINNING_TURRET`).
+    turret_step: u32,
 }
 
 /// Visual "growth" transition from `scaler_adjust` to full size.
@@ -858,6 +866,19 @@ pub const BUILD_MARKER_FRAME_SECONDS: f32 = 0.1;
 /// ~30 Hz (`TickTimer`, `timer_get`). In the interactive mode this clock follows real
 /// `dt`: 1/30 s per frame, 16 RADAR frames — a revolution in ~0.53 s.
 pub const SENTRY_ANIM_FRAME_SECONDS: f32 = 1.0 / 30.0;
+
+/// Seconds per `SpinningTurretAdvanceAnimation` frame (`SPINNING_TURRET`: AWAC,
+/// SCANNER).
+///
+/// C++ calls `UnitInfo::SpinningTurretAdvanceAnimation`
+/// (`units_manager.cpp:3263-3266` → `unitinfo.cpp:3891`) from
+/// `UnitsManager_ProcessOrder`, i.e. on every order-processing tick — exactly the
+/// tick of [`ORDER_TICK_SECONDS`] (`TIMER_FPS_TO_MS(24)` ≈ 42 ms). One turn:
+/// `AWAC`'s 30-frame radar in ~1.25 s, `SCANNER`'s 16-frame one in ~0.67 s.
+/// Frame-only: the simulation keeps the C++ `turret_image_index`, the port does
+/// not advance it, so the snapshot/CRC do not change; `dt = 0` (QA/headless)
+/// gives the static C++ frame.
+pub const SPINNING_TURRET_ANIM_FRAME_SECONDS: f32 = ORDER_TICK_SECONDS;
 
 /// Whether the mine drill frames `1..15` are advanced.
 ///
@@ -3394,8 +3415,9 @@ impl<D: Dispatcher> App<D> {
 
     /// Unit frame clock for drawing ([`render::FrameAnimation`]).
     ///
-    /// Contains the builder cycle and the `ProcessOrderSentry` tick
-    /// (ANIMATED buildings). There are no factory/mine frames: C++ does not
+    /// Contains the builder cycle, the `ProcessOrderSentry` tick
+    /// (ANIMATED buildings) and the `SpinningTurretAdvanceAnimation` tick
+    /// (`SPINNING_TURRET` radars). There are no factory/mine frames: C++ does not
     /// advance them by time — buildings have two state frames, a powered-on factory blinks
     /// with palette cycles. The value is advanced by [`App::update_unit_animations`]
     /// by real `dt`; `dt = 0` — all counters zero, i.e. the static
@@ -3406,6 +3428,7 @@ impl<D: Dispatcher> App<D> {
             .map(|anim| crate::render::FrameAnimation {
                 builder_step: anim.builder_step,
                 sentry_step: anim.sentry_step,
+                turret_step: anim.turret_step,
             })
             .unwrap_or_default()
     }
@@ -3540,6 +3563,11 @@ impl<D: Dispatcher> App<D> {
         }
     }
 
+    /// Visual frame clock: builder cycle, `ANIMATED` buildings and the
+    /// `SPINNING_TURRET` radar.
+    ///
+    /// Frame only — nothing here enters the snapshot/CRC. `dt <= 0` (QA/headless)
+    /// clears the clocks, so the goldens keep the static C++ frames.
     fn update_unit_animations(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.1);
 
@@ -3552,9 +3580,10 @@ impl<D: Dispatcher> App<D> {
 
         let ids = self.state_ref().unit_ids_in_order();
         // C++ `settings["effects"]` (`settings.cpp:128`): with effects
-        // disabled `UnitsManager_ProcessOrderBuild`/`ProcessOrderSentry`
-        // (`units_manager.cpp:2857/3030`) do not advance frames, so our
-        // frame clock does not run either — the frame stays static.
+        // disabled `UnitsManager_ProcessOrderBuild`/`ProcessOrderSentry`/
+        // `SpinningTurretAdvanceAnimation` (`units_manager.cpp:2857/3030/3263`)
+        // do not advance frames, so our frame clock does not run either — the
+        // frame stays static.
         let effects = self.preferences.effects;
         let state = self.universe.snapshot();
 
@@ -3567,8 +3596,13 @@ impl<D: Dispatcher> App<D> {
 
             let builder = crate::render::builder_animation_active(unit);
             let sentry = effects && crate::render::sentry_animation_active(unit);
+            // `UnitInfo::SpinningTurretAdvanceAnimation` from
+            // `UnitsManager_ProcessOrder` (`units_manager.cpp:3263-3266`):
+            // the rotating radar of `AWAC`/`SCANNER`, every tick of any order
+            // except `ORDER_DISABLE`, only with effects enabled.
+            let turret = effects && crate::render::spinning_turret_animation_active(unit);
 
-            if !(builder || sentry) {
+            if !(builder || sentry || turret) {
                 self.frame_anims.remove(id);
                 continue;
             }
@@ -3598,6 +3632,18 @@ impl<D: Dispatcher> App<D> {
             } else {
                 anim.sentry_elapsed = 0.0;
                 anim.sentry_step = 0;
+            }
+
+            if turret {
+                anim.turret_elapsed += dt;
+
+                while anim.turret_elapsed >= SPINNING_TURRET_ANIM_FRAME_SECONDS {
+                    anim.turret_elapsed -= SPINNING_TURRET_ANIM_FRAME_SECONDS;
+                    anim.turret_step = anim.turret_step.wrapping_add(1);
+                }
+            } else {
+                anim.turret_elapsed = 0.0;
+                anim.turret_step = 0;
             }
         }
 

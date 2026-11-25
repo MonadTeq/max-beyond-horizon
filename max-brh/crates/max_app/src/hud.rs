@@ -770,6 +770,77 @@ pub fn build_attack_order(state: StateRef<'_>, id: UnitId, target: UnitId) -> Op
     }))
 }
 
+/// Whether a click on the enemy `target` is an **attack** and not an inspection
+/// selection — a port of `GameManager_GetMilitaryCursor`
+/// (`game_manager.cpp:6150-6227`).
+///
+/// C++ returns `CURSOR_ENEMY` (in range, with ammo) or `CURSOR_FAR_TARGET`
+/// (mobile unit out of range → `ORDER_MOVE_TO_ATTACK`), and `CURSOR_UNIT_NO_GO`
+/// in every other case:
+///
+/// * the selected unit has a delayed reaction (the reaction-fire window);
+/// * `weapon != 2` (the type has no attack);
+/// * `ammo == 0` (there is no group fire in the port — the C++ `GetUnitList()`
+///   branch of a multi-selection is not modelled);
+/// * `Access_GetAttackTarget` finds no valid **visible** target in the cell
+///   (invalid target type, an idle unit, or fog of war);
+/// * the target is out of `ATTRIB_RANGE` and the selected unit is `STATIONARY`.
+///
+/// On `CURSOR_UNIT_NO_GO` the click does not give an order:
+/// `GameManager_UpdateSelection` (`:6292-6298`) calls
+/// `GameManager_UnitSelectOther` (`:6229-6244`), which selects the **visible**
+/// enemy and `GameManager_UpdateInfoDisplay` (`:7667`) draws its portrait and
+/// statistics — the original's "inspect a visible opponent" path.
+pub fn attack_cursor_active(state: StateRef<'_>, id: UnitId, target: UnitId) -> bool {
+    let Some(unit) = state.unit(id) else {
+        return false;
+    };
+    let Some(enemy) = state.unit(target) else {
+        return false;
+    };
+
+    if unit.hits == 0 || enemy.hits == 0 || unit.team == enemy.team || id == target {
+        return false;
+    }
+
+    // `GameManager_GetMilitaryCursor`: `if (SelectedUnit->delayed_reaction) return CURSOR_UNIT_NO_GO;`.
+    if unit.delayed_reaction != 0 {
+        return false;
+    }
+
+    // `if (SelectedUnit->GetUnitType() != COMMANDO) { if (weapon != 2) NO_GO; ... }`.
+    // The port only has the regular weapon path: the infiltrator's click actions
+    // are the separate stealth cursor modes 8/9.
+    if unit.weapon != 2 {
+        return false;
+    }
+
+    // `if (ammo == 0 && GetUnitList() == nullptr) return CURSOR_UNIT_NO_GO;` —
+    // the group list is not ported, so an out-of-ammo unit cannot attack.
+    if unit.ammo == 0 {
+        return false;
+    }
+
+    // `Access_GetAttackTarget(SelectedUnit, grid)` — a visible valid target,
+    // not an idle unit (`access.cpp:1999`).
+    if state.get_attack_target(unit, enemy.grid, false) != Some(target) {
+        return false;
+    }
+
+    let range = i32::from(
+        unit.base_values
+            .get_attribute(max_core::unit_values::ATTRIB_RANGE),
+    );
+
+    if state.is_within_attack_range(unit, enemy.grid, range) {
+        return true;
+    }
+
+    // Out of range: a mobile unit gets `CURSOR_FAR_TARGET` (`ORDER_MOVE_TO_ATTACK`),
+    // a stationary one — `CURSOR_UNIT_NO_GO`.
+    unit.flags & unit_flags::STATIONARY == 0
+}
+
 /// Fire-at-cell order without a target — C++ `GameManager_SetUnitOrder`
 /// (`game_manager.cpp:6360-6370`): in `targeting_mode` a click on an empty cell within
 /// range gives `fire_on_grid = (x, y)` and `ORDER_FIRE`/`ORDER_STATE_INIT`.
@@ -1038,9 +1109,14 @@ pub fn build_air_move_order(
 /// For `RESEARCH`, powering on starts research of the default topic
 /// (C++ `ResearchMenu_UpdateResearchProgress(team, topic, +1)` in
 /// `UnitsManager_ProcessOrderPowerOn`).
+///
+/// `None` for a unit of another team: the popup and the `O` key belong to the
+/// selected **own** unit (`GameManager_InitPopupButtons` is reached only for the
+/// player team, `game_manager.cpp:6253-6258`). Since a visible enemy is selectable
+/// for inspection (defect 2), the order builders gate the team explicitly.
 pub fn build_power_order(state: StateRef<'_>, id: UnitId) -> Option<Command> {
     let unit = state.unit(id)?;
-    if unit.hits == 0 {
+    if unit.hits == 0 || unit.team != state.player_team() {
         return None;
     }
 

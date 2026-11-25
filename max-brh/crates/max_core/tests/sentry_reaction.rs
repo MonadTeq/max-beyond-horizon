@@ -31,6 +31,7 @@ use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderSta
 use max_core::geo::Point;
 use max_core::input::{Command, Packet41MoveFinished};
 use max_core::team::{TeamId, TeamKind, TeamUnits};
+use max_core::unit_values::{ATTRIB_ARMOR, ATTRIB_ATTACK, ATTRIB_ROUNDS};
 use max_core::universe::GameUniverse;
 use max_core::UnitId;
 
@@ -166,5 +167,94 @@ fn sentry_does_not_fire_at_an_enemy_inside_range_but_unseen() {
         state.snapshot().unit(green).expect("green").hits,
         hits_before,
         "no damage may be dealt to an unseen target"
+    );
+}
+
+/// Reaction fire must **spend** `shots`: `UnitInfo::PrepareFire`
+/// (`max-cpp-port/src/unitinfo.cpp:4805-4818`) takes one `ammo` and one `shots`
+/// per shot outside the real-time debug setting, and `UnitsManager_CheckReaction`
+/// (`units_manager.cpp:4712`) refuses a shooter with `shots == 0`. A `TANK` has
+/// `ATTRIB_ROUNDS = 2`, so a sentry fires exactly twice per turn: two shots, then
+/// the fire order is dropped and no further damage is dealt. There is no
+/// unbounded fire loop, and a shot is never taken at `shots == 0` (which would
+/// wrap the `uint8_t` counter to 255).
+#[test]
+fn reaction_fire_spends_shots_and_stops_when_they_are_gone() {
+    let mut state = scenario();
+    let red = spawn(&mut state, UnitType::Tank, TeamId::RED, Point::new(5, 5));
+    let green = spawn(&mut state, UnitType::Tank, TeamId::GREEN, Point::new(20, 5));
+    set_sentry(&mut state, red);
+    state.update_visibility_status(false);
+
+    // In attack range (4) and inside the sentry's scan (4).
+    arrive(&mut state, green, Point::new(8, 5));
+    state.submit(Command::MoveFinished(Packet41MoveFinished::port_form(
+        green, true,
+    )));
+
+    let tank = state.snapshot().unit(red).expect("red").base_values;
+    let rounds = tank.get_attribute(ATTRIB_ROUNDS);
+    let damage_per_shot = tank.get_attribute(ATTRIB_ATTACK)
+        - state
+            .snapshot()
+            .unit(green)
+            .expect("green")
+            .base_values
+            .get_attribute(ATTRIB_ARMOR);
+    assert!(rounds >= 2, "the scenario needs a multi-shot unit");
+
+    let ammo_before = state.snapshot().unit(red).expect("red").ammo;
+    let hits_before = state.snapshot().unit(green).expect("green").hits;
+
+    let mut shots_taken = 0;
+    let mut previous = (
+        state.snapshot().unit(red).expect("red").shots,
+        state.snapshot().unit(red).expect("red").ammo,
+    );
+
+    for _ in 0..300 {
+        state.tick();
+
+        let shooter = state.snapshot().unit(red).expect("red").clone();
+        let (shots, ammo) = (shooter.shots, shooter.ammo);
+
+        if ammo < previous.1 {
+            shots_taken += 1;
+            assert!(
+                previous.0 > 0,
+                "a shot must not be taken at `shots == 0` (the counter would wrap)"
+            );
+            assert_eq!(
+                shots,
+                previous.0 - 1,
+                "`UnitInfo::PrepareFire` takes exactly one shot"
+            );
+        }
+
+        assert!(
+            i32::from(shots) <= rounds,
+            "`shots` never exceeds `ATTRIB_ROUNDS`"
+        );
+        previous = (shots, ammo);
+    }
+
+    assert_eq!(
+        shots_taken, rounds,
+        "a sentry fires `ATTRIB_ROUNDS` times per turn, not forever"
+    );
+    assert_eq!(
+        state.snapshot().unit(red).expect("red").shots,
+        0,
+        "the shot budget is exhausted"
+    );
+    assert_eq!(
+        state.snapshot().unit(red).expect("red").ammo,
+        ammo_before - rounds as u8,
+        "every shot is paid for in ammo"
+    );
+    assert_eq!(
+        state.snapshot().unit(green).expect("green").hits,
+        hits_before - (damage_per_shot * rounds) as u16,
+        "exactly the `ATTRIB_ROUNDS` shots deal damage"
     );
 }

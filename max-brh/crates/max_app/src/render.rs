@@ -86,13 +86,18 @@ pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 
 /// Unit frame clock (drawing only, not part of the snapshot/CRC).
 ///
-/// Two independent counters repeat two different C++ mechanisms:
+/// Three independent counters repeat three different C++ mechanisms:
 ///
 /// * `builder_step` — `UnitsManager_ProcessOrderBuild` (`+8`, `-16` when
 ///   `image_index + 8 >= 40`);
 /// * `sentry_step` — `UnitsManager_ProcessOrderSentry` for units with the
 ///   `ANIMATED` flag: every tick `image_index + 1`, after the last —
-///   `image_index = image_base`.
+///   `image_index = image_base`;
+/// * `turret_step` — `UnitInfo::SpinningTurretAdvanceAnimation`
+///   (`unitinfo.cpp:3891`), called from `UnitsManager_ProcessOrder`
+///   (`units_manager.cpp:3263-3266`) for `SPINNING_TURRET` units: every tick
+///   `turret_image_index + 1`, after `image_index_max` — `turret_image_base`
+///   (the rotating radar of `AWAC`/`SCANNER`).
 ///
 /// There are no **factory** frames here: C++ does not advance them by time. A factory with
 /// `ORDER_BUILD` keeps frame `image_base + 1` (`UnitInfo::StartBuilding`,
@@ -107,6 +112,8 @@ pub struct FrameAnimation {
     pub builder_step: u8,
     /// `ProcessOrderSentry` tick number (ANIMATED).
     pub sentry_step: u32,
+    /// `SpinningTurretAdvanceAnimation` tick number (`SPINNING_TURRET`).
+    pub turret_step: u32,
 }
 
 /// Whether the builder frame-by-frame animation is active (`ProcessOrderBuild`).
@@ -135,6 +142,48 @@ pub fn builder_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
 /// factories do not have it — C++ does not animate them by time.
 pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.flags & unit_flags::ANIMATED != 0 && unit.orders == UnitOrder::Sentry
+}
+
+/// Whether the `SpinningTurretAdvanceAnimation` turret cycle is active.
+///
+/// C++ `UnitsManager_ProcessOrder` (`units_manager.cpp:3263-3266`) advances the
+/// turret frame of **every** `SPINNING_TURRET` unit on each order tick, for any
+/// order except `ORDER_DISABLE` and only with `settings["effects"]` enabled:
+///
+/// ```text
+/// if (turret_image_index + 1 > image_index_max) turret_image_index = turret_image_base;
+/// else                                          turret_image_index += 1;
+/// ```
+///
+/// `image_index_max` for these units is `turret_image_base + turret_image_count - 1`
+/// (`UnitsManager_DeployUnit`, `units_manager.cpp:2446-2449`), so the dish cycles
+/// through exactly the `turret_image_count` frames of `D_*`: `AWAC` — 30,
+/// `SCANNER` — 16. The flag is present on both in `SC_UNITS` (and on no building).
+pub fn spinning_turret_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
+    unit.flags & unit_flags::SPINNING_TURRET != 0 && unit.orders != UnitOrder::Disable
+}
+
+/// Turret frame index of a `SPINNING_TURRET` unit for `animation.turret_step`.
+///
+/// The C++ sequence starts at the frame written by `UpdateTurretAngle`
+/// (`turret_image_base + turret_angle`, `unitinfo.cpp:2690-2696`) — for the
+/// `AWAC`/`SCANNER` radars `turret_angle` stays 0, because these types never aim
+/// (no `TURRET_SPRITE`, `UpdateAngle` does not touch the turret) — then goes
+/// `+1` per tick and wraps to `turret_image_base` after `turret_image_count`
+/// frames. `None` — the `D_*` header declares no turret frames.
+pub fn spinning_turret_frame_index(
+    info: &max_assets::sprite::FrameInfo,
+    unit: &max_core::unit::UnitInfo,
+    animation: FrameAnimation,
+) -> Option<usize> {
+    let count = usize::from(info.turret_image_count);
+    if count == 0 {
+        return None;
+    }
+
+    let phase = (usize::from(unit.turret_angle % 8) + animation.turret_step as usize) % count;
+
+    Some(usize::from(info.turret_image_base) + phase)
 }
 
 /// Whether a **stationary factory** is working — C++ keeps its frame
@@ -897,8 +946,10 @@ pub fn shadow_render_offset(presentation: &UnitPresentation) -> (i32, i32) {
 /// [`draw_unit_sprites_with_angle`] with the unit frame clock.
 ///
 /// `animation` — [`FrameAnimation`] from [`crate::App::unit_animation`]:
-/// the builder (`+16 → +24 → +32`) and the `ANIMATED` building
-/// (`ProcessOrderSentry`). Mines and factories have **no** time-based frame cycle
+/// the builder (`+16 → +24 → +32`), the `ANIMATED` building
+/// (`ProcessOrderSentry`) and the `SPINNING_TURRET` radar
+/// (`SpinningTurretAdvanceAnimation`: AWAC/SCANNER). Mines and factories have
+/// **no** time-based frame cycle
 /// (they hold the C++ state frame; the blinking is the palette). The HUD and tests
 /// pass [`FrameAnimation::default()`] (the static C++ frame, as with `dt = 0`).
 ///
@@ -925,6 +976,20 @@ pub fn draw_unit_sprites_with_animation(
     zoom: u32,
 ) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
+    // `UnitInfo::SpotByTeam` surfaces a spotted submarine / personnel carrier:
+    // `image_base = 8` (`unitinfo.cpp:2825-2829`), i.e. the second block of eight
+    // hull frames of the same `D_*`/`S_*` resource (the simulation field stays 0
+    // while the boat is submerged). The frame is still derived from the order
+    // state like every other hull; only the base moves to the surfaced block.
+    let image_base = if unit.image_base >= 8
+        && matches!(
+            unit.unit_type,
+            UnitType::Submarine | UnitType::ArmouredPersonnelCarrier
+        ) {
+        image_base.saturating_add(8)
+    } else {
+        image_base
+    };
     // `FrameInfo` (`D_*`) defines the length of the animation frame block; for RADAR it is 16,
     // although the sprite has 20 frames (the last 4 are connectors).
     let sentry_frames = sprite
@@ -1012,11 +1077,31 @@ pub fn draw_unit_sprites_with_animation(
             .and_then(|info| firing_turret_frame_index(info, unit))
             .filter(|index| *index < sprite.sheet.len());
 
-        let turret = match firing_index {
+        // `SPINNING_TURRET` — the rotating radar (`AWAC`/`SCANNER`):
+        // `UnitInfo::SpinningTurretAdvanceAnimation` (`unitinfo.cpp:3891`) walks
+        // `turret_image_index` through the `turret_image_count` frames of `D_*`.
+        // The stored C++ frame is `turret_image_base + turret_angle`; the port
+        // keeps it in the simulation, the rotation itself is a frame-only clock
+        // (`FrameAnimation::turret_step`), so the snapshot/CRC do not change.
+        let spinning_index = if effects && spinning_turret_animation_active(unit) {
+            sprite
+                .frame_info
+                .as_ref()
+                .and_then(|info| spinning_turret_frame_index(info, unit, animation))
+                .filter(|index| *index < sprite.sheet.len())
+        } else {
+            None
+        };
+
+        // The firing frame wins over the rotation (C++ draws only one turret
+        // frame; `AWAC`/`SCANNER` have no firing frames at all, so this only
+        // matters for a hypothetical type with both flags).
+        let turret_index = firing_index.or(spinning_index);
+        let turret = match turret_index {
             Some(index) => sprite.sheet.frame(index),
             None => sprite.turret_frame(unit.turret_angle),
         };
-        let turret_shadow = match firing_index {
+        let turret_shadow = match turret_index {
             Some(index) => sprite.shadow_at(index),
             None => sprite.turret_shadow(unit.turret_angle),
         };
@@ -2215,6 +2300,80 @@ mod tests {
         for step in 0..3 {
             assert_eq!(unit_frame_index_for_animation(&builder, 0, 40, 3, step), 3);
         }
+    }
+
+    /// `SPINNING_TURRET` radar: `UnitInfo::SpinningTurretAdvanceAnimation`
+    /// (`unitinfo.cpp:3891`) advances `turret_image_index` by one on every
+    /// `UnitsManager_ProcessOrder` tick and wraps at
+    /// `turret_image_base + turret_image_count - 1` back to `turret_image_base`
+    /// (`UnitsManager_DeployUnit`, `units_manager.cpp:2446-2449`).
+    #[test]
+    fn spinning_turret_walks_through_its_d_resource_frames() {
+        use max_core::enums::UnitType;
+        use max_core::team::TeamId;
+        use max_core::unit::{UnitId, UnitInfo};
+
+        let info = |base: u8, count: u8| max_assets::sprite::FrameInfo {
+            turret_image_base: base,
+            turret_image_count: count,
+            ..max_assets::sprite::FrameInfo::default()
+        };
+        let frame = |info: &max_assets::sprite::FrameInfo, unit: &UnitInfo, step: u32| {
+            spinning_turret_frame_index(
+                info,
+                unit,
+                FrameAnimation {
+                    turret_step: step,
+                    ..FrameAnimation::default()
+                },
+            )
+        };
+
+        // `AWAC`: `D_AWAC` turret base 8, 30 frames (`max_core::frames`).
+        let mut awac = UnitInfo::new(UnitType::Awac, TeamId::RED, UnitId(1));
+        awac.flags |= unit_flags::SPINNING_TURRET;
+        awac.orders = UnitOrder::Sentry;
+        assert!(spinning_turret_animation_active(&awac));
+
+        let awac_info = info(8, 30);
+        assert_eq!(frame(&awac_info, &awac, 0), Some(8));
+        assert_eq!(frame(&awac_info, &awac, 1), Some(9));
+        assert_eq!(frame(&awac_info, &awac, 29), Some(37));
+        assert_eq!(
+            frame(&awac_info, &awac, 30),
+            Some(8),
+            "wrap to turret_image_base"
+        );
+        assert_eq!(frame(&awac_info, &awac, 31), Some(9));
+
+        // `SCANNER`: `D_SCANNER` turret base 8, 16 frames.
+        let mut scanner = UnitInfo::new(UnitType::Scanner, TeamId::RED, UnitId(2));
+        scanner.flags |= unit_flags::SPINNING_TURRET;
+        scanner.orders = UnitOrder::Await;
+        assert!(spinning_turret_animation_active(&scanner));
+
+        let scanner_info = info(8, 16);
+        assert_eq!(frame(&scanner_info, &scanner, 15), Some(23));
+        assert_eq!(frame(&scanner_info, &scanner, 16), Some(8));
+
+        // The start phase is the C++ stored frame `turret_image_base + turret_angle`
+        // (`UnitInfo::UpdateTurretAngle`, `unitinfo.cpp:2690-2696`).
+        awac.turret_angle = 3;
+        assert_eq!(frame(&awac_info, &awac, 0), Some(11));
+        assert_eq!(frame(&awac_info, &awac, 27), Some(8));
+
+        // `ORDER_DISABLE` — `UnitsManager_ProcessOrder` skips the animation
+        // (`units_manager.cpp:3263`); a turret-less type and an empty `D_*` row
+        // have no cycle either.
+        awac.orders = UnitOrder::Disable;
+        assert!(!spinning_turret_animation_active(&awac));
+
+        let tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(3));
+        assert!(
+            !spinning_turret_animation_active(&tank),
+            "TANK has TURRET_SPRITE, not SPINNING_TURRET"
+        );
+        assert_eq!(frame(&info(8, 0), &scanner, 5), None);
     }
 
     #[test]

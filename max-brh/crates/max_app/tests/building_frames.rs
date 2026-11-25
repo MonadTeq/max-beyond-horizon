@@ -278,6 +278,7 @@ fn mining_station_body_frames_are_eight_clan_pairs_not_a_drill_cycle() {
             FrameAnimation {
                 builder_step: 2,
                 sentry_step: 99,
+                ..FrameAnimation::default()
             },
         ] {
             assert_eq!(

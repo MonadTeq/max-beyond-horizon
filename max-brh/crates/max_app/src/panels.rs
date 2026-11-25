@@ -1144,6 +1144,14 @@ impl Panels {
             return painted;
         };
 
+        // `WINDOW_CORNER_FLIC` is filled by `GameManager_MenuUnitSelect` for a
+        // unit that reached the selection only if visible to the player team
+        // (`Access_GetEnemyUnit` → `IsVisibleToTeam`); the port re-checks it every
+        // frame, so a hidden enemy does not keep its portrait.
+        if !unit.is_visible_to_team(app.player_team()) {
+            return painted;
+        }
+
         // The main path — FLC animation (`GameManager_MenuCreateFlic` +
         // `AdvanceFlic`): the frame 1:1 into the 128×128 window, indices — by the window
         // palette (`FRAMEPIC`), like C++ (`load_flic_palette = 0`).
@@ -2489,6 +2497,13 @@ fn blit_icon(frame: &mut RgbaBuffer, palette: &UiPalette, image: &SimpleImage, u
 /// Four statistics lines of the selected unit ([`rows_for`]).
 ///
 /// Rows that C++ does not draw remain the window background — [``None``].
+///
+/// The panel is drawn only for a unit visible to the player team:
+/// `GameManager_UpdateInfoDisplay` (`game_manager.cpp:7668`) opens with
+/// `if (unit->IsVisibleToTeam(GameManager_PlayerTeam) || GameManager_MaxSpy)`.
+/// The debug `MaxSpy` mode is not ported, so a foreign unit that left the
+/// player's scan loses the panel (the own team always sees its units,
+/// `UnitInfo::InitStealthStatus`).
 fn draw_stats(
     frame: &mut RgbaBuffer,
     state: StateRef<'_>,
@@ -2499,6 +2514,10 @@ fn draw_stats(
     let Some(unit) = selected else {
         return 0;
     };
+
+    if !unit.is_visible_to_team(state.player_team()) {
+        return 0;
+    }
 
     let rows = rows_for(state, unit, state.player_team());
     let rects = [

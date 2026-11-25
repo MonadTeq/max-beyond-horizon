@@ -5355,3 +5355,142 @@ draw_unit_label}`: три ветки в порядке C++; текст пере�
 * Golden переснят для затронутых кадров (`production`, `ai-turn`; в остальных
   наборах кадры без анонса/надписи не изменились).
 
+---
+
+## 47. Радар AWAC/сканера и осмотр видимого врага — **сделано** (2026-11-25)
+
+Два дефекта визуала/UI из ручного прогона 1.2. Сверка — `max-cpp-port`
+(оракулы не изменялись), изменения только в презентации: снапшот/CRC не
+затронуты.
+
+### 47.1 Вращение радара AWAC и мобильного сканера
+
+**Оракул.**
+
+* `UnitsManager_ProcessOrder` (`units_manager.cpp:3263-3266`) на **каждом**
+  тике обработки приказов вызывает
+  `unit->SpinningTurretAdvanceAnimation()` для юнитов с флагом
+  `SPINNING_TURRET`, если приказ не `ORDER_DISABLE` и включён
+  `settings["effects"]`;
+* `UnitInfo::SpinningTurretAdvanceAnimation` (`unitinfo.cpp:3891-3898`):
+  `turret_image_index + 1`, а после `image_index_max` — `turret_image_base`
+  (полный оборот);
+* `UnitsManager_DeployUnit` (`units_manager.cpp:2443-2450`) для
+  `SPINNING_TURRET` задаёт `image_index_max = turret_image_base +
+  turret_image_count - 1`, то есть листаются ровно кадры `D_*`;
+* рендер — отдельный кадр башни `turret_image_index` со сдвигом
+  `angle_offsets` (`UnitInfo::Render`/`RenderWithConnectors`,
+  `unitinfo.cpp:3143/3199`); `UnitInfo::UpdateAngle` башню
+  `SPINNING_TURRET`-юнитов не трогает (только `TURRET_SPRITE`, `:1178-1181`).
+
+В `SC_UNITS` флаг несут ровно два юнита: `AWAC` (`D_AWAC`: база 8, 30 кадров)
+и `SCANNER` (`D_SCANNER`: база 8, 16 кадров). Их башня — вращающийся радар на
+спине/крыше; неподвижных зданий с этим флагом нет.
+
+**Расхождение.** Порт никогда не двигал `turret_image_index`, а
+`render::draw_unit_sprites_with_animation` рисовал башню всегда как
+`turret_image_base + turret_angle`. У AWAC и мобильного сканера радар стоял.
+
+**Исправление** (только презентация, симуляция не пишется):
+
+* `render::FrameAnimation::turret_step` — счётчик кадров радара;
+  `App::update_unit_animations` двигает его по реальному `dt` с периодом
+  `SPINNING_TURRET_ANIM_FRAME_SECONDS = ORDER_TICK_SECONDS` (42 мс — тот же
+  тик `UnitsManager_ProcessOrder`, что и у `ProcessOrderSentry`), при
+  условиях C++: `SPINNING_TURRET` && приказ ≠ `ORDER_DISABLE` &&
+  `effects`;
+* `render::spinning_turret_animation_active` — те же условия C++;
+* `render::spinning_turret_frame_index` — `turret_image_base +
+  ((turret_angle + turret_step) % turret_image_count)`; при `dt = 0`
+  совпадает со старым кадром `turret_image_base + turret_angle`, поэтому
+  golden-кадры не дрейфуют;
+* снимок экрана берёт тот же кадр и для тени башни (`S_*`);
+* поле симуляции `turret_image_index` и `image_index_max` остаются как в
+  C++-сейве; анимация в снапшот/CRC не входит.
+
+**Данные.** В `D_AWAC`/`D_SCANNER` каждая поза радара записана дважды
+(30 записей → 15 различных картинок; 16 → 8), поэтому визуально поза
+меняется через тик — это данные оригинала, а не ошибка порта.
+
+**Тесты.** `max_app/tests/spinning_turret_animation.rs` (3, на реальных
+данных): 30 кадров AWAC и 16 сканера листаются, оборот периодичен,
+`turret_image_index` и `snapshot_bytes` не меняются, `ORDER_DISABLE` и
+`effects = false` останавливают часы, `dt = 0` — статичный кадр C++;
+unit-тест `render::tests::spinning_turret_walks_through_its_d_resource_frames`
+— точные индексы и переход через границу.
+
+### 47.2 Осмотр характеристик видимого вражеского юнита
+
+**Оракул.**
+
+* `GameManager_UpdateSelection` (`game_manager.cpp:6292-6298`): вражеский
+  юнит под курсором обрабатывается `GameManager_UnitSelectOther`
+  (`:6229-6244`), когда клик не является атакой; `Access_GetEnemyUnit`
+  (`access.cpp:1731`) и `UnitSelectOther` требуют `IsVisibleToTeam`
+  (отладочный `GameManager_MaxSpy` — исключение, в порте не реализован);
+* `GameManager_GetMilitaryCursor` (`:6150-6227`) различает атаку и выбор:
+  `CURSOR_ENEMY` (в радиусе, есть патроны), `CURSOR_FAR_TARGET` (мобильный
+  вне радиуса → `ORDER_MOVE_TO_ATTACK`), иначе `CURSOR_UNIT_NO_GO`
+  (нет оружия, 0 патронов, невалидная цель, `delayed_reaction`, вне
+  радиуса для `STATIONARY`);
+* `GameManager_MenuUnitSelect` (`:7141`) → `GameManager_UpdateInfoDisplay`
+  (`:7667`) рисует портрет (`MenuCreateFlic`) и четыре строки статистики
+  **только** при `IsVisibleToTeam(player)`; чужие данные скрываются самими
+  строками: `ammo` с базой 0, `cargo` с factor 0 (`:7688-7720`);
+* меню команд чужому юниту не открывается (`GameManager_InitPopupButtons`
+  доступен только своей команде, `:6253-6258`).
+
+**Расхождение.** Портал всегда отправлял клик по врагу в
+`hud::build_attack_order`; выделить врага для панели было нельзя, поэтому
+`WINDOW_CORNER_FLIC` и строки статистики для него не заполнялись. Побочно:
+правый клик при выделенном враге мог отдать `ORDER_MOVE`/`ORDER_ACTIVATE`, а
+клавиша `O` — переключить питание чужого юнита.
+
+**Исправление.**
+
+* `hud::attack_cursor_active` — порт `GameManager_GetMilitaryCursor`:
+  `delayed_reaction == 0`, `weapon == 2`, `ammo > 0`,
+  `Access_GetAttackTarget` находит именно эту видимую цель
+  (`get_attack_target`), в радиусе — атака, вне радиуса — только для
+  не-`STATIONARY`;
+* `ui::session_select_enemy` — порт `UnitSelectOther`/`MenuUnitSelect`:
+  проверка видимости, закрытие меню команд, `hud.select`, журнал
+  `Selected …`; подсказка `DrawUnitStatusMessage` для чужого юнита не
+  ставится (в C++ она тоже только для своей команды);
+* `panels::draw_stats`/`draw_portrait` дополнительно проверяют
+  `IsVisibleToTeam(player)` — `DrawStats`/портрет по видимости (как
+  `GameManager_UpdateInfoDisplay`), скрытый враг панель не сохраняет;
+* `hud::build_power_order` отклоняет чужого юнита;
+* правый клик при выделенном враге заказов не даёт
+  (`CURSOR_UNIT_NO_GO`), выделение сохраняется;
+* туман: невидимый враг по-прежнему не выделяется для осмотра, но
+  сохраняется задокументированная упрощёнка порта
+  (`hud::unit_at_screen` не фильтрует видимость) — со своим выделенным
+  юнитом клик по такому врагу идёт старым путём атаки.
+
+Строки панели для чужого юнита уже были готовы в `panels::rows_for`
+(§17.2: `Hits`, пустая `Ammo`, `Speed`, `Shots`) — теперь они достижимы
+выделением.
+
+**Осознанные ограничения.** Модальное окно `UnitStats_Menu`
+(`unitstats.cpp`) не портировано ни для своих, ни для чужих юнитов: правый
+клик по выделенному юниту по-прежнему снимает выделение, а характеристики
+показывают портрет `WINDOW_CORNER_FLIC` и четыре строки
+`WINDOW_STAT_WINDOW`.
+
+**Тесты.** `max_app/tests/enemy_unit_panel.rs` (3, на реальных данных):
+клик по видимому врагу выделяет его (без приказа атаки) и заполняет
+строки/портрет; невидимый враг не выделяется и панель пуста; атакуемый
+враг по-прежнему получает `ORDER_MOVE_TO_ATTACK`.
+
+### 47.3 Валидация
+
+* `cargo check --workspace` — зелёный;
+* `cargo test -p max_app --no-default-features` — зелёный (483 lib + все
+  интеграционные, включая 6 новых);
+* `qa_run visual-screens.qa` + `panels.qa` — PASS, `qa_golden_check`:
+  `visual-screens` 20/20 и `panels` 12/12 кадров, 0 пикселей расхождения
+  (`dt = 0` в QA даёт статичный кадр C++, как и раньше);
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.
+
+
