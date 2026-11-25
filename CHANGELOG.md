@@ -2,6 +2,49 @@
 
 ### Добавлено
 
+- **Кампания, этап 3b — стори-экраны intro/victory/defeat (`menu.cpp:766-864`).**
+  Модуль `max_app::story`: `StoryScreen` из `StoryBlock` дескриптора миссии —
+  текст `GNW_TEXT_FONT_1` (600 px, (20,20) 600×400, `Fonts_BrightSilverColor`),
+  фон `ENDGAME1…9`/ресурс `story.background`, видео `DEMO2FLC` → `maxmve2.mve`
+  (ASCIIZ-ссылка `MAX.RES` → файл рядом, плеер `IntroScreen`/MVE), музыка
+  `WINR_MSC` через `MusicDirector::play_story` (оверрайд сцены до закрытия
+  экрана), `ENDOK` 72×19 (293,458). Интро показывается после загрузки миссии и
+  до партии, victory/defeat — после `GameOver` и до кампанийного wrap-up;
+  прогрессия этапа 3a не менялась. Презентация не мутирует `GameState` и не
+  входит в `snapshot_bytes`/CRC; отсутствующий фон/видео/музыка — видимая
+  диагностика на экране и в логе, миссия стартует без файла. Текст длиннее 23
+  строк листается Up/Down/PageUp/PageDown (отличие подачи от обрезки
+  `Text_SplitText`). Тесты `max_app/tests/mission_story.rs` (7): одинаковый
+  `snapshot_bytes` с экраном и без (включая сквозной прогон `QaRunner`),
+  видимый fallback отсутствующего `maxmve2.mve`, реальные блоки
+  `SC_C0001`/`SC_C0009`, детерминированный кадр `dt = 0`, переход текст →
+  видео. QA: `story-screens.qa` — PASS, новые
+  эталоны `max-brh-qa/golden/story-screens/` (3), `visual-screens.qa` +
+  `qa_golden_check` — 20/20 без дрейфа. Подробности —
+  `max-brh-docs/development/campaign-missions.md` §«Реализация этапа 3b».
+
+- **Кампания, этап 3a — персистентная прогрессия `last_campaign`/`game_file_number`.**
+  `settings.cpp:101-105` (SETUP, default 1) → поля `Preferences` и
+  `preferences.ini` (round-trip файла байт-в-байт, загрузка не зажимает значения).
+  `menu.cpp:518-545`: победа в миссии кампании поднимает `game_file_number` до
+  следующей 1-based миссии и `last_campaign` — high-water mark (не понижается),
+  затем настройки сохраняются; последняя миссия и поражение прогрессию не двигают.
+  `menu.cpp:1968-1983`: `GameSetupMenu_Menu` зажимает `last_campaign` по числу
+  миссий, пишет зажим и открывает список на `game_file_number = last_campaign`;
+  `gamesetupmenu.cpp:281-296`: заблокированные миссии кампании (0-based индекс
+  `>= last_campaign`) видны строками, но неактивны, без заголовка, не выбираются и
+  не стартуют. Модуль `max_app::campaign` (`menu_open`, `victory_advance`,
+  `App::advance_campaign_after_victory` из `App::leave_local_game`,
+  `App::apply_campaign_clamp`); UI только сообщает о зажиме
+  (`UiContext::campaign_clamp`), драйвер применяет и синхронизирует зеркало
+  настроек (`handle_session_input` и сетевой драйвер не менялись). Тесты
+  `max_app/tests/campaign_progress.rs` (7): победа Campaign 1 → `last_campaign=2`
+  на диске и после перезапуска, поражение не двигает, список открывает ровно
+  `last_campaign` миссий, end-to-end Campaign 1→2 через меню == прямой
+  `start_local_game_from_save` `SAVE2.CAM` (включая 5 тиков), зажим 99 → 9,
+  прогрессия вне снапшота. QA: `save-load.qa` + `qa_golden_check` PASS (0 дрейфа).
+  Подробности — `max-brh-docs/development/campaign-missions.md` §«Реализация этапа 3a».
+
 - **Кампания, этап 2 — подменю New Game и `GameSetupMenu` (слой подачи миссий).**
   `menu_new_game_menu_loop` (`menu.cpp:2171-2320`): подменю «New Game Menu» с семью
   кнопками оракула — Training Missions / Stand Alone Missions / Custom Game /

@@ -93,6 +93,9 @@ pub enum ScreenName {
     Landing,
     /// `Screen::GameOver`.
     GameOver,
+    /// `Screen::MissionStory` — the campaign intro/victory/defeat story screen
+    /// (`menu_draw_mission_story_screen`).
+    Story,
     /// `Screen::Preferences` — the `OptionsMenu` dialog in the menu (`Setup`).
     Preferences,
     /// `Screen::InSession` (a match is in progress).
@@ -123,6 +126,7 @@ impl ScreenName {
             "mobilize" | "mobilization" | "cargo" => Some(Self::Mobilize),
             "landing" | "siteselect" | "site_select" => Some(Self::Landing),
             "gameover" | "game_over" | "winloss" => Some(Self::GameOver),
+            "story" | "missionstory" | "mission_story" | "storyscreen" => Some(Self::Story),
             "preferences" | "prefs" => Some(Self::Preferences),
             "ingame" | "in_game" | "session" => Some(Self::InGame),
             "help" | "helpmode" | "help_mode" => Some(Self::Help),
@@ -149,6 +153,7 @@ impl ScreenName {
             Self::Mobilize => "Mobilize",
             Self::Landing => "Landing",
             Self::GameOver => "GameOver",
+            Self::Story => "MissionStory",
             Self::Preferences => "Preferences",
             Self::InGame => "InGame",
             Self::Help => "Help",

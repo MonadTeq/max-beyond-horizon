@@ -616,7 +616,8 @@ impl ManualPlay {
                 }
                 Transition::StartLocal(_)
                 | Transition::StartSession(_)
-                | Transition::StartMission(_) => {
+                | Transition::StartMission(_)
+                | Transition::StoryFinished => {
                     panic!("ввод в сессии не меняет режим")
                 }
             }
@@ -647,6 +648,9 @@ impl ManualPlay {
             }
             Transition::StartMission(_) => {
                 panic!("миссии в тесте записи не стартуют")
+            }
+            Transition::StoryFinished => {
+                panic!("стори-экраны в тесте записи не открываются")
             }
             Transition::StartSession(_) => panic!("сеть в тесте записи не поднимается"),
         }

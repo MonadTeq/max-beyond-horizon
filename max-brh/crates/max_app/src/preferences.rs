@@ -149,6 +149,26 @@
 //!   (`menu_team_name_setting`, `optionsmenu.cpp:177/552`) — it is visible in the
 //!   HUD log, on the victory screen and in the V70 save.
 //!
+//! # Campaign progression (`game_file_number`, `last_campaign`)
+//!
+//! Two `SETUP` settings of the oracle (`settings.cpp:101-105`, defaults `1`) hold
+//! the campaign progression (plan M5, `campaign-missions.md`):
+//!
+//! * `game_file_number` — 1-based index of the mission selected last
+//!   (`GameSetupMenu_Menu`, `menu.cpp:1979/2058`; the victory wrap-up writes the
+//!   next mission, `menu.cpp:532`);
+//! * `last_campaign` — how many campaign missions are unlocked (1-based count;
+//!   `DrawMissionList` disables a row while its 0-based index is `>=` it,
+//!   `gamesetupmenu.cpp:281`), raised on a win (`menu.cpp:534-536`) and clamped
+//!   to the mission count when the list opens (`menu.cpp:1970-1982`).
+//!
+//! They are **persistent user state**, not UI flags: they live in this struct and
+//! in `preferences.ini` (the port of the C++ settings file), survive a restart and
+//! round-trip the file byte for byte. The simulation never sees them —
+//! `snapshot_bytes`/CRC do not change. The menu layer only reads them; the
+//! progression itself is applied by [`crate::campaign`] from the mission start and
+//! the victory wrap-up.
+//!
 //! Saved but not active yet: `disable_music`/`disable_voice`/
 //! `disable_movie` and the Music/Voice/Video levels (there is no music/voice/video in the
 //! sound layer — D2/C3), `enhanced_graphics`, `host_address`/`host_port` (the network
@@ -640,7 +660,8 @@ pub const DEBUG_TEAM_COUNT: usize = 4;
 /// Default values — `settings.cpp`: `effects=1`, `click_scroll=1`,
 /// `quick_scroll=16`, `fast_movement=1`, `follow_unit=0`, `auto_select=0`,
 /// `enemy_halt=1`; volumes 100, `auto_save=1`, `enhanced_graphics=1`,
-/// `player_name="Player 1"`, `timer=180`, `endturn=45`. Debug (`settings.cpp`
+/// `game_file_number=1`, `last_campaign=1`, `player_name="Player 1"`,
+/// `timer=180`, `endturn=45`. Debug (`settings.cpp`
 /// `DEBUG`/`TEAMS`): `debug=0`, `disable_fire=0`, `real_time=0`, team control
 /// `red=1` (player), `green=2` (computer), `blue=0`, `gray=0` (`TEAM_TYPE_NONE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,8 +698,19 @@ pub struct Preferences {
     pub disable_movie: bool,
     /// `auto_save`.
     pub auto_save: bool,
+    /// `game_file_number` — 1-based mission selected last (`settings.cpp:102`).
+    ///
+    /// Persistent campaign progression state (`campaign::`): the mission start sets
+    /// it (`menu.cpp:2058`) and the victory wrap-up moves it to the next mission
+    /// (`menu.cpp:532`). Not a UI flag and not part of the snapshot.
+    pub game_file_number: i32,
     /// `enhanced_graphics`.
     pub enhanced_graphics: bool,
+    /// `last_campaign` — number of unlocked campaign missions (`settings.cpp:105`),
+    /// a 1-based count (`gamesetupmenu.cpp:281`). Persistent progression state
+    /// raised on a campaign win (`menu.cpp:534-536`) and clamped to the mission
+    /// list when the campaign menu opens (`menu.cpp:1970-1982`).
+    pub last_campaign: i32,
     /// `player_name`.
     pub player_name: String,
     /// `host_address`.
@@ -731,7 +763,9 @@ impl Default for Preferences {
             disable_voice: false,
             disable_movie: false,
             auto_save: true,
+            game_file_number: 1,
             enhanced_graphics: true,
+            last_campaign: 1,
             player_name: "Player 1".to_string(),
             host_address: "127.0.0.1".to_string(),
             host_port: 31554,
@@ -969,6 +1003,15 @@ impl Preferences {
                 "disable_voice" => prefs.disable_voice = parse_bool(value, prefs.disable_voice),
                 "disable_movie" => prefs.disable_movie = parse_bool(value, prefs.disable_movie),
                 "auto_save" => prefs.auto_save = parse_bool(value, prefs.auto_save),
+                // Campaign progression (`settings.cpp` SETUP): raw integers, no
+                // clamping on load — the clamp is the campaign menu's rule
+                // (`campaign::menu_open`, `menu.cpp:1970-1982`).
+                "game_file_number" => {
+                    prefs.game_file_number = parse_int(value).unwrap_or(prefs.game_file_number)
+                }
+                "last_campaign" => {
+                    prefs.last_campaign = parse_int(value).unwrap_or(prefs.last_campaign)
+                }
                 "enhanced_graphics" => {
                     prefs.enhanced_graphics = parse_bool(value, prefs.enhanced_graphics)
                 }
@@ -1028,7 +1071,9 @@ impl Preferences {
         push_bool(&mut out, "disable_voice", self.disable_voice);
         push_bool(&mut out, "disable_movie", self.disable_movie);
         push_bool(&mut out, "auto_save", self.auto_save);
+        out.push_str(&format!("game_file_number={}\n", self.game_file_number));
         push_bool(&mut out, "enhanced_graphics", self.enhanced_graphics);
+        out.push_str(&format!("last_campaign={}\n", self.last_campaign));
         out.push_str(&format!("player_name={}\n", self.player_name));
         out.push_str(&format!("host_address={}\n", self.host_address));
         out.push_str(&format!("host_port={}\n", self.host_port));
@@ -2829,6 +2874,53 @@ mod tests {
 
         assert_eq!(loaded, prefs);
         assert!(loaded.no_fow, "no_fow must be read back from preferences.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Campaign progression is persistent user state (`settings.cpp:102/105`,
+    /// plan M5): `last_campaign`/`game_file_number` are written to and read from
+    /// `preferences.ini` **byte for byte** — no rounding, clamping or defaults on
+    /// the way through the file.
+    #[test]
+    fn campaign_progress_roundtrips_the_settings_file_byte_for_byte() {
+        let dir = std::env::temp_dir().join(format!(
+            "max-brh-prefs-campaign-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|time| time.as_nanos())
+                .unwrap_or(0)
+        ));
+        let path = preferences_path_for(&dir);
+        let second = dir.join("preferences-copy.ini");
+        let mut prefs = Preferences::default();
+        prefs.last_campaign = 4;
+        prefs.game_file_number = 3;
+
+        prefs.save_file(&path).expect("save");
+        let bytes = std::fs::read(&path).expect("the settings file exists");
+
+        let loaded = Preferences::load_file(&path).expect("load");
+        assert_eq!(loaded, prefs, "the values survive write → read");
+        assert_eq!(loaded.last_campaign, 4);
+        assert_eq!(loaded.game_file_number, 3);
+
+        // A second write of the loaded values produces the same bytes.
+        loaded.save_file(&second).expect("second save");
+        assert_eq!(
+            std::fs::read(&second).expect("the copy exists"),
+            bytes,
+            "preferences.ini must round-trip byte for byte"
+        );
+
+        // `settings.cpp` defaults: 1/1 for a file without the keys (an old
+        // `preferences.ini` of a client without the campaign stage).
+        std::fs::write(&path, "player_name=Cmdr\n").expect("legacy file");
+        let legacy = Preferences::load_file(&path).expect("legacy load");
+        assert_eq!(legacy.last_campaign, 1);
+        assert_eq!(legacy.game_file_number, 1);
+        assert_eq!(legacy.player_name, "Cmdr");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

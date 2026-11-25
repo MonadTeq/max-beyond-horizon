@@ -51,6 +51,8 @@ use max_app::net::{
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
 #[cfg(feature = "sdl")]
+use max_app::story::{StoryContinuation, StoryKind, StoryScreen};
+#[cfg(feature = "sdl")]
 use max_app::subtitles::{SubtitleTrack, DEFAULT_LANGUAGE};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
@@ -1042,6 +1044,63 @@ fn load_intro_subtitles(
     None
 }
 
+/// Plays the story-screen music (`StoryBlock::music`, `menu.cpp:803-805`) and
+/// returns the visible status line (fallback diagnostics or empty).
+#[cfg(feature = "sdl")]
+fn start_story_music(
+    music: &mut MusicDirector,
+    audio: &mut AudioPlayer,
+    story: &mut StoryScreen,
+) -> String {
+    if let Some(tag) = story.music().map(str::to_string) {
+        if !music.play_story(&tag, audio) {
+            let reason = music
+                .last_error()
+                .map(str::to_string)
+                .unwrap_or_else(|| "the track is unavailable".to_string());
+            story.note_music_error(&tag, &reason);
+            eprintln!("UI: story music: {tag} — {reason}");
+        }
+    }
+
+    story.status_line()
+}
+
+/// Resumes the driver action kept aside when the story screen opened
+/// (`menu.cpp:514-545`, `2096-2098`).
+#[cfg(feature = "sdl")]
+fn finish_story_screen(
+    screen: &mut Screen,
+    story_next: &mut Option<StoryContinuation>,
+    active_mission: &mut Option<max_assets::MissionDescriptor>,
+    app: &mut App,
+    ctx: &mut UiContext,
+    music: &mut MusicDirector,
+) {
+    music.end_story();
+
+    match story_next.take() {
+        Some(StoryContinuation::EnterSession) => {
+            *screen = Screen::InSession {
+                request: SessionRequest {
+                    game_id: "local".to_string(),
+                    password: None,
+                },
+            };
+            ctx.status.clear();
+        }
+        Some(StoryContinuation::LeaveSession) | None => {
+            *screen = Screen::MainMenu;
+            *active_mission = None;
+            // `menu.cpp:518-545`: a won campaign mission advances the progression at
+            // the point the oracle returns to the main menu (after the story).
+            app.leave_local_game();
+            ctx.preferences = app.preferences().clone();
+            ctx.status = "Left the session".to_string();
+        }
+    }
+}
+
 /// SDL UI loop: window events → [`InputEvent`] → [`Screen`] → frame.
 #[cfg(feature = "sdl")]
 fn run_ui(cli: &Cli) -> Result<()> {
@@ -1141,6 +1200,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // game data next to `MAX.RES` — not the save directory. A descriptor whose file
     // is absent stays visible in the list with a `[missing]` marker (owner
     // condition 5), so the menu never starts an empty world.
+    let mut campaign_mission_count: Option<usize> = None;
     if let Some(assets) = app.assets() {
         let mission_dir = config
             .max_res
@@ -1174,7 +1234,17 @@ fn run_ui(cli: &Cli) -> Result<()> {
             }
         }
 
+        // Campaign progression (stage 3a): the victory wrap-up needs the size of
+        // the campaign mission list (`MissionManager::GetMissions(...).size()`).
+        campaign_mission_count = Some(
+            registry
+                .missions(max_core::victory::MissionCategory::Campaign)
+                .len(),
+        );
         ctx.missions = Some(std::sync::Arc::new(registry));
+    }
+    if let Some(count) = campaign_mission_count {
+        app.set_campaign_mission_count(count);
     }
 
     let mut music = MusicDirector::new();
@@ -1206,6 +1276,11 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut mouse: Option<(i32, i32)> = None;
     let mut runtime: Option<tokio::runtime::Runtime> = None;
     let mut pending: Option<SessionRequest> = None;
+    // Campaign stage 3b: the descriptor of the loaded mission (presentation memory,
+    // `MissionManager::GetMission`) and the driver action the story screen returns
+    // to (`menu.cpp:497-512`, `2065-2071`).
+    let mut active_mission: Option<max_assets::MissionDescriptor> = None;
+    let mut story_next: Option<StoryContinuation> = None;
     // M-SP: the player name and the map directory for setup and planet minimaps.
     // `player_name` — from `settings` (`preferences.ini`), like C++ `OptionsMenu`
     // `SETUP`; the CLI `--player` remains the network client name (`config`).
@@ -1308,6 +1383,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     Screen::MissionSelect(_) => "MissionSelect",
                     Screen::InSession { .. } => "InSession",
                     Screen::GameOver => "GameOver",
+                    Screen::MissionStory(_) => "MissionStory",
                     Screen::Introduction(_) => "Introduction",
                     Screen::Credits(_) => "Credits",
                     Screen::Help { .. } => "Help",
@@ -1391,6 +1467,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 screen.handle_input(&mut ctx, input)
             };
 
+            // Campaign stage 3a: `GameSetupMenu_Menu` (`menu.cpp:1972-1977`) writes a
+            // `last_campaign` above the mission list back to the settings. The menu
+            // layer only reports the clamp, the driver applies it.
+            if let Some(last_campaign) = ctx.campaign_clamp.take() {
+                app.apply_campaign_clamp(last_campaign);
+            }
+
             // UI sounds (`Sfx`): voices — by `disable_voice`, effects — by
             // `disable_fx`/volume (C++ `SoundManager::PlaySfx`).
             for sfx in app.take_sounds() {
@@ -1424,9 +1507,76 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     return Ok(());
                 }
                 Transition::LeaveSession => {
-                    screen = Screen::MainMenu;
-                    app.leave_local_game();
-                    ctx.status = "Left the session".to_string();
+                    // `menu.cpp:495-512`: after the game-over screen the mission's
+                    // victory/defeat story is shown before the wrap-up returns to
+                    // the main menu. Any other `LeaveSession` stays immediate.
+                    let story = if matches!(screen, Screen::GameOver) {
+                        let descriptor = active_mission.clone().or_else(|| {
+                            let category = app.state_ref().mission_category();
+                            let index =
+                                usize::from(app.state_ref().mission_index()).checked_sub(1)?;
+                            ctx.missions
+                                .as_deref()?
+                                .missions(category)
+                                .get(index)
+                                .cloned()
+                        });
+                        let victory = app
+                            .local()
+                            .and_then(|local| local.outcome.as_ref())
+                            .is_some_and(|outcome| outcome.victory);
+                        let kind = if victory {
+                            StoryKind::Victory
+                        } else {
+                            StoryKind::Defeat
+                        };
+                        let data_dir = app
+                            .config()
+                            .max_res
+                            .parent()
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_default();
+
+                        StoryScreen::for_mission(
+                            descriptor.as_ref(),
+                            kind,
+                            usize::from(app.state_ref().mission_index()),
+                            app.assets().map(|assets| &assets.max_res),
+                            &data_dir,
+                        )
+                    } else {
+                        None
+                    };
+
+                    match story {
+                        Some(mut story_screen) => {
+                            ctx.status =
+                                start_story_music(&mut music, &mut ctx.audio, &mut story_screen);
+                            screen = Screen::MissionStory(Box::new(story_screen));
+                            story_next = Some(StoryContinuation::LeaveSession);
+                        }
+                        None => {
+                            story_next = None;
+                            active_mission = None;
+                            screen = Screen::MainMenu;
+                            // `menu.cpp:518-545`: the wrap-up of a won campaign mission
+                            // advances `last_campaign` in `App::preferences`; the menu reads
+                            // the mirror, so it must follow the application.
+                            app.leave_local_game();
+                            ctx.preferences = app.preferences().clone();
+                            ctx.status = "Left the session".to_string();
+                        }
+                    }
+                }
+                Transition::StoryFinished => {
+                    finish_story_screen(
+                        &mut screen,
+                        &mut story_next,
+                        &mut active_mission,
+                        &mut app,
+                        &mut ctx,
+                        &mut music,
+                    );
                 }
                 Transition::ApplyPreferences(preferences) => {
                     // `OptionsMenu` `Done`: the values are already saved in
@@ -1487,6 +1637,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     match started {
                         Ok(start) => {
                             ctx.status = String::new();
+                            // `GameSetupMenu_Menu` (`menu.cpp:2058`): the chosen
+                            // mission is the persistent `game_file_number`.
+                            app.persist_preferences();
                             println!(
                                 "UI: миссия {} — {} ({:?}), файл {}",
                                 start.tag,
@@ -1494,12 +1647,55 @@ fn run_ui(cli: &Cli) -> Result<()> {
                                 start.category,
                                 start.path.display()
                             );
-                            screen = Screen::InSession {
-                                request: SessionRequest {
-                                    game_id: "local".to_string(),
-                                    password: None,
-                                },
-                            };
+                            // Campaign stage 3b: keep the descriptor of the loaded
+                            // mission (`MissionManager::GetMission`) for the
+                            // victory/defeat story after the match.
+                            active_mission = ctx.missions.as_deref().and_then(|registry| {
+                                registry
+                                    .missions(request.category)
+                                    .get(request.index)
+                                    .cloned()
+                            });
+
+                            let data_dir = app
+                                .config()
+                                .max_res
+                                .parent()
+                                .map(std::path::Path::to_path_buf)
+                                .unwrap_or_default();
+                            let story = active_mission.as_ref().and_then(|descriptor| {
+                                StoryScreen::for_mission(
+                                    Some(descriptor),
+                                    StoryKind::Intro,
+                                    usize::from(start.mission_index),
+                                    app.assets().map(|assets| &assets.max_res),
+                                    &data_dir,
+                                )
+                            });
+
+                            match story {
+                                Some(mut story_screen) => {
+                                    // The match is already loaded: the story is a
+                                    // presentation screen before the session, so a
+                                    // missing story file can never block the start.
+                                    ctx.status = start_story_music(
+                                        &mut music,
+                                        &mut ctx.audio,
+                                        &mut story_screen,
+                                    );
+                                    screen = Screen::MissionStory(Box::new(story_screen));
+                                    story_next = Some(StoryContinuation::EnterSession);
+                                }
+                                None => {
+                                    story_next = None;
+                                    screen = Screen::InSession {
+                                        request: SessionRequest {
+                                            game_id: "local".to_string(),
+                                            password: None,
+                                        },
+                                    };
+                                }
+                            }
                         }
                         Err(error) => {
                             // The list stays on screen with the reason (condition 5):
@@ -1527,10 +1723,20 @@ fn run_ui(cli: &Cli) -> Result<()> {
         let frame_dt = frame_seconds as f32;
         let simulation_steps = step_clock.plan(frame_seconds);
 
-        // Menu screen animation (`Credits`): the credits scroll with the real
-        // `dt`, and when it reaches the top of the area the screen closes itself
-        // (`menu_credits_menu_loop`).
-        if screen.advance(frame_dt) {
+        // Menu/story screen animation (`Credits`, `Introduction`, campaign story
+        // videos): `dt` is the real frame time, `dt = 0` keeps a freeze-frame.
+        if matches!(screen, Screen::MissionStory(_)) {
+            if screen.advance(frame_dt) {
+                finish_story_screen(
+                    &mut screen,
+                    &mut story_next,
+                    &mut active_mission,
+                    &mut app,
+                    &mut ctx,
+                    &mut music,
+                );
+            }
+        } else if screen.advance(frame_dt) {
             let was_intro = matches!(screen, Screen::Introduction(_));
 
             screen = Screen::MainMenu;
@@ -1541,25 +1747,28 @@ fn run_ui(cli: &Cli) -> Result<()> {
             };
         }
 
-        // C3: the audio track of the `Introduction` movie. The chunks were decoded
-        // together with the frames; queue them in order (the oracle's `sndAdd`), gated by
-        // `disable_movie`/`movie_level`. The screen reports its own load state.
-        if let Screen::Introduction(screen) = &mut screen {
+        // C3: the audio track of the `Introduction` movie and of the story video.
+        // The chunks were decoded together with the frames; queue them in order (the
+        // oracle's `sndAdd`), gated by `disable_movie`/`movie_level`.
+        let movie_chunks = match &mut screen {
+            Screen::Introduction(screen) => Some(screen.take_audio()),
+            Screen::MissionStory(story) => Some(story.take_audio()),
+            _ => {
+                ctx.audio.stop_movie_audio();
+                None
+            }
+        };
+
+        if let Some(chunks) = movie_chunks {
             let enabled = app.preferences().movie_enabled() && ctx.audio.is_audible();
             let gain = app.preferences().movie_volume();
 
-            for chunk in screen.take_audio() {
+            for chunk in chunks {
                 if enabled {
-                    ctx.audio.play_pcm(
-                        &chunk.samples,
-                        chunk.channels,
-                        chunk.sample_rate,
-                        gain,
-                    );
+                    ctx.audio
+                        .play_pcm(&chunk.samples, chunk.channels, chunk.sample_rate, gain);
                 }
             }
-        } else {
-            ctx.audio.stop_movie_audio();
         }
 
         if matches!(screen, Screen::InSession { .. }) && app.local_active() {
@@ -1663,6 +1872,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // only sees `GameEvent`s — it can neither read nor mutate the simulation state.
         let scene = match &screen {
             Screen::InSession { .. } | Screen::GameOver => MusicScene::InGame,
+            // The victory/defeat story belongs to the finished match; the intro one
+            // still runs in the menu (the oracle keeps the menu track there).
+            Screen::MissionStory(story) if story.kind() != StoryKind::Intro => MusicScene::InGame,
             _ => MusicScene::Menu,
         };
         music.set_enabled(app.preferences().music_enabled(), &mut ctx.audio);
@@ -1941,7 +2153,8 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
                 }
                 Transition::StartSession(_)
                 | Transition::StartLocal(_)
-                | Transition::StartMission(_) => {}
+                | Transition::StartMission(_)
+                | Transition::StoryFinished => {}
             }
         }
 

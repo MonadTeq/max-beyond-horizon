@@ -164,4 +164,144 @@ LUA — win/loss уже захардкожено; game-rules — по катег
   из-за возврата отмены настройки в подменю). Скрипт `menu new_game` сохранён:
   драйвер проходит New Game → Custom, поэтому остальные сценарии не менялись.
 
+## Реализация этапа 3a (2026-11-25, Разработчик)
+
+Прогрессия кампании (M5): `last_campaign`/`game_file_number` — **персистентное**
+состояние настроек, а не UI-флаг; стори-экраны (M6) в этот этап не входят.
+
+- **Оракул.** `settings.cpp:101-105` — `game_file_number` и `last_campaign` —
+  `SETUP`-настройки со значением по умолчанию 1 (тот же файл настроек, что
+  `preferences.ini` порта). `menu.cpp:518-545` — после **победы** в кампании
+  менеджер миссий загружает следующую миссию списка, `game_file_number` получает
+  её 1-based индекс, `last_campaign` поднимается до него (никогда не понижается),
+  затем настройки сохраняются; победа в последней миссии (`next_it == end`)
+  ничего не пишет. `menu.cpp:1968-1983` (`GameSetupMenu_Menu`) — `last_campaign`
+  зажимается сверху по числу миссий, зажим пишется в настройки, и список
+  открывается на `game_file_number = last_campaign`. `gamesetupmenu.cpp:257-298,
+  402-423` — `DrawMissionList`/`FindNextValidFile`: миссия заблокирована, пока её
+  0-based индекс `>= last_campaign`; заблокированная строка остаётся в списке, но
+  неактивна и без заголовка, листание и выбор ограничены числом открытых миссий.
+- **Где живёт состояние** (`max_app::preferences`): новые поля `Preferences::
+  game_file_number`/`last_campaign` (`i32`, default 1), чтение/запись
+  `preferences.ini`. Загрузка не зажимает значения — зажим является правилом
+  меню (`campaign::menu_open`), поэтому файл round-trip'ится **байт-в-байт**
+  (unit-тест `preferences.rs::campaign_progress_roundtrips_the_settings_file_byte_for_byte`
+  + интеграционный повтор записи). В снапшот/CRC настройки не входят.
+- **Модуль `max_app::campaign`** (M5): `menu_open(last_campaign, mission_count)
+  -> CampaignMenuOpen` (`menu.cpp:1968-1983`; зажим только сверху, отрицательное
+  значение не открывает ничего), `victory_advance(current_index, count, prefs)
+  -> Option<CampaignAdvance>` (`menu.cpp:518-545`, `last_campaign` — high-water
+  mark), `App::advance_campaign_after_victory` (вызывается из
+  `App::leave_local_game`, т.е. в точке возврата C++-обёртки в главное меню после
+  экранов победы), `App::apply_campaign_clamp` (зажим из меню),
+  `App::set_campaign_mission_count` и `campaign_mission_count`.
+- **Старт миссии** (`max_app::mission`): `start_mission_from_registry` фиксирует
+  0-based позицию миссии в реестре (как `MissionManager::GetMissionIndex`) и число
+  кампанийных миссий, а также `game_file_number = index + 1` (`menu.cpp:2058`,
+  для любой категории — как в оракуле). Загрузка V70-сейва восстанавливает
+  позицию из 1-based `mission_index` заголовка (`saveload.cpp:772`); установка
+  нового мира (`adopt_universe`) её сбрасывает. Драйверы (`main.rs`,
+  `qa/runner.rs`) сохраняют `preferences.ini` после старта миссии (условие
+  владельца 1: `game_file_number` переживает перезапуск).
+- **`GameSetupMenu` (Campaign)**: `MissionSelectForm` получил
+  `campaign_unlocked` (это `last_campaign`; для остальных категорий — все миссии),
+  `open_campaign`, `unlocked_count`, `is_locked`; заблокированные строки видны,
+  но без заголовка, не выбираются кликом/стрелками, `Start` отказывает
+  («Mission N is locked…»), страницы ограничены открытыми миссиями. Без реестра
+  (`PATCHES.RES` недоступен) список пуст и **не** зажимает сохранённую
+  прогрессию. Открытие кампании только *сообщает* о зажиме
+  (`UiContext::campaign_clamp`), запись выполняет драйвер через
+  `App::apply_campaign_clamp` (правило C3: UI не мутирует приложение); после
+  возврата из партии драйвер синхронизирует зеркало `ctx.preferences` из `App`.
+  `handle_session_input` и сетевой драйвер не менялись.
+- **Гейт** (`max_app/tests/campaign_progress.rs`): победа Campaign 1 (через экран
+  победы → `Enter`/`LeaveSession`, как `main.rs`/`QaRunner`) →
+  `last_campaign=2`, `game_file_number=2`, файл настроек на диске, свежий `App`
+  (`load_preferences_from_disk`) читает 2 (перезапуск), повторное сохранение даёт
+  те же байты; поражение и последняя миссия прогрессию не двигают; список
+  кампании открывает ровно `last_campaign` миссий (заблокированная строка видна,
+  не выбирается, не стартует); end-to-end Campaign 1→2 через меню даёт
+  побайтово тот же `snapshot_bytes`/digest, что прямой
+  `start_local_game_from_save` `SAVE2.CAM` (включая 5 тиков); `last_campaign`
+  выше списка зажимается и пишется; прогрессия не входит в снапшот.
+- **Валидация:** `cargo check --workspace` — зелёный; `cargo test -p max_app
+  --no-default-features` — зелёный; `qa_run save-load.qa` и
+  `qa_golden_check` — PASS без дрейфа.
+
+## Реализация этапа 3b (2026-11-25, Разработчик)
+
+Стори-экраны кампании (M6): intro/victory/defeat по `menu_draw_mission_story_screen`
+(`menu.cpp:766-864`). Прогрессия этапа 3a не менялась: стори-экран только
+откладывает действие драйвера (вход в партию / возврат в меню), а
+`App::leave_local_game` вызывается там же, где раньше.
+
+- **Оракул и порядок.** `menu.cpp:2065-2071` — интро показывается после выбора
+  миссии и перед стартом партии; `menu.cpp:495-512` — victory/defeat после
+  экрана победы/поражения и **до** кампанийного wrap-up `menu.cpp:514-545`.
+  Экран: текст `GNW_TEXT_FONT_1`, ширина 600 px, область (20,20) 600×400,
+  цвет `Fonts_BrightSilverColor`; `ENDOK` 72×19 в (293,458), Enter/Esc
+  закрывают текст; далее `story.video` проигрывается `Movie_Play` (ресурс
+  `MAX.RES` — ASCIIZ-имя `*.MVE` рядом с архивом); `story.music` ставится до
+  текстового окна; фон — `menu_briefing_backgrounds` (`ENDGAME1`…`ENDGAME9`)
+  или список `story.background`.
+- **Модуль `max_app::story`** — презентация без `GameState`: `StoryScreen`
+  (текст + декодированный фон `BigImage` + пути видео + тег музыки + видимые
+  диагностики), `StoryKind::{Intro,Victory,Defeat}`, `StoryPhase::{Text,Video}`,
+  `StoryContinuation::{EnterSession,LeaveSession}`.
+  `StoryScreen::for_mission(descriptor, kind, seed, max_res, data_dir)` берёт
+  `StoryBlock` из `MissionDescriptor` (готов в `max_assets`) и возвращает
+  `None`, если блока нет (`HasIntroInfo`/`HasVictoryInfo`/`HasDefeatInfo`).
+  Видео-ID разрешается через `ResArchive::file_reference` (`DEMO2FLC` →
+  `maxmve2.mve`), файловые `Media` — относительно каталога данных; музыка-ID
+  уходит в `MusicDirector`, файловая форма — диагностика (в оракуле
+  `/// \todo`). Фон выбирается детерминированно из `seed` (1-based
+  `mission_index`); RNG симуляции не трогается (как у фона экрана победы).
+- **Драйверы** (`main.rs`, `qa/runner.rs`): старт миссии выполняется
+  **до** интро-экрана (мир уже загружен, `Screen::MissionStory` — слой подачи
+  перед `Screen::InSession`), поэтому отсутствие стори-файла физически не
+  может заблокировать старт; после закрытия экрана драйвер входит в партию
+  (`StoryFinished`). После `GameOver` `LeaveSession` сначала показывает
+  victory/defeat, затем возвращает в главное меню и вызывает
+  `App::leave_local_game` (прогрессия — как в C++, после стори). Дескриптор
+  запоминается на время партии; для миссии, загруженной из сейва, он ищется по
+  заголовку V70 (`mission_category` + 1-based `mission_index`). Во время
+  стори-экрана `local_update` не вызывается: `snapshot_bytes`/CRC не меняются.
+  `handle_session_input` не менялся; в сетевом UI-sink (`UiSessionSink`) добавлена
+  только пустая ветка нового `Transition::StoryFinished` для исчерпывающего
+  `match` — логика сети/сессии не менялась.
+- **Музыка** (`max_app::music`): `MusicDirector::play_story(tag, audio)` —
+  презентационный оверрайд: музыка сцены приостанавливается, на закрытии
+  `end_story` возвращает трек сцены; `disable_music` — no-op. Трек истории
+  `WINR_MSC` (`SC_C0009`) идёт через тот же `AudioPlayer`, что и остальная
+  музыка.
+- **Видимые fallback'и (условие владельца 2).** Отсутствующий фон/видео/музыка
+  попадают в `StoryScreen::diagnostics` (панель внизу экрана с чёрной
+  подложкой), в `ctx.status`/`eprintln!`/`tracing`, экран продолжает
+  показывать текст, а миссия уже стартовала. Без `MAX.RES` текст рисуется на
+  чёрном фоне (не пустой кадр). Отсутствие самого стори-блока — не ошибка:
+  экрана нет, миссия идёт как раньше.
+- **Отличия подачи (задокументированы в модуле).** (1) Текстовый бокс оракула
+  обрезается до 23 строк (`Text_SplitText`); порт листает текст
+  Up/Down/PageUp/PageDown со счётчиком страниц — сценарий `SC_C0001` полностью
+  укладывается в первую страницу после отбрасывания хвостовых пустых строк.
+  (2) Панель диагностик внизу — добавлена для видимости fallback'а.
+  (3) Печатающая машинка (`Text_TypeWriter`) не анимируется: страница
+  рисуется целиком, чтобы `dt = 0` в QA был детерминирован.
+- **Гейт** (`max_app/tests/mission_story.rs`, 7 тестов): старт Campaign 1 с
+  показом/закрытием стори-экрана и без него даёт побайтово тот же
+  `snapshot_bytes`/digest (на старте и после 5 тиков); сквозной прогон реального
+  драйвера (`QaRunner`: сценарий New Game → Campaign → intro-story → InGame)
+  даёт то же состояние, что прямой `start_local_game_from_save`; отсутствие
+  `maxmve2.mve` видно в диагностиках, экран рисуется, миссия стартует; реальные
+  блоки `SC_C0001` (текст/`ENDGAME2`/`DEMO2FLC`) и `SC_C0009`
+  (текст/фон/`WINR_MSC`) декодируются; миссия без блока не открывает экран;
+  кадр `dt = 0` детерминирован, Enter запускает видео, Esc завершает стори.
+  Плюс 7 unit-тестов модуля (перенос текста, пагинация, диагностики, кадр без
+  ассетов) и тест `MusicDirector` на приостановку/возврат трека сцены.
+- **Валидация:** `cargo check --workspace` — зелёный; `cargo test -p max_app
+  --no-default-features` — зелёный (483 lib-теста + интеграционные, 0 failed);
+  `qa_run visual-screens.qa` — PASS, `qa_golden_check` — 20/20, 0 дрейфа;
+  новый `qa_run story-screens.qa` — PASS, 3 новых эталона
+  (`story-mission-select.png`, `story-intro.png`, `story-intro-video.png` в
+  `max-brh-qa/golden/story-screens/`), сверка 3/3 без дрейфа.
 

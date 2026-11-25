@@ -848,7 +848,13 @@ impl App {
     }
 
     /// Exit to the menu: the local match is forgotten.
+    ///
+    /// `menu.cpp:518-545`: the C++ wrap-up runs the campaign progression after the
+    /// victory/story screens and before the main menu returns, so a won campaign
+    /// mission is advanced here, while the match result is still available
+    /// ([`crate::campaign`]).
     pub fn leave_local_game(&mut self) {
+        self.advance_campaign_after_victory();
         self.local = None;
         self.close_build_menu();
         self.close_build_site();
@@ -1991,6 +1997,17 @@ impl App {
         let mut local = LocalGame::new(loaded);
         local.phase = LocalPhase::Advancing;
         self.local = Some(local);
+        // Campaign progression: a campaign save resumes the mission its V70 header
+        // names (`saveload.cpp:772`, 1-based). A registry start overrides this with
+        // the descriptor position right after the load (`menu.cpp:2052-2056`).
+        self.campaign_mission_index =
+            if self.state_ref().mission_category() == MissionCategory::Campaign {
+                Some(usize::from(
+                    self.state_ref().mission_index().saturating_sub(1),
+                ))
+            } else {
+                None
+            };
         self.hud.clear();
         self.hud.push_log("Local game loaded from a V70 save");
         // `GAME_STATE_10_LOAD_GAME` resumes at the saved active team without

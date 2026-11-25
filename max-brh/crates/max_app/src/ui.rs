@@ -82,6 +82,7 @@ use crate::pregame::{PreGameFlow, PreGameStage};
 use crate::researchmenu::ResearchAction;
 use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::sfx::Sfx;
+use crate::story::{self, StoryAction};
 use crate::winloss;
 use crate::App;
 
@@ -194,6 +195,10 @@ pub enum Transition {
     StartMission(Box<MissionStartRequest>),
     /// Exit the session (Esc in the SDL loop).
     LeaveSession,
+    /// The campaign story screen (intro/victory/defeat) was closed: the driver
+    /// resumes the action it kept aside (enter the already started match, or leave
+    /// the session after the game-over screen).
+    StoryFinished,
     /// Apply the settings from the `Preferences`/`Setup` dialog (main menu).
     ApplyPreferences(Box<Preferences>),
     /// Close the application.
@@ -461,6 +466,12 @@ pub enum Screen {
     PreGame(PreGameFlow),
     /// Victory/defeat screen of the local match.
     GameOver,
+    /// Campaign story screen (intro/victory/defeat), `menu.cpp:766-864`.
+    ///
+    /// Presentation only: the screen sequence of an already resolved mission. The
+    /// driver keeps the action to resume (enter the session / leave to the menu) and
+    /// executes it on [`Transition::StoryFinished`]; see [`crate::story`].
+    MissionStory(Box<story::StoryScreen>),
     /// Modal help window over the previous screen (`HelpMenu`).
     ///
     /// In C++ `HelpMenu` is modal too: it is drawn over the menu/`CargoMenu`, and
@@ -595,6 +606,13 @@ pub struct UiContext {
     /// `MissionManager::GetMissions`); built once from `PATCHES.RES` + the game
     /// data directory. `None` — the menu shows the visible fallback.
     pub missions: Option<Arc<MissionRegistry>>,
+    /// Campaign clamp reported by the campaign list (`GameSetupMenu_Menu`,
+    /// `menu.cpp:1972-1977`): the persistent `last_campaign` was above the mission
+    /// count, so the oracle writes the clamped value back and saves the settings.
+    ///
+    /// The menu layer never writes the application (rule C3); the driver executes
+    /// this through [`crate::App::apply_campaign_clamp`] and clears the field.
+    pub campaign_clamp: Option<i32>,
 }
 
 impl UiContext {
@@ -615,6 +633,7 @@ impl UiContext {
             media_status: None,
             preferences: Preferences::default(),
             missions: None,
+            campaign_clamp: None,
         }
     }
 
@@ -818,6 +837,17 @@ impl Screen {
                 _ => Transition::None,
             };
         }
+        if matches!(self, Self::MissionStory(_)) {
+            // `menu_draw_mission_story_screen`: Enter/Esc close the text window, the
+            // videos play, any key/click aborts a movie. The driver resumes its own
+            // action (enter the match / leave to the menu) on `StoryFinished`.
+            if let Self::MissionStory(screen) = self {
+                return match screen.input(event) {
+                    StoryAction::None => Transition::None,
+                    StoryAction::Finished => Transition::StoryFinished,
+                };
+            }
+        }
         if matches!(self, Self::Introduction(_)) {
             // MVE: like `mve_cb_ctl` in the original — any key/click
             // interrupts and returns to the main menu.
@@ -842,9 +872,10 @@ impl Screen {
 
     /// One screen animation step (`dt` seconds; `dt <= 0` — the screen stands still).
     ///
-    /// Only [`Screen::Credits`] is animated (credits scrolling). Returns
-    /// `true` if the show is over and the screen should return to the main menu
-    /// (in C++ `menu_credits_menu_loop` exits on `height_offset <= bounds.uly`).
+    /// [`Screen::Credits`] scrolls, [`Screen::Introduction`] and
+    /// [`Screen::MissionStory`] advance their MVE movies. Returns `true` if the show
+    /// is over and the screen should close (in C++ `menu_credits_menu_loop` exits on
+    /// `height_offset <= bounds.uly`; `Movie_Play` returns when the movie ends).
     pub fn advance(&mut self, dt: f32) -> bool {
         if let Self::Credits(screen) = self {
             screen.advance(dt);
@@ -853,6 +884,11 @@ impl Screen {
         }
 
         if let Self::Introduction(screen) = self {
+            return screen.advance(dt);
+        }
+
+        if let Self::MissionStory(screen) = self {
+            // `true` — the last `Movie_Play` of the story has ended.
             return screen.advance(dt);
         }
 
@@ -1211,7 +1247,25 @@ impl Screen {
                 Transition::None
             }
             Some(NewGameAction::Campaign) => {
-                *self = Self::MissionSelect(MissionSelectForm::new(MissionCategory::Campaign));
+                // `GameSetupMenu_Menu` (`menu.cpp:1968-1983`): the campaign list
+                // opens on the persistent `last_campaign`, clamped to the mission
+                // count. The clamp is only *reported* here — the driver writes it
+                // back through `App::apply_campaign_clamp` (rule C3).
+                let mut form = MissionSelectForm::new(MissionCategory::Campaign);
+
+                if let Some(open) =
+                    form.open_campaign(ctx.preferences.last_campaign, ctx.missions.as_deref())
+                {
+                    // `settings["game_file_number"] = last_campaign` (`menu.cpp:1979`).
+                    ctx.preferences.game_file_number = open.last_campaign;
+
+                    if open.clamped {
+                        ctx.preferences.last_campaign = open.last_campaign;
+                        ctx.campaign_clamp = Some(open.last_campaign);
+                    }
+                }
+
+                *self = Self::MissionSelect(form);
                 ctx.status = "Campaign Game: choose a mission, Enter starts".to_string();
                 Transition::None
             }
@@ -1609,6 +1663,22 @@ impl Screen {
 
                 buffer.fill(Rgba::rgb(12, 14, 18));
                 draw_text_line(buffer, 12, 12, view.status, Rgba::rgb(232, 236, 244));
+            }
+            Self::MissionStory(screen) => {
+                if native_frame {
+                    screen.draw(buffer, menu_assets, mouse);
+                    return;
+                }
+
+                // The story layout is in the original 640×480 coordinates.
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Mission story uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
             }
             Self::InSession { .. } => render_session(buffer, view),
         }

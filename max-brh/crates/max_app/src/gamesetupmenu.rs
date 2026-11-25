@@ -29,12 +29,20 @@
 //! `Mission_ProcessMission` does), the row is drawn in red with a `[missing]`
 //! marker, the description panel names the absent file, and `Start` refuses with a
 //! visible status line instead of starting an empty world.
+//!
+//! Campaign progression (stage 3a): [`MissionSelectForm::campaign_unlocked`] is the
+//! persistent `last_campaign` of the settings (`DrawMissionList`,
+//! `gamesetupmenu.cpp:281`). A campaign row with a 0-based index `>= last_campaign`
+//! stays in the list but is disabled and carries no title — exactly the oracle's
+//! locked rows; [`MissionSelectForm::open_campaign`] applies the
+//! `GameSetupMenu_Menu` clamp and selection (`menu.cpp:1968-1983`).
 
 use max_assets::{MissionDescriptor, MissionRegistry};
 use max_core::victory::MissionCategory;
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw, draw_text_gnw_shadowed, GnwFontId};
 
+use crate::campaign::CampaignMenuOpen;
 use crate::helpmenu::HelpSection;
 use crate::menu::{
     blit_simple, clean_status, draw_big_image, draw_image_button, draw_title, truncate_to_width,
@@ -43,6 +51,9 @@ use crate::menu::{
 
 /// Missions per page (`GAME_SETUP_MENU_MISSION_COUNT`, `gamesetupmenu.cpp:35`).
 pub const MISSIONS_PER_PAGE: usize = 12;
+/// [`MissionSelectForm::campaign_unlocked`] of a category without progression:
+/// every mission is selectable (the campaign uses `last_campaign` instead).
+pub const ALL_MISSIONS_UNLOCKED: usize = usize::MAX;
 /// Mission row height (`control->bounds.lry - ulx`, `gamesetupmenu.hpp:60-71`).
 pub const ROW_HEIGHT: i32 = 20;
 /// Description rows per page (`201 / Text_GetHeight()`, `LoadMissionDescription`).
@@ -159,12 +170,20 @@ pub struct MissionSelectForm {
     /// Single-player entry: the `Custom Scenarios` title of the oracle
     /// (`_(884f)` instead of `_(f27a)`).
     pub single_player: bool,
+    /// Unlocked missions of the category.
+    ///
+    /// The campaign value is the persistent `last_campaign` (`settings.cpp:105`), a
+    /// 1-based count: `DrawMissionList` (`gamesetupmenu.cpp:281`) disables a row
+    /// while its 0-based index is `>= last_campaign`. Every other category unlocks
+    /// all missions ([`ALL_MISSIONS_UNLOCKED`]). Defaults to the `settings.cpp`
+    /// value of `last_campaign` = 1.
+    pub campaign_unlocked: usize,
 }
 
 impl MissionSelectForm {
     /// Opens the category on the first mission (`GameSetupMenu_Menu` sets
     /// `game_file_number` to 1 for every category except `Campaign`, where the
-    /// progression value is used; campaign progression is out of this stage).
+    /// progression value is used — [`Self::open_campaign`]).
     pub fn new(category: MissionCategory) -> Self {
         Self {
             category,
@@ -172,7 +191,64 @@ impl MissionSelectForm {
             page: 0,
             row_index: 0,
             single_player: true,
+            campaign_unlocked: if category == MissionCategory::Campaign {
+                // `settings.cpp:105`: `last_campaign` defaults to 1.
+                1
+            } else {
+                ALL_MISSIONS_UNLOCKED
+            },
         }
+    }
+
+    /// `GameSetupMenu_Menu` (`menu.cpp:1968-1983`) for the campaign list: the
+    /// persistent `last_campaign` is clamped to the mission count, the list opens on
+    /// `game_file_number = last_campaign`, and the returned value is the clamp the
+    /// oracle writes back to the settings file (`menu.cpp:1972-1977`).
+    ///
+    /// `None` — the registry is unavailable: the visible fallback of the stage-2
+    /// menu (owner condition 5). Nothing is unlocked and the stored progression is
+    /// left untouched: clamping it to an unknown zero would destroy it.
+    pub fn open_campaign(
+        &mut self,
+        last_campaign: i32,
+        registry: Option<&MissionRegistry>,
+    ) -> Option<CampaignMenuOpen> {
+        self.row_index = 0;
+
+        let Some(registry) = registry else {
+            self.campaign_unlocked = 0;
+            self.selected = 0;
+            self.page = 0;
+
+            return None;
+        };
+
+        let open = crate::campaign::menu_open(last_campaign, self.mission_count(Some(registry)));
+
+        self.campaign_unlocked = open.last_campaign.max(0) as usize;
+        self.selected = open.selected;
+        self.page = open.selected / MISSIONS_PER_PAGE * MISSIONS_PER_PAGE;
+
+        Some(open)
+    }
+
+    /// Unlocked missions of the category — the C++ `game_count` of
+    /// `DrawMissionList`: every mission outside the campaign, `last_campaign`
+    /// clamped to the list for the campaign.
+    pub fn unlocked_count(&self, registry: Option<&MissionRegistry>) -> usize {
+        let count = self.mission_count(registry);
+
+        if self.category == MissionCategory::Campaign {
+            self.campaign_unlocked.min(count)
+        } else {
+            count
+        }
+    }
+
+    /// Whether `index` is a locked campaign mission (`DrawMissionList`: the row is
+    /// still drawn by the oracle, but it is disabled and carries no title).
+    pub fn is_locked(&self, registry: Option<&MissionRegistry>, index: usize) -> bool {
+        index >= self.unlocked_count(registry)
     }
 
     /// Screen title (`GameSetupMenu::Init`): `_(9b46)`, `_(5d49)`, `_(385b)`,
@@ -234,19 +310,31 @@ impl MissionSelectForm {
         self.descriptor(registry, self.page + row)
     }
 
-    /// Whether the mission can start: the descriptor exists and its file is on disk
-    /// (`Mission::GetMission`, `mission.cpp:272-291`).
+    /// Whether the mission can start: it is unlocked and the descriptor exists and
+    /// its file is on disk (`Mission::GetMission`, `mission.cpp:272-291`).
+    ///
+    /// A locked campaign mission never starts (`DrawMissionList` disables the row;
+    /// the selection can only hold an unlocked mission).
     pub fn can_start(&self, registry: Option<&MissionRegistry>) -> bool {
-        self.selected_descriptor(registry)
-            .is_some_and(|descriptor| {
-                descriptor.mission_found && descriptor.mission_path().is_some()
-            })
+        !self.is_locked(registry, self.selected)
+            && self
+                .selected_descriptor(registry)
+                .is_some_and(|descriptor| {
+                    descriptor.mission_found && descriptor.mission_path().is_some()
+                })
     }
 
     /// Why the selection cannot start (visible fallback, owner condition 5).
     pub fn start_error(&self, registry: Option<&MissionRegistry>) -> String {
         if registry.is_none() {
             return "Mission registry unavailable (PATCHES.RES)".to_string();
+        }
+
+        if self.category == MissionCategory::Campaign && self.is_locked(registry, self.selected) {
+            return format!(
+                "Mission {} is locked: win the previous campaign mission first",
+                self.selected + 1
+            );
         }
 
         match self.selected_descriptor(registry) {
@@ -271,13 +359,14 @@ impl MissionSelectForm {
 
     /// `EventSelectItem`: a click on row `row` of the page.
     ///
-    /// Returns `true` when the row is the already selected mission — the second
-    /// click starts it (`event_click_done`).
+    /// A locked campaign row is a disabled button in the oracle: the click is
+    /// ignored and the selection stays where it was. Returns `true` when the row is
+    /// the already selected mission — the second click starts it
+    /// (`event_click_done`).
     pub fn select_row(&mut self, registry: Option<&MissionRegistry>, row: usize) -> bool {
         let index = self.page + row;
-        let count = self.mission_count(registry);
 
-        if index >= count {
+        if self.is_locked(registry, index) {
             return false;
         }
 
@@ -292,8 +381,11 @@ impl MissionSelectForm {
     }
 
     /// `EventStepButton`: up/down moves the selection and keeps the page in sync.
+    ///
+    /// The oracle stops on the last **unlocked** mission: `game_slot` is clamped to
+    /// `game_count + game_index_first_on_page - 1` (`gamesetupmenu.cpp:455-457`).
     pub fn step(&mut self, registry: Option<&MissionRegistry>, delta: isize) {
-        let count = self.mission_count(registry);
+        let count = self.unlocked_count(registry);
 
         if count == 0 {
             return;
@@ -312,7 +404,7 @@ impl MissionSelectForm {
 
     /// Last page index that holds missions.
     fn last_page(&self, registry: Option<&MissionRegistry>) -> usize {
-        let count = self.mission_count(registry);
+        let count = self.unlocked_count(registry);
 
         if count == 0 {
             0
@@ -436,6 +528,13 @@ pub fn draw_mission_select(
         let Some(descriptor) = descriptor else {
             continue;
         };
+
+        // `DrawMissionList` (`gamesetupmenu.cpp:281-296`): a campaign mission above
+        // `last_campaign` is a disabled button and `mission_titles[i]` stays empty —
+        // the row is visible, but it carries neither title nor selection color.
+        if form.is_locked(registry, index) {
+            continue;
+        }
 
         let selected = index == form.selected;
         let color = if !descriptor.mission_found {

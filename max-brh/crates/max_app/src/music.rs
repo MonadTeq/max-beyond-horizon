@@ -8,6 +8,8 @@
 //!   `UpdateMusic` to a random track of the `MAIN_MSC..BKG9_MSC` playlist when the current
 //!   one ends (the playlist refills when exhausted);
 //! * victory/defeat — `WINR_MSC` / `LOSE_MSC` (`menu.cpp:476/479`);
+//! * a campaign story screen — `StoryBlock::music` (`menu.cpp:803-805`):
+//!   [`MusicDirector::play_story`] suspends the scene cue until the screen closes;
 //! * `disable_music` — [`crate::Preferences::disable_music`]: `PlayMusic` records the
 //!   request but starts nothing (`HaltMusicPlayback` stops the current track).
 //!
@@ -95,6 +97,10 @@ pub struct MusicDirector {
     in_game: bool,
     /// Match outcome seen in the event stream.
     outcome: Option<MusicOutcome>,
+    /// A campaign story screen plays its own track (`StoryBlock::music`,
+    /// `menu.cpp:803-805`): the scene cue is suspended until
+    /// [`MusicDirector::end_story`].
+    story_active: bool,
     /// Playlist of the shuffle mode (`m_music_playlist`).
     playlist: [bool; GAME_PLAYLIST.len()],
     /// Presentation-only PRNG (xorshift; never the simulation `Randomizer`).
@@ -120,6 +126,7 @@ impl MusicDirector {
             messages: Vec::new(),
             in_game: false,
             outcome: None,
+            story_active: false,
             playlist: [true; GAME_PLAYLIST.len()],
             random: 0x9E37_79B9,
             plays: 0,
@@ -177,6 +184,52 @@ impl MusicDirector {
         self.outcome
     }
 
+    /// Whether a campaign story screen suspended the scene cue.
+    pub fn story_active(&self) -> bool {
+        self.story_active
+    }
+
+    /// Plays a story screen track (`StoryBlock::music`, `menu.cpp:803-805`).
+    ///
+    /// The scene cue is suspended while the story screen is open; the driver calls
+    /// [`Self::end_story`] when it closes and the normal scene track is started
+    /// again on the next [`Self::sync`]. `false` — the track could not be queued
+    /// (missing `*.MSC`/reference). With `disable_music` nothing is played and the
+    /// call reports `true` (the override is a no-op) — music is optional.
+    pub fn play_story(&mut self, tag: &str, audio: &mut AudioPlayer) -> bool {
+        if !self.enabled {
+            return true;
+        }
+
+        if audio.play_music(tag, self.volume) {
+            self.story_active = true;
+            self.current = None;
+            self.plays += 1;
+            self.last_error = None;
+
+            true
+        } else {
+            let reason = audio
+                .last_error()
+                .map(str::to_string)
+                .unwrap_or_else(|| "нет файла *.MSC".to_string());
+
+            self.last_error = Some(reason.clone());
+            self.log(format!("музыка истории: {tag} не запущена ({reason})"));
+
+            false
+        }
+    }
+
+    /// Ends the story-screen override; the scene cue resumes on the next
+    /// [`Self::sync`].
+    pub fn end_story(&mut self) {
+        if self.story_active {
+            self.story_active = false;
+            self.current = None;
+        }
+    }
+
     /// Applies the facade events to the music state (no simulation access).
     ///
     /// `Turn` notices are the only events the director cares about: the first one means
@@ -217,7 +270,7 @@ impl MusicDirector {
     ) {
         self.on_events(events, player_team);
 
-        if !self.enabled {
+        if !self.enabled || self.story_active {
             return;
         }
 
@@ -279,7 +332,7 @@ impl MusicDirector {
     /// the `sound` feature) the rotation is not attempted: `music_playing` cannot tell a
     /// finished track from a silent one.
     pub fn advance_if_finished(&mut self, audio: &mut AudioPlayer, planet: Planet) -> bool {
-        if !self.enabled || self.outcome.is_some() || self.current.is_none() {
+        if !self.enabled || self.outcome.is_some() || self.story_active || self.current.is_none() {
             return false;
         }
 
@@ -637,5 +690,58 @@ mod tests {
             .messages()
             .iter()
             .any(|message| message.contains(TRACK_MENU)));
+    }
+
+    /// A campaign story track (`menu.cpp:803-805`) suspends the scene cue while the
+    /// story screen is open; closing the screen resumes the scene track.
+    #[test]
+    fn a_story_cue_suspends_and_then_restores_the_scene_track() {
+        let (mut director, mut audio) = director_player(true);
+
+        director.sync(
+            MusicScene::Menu,
+            &[],
+            TeamId(0),
+            Planet::Snowcrab,
+            &mut audio,
+        );
+        assert_eq!(director.current(), Some(TRACK_MENU));
+
+        audio.preload_music(
+            "STORY_MSC",
+            WavClip {
+                sample_rate: 22_050,
+                channels: 2,
+                samples: vec![0, 0],
+            },
+        );
+        assert!(director.play_story("STORY_MSC", &mut audio));
+        assert!(director.story_active());
+        assert_eq!(director.current(), None, "the scene cue is suspended");
+
+        // The frame loop keeps calling `sync`, but the story track stays in charge.
+        director.sync(
+            MusicScene::Menu,
+            &[],
+            TeamId(0),
+            Planet::Snowcrab,
+            &mut audio,
+        );
+        assert_eq!(director.current(), None);
+
+        director.end_story();
+        director.sync(
+            MusicScene::Menu,
+            &[],
+            TeamId(0),
+            Planet::Snowcrab,
+            &mut audio,
+        );
+        assert!(!director.story_active());
+        assert_eq!(
+            director.current(),
+            Some(TRACK_MENU),
+            "the scene cue resumes"
+        );
     }
 }

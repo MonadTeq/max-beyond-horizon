@@ -40,6 +40,7 @@ use crate::qa::script::{
     TransferCommand, UnitMenuCommand, UpgradeCommand,
 };
 use crate::setup::{self, SetupScreen};
+use crate::story::{StoryContinuation, StoryKind, StoryScreen};
 use crate::ui::{
     handle_session_input, InputEvent, Key, MenuClient, Screen, SessionRequest, Transition,
     UiContext,
@@ -199,6 +200,10 @@ pub struct QaRunner {
     detail: Option<String>,
     /// Frames taken by the last `end_turn` (transition + AI turns).
     last_end_turn_frames: u32,
+    /// Campaign stage 3b: the descriptor of the started mission (presentation
+    /// memory) and the driver action the story screen returns to.
+    active_mission: Option<max_assets::MissionDescriptor>,
+    story_next: Option<StoryContinuation>,
 }
 
 impl QaRunner {
@@ -237,6 +242,15 @@ impl QaRunner {
                 &config.data_dir,
             ))
         });
+        // Campaign stage 3a: the victory wrap-up bounds the progression by the size
+        // of the campaign mission list (`MissionManager::GetMissions(...).size()`).
+        if let Some(registry) = &ctx.missions {
+            app.set_campaign_mission_count(
+                registry
+                    .missions(max_core::victory::MissionCategory::Campaign)
+                    .len(),
+            );
+        }
         ctx.status = String::new();
 
         Ok(Self {
@@ -250,6 +264,8 @@ impl QaRunner {
             frames: 0,
             detail: None,
             last_end_turn_frames: 0,
+            active_mission: None,
+            story_next: None,
         })
     }
 
@@ -2308,6 +2324,56 @@ impl QaRunner {
     // Input
     // -----------------------------------------------------------------------
 
+    /// Builds the story screen of the current mission (`menu_draw_mission_story_screen`).
+    ///
+    /// The descriptor is the one the registry start kept; a mission loaded through
+    /// the save/load path is looked up by its V70 header (`mission_category` +
+    /// 1-based `mission_index`). `None` — no such story block.
+    fn open_mission_story(&mut self, kind: StoryKind, seed: usize) -> Option<StoryScreen> {
+        let descriptor = self.active_mission.clone().or_else(|| {
+            let category = self.app.state_ref().mission_category();
+            let index = usize::from(self.app.state_ref().mission_index()).checked_sub(1)?;
+            self.ctx
+                .missions
+                .as_deref()?
+                .missions(category)
+                .get(index)
+                .cloned()
+        });
+
+        StoryScreen::for_mission(
+            descriptor.as_ref(),
+            kind,
+            seed,
+            self.app.assets().map(|assets| &assets.max_res),
+            &self.config.data_dir,
+        )
+    }
+
+    /// Resumes the action kept aside when the story screen opened.
+    fn finish_story(&mut self) {
+        match self.story_next.take() {
+            Some(StoryContinuation::EnterSession) => {
+                self.screen = Screen::InSession {
+                    request: SessionRequest {
+                        game_id: "local".to_string(),
+                        password: None,
+                    },
+                };
+                self.ctx.status.clear();
+            }
+            Some(StoryContinuation::LeaveSession) | None => {
+                self.screen = Screen::MainMenu;
+                self.active_mission = None;
+                // `menu.cpp:518-545`: the campaign wrap-up runs when the oracle
+                // returns to the main menu, i.e. after the story screen.
+                self.app.leave_local_game();
+                self.ctx.preferences = self.app.preferences().clone();
+                self.ctx.status = "Left the session".to_string();
+            }
+        }
+    }
+
     /// Sends an event to the current screen and executes the transition.
     fn send(&mut self, event: InputEvent) -> Result<Flow, String> {
         if matches!(self.screen, Screen::InSession { .. }) {
@@ -2316,6 +2382,7 @@ impl QaRunner {
                 Transition::LeaveSession => {
                     self.screen = Screen::MainMenu;
                     self.app.leave_local_game();
+                    self.ctx.preferences = self.app.preferences().clone();
                     self.ctx.status = "Left the session".to_string();
                     Ok(Flow::Continue)
                 }
@@ -2332,6 +2399,9 @@ impl QaRunner {
                 Transition::StartMission(_) => {
                     Err("ввод в сессии не может начать миссию".to_string())
                 }
+                Transition::StoryFinished => {
+                    Err("стори-экран не открывается из партии".to_string())
+                }
                 Transition::StartSession(request) => Err(format!(
                     "сетевая сессия «{}» в QA-драйвере не поддерживается",
                     request.game_id
@@ -2339,7 +2409,15 @@ impl QaRunner {
             };
         }
 
-        match self.screen.handle_input(&mut self.ctx, event) {
+        let transition = self.screen.handle_input(&mut self.ctx, event);
+
+        // Campaign stage 3a: the campaign list reports the `GameSetupMenu_Menu` clamp
+        // of `last_campaign` (`menu.cpp:1972-1977`); the driver writes it back.
+        if let Some(last_campaign) = self.ctx.campaign_clamp.take() {
+            self.app.apply_campaign_clamp(last_campaign);
+        }
+
+        match transition {
             Transition::None => Ok(Flow::Continue),
             Transition::StartLocal(setup) => {
                 self.app
@@ -2367,26 +2445,95 @@ impl QaRunner {
 
                 let start = self
                     .app
-                    .start_mission_from_registry(
-                        &registry,
-                        request.category,
-                        request.index,
-                        &setup,
-                    )
+                    .start_mission_from_registry(&registry, request.category, request.index, &setup)
                     .map_err(|error| format!("start_mission_from_registry: {error}"))?;
 
-                self.screen = Screen::InSession {
-                    request: SessionRequest {
-                        game_id: "local".to_string(),
-                        password: None,
-                    },
-                };
+                // `GameSetupMenu_Menu` (`menu.cpp:2058`): the chosen mission is the
+                // persistent `game_file_number`.
+                self.app.persist_preferences();
                 self.ctx.status = format!("Mission: {}", start.title);
+                // Campaign stage 3b: keep the descriptor for the victory/defeat
+                // story (`MissionManager::GetMission`).
+                self.active_mission = self.ctx.missions.as_deref().and_then(|registry| {
+                    registry
+                        .missions(request.category)
+                        .get(request.index)
+                        .cloned()
+                });
+
+                // `menu.cpp:2065-2071`: the intro story is a presentation screen
+                // before the session; the mission is already loaded, so a missing
+                // story file can never block the start.
+                let story = StoryScreen::for_mission(
+                    self.active_mission.as_ref(),
+                    StoryKind::Intro,
+                    usize::from(start.mission_index),
+                    self.app.assets().map(|assets| &assets.max_res),
+                    &self.config.data_dir,
+                );
+
+                match story {
+                    Some(story) => {
+                        self.ctx.status = story.status_line();
+                        self.screen = Screen::MissionStory(Box::new(story));
+                        self.story_next = Some(StoryContinuation::EnterSession);
+                    }
+                    None => {
+                        self.story_next = None;
+                        self.screen = Screen::InSession {
+                            request: SessionRequest {
+                                game_id: "local".to_string(),
+                                password: None,
+                            },
+                        };
+                    }
+                }
+
                 Ok(Flow::Continue)
             }
             Transition::LeaveSession => {
-                self.screen = Screen::MainMenu;
-                self.app.leave_local_game();
+                // `menu.cpp:495-512`: the victory/defeat story of the finished
+                // mission comes before the return to the main menu.
+                let story = if matches!(self.screen, Screen::GameOver) {
+                    let victory = self
+                        .app
+                        .local()
+                        .and_then(|local| local.outcome.as_ref())
+                        .is_some_and(|outcome| outcome.victory);
+                    let kind = if victory {
+                        StoryKind::Victory
+                    } else {
+                        StoryKind::Defeat
+                    };
+                    let seed = usize::from(self.app.state_ref().mission_index());
+
+                    self.open_mission_story(kind, seed)
+                } else {
+                    None
+                };
+
+                match story {
+                    Some(story) => {
+                        self.ctx.status = story.status_line();
+                        self.screen = Screen::MissionStory(Box::new(story));
+                        self.story_next = Some(StoryContinuation::LeaveSession);
+                    }
+                    None => {
+                        self.story_next = None;
+                        self.active_mission = None;
+                        self.screen = Screen::MainMenu;
+                        self.app.leave_local_game();
+                        // `menu.cpp:518-545`: a won campaign mission advances
+                        // `last_campaign`; the menu reads the mirror of the settings.
+                        self.ctx.preferences = self.app.preferences().clone();
+                    }
+                }
+
+                Ok(Flow::Continue)
+            }
+            Transition::StoryFinished => {
+                self.finish_story();
+
                 Ok(Flow::Continue)
             }
             Transition::Quit => Ok(Flow::Exit),
@@ -2409,7 +2556,13 @@ impl QaRunner {
         // frame is a pure function of the scenario step count. When the scrolling
         // reaches the top of the area, the original exits the loop — we return
         // to the main menu.
-        if self.screen.advance(1.0 / 60.0) {
+        if matches!(self.screen, Screen::MissionStory(_)) {
+            // `Movie_Play` returns when the video ends; a fixed step keeps the
+            // scenario deterministic.
+            if self.screen.advance(1.0 / 60.0) {
+                self.finish_story();
+            }
+        } else if self.screen.advance(1.0 / 60.0) {
             let was_intro = matches!(self.screen, Screen::Introduction(_));
 
             self.screen = Screen::MainMenu;
@@ -4987,6 +5140,7 @@ impl QaRunner {
             (Screen::Introduction(_), ScreenName::Introduction) => true,
             (Screen::Credits(_), ScreenName::Credits) => true,
             (Screen::GameOver, ScreenName::GameOver) => true,
+            (Screen::MissionStory(_), ScreenName::Story) => true,
             (Screen::InSession { .. }, ScreenName::InGame) => true,
             (Screen::LocalSetup(_), ScreenName::LocalSetup) => true,
             (Screen::LocalSetup(form), ScreenName::Options) => form.screen == SetupScreen::Options,
@@ -5037,6 +5191,7 @@ impl QaRunner {
             Screen::Introduction(_) => "Introduction",
             Screen::Credits(_) => "Credits",
             Screen::GameOver => "GameOver",
+            Screen::MissionStory(_) => "MissionStory",
             Screen::InSession { .. } => "InGame",
             Screen::Help { .. } => "Help",
             Screen::Preferences(_) => "Preferences",

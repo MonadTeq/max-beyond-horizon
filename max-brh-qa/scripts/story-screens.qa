@@ -1,0 +1,38 @@
+# story-screens.qa — стори-экраны кампании (этап 3b, `menu.cpp:766-864`).
+#
+# Сквозной проход без сети: New Game → Campaign Game → миссия 1 → intro-story
+# (текст + фон `ENDGAME*` из MAX.RES) → видео `DEMO2FLC` → `maxmve2.mve` →
+# партия. Кадры этого скрипта — новые эталоны стори-экранов:
+#
+#   cargo run -p max_app --no-default-features --example qa_run -- \
+#       max-brh-qa/scripts/story-screens.qa qa-out/story-screens
+#   cargo run -p max_app --no-default-features --example qa_golden_check -- \
+#       qa-out/story-screens max-brh-qa/golden
+#
+# Партия не симулируется: кадры снимаются до первого тика, поэтому
+# `snapshot_bytes` в этом скрипте не участвует (гейт снапшота — в
+# `max_app/tests/mission_story.rs`).
+
+# --- New Game → Campaign Game ---------------------------------------------
+click 485 189
+assert screen=NewGameMenu
+click 485 329
+assert screen=MissionSelect
+shot story-mission-select
+
+# Start миссии 1 (`SC_C0001`): после старта миссии открывается intro-story
+# (`menu.cpp:2065-2071`), сама миссия уже загружена.
+key ENTER
+assert screen=MissionStory
+shot story-intro
+
+# Enter закрывает текстовое окно и запускает видео `DEMO2FLC` → `maxmve2.mve`.
+# Кадр 0 декодируется сразу, `dt = 0` — детерминированный стоп-кадр.
+key ENTER
+assert screen=MissionStory
+shot story-intro-video
+
+# Любая клавиша прерывает MVE (`mve_cb_ctl`); единственное видео завершает
+# стори-экран, драйвер входит в партию.
+key ESC
+assert screen=InGame

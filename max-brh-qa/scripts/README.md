@@ -30,6 +30,7 @@ max-brh-qa/
 ├── scripts/missile-line.qa     # снаряд летит ПО ПРЯМОЙ (диагональ −3/+3 после AI A.4): `assert missile-line`, след по линии
 ├── scripts/build-cancel.qa     # строителя нельзя увести (UNIT_NO_GO); отмена — только явный `stop` (CancelBuilding)
 ├── scripts/panels.qa           # кнопки 3×3 левой панели: переключатели и их оверлеи (overlay/panel)
+├── scripts/story-screens.qa    # этап 3b: Campaign 1 → intro-story (текст/фон/видео MVE) → партия
 ├── golden/*.png                # эталоны visual-screens.qa (20 кадров, ~2.2 МиБ)
 ├── golden/production/*.png     # эталоны BuildMenu, стройплощадки, её роста и кадров строителя (production.qa)
 ├── golden/upgrade/*.png        # эталоны UpgradeMenu (upgrade.qa)
@@ -46,6 +47,7 @@ max-brh-qa/
 ├── golden/combat-tb/*.png      # эталоны боя: выстрел/снаряд/след/взрыв/вспышка танка (11)
 ├── golden/missile-line/*.png   # эталоны пиксельной прямой снаряда (3: два кадра в полёте + попадание)
 ├── golden/build-cancel/*.png   # эталоны NO_GO и явной отмены стройки (4)
+├── golden/story-screens/*.png  # эталоны стори-экранов кампании: список/интро/видео (3)
 └── scripts/README.md
 ```
 
@@ -206,7 +208,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `assert team=1` / `team=GREEN` | `state.active_turn_team` (0..3 или RED/GREEN/BLUE/GRAY) |
 | `assert units>=4` | число юнитов в состоянии |
 | `assert unit-count NAME>=N` | юнитов типа `NAME` на карте (имя — как у `spawn`: `RocketSmoke`, `Rocket`, `TorpedoBubble`, `Training Hall`, …) |
-| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Preferences`, `Mobilize`, `Landing`, `GameOver`, `InGame` |
+| `assert screen=InGame` | текущий экран: `MainMenu`, `JoinList`, `CreateForm`, `MultiplayerMenu`, `Introduction`, `Credits`, `Options`, `Planet`, `Players`, `Clan`, `LocalSetup`, `Preferences`, `Mobilize`, `Landing`, `GameOver`, `MissionStory`, `InGame` |
 | `assert phase=PlayerTurn` | фаза локальной партии: `PlayerTurn`, `AiTurn`, `Advancing`, `Finished` |
 | `assert notice=RED` / `notice=none` | окно «Begin turn» (M-HS) открыто для команды |
 | `assert victory` / `assert defeat` | исход партии (`LocalOutcome`) |
@@ -298,6 +300,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | `preferences.qa` | TC-0935: `menu setup` → `SETUPPIC` (`setup-dialog`, `prefs-value disable_fx=0`, toggle → `prefs-sound=off`, Cancel не применяет, Done применяет); партия → кнопка `Preferences` панели → `PREFSPIC` (`prefs-dialog`, все секции, `quick_scroll=16`, `timer=180`), `prefs set quick_scroll 36` → 35, `prefs toggle effects` → `effects=off`, `anim 200` → `prefs-effects-off`, Done, значение помнится, `save_v70 prefs-ini`; звук `prefs-audio=off/on`; Cancel возвращает снимок; `Help` → `help-section=preferences`; 4 golden-кадра | **PASS** (1 кадр цикла, 0 дрейфа) |
 | `ai-turn.qa` | A2/A3: конец хода человека и ход компьютера — Options (No Limit + Turn Based) → мобилизация → высадка → `assert endturn=normal` (мой ход: кнопка отжата, таймер 00:00 красным) → `click 426 12` (End Turn) → `tick 1` (`assert team=GREEN`, `assert endturn=pressed`: нажатый `G_ENDT_D` с подписью цветом команды, таймер 00:45) → `wait 2000` (`assert endturn=normal`, `assert team=RED`, `turn>=2`); кадры `ai-turn-human-normal`/`ai-turn-ai-pressed`/`ai-turn-human-again` | **PASS** (298 кадров; golden `ai-turn/`) |
 | `sp-tb.qa` | Turn Based SP: Options (No Limit + Turn Based) → Planet → Players (RED человек, GREEN+BLUE компьютеры, GRAY пусто) → мобилизация → высадка → `assert turn=1`/`team=RED` → `select unit 0`/`move near` → `end_turn` → `assert turn=2`/`team=RED`/`endturn-frames<3000` (два хода ИИ: 658 кадров) → ещё 2 раунда (1022/1029) → `save sp-tb.mxs`; кадры `sp-tb-turn1/turn2/turn4` | **PASS** (2719 кадров; golden `sp-tb/`) |
+| `story-screens.qa` | Этап 3b (M6): New Game → Campaign Game → миссия 1 → **intro-story** (`menu.cpp:766-864`): текст `SC_C0001` на фоне `ENDGAME2` из `MAX.RES`, `ENDOK` (293,458) → Enter запускает видео `DEMO2FLC` → `maxmve2.mve` (кадр 0, `dt = 0`) → Esc завершает стори и входит в партию (`assert screen=InGame`); кадры `story-mission-select`/`story-intro`/`story-intro-video` | **PASS** (0 кадров цикла; golden `story-screens/`, 3 эталона) |
 
 > **Энергия в сценариях.** `production.qa`, `research.qa` и `research-help.qa`
 > строят завод/центр отдельным комплексом и поэтому ставят рядом

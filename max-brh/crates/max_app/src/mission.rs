@@ -23,8 +23,12 @@
 //! with the descriptor is reported as a warning (content damage, like the optional
 //! hash check of `mission.cpp:263`) and never zeroes `mission_index`.
 //!
-//! Out of scope here (later stages of the plan): the `GameSetupMenu` list
-//! (stage 2), campaign progression and story screens (stage 3).
+//! The story screens of the campaign plan's stage 3 (`menu.cpp:766`,
+//! intro/victory/defeat) live in [`crate::story`] (stage 3b): this module only
+//! starts the mission, the drivers decide when the story screen comes before the
+//! session screen. Campaign **progression** (`last_campaign`/`game_file_number`,
+//! stage 3a) starts here — the start records the chosen mission and the registry
+//! count (`crate::campaign`), the victory wrap-up advances them.
 
 use std::path::PathBuf;
 
@@ -108,6 +112,15 @@ impl App {
                 start.mission_index
             );
         }
+
+        // Campaign progression bookkeeping (`menu.cpp:2058`): the chosen mission
+        // becomes the persistent `game_file_number`, and the category's mission count
+        // lets the victory wrap-up find the end of the list (`menu.cpp:518-545`).
+        // The registry position — not the V70 header value — is the mission the C++
+        // `MissionManager` keeps loaded (`LoadMission(category, game_file_number - 1)`).
+        self.campaign_mission_count = Some(registry.missions(MissionCategory::Campaign).len());
+        self.campaign_mission_index = (category == MissionCategory::Campaign).then_some(index);
+        self.preferences.game_file_number = i32::try_from(index + 1).unwrap_or(i32::MAX);
 
         Ok(start)
     }

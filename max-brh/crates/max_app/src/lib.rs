@@ -42,6 +42,7 @@ pub mod assets;
 pub mod audio;
 pub mod buildmenu;
 pub mod buildsite;
+pub mod campaign;
 pub mod cargo_unit_data;
 pub mod chrome;
 pub mod credits;
@@ -79,6 +80,7 @@ pub mod session;
 pub mod setup;
 pub mod sfx;
 pub mod soak;
+pub mod story;
 pub mod subtitles;
 pub mod transfermenu;
 pub mod ui;
@@ -743,6 +745,21 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// `settings.cpp`). Not part of the snapshot/CRC: only `effects` (frames)
     /// and sound affect the simulation.
     pub(crate) preferences: Preferences,
+    /// Campaign mission count of the mission registry
+    /// (`MissionManager::GetMissions(MISSION_CATEGORY_CAMPAIGN).size()`).
+    ///
+    /// The bound of the victory progression (`menu.cpp:518-545`): the drivers record
+    /// it once the registry is built (`App::set_campaign_mission_count`), and the
+    /// headless mission start does too. Not part of the snapshot/CRC.
+    pub(crate) campaign_mission_count: Option<usize>,
+    /// 0-based registry position of the campaign mission being played
+    /// (`MissionManager::GetMissionIndex`; `game_file_number - 1`).
+    ///
+    /// Set by the mission start (`menu.cpp:2052-2056`) or reconstructed from the V70
+    /// header mission index on a save load (`saveload.cpp:772`); cleared by
+    /// [`App::adopt_universe`]. The victory wrap-up advances from it. Not part of the
+    /// snapshot/CRC.
+    pub(crate) campaign_mission_index: Option<usize>,
     /// Open `Preferences` dialog (panel button, C++ `OptionsMenu`).
     /// Not part of the snapshot/CRC — this is UI.
     pub(crate) preferences_dialog: Option<PreferencesDialog>,
@@ -1001,6 +1018,8 @@ impl<D: Dispatcher> App<D> {
             growth_anims: std::collections::HashMap::new(),
             portrait: None,
             preferences: Preferences::default(),
+            campaign_mission_count: None,
+            campaign_mission_index: None,
             preferences_dialog: None,
             build_marker_step: 0,
             build_marker_elapsed: 0.0,
@@ -1053,6 +1072,10 @@ impl<D: Dispatcher> App<D> {
         self.applied_commands = 0;
         self.hud.clear();
         self.local = None;
+        // The campaign position belongs to the match that is being replaced: the
+        // mission start / V70 load records the new one right after this install
+        // (`campaign::`). The mission count of the registry stays known.
+        self.campaign_mission_index = None;
         self.build_menu = None;
         self.save_load = None;
         // `GameManager_InitGame` (`game_manager.cpp:3053`): a new match targets the
