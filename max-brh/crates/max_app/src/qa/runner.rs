@@ -17,7 +17,9 @@
 //! case exits the process with code 1).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use max_assets::MissionRegistry;
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
 use max_net::{CreateGameParams, GameInfo, GameStatus};
@@ -227,6 +229,14 @@ impl QaRunner {
         ctx.preferences.player_name = "Commander".to_string();
         ctx.world_dir = config.data_dir.clone();
         ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
+        // Campaign stage 2: the mission list comes from `PATCHES.RES`; mission files
+        // are the game data of `--data-dir` (not the QA save directory).
+        ctx.missions = app.assets().map(|assets| {
+            Arc::new(MissionRegistry::from_archive(
+                &assets.patches_res,
+                &config.data_dir,
+            ))
+        });
         ctx.status = String::new();
 
         Ok(Self {
@@ -2319,6 +2329,9 @@ impl QaRunner {
                 Transition::StartLocal(_) => {
                     Err("ввод в сессии не может начать локальную партию".to_string())
                 }
+                Transition::StartMission(_) => {
+                    Err("ввод в сессии не может начать миссию".to_string())
+                }
                 Transition::StartSession(request) => Err(format!(
                     "сетевая сессия «{}» в QA-драйвере не поддерживается",
                     request.game_id
@@ -2339,6 +2352,36 @@ impl QaRunner {
                     },
                 };
                 self.ctx.status = String::new();
+                Ok(Flow::Continue)
+            }
+            Transition::StartMission(request) => {
+                let registry = self
+                    .ctx
+                    .missions
+                    .clone()
+                    .ok_or_else(|| "start_mission: нет реестра миссий".to_string())?;
+                let setup = LocalSetup {
+                    player_name: self.ctx.player_name.clone(),
+                    ..LocalSetup::default()
+                };
+
+                let start = self
+                    .app
+                    .start_mission_from_registry(
+                        &registry,
+                        request.category,
+                        request.index,
+                        &setup,
+                    )
+                    .map_err(|error| format!("start_mission_from_registry: {error}"))?;
+
+                self.screen = Screen::InSession {
+                    request: SessionRequest {
+                        game_id: "local".to_string(),
+                        password: None,
+                    },
+                };
+                self.ctx.status = format!("Mission: {}", start.title);
                 Ok(Flow::Continue)
             }
             Transition::LeaveSession => {
@@ -2552,7 +2595,13 @@ impl QaRunner {
                     ));
                 }
 
-                let rect = menu::MAIN_MENU_BUTTONS[0].rect;
+                // `menu_new_game_menu_loop` → `Custom Game` (`menu.cpp:2235`):
+                // the script command keeps its old meaning — the local match setup.
+                self.click_main_menu_button(0, "menu new_game")?;
+                self.require_screen(ScreenName::NewGameMenu, "menu new_game")?;
+
+                let rect = crate::newgame::new_game_rect(crate::newgame::NewGameAction::Custom)
+                    .ok_or_else(|| "menu new_game: нет кнопки Custom Game".to_string())?;
                 self.send(InputEvent::MouseClick(
                     rect.ulx + rect.width / 2,
                     rect.uly + rect.height / 2,
@@ -4933,6 +4982,8 @@ impl QaRunner {
             (Screen::JoinList { .. }, ScreenName::JoinList) => true,
             (Screen::CreateForm(_), ScreenName::CreateForm) => true,
             (Screen::MultiplayerMenu, ScreenName::MultiplayerMenu) => true,
+            (Screen::NewGameMenu { .. }, ScreenName::NewGameMenu) => true,
+            (Screen::MissionSelect(_), ScreenName::MissionSelect) => true,
             (Screen::Introduction(_), ScreenName::Introduction) => true,
             (Screen::Credits(_), ScreenName::Credits) => true,
             (Screen::GameOver, ScreenName::GameOver) => true,
@@ -4981,6 +5032,8 @@ impl QaRunner {
             Screen::JoinList { .. } => "JoinList",
             Screen::CreateForm(_) => "CreateForm",
             Screen::MultiplayerMenu => "MultiplayerMenu",
+            Screen::NewGameMenu { .. } => "NewGameMenu",
+            Screen::MissionSelect(_) => "MissionSelect",
             Screen::Introduction(_) => "Introduction",
             Screen::Credits(_) => "Credits",
             Screen::GameOver => "GameOver",

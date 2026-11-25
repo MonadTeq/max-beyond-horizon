@@ -137,6 +137,7 @@ fn main() -> anyhow::Result<()> {
             mouse: Some(max_render::ui::Point::new(cell.x + 8, cell.y + 8)),
             focus: 0,
             app: Some(&app),
+            missions: None,
         },
     );
     let planets_path = with_suffix(&prefix, "-planets.ppm");

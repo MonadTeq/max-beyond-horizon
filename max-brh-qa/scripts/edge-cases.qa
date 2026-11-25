@@ -182,6 +182,10 @@ type "Командир 汉字"
 key ENTER
 shot edge-unicode-name
 setup cancel
+# `Custom Game` открывается из подменю New Game (menu_new_game_menu_loop):
+# Cancel из настройки возвращает в подменю, Esc — в главное меню.
+assert screen=NewGameMenu
+key ESC
 assert screen=MainMenu
 shot edge-repeat-start
 

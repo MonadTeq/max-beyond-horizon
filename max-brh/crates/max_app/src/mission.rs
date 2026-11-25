@@ -52,6 +52,19 @@ pub struct MissionStart {
     pub path: PathBuf,
 }
 
+/// A mission choice from the `GameSetupMenu` — the start DTO of the menu layer.
+///
+/// The menu only collects the choice ([`MissionCategory`] + the 0-based index inside
+/// it); the start itself is [`App::start_mission_from_registry`], so the UI never
+/// mutates the match (owner condition 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MissionStartRequest {
+    /// Mission category of the list.
+    pub category: MissionCategory,
+    /// 0-based mission index inside the category (`game_file_number - 1`).
+    pub index: usize,
+}
+
 impl App {
     /// Starts a mission by category and registry index — C++ `LoadMission` followed
     /// by `GAME_STATE_10_LOAD_GAME` (`menu.cpp:2052-2098`).

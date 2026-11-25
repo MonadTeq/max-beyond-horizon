@@ -1,0 +1,81 @@
+1. Unless you're playing a short game, one of the first things you'll need to build is a second Mining Station.  This will help feed materials to your hungry engineers and constructors.
+
+
+2. Scouts can be surprisingly nasty early in the game.  They can dart in, pick away at a constructor or engineer, and still be able to run back to safety before their movement is exhausted.
+
+
+3. Every complex has a weak spot.  Use stealth units like infiltrators and submarines to secretly find places that your enemy hasn't built gun turrets and anti aircraft, and strike there first.
+
+
+4. Connect your gun turrets and other fixed defenses to your complex.  If they're connected, they'll reload automatically, and be repaired when damaged.
+
+
+5. Spread at least some of your mines out over a large area.  Your enemy will move just as slowly if he thinks he's likely to run into a mine as he would if he knows he will run into a mine.
+
+
+6. As your complex grows,  you can use a mine layer to pick up previously laid mines and move them out to the new perimeter of your complex.
+
+
+7. Rocket launchers are by far the best way to clear enemy minefields, because they affect a 9 square area.  This also makes them useful in  ferreting out enemy infiltrators.
+
+
+8. Aircraft have a hard time with anti-aircraft.  If you must attack with just planes, consider sacrificing empty air transports by moving them in first to draw fire.  When the anti-aircraft has been exhausted for that turn, use your Ground Attack planes to take out the enemy defenses.
+
+
+9. Mobile anti-aircraft are powerful once in place, but it's hard to attack with them. That is because if moved, they lose the ability to fire for that turn, and the target can then attack or escape unhindered.  Use Fighters if you must attack your enemy's air force.
+
+
+10. Bombarding your enemy's complex from the water can be an excellent tactic, especially if your enemy is not prepared.   Ships are generally tougher and faster than land units.
+
+
+11. Infiltrators can be devastating if they catch you unprepared.  Infantry units on Sentry duty in and around your complex can help avoid much grief.
+
+
+12. Use Air Transports to land Missile Crawlers or Anti-Aircraft in strategic spots for hit-and-run attacks. After they fire their shots, load the missile crawlers or anti-aircraft back into the transport and retreat to safety.
+
+
+13. Study your Upgrade options carefully.  Sometimes an inexpensive upgrade may provide a remarkable edge.
+
+
+14. Always try to keep a reserve of refined gold (credits) for emergency upgrades.
+
+
+15. When you spot an enemy unit, always remember to look at its statistics by right-clicking on the unit to display its attributes.  It is very important to know the current strength and capabilities of your opposition.
+
+
+16. If there is a spot over water where you wish you had a Radar or a Missile Crawler, remember that your Engineers can build islands out of water platforms on which you may then build any other structure or defense.
+
+
+17. In battle, select your targets with care. Often, eliminating a Scanner, Radar or a Repair unit may have a more devastating effect on your enemy than loss of fighting units.  Your enemy can't shoot at things he can't see.
+
+
+18. Be aware that if you don't have a shipyard by the time your opponent has built submarines, he can make it very difficult for you to build your own sea units.  One hit from these unseen opponents will severely damage a constructor and destroy an engineer outright.
+
+
+19. Any Complex without anti-air defenses, especially in early stages of custom games, is likely to suffer a quick defeat.
+
+
+20. When you are about to start a new head-to-head game, study the map carefully and decide on what your overall strategy is going to be before making your clan and initial landing force selections.
+
+
+21. When you want to resupply a unit (transfer raw materials to it), it does NOT need to be right next to a mining station or storage bin.  The unit only needs to be next to ANY structure that is ultimately connected to a mining station or storage bin.
+
+
+22. Power stations are twice as efficient as power generators.  Power Stations convert 1 unit of fuel into 1 unit of power, whereas Power Generators consume 2 fuel to generate 1 power.
+
+
+23. When attacking an enemy complex, look for weak connecting spots, which if destroyed, will make multiple structures become detached from their power and/or material sources at once.  You may be able to halt operation of numerous plants by simply destroying one or two connectors.
+
+
+24. Do not assume a game is won or lost without considering this: When an Eco-Sphere is destroyed all points it accumulated during its existence are also removed from the current points total.
+
+
+25. Disable an enemy unit before attempting to capture it.  This will reduce the possibility of detection tremendously.
+
+
+26. Always prefer to capture enemy units that are away from the pack.  When a captured unit changes color it will come under immediate attack by its ex-teammates.
+
+
+27. When a research assignment is completed, the resulting upgrade needs to be applied to any unit or units you wish to benefit.  This is done in the same manner as upgrading existing units after an upgrade purchase.
+
+

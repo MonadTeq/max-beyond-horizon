@@ -614,7 +614,9 @@ impl ManualPlay {
                 Transition::ApplyPreferences(preferences) => {
                     self.app.set_preferences(*preferences);
                 }
-                Transition::StartLocal(_) | Transition::StartSession(_) => {
+                Transition::StartLocal(_)
+                | Transition::StartSession(_)
+                | Transition::StartMission(_) => {
                     panic!("ввод в сессии не меняет режим")
                 }
             }
@@ -642,6 +644,9 @@ impl ManualPlay {
             Transition::ApplyPreferences(preferences) => {
                 self.app.set_preferences(*preferences);
                 self.ctx.preferences = self.app.preferences().clone();
+            }
+            Transition::StartMission(_) => {
+                panic!("миссии в тесте записи не стартуют")
             }
             Transition::StartSession(_) => panic!("сеть в тесте записи не поднимается"),
         }
@@ -746,8 +751,13 @@ fn recorded_manual_session_round_trips_through_qa_run() {
     let dir = temp_dir("record_roundtrip");
     let mut play = ManualPlay::new(&dir);
 
-    // --- Main menu → New Game → Options/Planet/Players --------------------
+    // --- Main menu → New Game submenu → Custom → Options/Planet/Players ---
     play.send(click_rect(menu::MAIN_MENU_BUTTONS[0].rect));
+    assert!(matches!(&play.screen, Screen::NewGameMenu { .. }));
+
+    let custom = max_app::newgame::new_game_rect(max_app::newgame::NewGameAction::Custom)
+        .expect("Custom Game");
+    play.send(click_rect(custom));
     assert!(matches!(&play.screen, Screen::LocalSetup(_)));
 
     // Options: No Limit + Turn Based (the same points as in sp-full.qa), Done.

@@ -14,6 +14,27 @@
 shot main-menu
 assert screen=MainMenu
 
+# Кампания, этап 2: подменю New Game (7 кнопок, menu.cpp:2181-2189) и
+# GameSetupMenu — список миссий категории (12 строк, gamesetupmenu.hpp:59-71),
+# панель описания, Briefing/Cancel/?/Start.
+click 485 189
+assert screen=NewGameMenu
+shot new-game
+# `Tips` (`_(3838)`): окно `_(e81f)` в области портрета (296 px, 23 строки/страница).
+click 485 364
+assert screen=NewGameMenu
+shot new-game-tips
+click 485 364
+# `Custom Scenarios` (`_(884f)`, MENU_CATEGORY_MULTI_PLAYER_SCENARIO): ровно
+# 12 миссий — одна страница списка, описание первой миссии.
+click 485 294
+assert screen=MissionSelect
+shot mission-select
+key ESC
+assert screen=NewGameMenu
+key ESC
+assert screen=MainMenu
+
 # TC-0108: Introduction (MVE-видео INTROFLC → maxint.mve) и Credits
 # (прокрутка титров). Экран титров снимается не пустым: 100 кадров по 1/60 с —
 # ~166 шагов прокрутки (10 мс на шаг, шаг = 1 пиксель), видны первые строки.

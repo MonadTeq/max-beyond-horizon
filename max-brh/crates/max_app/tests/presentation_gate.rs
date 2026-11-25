@@ -465,6 +465,7 @@ fn menu_frame_bytes_do_not_depend_on_the_window_geometry() {
                 mouse: None,
                 focus: 0,
                 app: None,
+                missions: None,
             },
         );
     }

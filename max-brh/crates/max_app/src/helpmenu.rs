@@ -107,6 +107,14 @@ pub enum HelpSection {
     Preferences,
     /// `SETUP_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, the `SETUPPIC` variant).
     Setup,
+    /// `TRAINING_MENU_SETUP` (`GameSetupMenu::EventHelp`, training missions).
+    TrainingMenu,
+    /// `STAND_ALONE_MENU_SETUP` (`GameSetupMenu::EventHelp`, scenarios).
+    StandAloneMenu,
+    /// `CAMPAIGN_MENU` (`GameSetupMenu::EventHelp`, campaign).
+    CampaignMenu,
+    /// `MULTI_SCENARIO_MENU` (`GameSetupMenu::EventHelp`, scenarios/multiplayer).
+    MultiScenarioMenu,
 }
 
 impl HelpSection {
@@ -126,6 +134,10 @@ impl HelpSection {
             Self::Transfer => "TRANSFER_SETUP",
             Self::Preferences => "PREFS_MENU_SETUP",
             Self::Setup => "SETUP_MENU_SETUP",
+            Self::TrainingMenu => "TRAINING_MENU_SETUP",
+            Self::StandAloneMenu => "STAND_ALONE_MENU_SETUP",
+            Self::CampaignMenu => "CAMPAIGN_MENU",
+            Self::MultiScenarioMenu => "MULTI_SCENARIO_MENU",
         }
     }
 
@@ -145,6 +157,10 @@ impl HelpSection {
             "transfer" | "transfer_setup" | "xfer" => Some(Self::Transfer),
             "preferences" | "prefs" | "prefs_menu_setup" => Some(Self::Preferences),
             "setup_menu" | "setup_menu_setup" | "setuphelp" => Some(Self::Setup),
+            "training" | "training_menu" | "training_menu_setup" => Some(Self::TrainingMenu),
+            "stand_alone" | "standalone" | "stand_alone_menu_setup" => Some(Self::StandAloneMenu),
+            "campaign" | "campaign_menu" => Some(Self::CampaignMenu),
+            "multi_scenario" | "multi_scenario_menu" | "scenarios" => Some(Self::MultiScenarioMenu),
             _ => None,
         }
     }

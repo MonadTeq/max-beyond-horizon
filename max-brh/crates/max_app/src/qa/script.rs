@@ -69,6 +69,10 @@ pub enum ScreenName {
     CreateForm,
     /// `Screen::MultiplayerMenu`.
     MultiplayerMenu,
+    /// `Screen::NewGameMenu` — the `New Game` submenu (`menu_new_game_menu_loop`).
+    NewGameMenu,
+    /// `Screen::MissionSelect` — the `GameSetupMenu` mission list.
+    MissionSelect,
     /// `Screen::Introduction` (MVE video placeholder).
     Introduction,
     /// `Screen::Credits` (credits scrolling).
@@ -105,6 +109,10 @@ impl ScreenName {
             "joinlist" | "join_list" | "join" => Some(Self::JoinList),
             "createform" | "create_form" | "create" => Some(Self::CreateForm),
             "multiplayermenu" | "multiplayer_menu" | "multiplayer" => Some(Self::MultiplayerMenu),
+            "newgamemenu" | "new_game_menu" | "newgame" | "new_game" => Some(Self::NewGameMenu),
+            "missionselect" | "mission_select" | "missions" | "gamesetup" | "game_setup" => {
+                Some(Self::MissionSelect)
+            }
             "introduction" | "intro" => Some(Self::Introduction),
             "credits" | "titres" => Some(Self::Credits),
             "options" => Some(Self::Options),
@@ -129,6 +137,8 @@ impl ScreenName {
             Self::JoinList => "JoinList",
             Self::CreateForm => "CreateForm",
             Self::MultiplayerMenu => "MultiplayerMenu",
+            Self::NewGameMenu => "NewGameMenu",
+            Self::MissionSelect => "MissionSelect",
             Self::Introduction => "Introduction",
             Self::Credits => "Credits",
             Self::Options => "Options",

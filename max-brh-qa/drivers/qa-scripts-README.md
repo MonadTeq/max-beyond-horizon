@@ -11,7 +11,7 @@ max-brh-qa/
 ├── scripts/hs-2.qa             # hot-seat на двоих: окна «Begin turn», 2+ раунда, чередование команд
 ├── scripts/visual-screens.qa   # проход по всем экранам; кадры = эталоны golden/
 ├── scripts/victory.qa          # партия до исхода «победа» + экран победы
-├── golden/*.png                # эталоны visual-screens.qa (10 кадров, ~980 КиБ)
+├── golden/*.png                # эталоны visual-screens.qa (20 кадров, ~2.2 МиБ)
 └── scripts/README.md
 ```
 
@@ -59,7 +59,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 
 | Команда | Что делает |
 |---|---|
-| `menu new_game` | `New Game` главного меню → экран Options |
+| `menu new_game` | `New Game` главного меню → подменю New Game → `Custom Game` → экран Options |
 | `menu multiplayer` | `Multiplayer Game` → `Multiplayer Menu` |
 | `menu hot_seat` | `Multiplayer Menu` → `Hot Seat Game` → настройка hot-seat |
 | `menu join` | `Multiplayer Menu` → `Join Network Game` → список игр (клиент лобби — заглушка QA, 2 детерминированные игры) |
@@ -102,7 +102,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 |---|---|---|
 | `sp-full.qa` | главное меню → Options (No Limit, Turn Based) → Planet → Players (`RED` человек, `GREEN` компьютер) → партия: `select unit`, `move near`, 3 × `end_turn` с ходами ИИ, `assert turn>=3`, сохранение `MXLS` | **PASS** (38 шагов, 9 кадров, ~380 кадров цикла) |
 | `hs-2.qa` | `Hot Seat Game` → 2 человека → окно «Begin turn» для RED и GREEN, `assert team` чередуется, 3 раунда, подтверждение окна `key ENTER` | **PASS** (50 шагов, 10 кадров) |
-| `visual-screens.qa` | 8 экранов только с `shot` (main menu, options, planet, players, game, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (37 шагов, 8 кадров = эталоны) |
+| `visual-screens.qa` | 20 снимков по всем экранам (main menu, New Game submenu, Tips window, GameSetupMenu mission list, introduction, credits, options, planet, players, mobilize, landing, game, mine-selected, portrait, survey, winloss, multiplayer, join list); партия заканчивается честно лимитом ходов Duration=1 | **PASS** (451 кадр, 20 кадров = эталоны) |
 | `victory.qa` | партия до исхода: лимит ходов 1 → `assert victory`, `assert phase=Finished`, экран победы | **PASS** (26 шагов, 3 кадра) |
 | `sp-tb.qa` | Turn Based SP: RED человек + GREEN/BLUE компьютеры, `end_turn` три раза, `assert turn`, `endturn-frames<3000`, сохранение `MXLS` | **PASS** (2719 кадров, 3 кадра) |
 | `combat-tb.qa` | Turn Based бой: `spawn` ракетчика и танка, `click enemy` (атака), снаряд `ROCKET`, взрыв по кадрам `image_index`, `assert unit-order`, `endturn-frames<2000` | **PASS** (193 кадра, 8 кадров; до фикса 12 000) |

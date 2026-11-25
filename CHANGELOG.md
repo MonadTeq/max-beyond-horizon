@@ -2,6 +2,31 @@
 
 ### Добавлено
 
+- **Кампания, этап 2 — подменю New Game и `GameSetupMenu` (слой подачи миссий).**
+  `menu_new_game_menu_loop` (`menu.cpp:2171-2320`): подменю «New Game Menu» с семью
+  кнопками оракула — Training Missions / Stand Alone Missions / Custom Game /
+  Custom Scenarios / Campaign Game / Tips / Cancel (`_(182b)`/`_(02c9)`/`_(3d29)`/
+  `_(884f)`/`_(878a)`/`_(3838)`/`_(7eec)`, 200×29 при x=385 с шагом 35, Cancel
+  100×30 (435,420)), горячие клавиши `Shift+T/S/U/M/A/I/C`, окно Tips (`_(e81f)`,
+  296 px, 23 строки на страницу, `MNUUAROU`/`MNUDAROU`). `GameSetupMenu`
+  (`gamesetupmenu.cpp`): 12 строк миссий категории (18,184+20·i, 294×19), панель
+  описания (`SUBTITLE` (400,174), `BIGSCRNL`/`BIGSCRNR`, текст 266×201),
+  стрелки страниц/брифинга, `Cancel`/`?`/`Start`; заголовки и help-секции
+  категорий как `Init/EventHelp`. UI — презентация: выбор отдаётся DTO
+  `Transition::StartMission { category, index }`, старт — только через
+  `App::start_mission_from_registry` (поток этапа 1), `App.universe` из UI не
+  мутируется. Отсутствующий файл миссии виден (`[missing]`, описание и статус
+  называют файл) и не стартует пустой мир. Тесты
+  `max_app/tests/game_setup_menu.rs` (12): все 4 категории из меню дают
+  побайтово тот же `snapshot_bytes`, что прямой `start_local_game_from_save`
+  (включая листание страниц и 5 тиков); 0/1/3/7 циклов открытия-закрытия меню не
+  меняют снапшот; grep-аудит новых UI-модулей на мутации — 0. QA:
+  `visual-screens.qa` PASS (451 кадр, 20 снимков, новые эталоны `new-game.png`,
+  `new-game-tips.png`, `mission-select.png`), `qa_golden_check` 20/20 — 0 дрейфа; `menu new_game`
+  сохранён (драйвер проходит New Game → Custom), `edge-cases.qa` обновлён на
+  возврат отмены настройки в подменю. Подробности —
+  `max-brh-docs/development/campaign-missions.md` §«Реализация этапа 2».
+
 - **S1 — parity save/load с оракулом (RNG-сид, `.bak`, быстрый save/load, split
   каталога).** `SaveLoadMenu_Save` (`saveloadmenu.cpp:593-630`) и
   `GameManager_SaveLoadGame` (`game_manager.cpp:4032`) сверены с оракулом:

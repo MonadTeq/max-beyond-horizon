@@ -46,12 +46,15 @@
 //! them in the queue for `net::flush_hud_orders` → `submit`.
 
 use std::fmt;
+use std::sync::Arc;
 
+use max_assets::MissionRegistry;
 use max_core::enums::Planet;
 use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
 use max_core::unit::UnitInfo;
 use max_core::universe::{Dispatcher, LocalDispatcher};
+use max_core::victory::MissionCategory;
 use max_net::{CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 use max_render::text::{draw_text_gnw, draw_text_line, GnwFontId, GLYPH_HEIGHT};
@@ -63,13 +66,16 @@ use max_render::viewport::Viewport;
 
 use crate::audio::{AudioPlayer, MENU_CLICK};
 use crate::credits;
+use crate::gamesetupmenu::{self, MissionSelectAction, MissionSelectForm};
 use crate::helpmenu::{self, HelpAction, HelpPlacement, HelpSection};
 use crate::hud::{self, HudButton};
 use crate::intro;
 use crate::landing::LandingAction;
 use crate::local::{LocalSetup, SessionLocal};
 use crate::menu;
+use crate::mission::MissionStartRequest;
 use crate::mobilize::CargoAction;
+use crate::newgame::{self, NewGameAction, TipsWindow};
 use crate::panels::{self, PanelButton};
 use crate::preferences::{self, Preferences, PreferencesDialog, PreferencesVariant};
 use crate::pregame::{PreGameFlow, PreGameStage};
@@ -183,6 +189,9 @@ pub enum Transition {
     StartSession(SessionRequest),
     /// Start a local match (M-SP) with these settings.
     StartLocal(Box<LocalSetup>),
+    /// Start a mission of a category through the stage-1 flow
+    /// (`App::start_mission_from_registry`): the menu only chose the mission.
+    StartMission(Box<MissionStartRequest>),
     /// Exit the session (Esc in the SDL loop).
     LeaveSession,
     /// Apply the settings from the `Preferences`/`Setup` dialog (main menu).
@@ -423,6 +432,17 @@ pub enum Screen {
     },
     /// Game creation form.
     CreateForm(CreateForm),
+    /// `New Game` submenu (`menu_new_game_menu_loop`, `menu.cpp:2171`):
+    /// Training/Scenario/Custom/Multiplayer Scenario/Campaign/Tips/Cancel.
+    ///
+    /// `tips` — the tips window state (`menu_draw_tips`), toggled by the `Tips`
+    /// button.
+    NewGameMenu {
+        /// Open tips window; `None` — closed.
+        tips: Option<TipsWindow>,
+    },
+    /// `GameSetupMenu` — the mission list of one category (`gamesetupmenu.cpp`).
+    MissionSelect(MissionSelectForm),
     /// `Multiplayer Menu` (`menu_multiplayer_menu_loop`): host/join/hot-seat.
     MultiplayerMenu,
     /// `Introduction` (`Movie_PlayIntro`): MVE video `INTROFLC` (`maxint.mve`).
@@ -571,6 +591,10 @@ pub struct UiContext {
     pub media_status: Option<String>,
     /// Current user settings (for the `Setup` dialog).
     pub preferences: Preferences,
+    /// Mission registry for the `GameSetupMenu` (`GameSetupMenu_Menu` reads
+    /// `MissionManager::GetMissions`); built once from `PATCHES.RES` + the game
+    /// data directory. `None` — the menu shows the visible fallback.
+    pub missions: Option<Arc<MissionRegistry>>,
 }
 
 impl UiContext {
@@ -590,6 +614,7 @@ impl UiContext {
             intro_subtitles: None,
             media_status: None,
             preferences: Preferences::default(),
+            missions: None,
         }
     }
 
@@ -615,6 +640,7 @@ impl UiContext {
             mouse: self.mouse,
             focus: self.focus,
             app,
+            missions: self.missions.as_deref(),
         }
     }
 
@@ -657,6 +683,11 @@ pub struct ScreenView<'a, D: Dispatcher = LocalDispatcher> {
     pub focus: usize,
     /// Match state for [`Screen::InSession`] — the dispatcher of the match.
     pub app: Option<&'a App<D>>,
+    /// Mission registry of the `GameSetupMenu` (`PATCHES.RES` descriptors).
+    ///
+    /// `None` — the archive is unavailable: the mission screen shows a visible
+    /// "registry unavailable" fallback and refuses to start anything.
+    pub missions: Option<&'a MissionRegistry>,
 }
 
 // `Copy`/`Clone` are structural here; the derived bounds would wrongly require
@@ -766,6 +797,12 @@ impl Screen {
         if matches!(self, Self::MultiplayerMenu) {
             return self.handle_multiplayer_menu(ctx, event);
         }
+        if matches!(self, Self::NewGameMenu { .. }) {
+            return self.handle_new_game_menu(ctx, event);
+        }
+        if matches!(self, Self::MissionSelect(_)) {
+            return self.handle_mission_select(ctx, event);
+        }
         if matches!(self, Self::LocalSetup(_)) {
             return self.handle_local_setup(ctx, event);
         }
@@ -859,12 +896,13 @@ impl Screen {
             SetupTransition::None => Transition::None,
             SetupTransition::Back => {
                 // Esc/Cancel returns where it came from: to `Multiplayer
-                // Menu` for hot-seat (like `menu_custom_game_menu`), otherwise to
-                // the main menu.
+                // Menu` for hot-seat (`menu_custom_game_menu`), otherwise to the
+                // `New Game` submenu — the custom game is opened from there
+                // (`menu_new_game_menu_loop` continues after a cancelled custom game).
                 let back = if hot_seat {
                     Self::MultiplayerMenu
                 } else {
-                    Self::MainMenu
+                    Self::NewGameMenu { tips: None }
                 };
                 *self = back;
                 ctx.status = "New game cancelled".to_string();
@@ -1099,6 +1137,214 @@ impl Screen {
         }
     }
 
+    /// `New Game` submenu input (`menu_new_game_menu_loop`, `menu.cpp:2171`).
+    ///
+    /// The seven buttons of the oracle plus the original hotkeys
+    /// (`Shift+T/S/U/M/A/I/C`). `Tips` toggles the tips window
+    /// (`menu_draw_tips`), `Cancel` returns to the main menu; the mission
+    /// categories only open [`Self::MissionSelect`] — no match is touched here.
+    fn handle_new_game_menu(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let mut action = None;
+        let mut scroll = None;
+
+        if let Self::NewGameMenu { tips } = self {
+            match event {
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => {}
+                InputEvent::MouseClick(x, y) => {
+                    if tips.is_some() {
+                        scroll = newgame::tips_scroll_at(x, y);
+                    }
+
+                    if scroll.is_none() {
+                        action = newgame::new_game_button_at(x, y);
+                    }
+                }
+                InputEvent::Key(Key::Escape) => action = Some(NewGameAction::Cancel),
+                InputEvent::Key(Key::Char(character)) => {
+                    action = match character.to_ascii_lowercase() {
+                        't' => Some(NewGameAction::Training),
+                        's' => Some(NewGameAction::Scenario),
+                        'u' => Some(NewGameAction::Custom),
+                        'm' => Some(NewGameAction::MultiplayerScenario),
+                        'a' => Some(NewGameAction::Campaign),
+                        'i' => Some(NewGameAction::Tips),
+                        'c' => Some(NewGameAction::Cancel),
+                        _ => None,
+                    };
+                }
+                InputEvent::Key(_) => {}
+            }
+        }
+
+        if let Some(down) = scroll {
+            if let Self::NewGameMenu {
+                tips: Some(window), ..
+            } = self
+            {
+                window.scroll(down);
+            }
+            ctx.click();
+
+            return Transition::None;
+        }
+
+        if action.is_some() {
+            ctx.click();
+        }
+
+        match action {
+            Some(NewGameAction::Training) => {
+                *self = Self::MissionSelect(MissionSelectForm::new(MissionCategory::Training));
+                ctx.status = "Training Missions: choose a mission, Enter starts".to_string();
+                Transition::None
+            }
+            Some(NewGameAction::Scenario) => {
+                *self = Self::MissionSelect(MissionSelectForm::new(MissionCategory::Scenario));
+                ctx.status = "Stand Alone Missions: choose a mission, Enter starts".to_string();
+                Transition::None
+            }
+            Some(NewGameAction::MultiplayerScenario) => {
+                *self = Self::MissionSelect(MissionSelectForm::new(
+                    MissionCategory::MultiPlayerScenario,
+                ));
+                ctx.status = "Custom Scenarios: choose a mission, Enter starts".to_string();
+                Transition::None
+            }
+            Some(NewGameAction::Campaign) => {
+                *self = Self::MissionSelect(MissionSelectForm::new(MissionCategory::Campaign));
+                ctx.status = "Campaign Game: choose a mission, Enter starts".to_string();
+                Transition::None
+            }
+            Some(NewGameAction::Custom) => {
+                // `menu_custom_game_menu(true)` (`menu.cpp:2115`): the planet and
+                // player setup screens, unchanged.
+                let mut form = GameSetupForm::default();
+                form.setup.player_name = ctx.preferences.player_name.clone();
+                form.world_dir = ctx.world_dir.clone();
+                *self = Self::LocalSetup(form);
+                ctx.status = "Custom game: options, Enter — next screen, Esc — back".to_string();
+                Transition::None
+            }
+            Some(NewGameAction::Tips) => {
+                let mut opened = false;
+
+                if let Self::NewGameMenu { tips } = self {
+                    if tips.is_some() {
+                        *tips = None;
+                    } else {
+                        *tips = Some(TipsWindow::new());
+                        opened = true;
+                    }
+                }
+
+                ctx.status = if opened {
+                    "Tips: page arrows, Tips closes the window".to_string()
+                } else {
+                    "New game: choose a mission category".to_string()
+                };
+                Transition::None
+            }
+            Some(NewGameAction::Cancel) => {
+                *self = Self::MainMenu;
+                ctx.status.clear();
+                Transition::None
+            }
+            None => Transition::None,
+        }
+    }
+
+    /// `GameSetupMenu` input (`gamesetupmenu.cpp`).
+    ///
+    /// Rows select a mission; a second click on the selected row (or `Start`/Enter)
+    /// emits [`Transition::StartMission`]. `Start` on a mission whose file is missing
+    /// stays on the screen and explains why — the visible fallback of owner
+    /// condition 5 — instead of starting an empty world.
+    fn handle_mission_select(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
+        let native_frame =
+            ctx.width == menu::MENU_WIDTH as u32 && ctx.height == menu::MENU_HEIGHT as u32;
+        let mut action = MissionSelectAction::None;
+
+        {
+            let Self::MissionSelect(form) = self else {
+                return Transition::None;
+            };
+            let registry = ctx.missions.as_deref();
+
+            match event {
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => {}
+                InputEvent::MouseClick(x, y) if native_frame => {
+                    action = gamesetupmenu::mission_select_at(x, y);
+
+                    if let MissionSelectAction::Select(row) = action {
+                        if form.select_row(registry, row) {
+                            // `EventSelectItem`: a click on the selected row starts.
+                            action = MissionSelectAction::Start;
+                        }
+                    }
+                }
+                InputEvent::Key(Key::Up) => form.step(registry, -1),
+                InputEvent::Key(Key::Down) => form.step(registry, 1),
+                InputEvent::Key(Key::PageUp) => action = MissionSelectAction::PageUp,
+                InputEvent::Key(Key::PageDown) => action = MissionSelectAction::PageDown,
+                InputEvent::Key(Key::Enter) => action = MissionSelectAction::Start,
+                InputEvent::Key(Key::Escape) => action = MissionSelectAction::Cancel,
+                InputEvent::Key(Key::Char('?')) => action = MissionSelectAction::Help,
+                InputEvent::Key(_) => {}
+                InputEvent::MouseClick(..) => {}
+            }
+
+            match action {
+                MissionSelectAction::PageUp => form.scroll_page(registry, -1),
+                MissionSelectAction::PageDown => form.scroll_page(registry, 1),
+                MissionSelectAction::BriefUp => form.scroll_briefing(registry, -1),
+                MissionSelectAction::BriefDown => form.scroll_briefing(registry, 1),
+                _ => {}
+            }
+        }
+
+        if action != MissionSelectAction::None {
+            ctx.click();
+        }
+        match action {
+            MissionSelectAction::Cancel => {
+                *self = Self::NewGameMenu { tips: None };
+                ctx.status = "New game: choose a mission category".to_string();
+                Transition::None
+            }
+            MissionSelectAction::Help => {
+                let section = match self {
+                    Self::MissionSelect(form) => form.help_section(),
+                    _ => HelpSection::NewGame,
+                };
+                let inner = std::mem::replace(self, Self::MainMenu);
+                *self = Self::Help {
+                    screen: Box::new(inner),
+                    help: None,
+                    mode: helpmenu::HelpMode::new(section, HelpPlacement::Menu),
+                };
+                Transition::None
+            }
+            MissionSelectAction::Start => {
+                let Self::MissionSelect(form) = self else {
+                    return Transition::None;
+                };
+                let registry = ctx.missions.as_deref();
+
+                if !form.can_start(registry) {
+                    ctx.status = form.start_error(registry);
+                    return Transition::None;
+                }
+
+                ctx.status = String::new();
+                Transition::StartMission(Box::new(MissionStartRequest {
+                    category: form.category,
+                    index: form.selected,
+                }))
+            }
+            _ => Transition::None,
+        }
+    }
+
     /// Draws the screen into the frame.
     ///
     /// For [`Screen::InSession`] the map is taken from [`crate::App::render_frame`]
@@ -1189,6 +1435,49 @@ impl Screen {
                     form,
                     view.width,
                     view.height,
+                );
+            }
+            Self::NewGameMenu { tips } => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    newgame::draw_new_game_menu(
+                        buffer,
+                        menu_assets,
+                        tips.as_ref(),
+                        view.status,
+                        mouse,
+                    );
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "New Game Menu uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
+                );
+            }
+            Self::MissionSelect(form) => {
+                if let (Some(menu_assets), true) = (menu_assets, native_frame) {
+                    gamesetupmenu::draw_mission_select(
+                        buffer,
+                        menu_assets,
+                        view.missions,
+                        form,
+                        view.status,
+                        mouse,
+                    );
+                    return;
+                }
+
+                buffer.fill(Rgba::rgb(12, 14, 18));
+                draw_text_line(
+                    buffer,
+                    12,
+                    12,
+                    "Mission selection uses the original 640x480 frame",
+                    Rgba::rgb(232, 236, 244),
                 );
             }
             Self::MultiplayerMenu => {
@@ -1377,13 +1666,12 @@ impl Screen {
 
         match activate {
             Some(MAIN_CREATE) => {
-                // M-SP: «New Game» opens the local match setup
-                // (`menu_custom_game_menu`: Options → Planet → Players).
-                let mut form = GameSetupForm::default();
-                form.setup.player_name = ctx.preferences.player_name.clone();
-                form.world_dir = ctx.world_dir.clone();
-                *self = Self::LocalSetup(form);
-                ctx.status = "New game: options, Enter — next screen, Esc — back".to_string();
+                // M-SP: `New Game` opens the submenu (`menu_new_game_menu_loop`,
+                // `menu.cpp:2171`) — Training/Scenario/Custom/Multiplayer
+                // Scenario/Campaign/Tips/Cancel. `Custom` leads to the local match
+                // setup (`menu_custom_game_menu`: Options → Planet → Players).
+                *self = Self::NewGameMenu { tips: None };
+                ctx.status = "New game: choose a mission category".to_string();
                 Transition::None
             }
             Some(MAIN_JOIN) => {
@@ -4471,8 +4759,19 @@ mod tests {
         let (mut ctx, _log) = context(Vec::new(), None);
         let mut screen = Screen::MainMenu;
 
-        // M-SP: «New Game» opens the local match setup (Options).
+        // M-SP: «New Game» opens the `New Game` submenu (`menu.cpp:2171`).
         assert_eq!(key(&mut screen, &mut ctx, Key::Enter), Transition::None);
+        assert_eq!(screen, Screen::NewGameMenu { tips: None });
+
+        // `Custom Game` (`_(3d29)`) opens the local match setup (Options).
+        let custom = newgame::new_game_rect(NewGameAction::Custom).expect("Custom Game");
+        screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(
+                custom.ulx + custom.width / 2,
+                custom.uly + custom.height / 2,
+            ),
+        );
         assert!(matches!(screen, Screen::LocalSetup(_)));
         if let Screen::LocalSetup(form) = &screen {
             assert_eq!(form.screen, crate::setup::SetupScreen::Options);
@@ -4484,6 +4783,10 @@ mod tests {
             assert_eq!(form.screen, crate::setup::SetupScreen::Planet);
         }
 
+        // Escape returns to the `New Game` submenu (`menu_custom_game_menu` cancel
+        // continues the `menu_new_game_menu_loop`), the second Escape to the main menu.
+        key(&mut screen, &mut ctx, Key::Escape);
+        assert_eq!(screen, Screen::NewGameMenu { tips: None });
         key(&mut screen, &mut ctx, Key::Escape);
         assert_eq!(screen, Screen::MainMenu);
     }
@@ -4626,6 +4929,7 @@ mod tests {
             mouse: None,
             focus: 0,
             app: Some(&app),
+            missions: None,
         };
         Screen::CreateForm(form).render(&mut buffer, view);
 
@@ -4859,6 +5163,7 @@ mod tests {
             mouse: Some(Point::new(390, 180)),
             focus: 0,
             app: Some(&app),
+            missions: None,
         };
 
         // Main menu: background — MAINPIC.
@@ -4912,9 +5217,21 @@ mod tests {
         );
 
         assert_eq!(transition, Transition::None);
+        assert_eq!(
+            screen,
+            Screen::NewGameMenu { tips: None },
+            "New Game открывает подменю New Game Menu"
+        );
+
+        // The `Custom Game` button of the submenu opens the local match setup.
+        let custom = newgame::new_game_rect(NewGameAction::Custom).expect("Custom Game");
+        screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(custom.ulx + 4, custom.uly + 4),
+        );
         assert!(
             matches!(screen, Screen::LocalSetup(_)),
-            "New Game открывает настройку локальной партии"
+            "Custom Game открывает настройку локальной партии"
         );
 
         let mut screen = Screen::MainMenu;
@@ -4968,6 +5285,14 @@ mod tests {
         let mut screen = Screen::MainMenu;
 
         key(&mut screen, &mut ctx, Key::Enter);
+        assert_eq!(screen, Screen::NewGameMenu { tips: None });
+
+        // `Custom Game` opens the local match setup (Options).
+        let custom = newgame::new_game_rect(NewGameAction::Custom).expect("Custom Game");
+        screen.handle_input(
+            &mut ctx,
+            InputEvent::MouseClick(custom.ulx + 4, custom.uly + 4),
+        );
         assert!(matches!(screen, Screen::LocalSetup(_)));
 
         // The `?` button (465,438 48×40) on the Options screen.
@@ -5165,6 +5490,7 @@ mod tests {
                 mouse: Some(Point::new(10, 10)),
                 focus: 0,
                 app: Some(&app),
+                missions: None,
             };
             screen.render(&mut buffer, view);
 
@@ -5236,7 +5562,11 @@ mod tests {
         let transition = screen.handle_input(&mut ctx, InputEvent::MouseClick(create.x, create.y));
 
         assert_eq!(transition, Transition::None);
-        assert!(matches!(screen, Screen::LocalSetup(_)));
+        assert_eq!(
+            screen,
+            Screen::NewGameMenu { tips: None },
+            "клик по New Game открывает подменю"
+        );
         assert_eq!(*calls.lock().expect("lock"), 1, "клик должен озвучиваться");
         assert_eq!(ctx.audio.plays(), 1);
     }

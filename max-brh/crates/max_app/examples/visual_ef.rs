@@ -67,6 +67,7 @@ fn main() {
         mouse: mouse.map(|(x, y)| Point::new(x, y)),
         focus: 0,
         app: Some(&app),
+        missions: None,
     };
 
     let mut frames: Vec<(&str, RgbaBuffer)> = Vec::new();

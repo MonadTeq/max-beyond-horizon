@@ -493,6 +493,16 @@ pub struct MenuAssets {
     pub small_blank: MenuButtonPair,
     /// `MNUBTN1U/D` … `MNUBTN6U/D` (index 0 — resource 1).
     pub mnubtn: [MenuButtonPair; 6],
+    /// `MNUUAROU/D` — page/briefing scroll up 28×29 (`GameSetupMenu`, `Tips`).
+    pub arrow_up: Option<MenuButtonPair>,
+    /// `MNUDAROU/D` — page/briefing scroll down 28×29.
+    pub arrow_down: Option<MenuButtonPair>,
+    /// `SUBTITLE` 181×22 — the caption plate of the `GameSetupMenu` description.
+    pub subtitle: Option<SimpleImage>,
+    /// `BIGSCRNL` 140×229 — the left description panel of the `GameSetupMenu`.
+    pub info_panel_left: Option<SimpleImage>,
+    /// `BIGSCRNR` 149×229 — the right description panel of the `GameSetupMenu`.
+    pub info_panel_right: Option<SimpleImage>,
     /// `BTNHIDE` button 38×21.
     pub btnhide: Option<SimpleImage>,
     /// Left portrait frame `BGRSCRNL` 160×259.
@@ -613,6 +623,11 @@ impl MenuAssets {
             blank: pair("BLANK_UP", "BLANK_DN")?,
             small_blank: pair("SBLNK_UP", "SBLNK_DN")?,
             mnubtn: mnubtn.try_into().ok()?,
+            arrow_up: pair("MNUUAROU", "MNUUAROD"),
+            arrow_down: pair("MNUDAROU", "MNUDAROD"),
+            subtitle: read_simple("SUBTITLE"),
+            info_panel_left: read_simple("BIGSCRNL"),
+            info_panel_right: read_simple("BIGSCRNR"),
             btnhide: read_simple("BTNHIDE"),
             portrait_frame_left: read_simple("BGRSCRNL"),
             portrait_frame_right: read_simple("BGRSCRNR"),
@@ -830,7 +845,28 @@ pub fn draw_image_button(
 
 /// "Portrait" with the `BGRSCRNL`/`BGRSCRNR` frames — shared by the main menu and
 /// `Multiplayer Menu` (`menu_draw_menu_portrait`).
-fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
+pub(crate) fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
+    let palette = &menu.palette;
+    let mut painted = draw_menu_portrait_frame(frame, menu);
+
+    if let Some(ref portrait) = menu.portrait {
+        painted += draw_big_image_at(
+            frame,
+            portrait,
+            palette,
+            (MAIN_PORTRAIT.ulx, MAIN_PORTRAIT.uly),
+            MAIN_PORTRAIT,
+        );
+    }
+
+    painted
+}
+
+/// Only the `BGRSCRNL`/`BGRSCRNR` frames (`menu_draw_menu_portrait_frame`).
+///
+/// `GameSetupMenu::DrawMissionList` and `menu_draw_tips_frame` draw the frames
+/// without the `P_*` picture; the mission screen keeps the area for the list.
+pub(crate) fn draw_menu_portrait_frame(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
     let palette = &menu.palette;
     let mut painted = 0;
 
@@ -852,15 +888,6 @@ fn draw_menu_portrait(frame: &mut RgbaBuffer, menu: &MenuAssets) -> u32 {
             MAIN_PORTRAIT_RIGHT.0,
             MAIN_PORTRAIT_RIGHT.1,
             false,
-        );
-    }
-    if let Some(ref portrait) = menu.portrait {
-        painted += draw_big_image_at(
-            frame,
-            portrait,
-            palette,
-            (MAIN_PORTRAIT.ulx, MAIN_PORTRAIT.uly),
-            MAIN_PORTRAIT,
         );
     }
 

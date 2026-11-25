@@ -38,9 +38,9 @@ use max_app::host::{
     DEFAULT_MIN_PLAYERS,
 };
 #[cfg(feature = "sdl")]
-use max_app::music::{MusicDirector, MusicScene};
+use max_app::local::LocalSetup;
 #[cfg(feature = "sdl")]
-use max_app::subtitles::{SubtitleTrack, DEFAULT_LANGUAGE};
+use max_app::music::{MusicDirector, MusicScene};
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
 #[cfg(feature = "sdl")]
@@ -50,6 +50,8 @@ use max_app::net::{
 };
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
+#[cfg(feature = "sdl")]
+use max_app::subtitles::{SubtitleTrack, DEFAULT_LANGUAGE};
 #[cfg(feature = "sdl")]
 use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
@@ -1134,6 +1136,47 @@ fn run_ui(cli: &Cli) -> Result<()> {
     if ctx.intro_mve_path.is_none() {
         media_notes.push("видео: maxint.mve нет рядом с MAX.RES — заглушка".to_string());
     }
+    // Campaign stage 2 (`GameSetupMenu`): mission descriptors come from
+    // `PATCHES.RES` (`MissionRegistry`), and the mission files (`SAVE1.CAM`, …) are
+    // game data next to `MAX.RES` — not the save directory. A descriptor whose file
+    // is absent stays visible in the list with a `[missing]` marker (owner
+    // condition 5), so the menu never starts an empty world.
+    if let Some(assets) = app.assets() {
+        let mission_dir = config
+            .max_res
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let registry = max_assets::MissionRegistry::from_archive(&assets.patches_res, &mission_dir);
+        let missing: Vec<&String> = registry
+            .warnings()
+            .iter()
+            .filter(|warning| warning.contains("not found") || warning.contains("cannot read"))
+            .collect();
+
+        for warning in &missing {
+            eprintln!("UI: миссии: {warning}");
+        }
+
+        if !missing.is_empty() {
+            let note = format!(
+                "миссии: {} файл(ов) миссий не найдено — в списке помечены [missing]",
+                missing.len()
+            );
+            ctx.media_status = Some(match ctx.media_status.take() {
+                Some(existing) => format!("{existing}; {note}"),
+                None => note.clone(),
+            });
+            if ctx.status.is_empty() {
+                ctx.status = note;
+            } else {
+                ctx.status.push_str(&format!("; {note}"));
+            }
+        }
+
+        ctx.missions = Some(std::sync::Arc::new(registry));
+    }
+
     let mut music = MusicDirector::new();
     if ctx.audio.is_audible() {
         if ctx.audio.has_music(max_app::music::TRACK_MENU) {
@@ -1261,6 +1304,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     Screen::MainMenu => "MainMenu",
                     Screen::Preferences(_) => "Preferences",
                     Screen::LocalSetup(_) => "LocalSetup",
+                    Screen::NewGameMenu { .. } => "NewGameMenu",
+                    Screen::MissionSelect(_) => "MissionSelect",
                     Screen::InSession { .. } => "InSession",
                     Screen::GameOver => "GameOver",
                     Screen::Introduction(_) => "Introduction",
@@ -1412,6 +1457,55 @@ fn run_ui(cli: &Cli) -> Result<()> {
                             // phases) — we return to the menu instead of staying on the
                             // empty PreGame screen.
                             screen = Screen::MainMenu;
+                        }
+                    }
+                }
+                Transition::StartMission(request) => {
+                    // Campaign stage 2: the `GameSetupMenu` chose a mission; the start
+                    // goes through the stage-1 flow (`start_mission_from_registry`),
+                    // never by mutating the match in the UI.
+                    let started = match ctx.missions.as_deref() {
+                        None => Err(
+                            "mission registry is unavailable (PATCHES.RES is not loaded)"
+                                .to_string(),
+                        ),
+                        Some(registry) => {
+                            let setup = LocalSetup {
+                                player_name: ctx.player_name.clone(),
+                                ..LocalSetup::default()
+                            };
+
+                            app.start_mission_from_registry(
+                                registry,
+                                request.category,
+                                request.index,
+                                &setup,
+                            )
+                        }
+                    };
+
+                    match started {
+                        Ok(start) => {
+                            ctx.status = String::new();
+                            println!(
+                                "UI: миссия {} — {} ({:?}), файл {}",
+                                start.tag,
+                                start.title,
+                                start.category,
+                                start.path.display()
+                            );
+                            screen = Screen::InSession {
+                                request: SessionRequest {
+                                    game_id: "local".to_string(),
+                                    password: None,
+                                },
+                            };
+                        }
+                        Err(error) => {
+                            // The list stays on screen with the reason (condition 5):
+                            // a missing file is visible, not a silent menu reset.
+                            eprintln!("max-brh: mission: {error}");
+                            ctx.status = format!("Mission: {error}");
                         }
                     }
                 }
@@ -1845,7 +1939,9 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
                     app.set_preferences(*preferences);
                     app.persist_preferences();
                 }
-                Transition::StartSession(_) | Transition::StartLocal(_) => {}
+                Transition::StartSession(_)
+                | Transition::StartLocal(_)
+                | Transition::StartMission(_) => {}
             }
         }
 
@@ -1879,6 +1975,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             mouse: None,
             focus: 0,
             app: Some(app),
+            missions: None,
         };
         self.screen.render(&mut self.buffer, view);
 
@@ -1907,6 +2004,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             mouse: None,
             focus: 0,
             app: None,
+            missions: None,
         };
         self.screen.render(&mut self.buffer, view);
 

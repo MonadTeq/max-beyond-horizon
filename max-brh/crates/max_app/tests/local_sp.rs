@@ -355,15 +355,29 @@ fn setup_form_produces_team_types_planet_and_timer() {
 fn screen_routes_setup_to_start_local_and_back() {
     let mut ctx = context();
 
-    // MainMenu → LocalSetup (New Game).
+    // MainMenu → New Game submenu (`menu_new_game_menu_loop`).
     let mut screen = Screen::MainMenu;
     assert_eq!(
         screen.handle_input(&mut ctx, InputEvent::Key(Key::Enter)),
         Transition::None
     );
+    assert_eq!(screen, Screen::NewGameMenu { tips: None });
+
+    // `Custom Game` → LocalSetup.
+    let custom = max_app::newgame::new_game_rect(max_app::newgame::NewGameAction::Custom)
+        .expect("Custom Game");
+    screen.handle_input(
+        &mut ctx,
+        InputEvent::MouseClick(custom.ulx + 2, custom.uly + 2),
+    );
     assert!(matches!(screen, Screen::LocalSetup(_)));
 
-    // Esc from the first screen — back to the menu.
+    // Esc from the first screen — back to the submenu, the second Esc — to the menu.
+    assert_eq!(
+        screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape)),
+        Transition::None
+    );
+    assert_eq!(screen, Screen::NewGameMenu { tips: None });
     assert_eq!(
         screen.handle_input(&mut ctx, InputEvent::Key(Key::Escape)),
         Transition::None
