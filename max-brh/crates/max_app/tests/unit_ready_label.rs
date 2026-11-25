@@ -18,7 +18,7 @@
 //! The label is not part of the NAME toggle (`GameManager_DisplayButtonNames`):
 //! C++ calls `DrawMap_RenderNamesDisplay` for every own unit of the draw group.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -39,16 +39,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("unit_ready_label: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("unit_ready_label: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -71,9 +71,7 @@ fn count_color(frame: &RgbaBuffer, color: (u8, u8, u8)) -> usize {
 /// produced unit, and it is drawn even with every panel button off.
 #[test]
 fn factory_with_a_produced_unit_shows_the_label() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let factory = app
         .universe_mut()
@@ -143,9 +141,7 @@ fn factory_with_a_produced_unit_shows_the_label() {
 /// A builder that finished a building: the same text, but over the building.
 #[test]
 fn finished_building_gets_the_label_from_its_builder() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let building = app
         .universe_mut()
@@ -181,9 +177,7 @@ fn finished_building_gets_the_label_from_its_builder() {
 /// Another team's ready unit gets no label (C++: `unit->team == GameManager_PlayerTeam`).
 #[test]
 fn foreign_unit_has_no_label() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let factory = app
         .universe_mut()
@@ -213,9 +207,7 @@ fn foreign_unit_has_no_label() {
 /// `%s research completed` over a powered-on research center with a finished topic.
 #[test]
 fn finished_research_gets_the_label() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let center = app
         .universe_mut()
@@ -248,9 +240,7 @@ fn finished_research_gets_the_label() {
 /// cycle `63 → 31 → 15 → 7` (`World::UpdateColorAnimations`).
 #[test]
 fn label_color_blinks_with_the_palette_cycle() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let start = ready_label_color(&app);
     assert_eq!((start.r, start.g, start.b), (0, 252, 0));
@@ -282,9 +272,7 @@ fn label_color_blinks_with_the_palette_cycle() {
 /// inside it (`UnitInfoGroup::IsRelevant` skips stored units).
 #[test]
 fn stored_unit_itself_has_no_label() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let factory = app
         .universe_mut()

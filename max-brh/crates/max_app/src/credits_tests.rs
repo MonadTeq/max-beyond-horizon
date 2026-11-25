@@ -162,15 +162,9 @@ fn draw_paints_background_and_text_only_inside_the_region() {
     let menu =
         crate::menu::MenuAssets::load(&max_assets::ResArchive::open(repo_max_res()).unwrap());
 
-    let Some(menu) = menu else {
-        eprintln!("пропуск: нет MAX.RES");
-        return;
-    };
+    let menu = menu.expect(concat!("test fixture is missing: ", stringify!(menu)));
 
-    let Some(background) = menu.credits.as_ref() else {
-        eprintln!("пропуск: нет CREDITS");
-        return;
-    };
+    let background = menu.credits.as_ref().expect(concat!("test fixture is missing: ", stringify!(menu.credits.as_ref())));
 
     let mut screen = CreditsScreen::new();
     let mut frame = RgbaBuffer::new(640, 480);

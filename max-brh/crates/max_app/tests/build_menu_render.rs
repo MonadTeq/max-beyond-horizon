@@ -3,7 +3,7 @@
 //! `P_*` 300×240 at (11,13) and the `UnitStats_DrawStats` characteristics table with
 //! icons (both — `AbstractBuildMenu::Draw`, `buildmenu.cpp:509-536`).
 //!
-//! The test loads the real `MAX.RES`/`PATCHES.RES` (skipped if there is no data) and
+//! The test loads the real `MAX.RES`/`PATCHES.RES` (a missing data set fails it) and
 //! compares the menu frame with the clean `CONBUILD`/`FACBUILD` background in the C++
 //! rectangles: the 32×32 row icon at `LIST_AREA`, the `PORTRAIT` window, the
 //! `STATS` (11,293,250,174).
@@ -28,7 +28,7 @@ fn assets() -> Option<Assets> {
     let root = root();
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -105,9 +105,7 @@ fn changed(before: &RgbaBuffer, after: &RgbaBuffer, rect: PixelRect) -> usize {
 
 #[test]
 fn list_rows_draw_the_i_star_icons_of_every_visible_building() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let (state, builder) = build_state();
     let menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let background = background(&assets, false);
@@ -145,9 +143,7 @@ fn list_rows_draw_the_i_star_icons_of_every_visible_building() {
 
 #[test]
 fn list_icons_are_recolored_for_the_team_like_cargo_menu() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let (state, builder) = build_state();
     let mut menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let mut red = RgbaBuffer::new(640, 480);
@@ -174,9 +170,7 @@ fn list_icons_are_recolored_for_the_team_like_cargo_menu() {
 
 #[test]
 fn portrait_is_the_selected_buildings_p_star_big_image() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let (state, builder) = build_state();
     let menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let background = background(&assets, false);
@@ -240,9 +234,7 @@ fn portrait_is_the_selected_buildings_p_star_big_image() {
 
 #[test]
 fn portrait_follows_the_selected_row_and_the_queue_selection() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let (mut state, builder) = build_state();
 
     // For a factory the queue is selected by a click; the portrait — `selector->GetLast()`
@@ -279,9 +271,7 @@ fn portrait_follows_the_selected_row_and_the_queue_selection() {
 
 #[test]
 fn stats_table_shows_the_building_characteristics_with_icons() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let (state, builder) = build_state();
     let mut menu = BuildMenu::new(StateRef::from(&state), builder).expect("меню конструктора");
     let training_hall = menu

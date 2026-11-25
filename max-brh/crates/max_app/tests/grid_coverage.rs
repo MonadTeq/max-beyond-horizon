@@ -8,7 +8,7 @@
 //! every side, and the border strip of the outer cells otherwise looked cut off.
 //!
 //! The test draws through the real `max_app::overlays::draw_grid` path;
-//! it is skipped when the game data (`max-original/`) is not available.
+//! it fails when the game data (`max-original/`) is not available.
 
 use std::path::{Path, PathBuf};
 
@@ -30,16 +30,16 @@ fn app_with_assets() -> Option<App> {
     let color_pal = repo_path("max-original/COLOR.PAL");
     // The checkout keeps `PATCHES.RES` in the C++ oracle's shared assets
     // directory; the app's fallback finds it from the repository root too.
-    let patches = repo_path("max-cpp-port/assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("grid_coverage: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("grid_coverage: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("max-cpp-port/assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -64,9 +64,7 @@ fn painted_row(frame: &RgbaBuffer, y: i32, color: Rgba) -> usize {
 
 #[test]
 fn grid_covers_all_four_edges_of_the_map_window() {
-    let Some(app) = app_with_assets() else {
-        return;
-    };
+    let app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
     let assets = app.assets().expect("ассеты");
     let palette = UiPalette::from_assets(assets).expect("палитра окна");
     let land = grid_color(&palette, max_core::enums::Surface::LAND);

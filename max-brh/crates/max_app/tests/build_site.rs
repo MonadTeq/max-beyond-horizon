@@ -7,8 +7,8 @@
 //! `game_manager.cpp:5829` (`GetBuilderUnitCursor`),
 //! `unitinfo.cpp:4414` (`PositionInTape`).
 //!
-//! Tests are skipped if there is no game data next to the repository (like
-//! `unit_menu.rs`/`construction_site.rs`).
+//! The tests require the game data next to the repository (like
+//! `unit_menu.rs`/`construction_site.rs`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -29,16 +29,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("build_site: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("build_site: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"));
+        .with_assets_dir(repo_path("tests/fixtures/assets"));
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
 
@@ -62,7 +62,7 @@ fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
     if !world_dir.join("SNOW_1.WRL").is_file() {
-        eprintln!("build_site: пропуск — нет SNOW_1.WRL");
+        eprintln!("build_site: нет данных — нет SNOW_1.WRL");
         return None;
     }
 
@@ -245,11 +245,20 @@ fn order_site_selection_via(app: &mut App, builder: UnitId, popup: bool) -> Poin
     app.build_site().expect("режим выбора").anchor
 }
 
+/// Runs the body on a thread with a larger stack: in a debug build the `App`
+/// scenes and the 640×480 frames need more than the 2 MiB test-thread stack.
+fn with_big_stack(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(body)
+        .expect("test thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+}
+
 #[test]
 fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     let anchor = order_site_selection(&mut app, builder);
@@ -294,9 +303,7 @@ fn ghost_cursor_moves_with_the_mouse_and_marks_validity() {
 
 #[test]
 fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     // A frame without the mode — the reference for comparison.
@@ -332,9 +339,7 @@ fn ghost_is_drawn_in_the_frame_and_esc_cancels_without_an_order() {
 
 #[test]
 fn lmb_places_the_site_in_the_chosen_cell_and_the_builder_works_at_its_center() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     place_and_assert_centered(&mut app, builder, builder_grid, false);
@@ -344,9 +349,7 @@ fn lmb_places_the_site_in_the_chosen_cell_and_the_builder_works_at_its_center() 
 /// `Build` item (`unitmenu`), not the `B` key.
 #[test]
 fn popup_build_places_the_site_and_centers_the_builder() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     place_and_assert_centered(&mut app, builder, builder_grid, true);
@@ -357,9 +360,7 @@ fn popup_build_places_the_site_and_centers_the_builder() {
 #[test]
 fn ghost_is_drawn_after_both_build_menu_paths() {
     for popup in [false, true] {
-        let Some(mut app) = game_app() else {
-            return;
-        };
+        let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
         // A 640×480 frame with `FRAMEPIC` loaded goes through
         // `render_with_chrome` — the ghost must be drawn exactly there.
         assert!(app.chrome_active(), "кадр идёт через render_with_chrome");
@@ -456,18 +457,11 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     );
 
     // Frame test: the builder sprite pixels stand in the site center.
-    // A frame with the builder versus a frame without it (visibility to the team disabled) —
-    // the center of the differing pixels must coincide with the 2×2 center.
+    // A frame with the builder versus a frame without it (`IsRelevant` skips an
+    // idle unit) — the center of the differing pixels must coincide with the
+    // 2×2 center.
     let with_builder = app.render_frame();
-    app.universe_mut()
-        .unit_mut(builder)
-        .expect("строитель")
-        .set_visible_to_team(TeamId::RED, false);
-    let without_builder = app.render_frame();
-    app.universe_mut()
-        .unit_mut(builder)
-        .expect("строитель")
-        .set_visible_to_team(TeamId::RED, true);
+    let without_builder = frame_without_unit(app, builder);
 
     let bounds = changed_bounds(&with_builder, &without_builder, MAIN_MAP)
         .expect("строитель нарисован на карте");
@@ -482,19 +476,35 @@ fn place_and_assert_centered(app: &mut App, builder: UnitId, builder_grid: Point
     );
 }
 
+/// Frame without `unit`: the unit is temporarily made idle, which
+/// `UnitInfoGroup::IsRelevant` excludes from the sprite loop
+/// (`unitinfogroup.cpp:59`). `visible_to_team` no longer hides own units
+/// (`presented_visible` keeps own-team units visible), so this is the way to
+/// measure exactly the sprite pixels.
+fn frame_without_unit(app: &mut App, unit: UnitId) -> max_render::buffer::RgbaBuffer {
+    let saved = app
+        .universe_mut()
+        .unit_mut(unit)
+        .expect("юнит для кадра без него")
+        .orders;
+    app.universe_mut()
+        .unit_mut(unit)
+        .expect("юнит для кадра без него")
+        .orders = UnitOrder::Idle;
+    let frame = app.render_frame();
+    app.universe_mut()
+        .unit_mut(unit)
+        .expect("юнит для кадра без него")
+        .orders = saved;
+
+    frame
+}
+
 /// Center (x,y) of the builder sprite pixels in the frame: a frame with the unit versus a frame
-/// with visibility disabled. This measures exactly the sprite, without the tape markup.
+/// with the unit idle. This measures exactly the sprite, without the tape markup.
 fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
     let with_builder = app.render_frame();
-    app.universe_mut()
-        .unit_mut(builder)
-        .expect("строитель")
-        .set_visible_to_team(TeamId::RED, false);
-    let without_builder = app.render_frame();
-    app.universe_mut()
-        .unit_mut(builder)
-        .expect("строитель")
-        .set_visible_to_team(TeamId::RED, true);
+    let without_builder = frame_without_unit(app, builder);
 
     let (x0, y0, x1, y1) = changed_bounds(&with_builder, &without_builder, MAIN_MAP)
         .expect("строитель нарисован на карте");
@@ -508,9 +518,7 @@ fn builder_pixel_center(app: &mut App, builder: UnitId) -> (i32, i32) {
 /// not "straight". "Before/after" frames: the angle and bbox of the sprite on each tick.
 #[test]
 fn builder_turns_to_the_tape_and_slides_diagonally_by_eight_pixels_per_tick() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     // The tape anchor is one cell left/above the builder: it stands in the SE corner of the 2×2,
@@ -630,9 +638,7 @@ fn changed_bounds(
 
 #[test]
 fn lmb_on_an_invalid_cell_cancels_the_selection() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (builder, builder_grid) = spawn_builder(&mut app);
 
     order_site_selection(&mut app, builder);
@@ -648,10 +654,11 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
         let _ = move_cursor(&mut app, target);
     }
 
-    if app.build_site().expect("режим").valid(app.state_ref()) {
-        // The whole neighborhood is free — the scenario has nothing to check (generator map).
-        return;
-    }
+    assert!(
+        !app.build_site().expect("режим").valid(app.state_ref()),
+        "no invalid cell found next to the builder: the scenario cannot check \
+         that a click on it cancels the selection"
+    );
 
     let _ = click_cell(&mut app, target);
 
@@ -677,37 +684,36 @@ fn lmb_on_an_invalid_cell_cancels_the_selection() {
 
 #[test]
 fn same_input_gives_the_same_site_and_digest() {
-    let Some(mut first) = game_app() else {
-        return;
-    };
-    let Some(mut second) = game_app() else {
-        return;
-    };
+    with_big_stack(|| {
+        let mut first = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
+        let mut second = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
-    let run = |app: &mut App| {
-        let (builder, builder_grid) = spawn_builder(app);
-        order_site_selection(app, builder);
+        let run = |app: &mut App| {
+            let (builder, builder_grid) = spawn_builder(app);
+            order_site_selection(app, builder);
 
-        let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
-        let _ = move_cursor(app, chosen);
-        let _ = click_cell(app, chosen);
+            let chosen = Point::new(builder_grid.x - 1, builder_grid.y - 1);
+            let _ = move_cursor(app, chosen);
+            let _ = click_cell(app, chosen);
 
-        app.tick();
+            app.tick();
 
-        (
-            chosen,
-            app.digest().state_digest,
-            app.state_ref().construction_utility( TeamId::RED, chosen),
-            app.state_ref()
-                .unit(builder)
-                .map(|unit| (unit.grid, unit.orders, unit.state)),
-        )
-    };
+            (
+                chosen,
+                app.digest().state_digest,
+                app.state_ref().construction_utility( TeamId::RED, chosen),
+                app.state_ref()
+                    .unit(builder)
+                    .map(|unit| (unit.grid, unit.orders, unit.state)),
+            )
+        };
 
-    let left = run(&mut first);
-    let right = run(&mut second);
+        let left = run(&mut first);
+        let right = run(&mut second);
 
-    assert_eq!(left, right, "та же последовательность — тот же результат");
+        assert_eq!(left, right, "та же последовательность — тот же результат");
+
+    });
 }
 
 /// `GameManager_PathBuild` (`game_manager.cpp:4566-4598`): the engineer's `Path`
@@ -717,9 +723,7 @@ fn same_input_gives_the_same_site_and_digest() {
 /// (`UnitsManager_BuildNext`, `units_manager.cpp:3807`).
 #[test]
 fn engineer_path_attaches_the_route_and_builds_at_its_own_cell() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     // A free horizontal strip of four land cells for the engineer and its route.
     let land = max_core::enums::Surface::LAND.bits();

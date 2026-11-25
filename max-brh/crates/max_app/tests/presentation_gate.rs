@@ -121,7 +121,7 @@ fn local_app() -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut app = App::new(config);
@@ -197,9 +197,7 @@ fn started_app() -> Option<App> {
 
 #[test]
 fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
-    let Some(mut reference) = started_app() else {
-        return;
-    };
+    let mut reference = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
 
     let start_bytes = reference.state_ref().snapshot_bytes();
 
@@ -212,9 +210,7 @@ fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
     let expected_digest = reference.digest();
 
     for profile in PROFILES {
-        let Some(mut app) = started_app() else {
-            return;
-        };
+        let mut app = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
 
         assert_same_snapshot(
             &app.state_ref().snapshot_bytes(),
@@ -271,9 +267,7 @@ fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
 
 #[test]
 fn alt_tab_does_not_reset_or_unpause_the_match() {
-    let Some(mut app) = started_app() else {
-        return;
-    };
+    let mut app = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
 
     let mut presentation = PresentationState::new();
     assert!(presentation.should_draw());
@@ -371,12 +365,8 @@ impl<D: Dispatcher> SessionFrame<D> for FocusFrame {
 
 #[test]
 fn session_step_is_not_gated_on_focus() {
-    let Some(mut focused) = started_app() else {
-        return;
-    };
-    let Some(mut unfocused) = started_app() else {
-        return;
-    };
+    let mut focused = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+    let mut unfocused = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
 
     // The network session step is the same skeleton for a lockstep match: a
     // hidden window must not stop the loop (barrier timeouts keep their own

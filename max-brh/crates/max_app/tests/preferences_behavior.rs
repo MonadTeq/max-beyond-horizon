@@ -47,7 +47,7 @@ fn local_app(save_dir: &Path) -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut config = config;
@@ -199,9 +199,12 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     let mut slow = local_app(&temp_save_dir("fast-off"));
     let mut fast = local_app(&temp_save_dir("fast-on"));
 
-    let (Some(mut slow), Some(mut fast)) = (slow.take(), fast.take()) else {
-        return;
-    };
+    let mut slow = slow
+        .take()
+        .expect(concat!("test fixture is missing: ", stringify!(local_app(...))));
+    let mut fast = fast
+        .take()
+        .expect(concat!("test fixture is missing: ", stringify!(local_app(...))));
 
     let setup = setup_vs_one_ai();
     // The setting is set before the start, like the main menu Preferences.
@@ -280,9 +283,7 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 #[test]
 fn follow_unit_centers_the_camera_on_the_selected_unit() {
     let dir = temp_save_dir("follow");
-    let Some(mut app) = local_app(&dir) else {
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -335,9 +336,7 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
 #[test]
 fn auto_select_picks_the_next_unit_after_a_move() {
     let dir = temp_save_dir("autoselect");
-    let Some(mut app) = local_app(&dir) else {
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -455,9 +454,7 @@ fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..60
 #[test]
 fn enemy_halt_reaches_the_simulation() {
     let dir = temp_save_dir("enemy-halt");
-    let Some(mut app) = local_app(&dir) else {
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     let mut prefs = app.preferences().clone();
     prefs.enemy_halt = false;
@@ -487,9 +484,7 @@ fn enemy_halt_reaches_the_simulation() {
 #[test]
 fn turn_timers_from_preferences_apply_to_the_local_game() {
     let dir = temp_save_dir("timers");
-    let Some(mut app) = local_app(&dir) else {
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup).expect("локальная партия");
@@ -536,9 +531,7 @@ fn turn_timers_from_preferences_apply_to_the_local_game() {
 #[test]
 fn player_name_applies_to_the_game_and_the_v70_save() {
     let dir = temp_save_dir("player-name");
-    let Some(mut app) = local_app(&dir) else {
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     let mut setup = setup_vs_one_ai();
     setup.player_name = "Alice".to_string();

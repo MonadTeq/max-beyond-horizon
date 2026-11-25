@@ -163,9 +163,7 @@ fn parser_reports_the_line_of_a_typo() {
 
 #[test]
 fn sp_full_script_passes_through_the_real_input_path() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("sp_full");
     let mut runner = runner(&dir);
@@ -218,9 +216,7 @@ fn sp_full_script_passes_through_the_real_input_path() {
 /// list, the cargo slider, the upgrade mode, filters, an upgrade, `Done`.
 #[test]
 fn cargo_full_script_passes_through_the_real_input_path() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("cargo_full");
     let mut runner = runner(&dir);
@@ -257,9 +253,7 @@ fn cargo_full_script_passes_through_the_real_input_path() {
 /// and the actual movement of the unit to a new cell.
 #[test]
 fn move_input_script_passes_through_the_real_input_path() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("move_input");
     let mut runner = runner(&dir);
@@ -317,9 +311,7 @@ fn move_input_script_passes_through_the_real_input_path() {
 ///   does not depend on how many frames were drawn before it.
 #[test]
 fn dt_zero_frames_are_byte_identical_across_runs() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     // Menu → match with a selected Surveyor (its `SURVEYOR.FLC` portrait is the
     // animated corner frame), then 60 game frames at `dt = 0`.
@@ -394,9 +386,7 @@ shot after-60
 /// the allocation and the topic speed on the tick.
 #[test]
 fn research_help_script_passes_through_the_real_input_path() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("research_help");
     let mut runner = runner(&dir);
@@ -496,9 +486,7 @@ fn unknown_command_is_a_script_error_not_a_panic() {
 
 #[test]
 fn v70_save_is_loaded_by_the_script_command() {
-    if !repo_root().join("max-original/SAVE1.CAM").is_file() {
-        return;
-    }
+    assert!(repo_root().join("max-original/SAVE1.CAM").is_file(), concat!("required test fixture is missing: ", stringify!(!repo_root().join("max-original/SAVE1.CAM").is_file())));
 
     let dir = temp_dir("load_v70");
     let mut runner = runner(&dir);
@@ -570,7 +558,7 @@ impl ManualPlay {
     fn new(out_dir: &Path) -> Self {
         let config = AppConfig::default()
             .with_data_dir(repo_root().join("max-original"))
-            .with_assets_dir(repo_root().join("assets"))
+            .with_assets_dir(repo_root().join("tests/fixtures/assets"))
             .with_mode(AppMode::Ui);
         let mut app = App::new(config);
         app.init_assets().expect("ассеты для ручной игры");
@@ -748,9 +736,7 @@ fn visible_neighbor(app: &App, grid: Point) -> Option<(i32, i32)> {
 
 #[test]
 fn recorded_manual_session_round_trips_through_qa_run() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("record_roundtrip");
     let mut play = ManualPlay::new(&dir);
@@ -935,9 +921,7 @@ fn soak_script_is_100_turns_with_periodic_checks() {
 
 #[test]
 fn edge_cases_script_passes_click_spam_and_unicode() {
-    if !has_game_data() {
-        return;
-    }
+    assert!(has_game_data(), concat!("required test fixture is missing: ", stringify!(!has_game_data())));
 
     let dir = temp_dir("edge_cases");
     let mut runner = runner(&dir);

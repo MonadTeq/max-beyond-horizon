@@ -2,8 +2,8 @@
 //! opens by clicking the target in cursor mode, `Done` gives `ORDER_TRANSFER`
 //! (08/P3), the stocks change, `Esc` changes nothing, the frame draws the window.
 //!
-//! Tests with real assets are skipped if there is no game data next to
-//! the repository (like `alloc_menu.rs`/`unit_menu.rs`).
+//! The tests use real assets, require the game data next to the repository
+//! (like `alloc_menu.rs`/`unit_menu.rs`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -39,16 +39,16 @@ fn single_human() -> LocalSetup {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("transfer: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("transfer: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"));
+        .with_assets_dir(repo_path("tests/fixtures/assets"));
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
 
@@ -60,7 +60,7 @@ fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
     if !world_dir.join("SNOW_1.WRL").is_file() {
-        eprintln!("transfer: пропуск — нет SNOW_1.WRL");
+        eprintln!("transfer: нет данных — нет SNOW_1.WRL");
         return None;
     }
 
@@ -177,9 +177,7 @@ fn open_transfer(app: &mut App, source: UnitId, target: UnitId) -> UnitId {
 
 #[test]
 fn xfer_item_is_enabled_for_a_mining_station() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let mine = unit_of_type(&app, UnitType::MiningStation);
     select_and_open_menu(&mut app, mine);
@@ -197,9 +195,7 @@ fn xfer_item_is_enabled_for_a_mining_station() {
 
 #[test]
 fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (mine, constructor) = prepare_transfer(&mut app);
 
     open_transfer(&mut app, mine, constructor);
@@ -265,9 +261,7 @@ fn xfer_opens_on_target_click_and_moves_cargo_on_done() {
 
 #[test]
 fn xfer_cancel_and_zero_amount_do_not_change_storage() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (mine, constructor) = prepare_transfer(&mut app);
 
     open_transfer(&mut app, mine, constructor);
@@ -298,9 +292,7 @@ fn xfer_cancel_and_zero_amount_do_not_change_storage() {
 
 #[test]
 fn xfer_help_opens_transfer_setup() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (mine, constructor) = prepare_transfer(&mut app);
     open_transfer(&mut app, mine, constructor);
 
@@ -340,9 +332,7 @@ fn xfer_help_opens_transfer_setup() {
 
 #[test]
 fn xfer_frame_draws_the_window_over_the_map() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
     let (mine, constructor) = prepare_transfer(&mut app);
 
     let before = app.render_frame();

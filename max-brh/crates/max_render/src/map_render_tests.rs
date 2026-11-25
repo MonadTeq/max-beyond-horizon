@@ -105,9 +105,7 @@ fn resource_markers_are_drawn_from_max_res() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let archive = max_assets::ResArchive::open(&path).expect("MAX.RES");
     let markers = max_assets::ResourceMarkers::load(&archive);
@@ -157,9 +155,7 @@ fn a_surveyed_empty_cell_gets_the_circle_marker() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let archive = max_assets::ResArchive::open(&path).expect("MAX.RES");
     let markers = max_assets::ResourceMarkers::load(&archive);

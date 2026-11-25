@@ -258,11 +258,9 @@ fn create_form_paints_planet_pictures_from_max_res() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let config = AppConfig {
         max_res,
@@ -494,11 +492,9 @@ fn native_frame_menus_are_drawn_from_max_res() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let mut app = crate::App::new(AppConfig {
         max_res,

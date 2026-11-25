@@ -34,7 +34,7 @@ fn local_app() -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut app = App::new(config);
@@ -111,9 +111,7 @@ fn combat_effect(unit_type: UnitType) -> bool {
 /// hold the AI turn. Both projectiles and explosions are checked (they do not remain on the map).
 #[test]
 fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия Turn Based");
@@ -240,9 +238,7 @@ fn first_turn_end_turn_with_a_missile_in_flight_returns_to_the_player() {
 /// Hot-seat in Turn Based: two humans + a computer, turn-transition windows.
 #[test]
 fn hot_seat_turn_based_covers_humans_and_the_computer() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     let mut setup = setup_vs_one_ai();
     setup.hot_seat = true;
@@ -307,9 +303,7 @@ fn hot_seat_turn_based_covers_humans_and_the_computer() {
 /// SP in Turn Based: several rounds in a row, the AI turn closes normally.
 #[test]
 fn several_turn_based_rounds_close_without_hanging() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai()).expect("партия");
 

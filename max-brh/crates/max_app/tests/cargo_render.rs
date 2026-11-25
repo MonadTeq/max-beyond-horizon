@@ -1,7 +1,7 @@
 //! `CargoMenu` rendering (mobilization): list icons, gold/cargo bars,
 //! upgrade arrows, the mode toggle.
 //!
-//! The test loads the real `MAX.RES`/`PATCHES.RES` (skipped if there is no data) and
+//! The test loads the real `MAX.RES`/`PATCHES.RES` (a missing data set fails it) and
 //! compares the changed pixels of frame areas with the reference C++
 //! rectangles (`cargomenu.cpp`): the 32×32 row icon, the `VERTGOLD` bar (361,276),
 //! the cargo slider (421,301), the `UPGLFT`/`UPGRGT` arrows (283/301), `CRGTOG`
@@ -30,7 +30,7 @@ fn assets() -> Option<Assets> {
     let root = root();
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -81,9 +81,7 @@ fn draw(mobilization: &Mobilization, assets: &Assets) -> (RgbaBuffer, RgbaBuffer
 
 #[test]
 fn cargo_assets_carry_icons_for_every_purchase_type() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
 
     assert!(cargo.is_ready(), "CARGOPIC + Done/Cancel");
@@ -108,9 +106,7 @@ fn cargo_assets_carry_icons_for_every_purchase_type() {
 
 #[test]
 fn turret_icons_carry_the_second_frame_and_d2_offset() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
 
     // `ReportStats_DrawListItemIcon`: frame 0 — body, frame 1 — turret,
@@ -173,9 +169,7 @@ fn turret_icons_carry_the_second_frame_and_d2_offset() {
 
 #[test]
 fn turret_is_painted_over_the_tank_icon_in_the_list() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
 
     // The same frame, but the second frame is removed from the tank icon: the difference in the
@@ -204,9 +198,7 @@ fn turret_is_painted_over_the_tank_icon_in_the_list() {
 
 #[test]
 fn sprite_renderer_draws_the_tank_turret_as_a_separate_frame() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let sprite = assets.sprite(UnitType::Tank).expect("TANK");
     let body = sprite.frame_for(0, 0).expect("корпус");
     let turret = sprite.turret_frame(0).expect("башня");
@@ -243,9 +235,7 @@ fn sprite_renderer_draws_the_tank_turret_as_a_separate_frame() {
 
 #[test]
 fn purchase_screen_draws_icons_bars_and_buttons() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
     let (background, frame) = draw(&mobilization, &assets);
 
@@ -296,9 +286,7 @@ fn purchase_screen_draws_icons_bars_and_buttons() {
 
 #[test]
 fn upgrade_screen_shows_more_of_the_frame() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
     mobilization.select_type(5); // Tank — 4 military upgrades
     let (background, buy_frame) = draw(&mobilization, &assets);
@@ -327,9 +315,7 @@ fn upgrade_screen_shows_more_of_the_frame() {
 
 #[test]
 fn upgrade_costs_are_shown_within_the_limit() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
     mobilization.select_type(5); // TANK
 
@@ -357,9 +343,7 @@ fn upgrade_costs_are_shown_within_the_limit() {
 
 #[test]
 fn full_purchase_list_fits_nine_rows_with_scroll() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 1000);
 
     // The buy list — 15 types, 9 visible; the last row is reached
@@ -387,9 +371,7 @@ fn full_purchase_list_fits_nine_rows_with_scroll() {
 
 #[test]
 fn portrait_is_the_p_star_big_image_for_every_selectable_type() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let cargo = assets.cargo.as_ref().expect("CargoMenuAssets");
 
     let mut all = PURCHASE_UNITS.to_vec();
@@ -416,9 +398,7 @@ fn portrait_is_the_p_star_big_image_for_every_selectable_type() {
 
 #[test]
 fn purchase_screen_draws_portrait_description_and_stat_pips() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 150);
     let (background, frame) = draw(&mobilization, &assets);
 
@@ -473,9 +453,7 @@ fn purchase_screen_draws_portrait_description_and_stat_pips() {
 
 #[test]
 fn stat_rows_change_with_the_selected_unit() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut mobilization = Mobilization::new(TeamId::RED, TeamClan::Random, 500);
     mobilization.select_loadout(0); // Constructor: Cargo/Uses/Armor/Hits/Scan/Speed/Cost
 

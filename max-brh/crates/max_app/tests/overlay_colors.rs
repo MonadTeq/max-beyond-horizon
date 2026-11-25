@@ -18,7 +18,7 @@
 //! these bits in `flags` (they are part of the reference digest) and restores the same
 //! color from the `unit.team → color` mapping, while bits from saves are honoured.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -43,16 +43,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("overlay_colors: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("overlay_colors: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -79,9 +79,7 @@ fn color_pixel_count(frame: &RgbaBuffer, color: max_render::buffer::Rgba) -> usi
 
 #[test]
 fn colors_frame_uses_the_team_color() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let teams = [TeamId::RED, TeamId::GREEN, TeamId::BLUE, TeamId::GRAY];
     let expected = [COLOR_RED, COLOR_GREEN, COLOR_BLUE, COLOR_GRAY];
@@ -175,9 +173,7 @@ fn colors_frame_uses_the_team_color() {
 
 #[test]
 fn alien_units_fall_back_to_derelict_and_stationary_is_skipped() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let alien = app
         .universe_mut()

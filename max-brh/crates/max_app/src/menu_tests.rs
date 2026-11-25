@@ -52,9 +52,7 @@ fn main_menu_layout_matches_the_cpp_oracle() {
 #[test]
 fn clan_logos_are_drawn_at_their_anchor() {
     // `WindowManager_DecodeSimpleImage`: `ulx -= image->ulx`, `uly -= image->uly`.
-    let Some((_archive, menu)) = test_assets() else {
-        return;
-    };
+    let (_archive, menu) = test_assets().expect(concat!("test fixture is missing: ", stringify!(test_assets())));
 
     let logo = menu.clan_logos[1].as_ref().expect("CLN1LOGO");
     // CLN1LOGO: 74×57, ulx=37, uly=28 — the anchor inside the picture.
@@ -129,9 +127,7 @@ fn quest_caption_is_centered_like_cpp() {
 
 #[test]
 fn menu_assets_load_all_button_images_from_max_res() {
-    let Some((_archive, menu)) = test_assets() else {
-        return;
-    };
+    let (_archive, menu) = test_assets().expect(concat!("test fixture is missing: ", stringify!(test_assets())));
 
     assert_eq!(menu.blank.size(), (200, 29));
     assert_eq!(menu.small_blank.size(), (100, 30));
@@ -161,9 +157,7 @@ fn menu_assets_load_all_button_images_from_max_res() {
 
 #[test]
 fn main_menu_draws_mainpic_title_and_gold_captions() {
-    let Some((_archive, menu)) = test_assets() else {
-        return;
-    };
+    let (_archive, menu) = test_assets().expect(concat!("test fixture is missing: ", stringify!(test_assets())));
     let mut frame = RgbaBuffer::new(640, 480);
 
     draw_main_menu(&mut frame, &menu, "", Some((390, 180)));
@@ -204,9 +198,7 @@ fn main_menu_draws_mainpic_title_and_gold_captions() {
 
 #[test]
 fn create_form_draws_planetse_grid_and_mnubtn_buttons() {
-    let Some((_archive, menu)) = test_assets() else {
-        return;
-    };
+    let (_archive, menu) = test_assets().expect(concat!("test fixture is missing: ", stringify!(test_assets())));
     let mut frame = RgbaBuffer::new(640, 480);
     let form = CreateForm {
         world: 12,
@@ -243,9 +235,7 @@ fn create_form_draws_planetse_grid_and_mnubtn_buttons() {
 
 #[test]
 fn join_list_draws_multgame_frame_rows_and_buttons() {
-    let Some((_archive, menu)) = test_assets() else {
-        return;
-    };
+    let (_archive, menu) = test_assets().expect(concat!("test fixture is missing: ", stringify!(test_assets())));
     let games = vec![
         max_net::GameInfo {
             id: "g1".to_string(),

@@ -7,12 +7,12 @@
 //! `App::draw_units` draws them in the common sprite loop (they are `ORDER_AWAIT`, not
 //! `ORDER_IDLE`), so the frame must change before the first turn.
 //!
-//! The test is skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
 use max_app::{App, AppConfig};
-use max_core::enums::UnitType;
+use max_core::enums::{UnitOrder, UnitType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
 use max_core::TeamClan;
@@ -26,16 +26,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("construction_site: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("construction_site: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         // 640×640 — the full-screen fallback without `FRAMEPIC`; the map is entirely ours.
         .with_screen(640, 640);
     let mut app = App::new(config);
@@ -61,9 +61,7 @@ fn changed_pixels(
 /// the tape/cones, leaving the slab and the finished building.
 #[test]
 fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     app.universe_mut().teams_mut()[0].team_type = TeamKind::Player;
     app.universe_mut().team_units_table_mut()[0] = max_core::TeamUnits::with_clan(TeamClan::Random);
@@ -142,15 +140,18 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
             .map(|unit| (unit.orders, unit.state))
             .expect("декаль на площадке");
 
+        // The decal is hidden by making it idle: `IsRelevant` skips idle units
+        // (`unitinfogroup.cpp:59`), while `visible_to_team` no longer hides own
+        // units in `presented_visible`.
         app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
-            .set_visible_to_team(TeamId::RED, false);
+            .orders = UnitOrder::Idle;
         let without = app.render_frame();
         app.universe_mut()
             .unit_mut(decal)
             .expect("декаль на площадке")
-            .set_visible_to_team(TeamId::RED, true);
+            .orders = order.0;
 
         let own = changed_pixels(&with_site, &without);
 
@@ -192,10 +193,17 @@ fn construction_site_is_drawn_on_the_map_until_the_building_is_ready() {
         waiting_stats.units_drawn, site_stats.units_drawn,
         "ждущее здание не рисуется (`ORDER_IDLE`), кадр не меняется по составу"
     );
-    assert_eq!(
-        waiting.pixels(),
-        with_site.pixels(),
-        "кадр не должен меняться, пока строитель не ушёл с площадки"
+    // The builder is `Build`/`UnitReady`: its "ready" label appears above it
+    // (`overlays::unit_ready_label`, the blinking palette slot `0x1F`), so the
+    // frame changes only by the label overlay — the site composition itself is
+    // unchanged and the waiting building is still not drawn.
+    assert!(
+        waiting_stats.units_skipped > site_stats.units_skipped,
+        "готовое здание ждёт и не рисуется (`ORDER_IDLE`)"
+    );
+    assert!(
+        waiting_stats.overlay_pixels > site_stats.overlay_pixels,
+        "подпись готовности строителя (`UnitReady`) появляется в кадре"
     );
 
     // The builder leaves + `UnitsManager_BuildingReady`: the building opens, and

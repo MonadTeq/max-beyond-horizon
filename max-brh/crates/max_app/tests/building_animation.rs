@@ -26,7 +26,7 @@
 //! cycles and the visual clock of `ANIMATED`/the builder; `dt = 0` gives the static
 //! C++ frame, so golden frames do not drift.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -46,16 +46,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("building_animation: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("building_animation: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_screen(640, 640);
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
@@ -80,9 +80,7 @@ fn changed_pixels(left: &RgbaBuffer, right: &RgbaBuffer) -> usize {
 /// (§7.3): 4 phases of 166.7 ms (6 fps), a full cycle of 666.7 ms.
 #[test]
 fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let mine = app
         .universe_mut()
@@ -193,9 +191,7 @@ fn mining_station_body_is_static_and_only_the_palette_cycles_with_dt() {
 /// 25–30 (2) — exactly those ranges that `ColorCycles` rotates.
 #[test]
 fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let factory = app
         .universe_mut()
@@ -293,9 +289,7 @@ fn factory_with_a_queue_holds_its_on_frame_and_blinks_only_via_the_palette() {
 /// `ProcessOrderSentry` (16 frames from `D_RADAR`, not 20 sprite frames).
 #[test]
 fn radar_sentry_animation_advances_with_real_dt() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let radar = app
         .universe_mut()
@@ -340,9 +334,7 @@ fn radar_sentry_animation_advances_with_real_dt() {
 /// beacons) and a working factory (`image_base + 1`, palette blinking).
 #[test]
 fn animation_clock_does_not_change_the_snapshot() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let mine = app
         .universe_mut()
@@ -399,9 +391,7 @@ fn animation_clock_does_not_change_the_snapshot() {
 fn adjacent_buildings_get_connector_frames_and_isolated_ones_do_not() {
     use max_app::render::{connector_frame_indices, connector_mask_for};
 
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let mine = app
         .universe_mut()

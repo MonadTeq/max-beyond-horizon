@@ -49,7 +49,7 @@ fn local_app() -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut app = App::new(config);
@@ -169,9 +169,7 @@ enum ExitClick {
 /// Full interactive cycle: order → construction → completion → markers →
 /// builder leaves → building appears. All steps — on frames with `dt = 1/60`.
 fn run_build_cycle(exit: ExitClick) {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -387,9 +385,7 @@ fn run_build_cycle(exit: ExitClick) {
 /// cancel construction on an attempted move and does not waste the order.
 #[test]
 fn right_click_while_building_is_no_go_and_keeps_the_site() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");

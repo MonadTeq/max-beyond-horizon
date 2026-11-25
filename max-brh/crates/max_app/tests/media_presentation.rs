@@ -5,7 +5,7 @@
 //! * the music director reads the facade `EventStream` and mutates nothing;
 //! * every missing layer is a visible diagnostic (log/status), never a panic.
 //!
-//! The real-data parts are skipped when `max-original/` is absent.
+//! The real-data parts require `max-original/`; a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -28,7 +28,7 @@ fn real_config() -> Option<AppConfig> {
     let root = root();
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -86,9 +86,7 @@ impl AudioBackend for SilentBackend {
 /// Loading the real game data must not change the canonical state bytes.
 #[test]
 fn snapshot_bytes_do_not_depend_on_the_loaded_content() {
-    let Some(config) = real_config() else {
-        return;
-    };
+    let config = real_config().expect(concat!("test fixture is missing: ", stringify!(real_config())));
     let mut with_content = app(config.clone());
     let mut without_content = app(config);
 

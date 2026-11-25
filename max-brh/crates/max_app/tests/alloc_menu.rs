@@ -2,8 +2,8 @@
 //! opening from the unit menu, changing the value, saving it in the unit fields,
 //! the effect on the complex economy, determinism and the frame.
 //!
-//! Tests with real frames (`Assets`/`.WRL`) are skipped if there is no game data
-//! next to the repository — like `move_input.rs` and `unit_menu.rs`.
+//! The tests use real frames (`Assets`/`.WRL`) and require the game data next to
+//! the repository — like `move_input.rs` and `unit_menu.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -41,16 +41,16 @@ fn single_human() -> LocalSetup {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("alloc_menu: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("alloc_menu: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"));
+        .with_assets_dir(repo_path("tests/fixtures/assets"));
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
 
@@ -62,7 +62,7 @@ fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
     if !world_dir.join("SNOW_1.WRL").is_file() {
-        eprintln!("alloc_menu: пропуск — нет SNOW_1.WRL");
+        eprintln!("alloc_menu: нет данных — нет SNOW_1.WRL");
         return None;
     }
 
@@ -141,11 +141,20 @@ fn open_alloc(app: &mut App) -> UnitId {
     id
 }
 
+/// Runs the body on a thread with a larger stack: in a debug build the `App`
+/// scenes and the 640×480 frames need more than the 2 MiB test-thread stack.
+fn with_big_stack(body: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(body)
+        .expect("test thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+}
+
 #[test]
 fn allocation_item_is_enabled_for_a_mining_station() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     select_mine(&mut app);
 
@@ -162,9 +171,7 @@ fn allocation_item_is_enabled_for_a_mining_station() {
 
 #[test]
 fn allocate_opens_the_dialog_and_matches_the_cpp_layout() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     open_alloc(&mut app);
 
@@ -183,9 +190,7 @@ fn allocate_opens_the_dialog_and_matches_the_cpp_layout() {
 
 #[test]
 fn values_change_and_survive_closing_the_dialog() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let id = open_alloc(&mut app);
 
@@ -240,9 +245,7 @@ fn values_change_and_survive_closing_the_dialog() {
 
 #[test]
 fn arrows_bump_one_unit_like_the_cpp_buttons() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let id = open_alloc(&mut app);
 
@@ -271,9 +274,7 @@ fn arrows_bump_one_unit_like_the_cpp_buttons() {
 
 #[test]
 fn dialog_is_modal_for_the_map() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     open_alloc(&mut app);
     let pending = app.hud().pending.len();
@@ -287,9 +288,7 @@ fn dialog_is_modal_for_the_map() {
 
 #[test]
 fn allocation_changes_the_complex_income_next_turn() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let id = open_alloc(&mut app);
     let _ = id;
@@ -364,35 +363,32 @@ fn allocation_changes_the_complex_income_next_turn() {
 
 #[test]
 fn two_identical_dialogs_stay_deterministic() {
-    let Some(mut a) = game_app() else {
-        return;
-    };
-    let Some(mut b) = game_app() else {
-        return;
-    };
+    with_big_stack(|| {
+        let mut a = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
+        let mut b = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
-    for app in [&mut a, &mut b] {
-        open_alloc(app);
-        app.alloc_menu_set(MiningKind::Raw, 2);
-        app.alloc_menu_set(MiningKind::Fuel, 1);
-        let _ = key(app, Key::Enter);
-        app.flush_orders();
-    }
+        for app in [&mut a, &mut b] {
+            open_alloc(app);
+            app.alloc_menu_set(MiningKind::Raw, 2);
+            app.alloc_menu_set(MiningKind::Fuel, 1);
+            let _ = key(app, Key::Enter);
+            app.flush_orders();
+        }
 
-    assert_eq!(
-        a.digest().state_checksum,
-        b.digest().state_checksum,
-        "CRC пакета 45 совпадает: добыча входит в снапшот полями юнита"
-    );
-    assert_eq!(a.state_ref().snapshot_bytes(), b.state_ref().snapshot_bytes());
-    assert_eq!(a.digest().state_digest, b.digest().state_digest);
+        assert_eq!(
+            a.digest().state_checksum,
+            b.digest().state_checksum,
+            "CRC пакета 45 совпадает: добыча входит в снапшот полями юнита"
+        );
+        assert_eq!(a.state_ref().snapshot_bytes(), b.state_ref().snapshot_bytes());
+        assert_eq!(a.digest().state_digest, b.digest().state_digest);
+
+    });
 }
 
 #[test]
 fn frame_shows_the_full_screen_dialog() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let before = app.render_frame();
     open_alloc(&mut app);

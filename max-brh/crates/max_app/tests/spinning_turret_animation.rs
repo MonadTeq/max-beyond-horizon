@@ -19,7 +19,7 @@
 //! presentation clock [`max_app::render::FrameAnimation::turret_step`] rotates the
 //! drawn frame, so the snapshot/CRC do not change.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -43,20 +43,20 @@ fn app_with_assets() -> Option<App> {
     // `PATCHES.RES` lives either in the delivery `assets/` directory or in the
     // C++ port's shared one (`PATCHES_RES_FALLBACKS` in `assets.rs`).
     let patches = [
-        repo_path("assets/PATCHES.RES"),
-        repo_path("max-cpp-port/assets/PATCHES.RES"),
-        repo_path("bin/linux-server-template/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
     ]
     .into_iter()
     .find(|path| path.is_file());
 
     if !max_res.is_file() || !color_pal.is_file() {
-        eprintln!("spinning_turret_animation: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("spinning_turret_animation: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let Some(patches) = patches else {
-        eprintln!("spinning_turret_animation: пропуск — нет PATCHES.RES");
+        eprintln!("spinning_turret_animation: нет данных — нет PATCHES.RES");
         return None;
     };
 
@@ -118,9 +118,7 @@ fn render_unit(app: &App, id: max_core::unit::UnitId, animation: FrameAnimation)
 /// `turret_image_index + 1 > image_index_max → turret_image_base`.
 #[test]
 fn awac_radar_turns_through_thirty_frames_and_wraps() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let awac = app
         .universe_mut()
@@ -254,9 +252,7 @@ fn awac_radar_turns_through_thirty_frames_and_wraps() {
 /// `SCANNER` — the mobile scanner's radar: `D_SCANNER` declares 16 turret frames.
 #[test]
 fn mobile_scanner_radar_turns_through_sixteen_frames() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let scanner = app
         .universe_mut()
@@ -305,9 +301,7 @@ fn mobile_scanner_radar_turns_through_sixteen_frames() {
 /// the simulation (`turret_image_index`/snapshot bytes) is untouched.
 #[test]
 fn turret_clock_is_frame_only_and_follows_the_order_tick() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let awac = app
         .universe_mut()

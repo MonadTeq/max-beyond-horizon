@@ -12,7 +12,7 @@
 //!    golden screens.
 //!
 //! The mission fixtures are the stage-1/3a ones; the media are the real
-//! `MAX.RES`/`PATCHES.RES` (the tests are skipped when the game data is absent).
+//! `MAX.RES`/`PATCHES.RES`; a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -179,9 +179,7 @@ fn showing_the_story_screen_does_not_change_the_mission_snapshot() {
 /// screen names it in its visible diagnostics and closes straight into the match.
 #[test]
 fn a_missing_story_file_is_visible_and_does_not_block_the_mission() {
-    let Some(max_res) = max_res() else {
-        return;
-    };
+    let max_res = max_res().expect(concat!("test fixture is missing: ", stringify!(max_res())));
     let dir = mission_dir("missing");
     let registry = load_registry(&dir);
     let descriptor = campaign_descriptor(&registry, 0);
@@ -243,9 +241,7 @@ fn a_missing_story_file_is_visible_and_does_not_block_the_mission() {
 /// oracle's list instead of advancing the simulation RNG.
 #[test]
 fn the_campaign_intro_uses_the_real_story_block() {
-    let Some(max_res) = max_res() else {
-        return;
-    };
+    let max_res = max_res().expect(concat!("test fixture is missing: ", stringify!(max_res())));
     let dir = mission_dir("intro");
     let registry = load_registry(&dir);
     let descriptor = campaign_descriptor(&registry, 0);
@@ -282,9 +278,7 @@ fn the_campaign_intro_uses_the_real_story_block() {
 /// `SC_C0009` victory: text, background and the `WINR_MSC` music cue.
 #[test]
 fn the_last_campaign_mission_has_a_victory_story_with_music() {
-    let Some(max_res) = max_res() else {
-        return;
-    };
+    let max_res = max_res().expect(concat!("test fixture is missing: ", stringify!(max_res())));
     let dir = mission_dir("victory");
     let registry = load_registry(&dir);
     let descriptor = campaign_descriptor(&registry, 8);
@@ -337,9 +331,7 @@ fn a_mission_without_a_story_block_has_no_screen() {
 /// only when the player advances, and any key then finishes the single movie.
 #[test]
 fn the_story_frame_is_deterministic_and_the_video_sequence_finishes() {
-    let Some(max_res) = max_res() else {
-        return;
-    };
+    let max_res = max_res().expect(concat!("test fixture is missing: ", stringify!(max_res())));
     let dir = mission_dir("frames");
     let registry = load_registry(&dir);
     let descriptor = campaign_descriptor(&registry, 0);
@@ -393,9 +385,7 @@ fn the_story_frame_is_deterministic_and_the_video_sequence_finishes() {
 /// of the same file (`menu.cpp:2065-2098`).
 #[test]
 fn the_qa_driver_shows_the_intro_story_and_starts_the_same_mission() {
-    let Some(_max_res) = max_res() else {
-        return;
-    };
+    let _max_res = max_res().expect(concat!("test fixture is missing: ", stringify!(max_res())));
     let dir = mission_dir("qa_driver");
     let script = dir.join("story.qa");
 
@@ -416,7 +406,10 @@ assert screen=InGame
 
     let config = QaConfig::new(&dir)
         .with_data_dir(game_data_dir())
-        .with_assets_dir(root().join("assets"));
+        // The real mission descriptors (`SC_C0001`/`SC_C0009`) come from the
+        // tracked `max_assets/tests/data/PATCHES.RES` fixture, not from the
+        // minimal synthetic archive.
+        .with_assets_dir(patches_res().parent().expect("PATCHES.RES directory"));
     let mut runner = QaRunner::new(config).expect("QA runner with the real assets");
     let report = runner.run_file(&script);
 

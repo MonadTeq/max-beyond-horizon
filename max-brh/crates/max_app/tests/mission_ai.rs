@@ -89,7 +89,7 @@ fn mission_setup() -> LocalSetup {
 
 /// Application with real assets: the mission load needs the game data (as the
 /// `local_sp`/`mission_start` suites do). `None` — the assets are not checked
-/// out (the test is skipped instead of reporting a false failure).
+/// out (the loader returns `None` and the test fails with a clear message).
 fn mission_app() -> Option<App> {
     let data = repo_path("max-original");
 
@@ -101,7 +101,7 @@ fn mission_app() -> Option<App> {
     let mut app = App::new(AppConfig::default());
     let config = AppConfig::default()
         .with_data_dir(data)
-        .with_assets_dir(repo_path("assets"));
+        .with_assets_dir(repo_path("tests/fixtures/assets"));
     app.config_mut().max_res = config.max_res;
     app.config_mut().patches_res = config.patches_res;
 
@@ -165,9 +165,7 @@ fn ai_unit_count(app: &App) -> usize {
 
 #[test]
 fn mission_load_keeps_the_ai_complexes_and_clan() {
-    let Some(mut app) = mission_app() else {
-        return;
-    };
+    let mut app = mission_app().expect(concat!("test fixture is missing: ", stringify!(mission_app())));
     let save = SaveFile::parse(SAVE2).expect("save2 parses as V70");
 
     start_mission(&mut app);
@@ -243,9 +241,7 @@ fn mission_load_keeps_the_ai_complexes_and_clan() {
 
 #[test]
 fn mission_load_ai_turn_rebuilds_tasks_and_moves_units() {
-    let Some(mut app) = mission_app() else {
-        return;
-    };
+    let mut app = mission_app().expect(concat!("test fixture is missing: ", stringify!(mission_app())));
 
     start_mission(&mut app);
     assert_mission_started(&app);
@@ -305,9 +301,7 @@ fn mission_load_ai_turn_rebuilds_tasks_and_moves_units() {
 
 #[test]
 fn mission_load_ai_produces_units_after_load() {
-    let Some(mut app) = mission_app() else {
-        return;
-    };
+    let mut app = mission_app().expect(concat!("test fixture is missing: ", stringify!(mission_app())));
 
     start_mission(&mut app);
     assert_mission_started(&app);

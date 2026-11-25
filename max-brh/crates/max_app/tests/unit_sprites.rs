@@ -6,7 +6,7 @@
 //! units of all 93 types does not panic and leaves no markers except
 //! the documented `MASTER`.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby — like
+//! The test requires the game data (`max-original/`); a missing data set fails the test. Like
 //! `assets_integration_smoke` in `tests/app.rs`.
 
 use std::path::{Path, PathBuf};
@@ -31,10 +31,10 @@ fn repo_path(relative: &str) -> PathBuf {
 fn game_assets() -> Option<Assets> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("unit_sprites: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("unit_sprites: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
@@ -85,9 +85,7 @@ fn has_turret(unit_type: UnitType) -> bool {
 /// turret is drawn exactly where `SC_UNITS` declares it.
 #[test]
 fn every_unit_type_draws_a_non_empty_frame_and_turret_where_flagged() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     let mut drawn = 0usize;
     let mut markers = Vec::new();
@@ -190,9 +188,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
         firing_body_frame_index, firing_frame_active, firing_turret_frame_index,
     };
 
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     // Tank: the body does not change, the turret — `firing_image_base + turret_angle`.
     let sprite = assets.sprite(UnitType::Tank).expect("TANK");
@@ -309,15 +305,13 @@ fn firing_frames_come_from_the_d_star_firing_block() {
 fn map_render_loop_covers_all_93_unit_types() {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let config = AppConfig::default()
         .with_data_dir(&repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         // 10×10 cells at zoom 64 — exactly under 93 units in one frame.
         .with_screen(640, 640);
     let mut app = App::new(config);
@@ -374,9 +368,7 @@ fn map_render_loop_covers_all_93_unit_types() {
 /// `draw_unit_sprites`.
 #[test]
 fn hud_portrait_draws_every_unit_type() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     for index in 0..UNIT_END as usize {
         let unit_type = UnitType::try_from(index as u16).expect("тип");
@@ -406,9 +398,7 @@ fn hud_portrait_draws_every_unit_type() {
 /// frames. This is the contract `App::visual_angle` → `draw_unit_sprites_with_angle`.
 #[test]
 fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     // Scout — without a turret: only the body frame is compared.
     let mut unit = unit_of(UnitType::Scout, 0);
@@ -472,9 +462,7 @@ fn explicit_body_angle_selects_the_corresponding_sprite_frame() {
 /// fixed in `frames.rs`).
 #[test]
 fn frame_info_table_matches_game_data() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     for index in 0..UNIT_END {
         let unit_type = UnitType::try_from(index).expect("UnitType 0..92");

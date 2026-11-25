@@ -1,6 +1,6 @@
 //! `Introduction` screen: MVE video `INTROFLC` → `maxint.mve`.
 //!
-//! The test loads the real `MAX.RES`/`MAXINT.MVE` (skipped if there is no data):
+//! The test loads the real `MAX.RES`/`MAXINT.MVE` (a missing data set fails it):
 //! frame 0 is decoded on entry, scaled to 640×480 with letterbox,
 //! a repeated render is deterministic, Esc returns to the main menu.
 
@@ -22,7 +22,7 @@ fn assets() -> Option<Assets> {
     let root = root();
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -44,9 +44,7 @@ fn assets() -> Option<Assets> {
 
 #[test]
 fn intro_asset_points_to_maxint_mve() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
 
     let path = assets.intro_mve.as_ref().expect("INTROFLC → maxint.mve");
     assert!(path.is_file(), "{}", path.display());
@@ -59,9 +57,7 @@ fn intro_asset_points_to_maxint_mve() {
 
 #[test]
 fn intro_decodes_frame_zero_and_scales_to_letterbox() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let screen = IntroScreen::new(assets.intro_mve.clone());
     let menu = assets.menu.as_ref().expect("MenuAssets");
 
@@ -85,9 +81,7 @@ fn intro_decodes_frame_zero_and_scales_to_letterbox() {
 
 #[test]
 fn intro_advances_by_real_time_and_esc_closes() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut screen = IntroScreen::new(assets.intro_mve.clone());
 
     // 15 FPS: one 1/60 s frame is not enough, 0.5 s — several frames.
@@ -112,9 +106,7 @@ fn intro_advances_by_real_time_and_esc_closes() {
 /// C3: the real track (stereo 22050 Hz 16-bit delta) is decoded with the frames.
 #[test]
 fn intro_audio_track_is_decoded_into_chunks() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let mut screen = IntroScreen::new(assets.intro_mve.clone());
     let format = screen.audio_format().expect("ALLOC_AUDIO_BUFFERS");
 
@@ -144,9 +136,7 @@ fn intro_audio_track_is_decoded_into_chunks() {
 /// C3: captions are drawn over the video area for the frame that is shown.
 #[test]
 fn intro_draws_the_caption_of_the_current_frame() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let menu = assets.menu.as_ref().expect("MenuAssets");
     let caption = "They were the unwanted, cults, religious factions, even entire governments.";
     let json = format!(
@@ -213,9 +203,7 @@ fn intro_draws_the_caption_of_the_current_frame() {
 /// Fallback: no movie and no captions — the placeholder is drawn, nothing panics.
 #[test]
 fn a_missing_intro_and_missing_subtitles_are_a_placeholder() {
-    let Some(assets) = assets() else {
-        return;
-    };
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
     let menu = assets.menu.as_ref().expect("MenuAssets");
     let mut screen = IntroScreen::new(None);
 

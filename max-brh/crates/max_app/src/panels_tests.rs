@@ -528,11 +528,9 @@ fn panels_load_and_paint_every_region() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let config = crate::AppConfig {
         max_res: max_res.clone(),

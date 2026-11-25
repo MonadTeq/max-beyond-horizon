@@ -63,7 +63,7 @@ fn local_app() -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut app = App::new(config);
@@ -233,9 +233,7 @@ fn run_ai_turn_with_fire(app: &mut App, team: TeamId, limit: usize) -> AiFire {
 /// Real time, `endturn = 45` (the default): the AI turn lasts exactly 45 s.
 #[test]
 fn real_time_ai_turn_runs_for_the_endturn_setting() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai(45, PlayMode::SimultaneousMoves))
         .expect("real-time local match");
@@ -264,9 +262,7 @@ fn real_time_ai_turn_runs_for_the_endturn_setting() {
 /// `GameManager_HandleTurnTimer`: below 15 the window is raised to 15 s.
 #[test]
 fn endturn_minimum_is_fifteen_seconds() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     // A value below the oracle floor (the dialog offers 15, this is the clamp).
     app.start_local_game(&setup_vs_one_ai(5, PlayMode::SimultaneousMoves))
@@ -294,9 +290,7 @@ fn endturn_minimum_is_fifteen_seconds() {
 /// The live settings are the oracle source: the next AI turn reads the new value.
 #[test]
 fn the_next_ai_turn_reads_the_live_preferences() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai(15, PlayMode::SimultaneousMoves))
         .expect("real-time local match");
@@ -322,12 +316,8 @@ fn the_next_ai_turn_reads_the_live_preferences() {
 /// window, and the AI keeps acting after the old 121-tick counter window.
 #[test]
 fn endturn_15_and_45_spend_the_same_shots_and_ammo() {
-    let Some(mut short) = local_app() else {
-        return;
-    };
-    let Some(mut long) = local_app() else {
-        return;
-    };
+    let mut short = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut long = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     short
         .start_local_game(&setup_vs_one_ai(15, PlayMode::SimultaneousMoves))
@@ -472,9 +462,7 @@ fn ai_activity(app: &App) -> (Vec<(u16, i16, i16, u8)>, usize) {
 /// `end_turn_retry_counter > 120` (`aiplayer.cpp:2838-2848`), timer `max(endturn, 45)`.
 #[test]
 fn turn_based_keeps_the_oracle_counter_trigger() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai(45, PlayMode::TurnBased))
         .expect("turn based match");
@@ -508,9 +496,7 @@ fn turn_based_keeps_the_oracle_counter_trigger() {
 /// `End Turn: None` (no setting) — the counter is the documented fallback.
 #[test]
 fn missing_setting_falls_back_to_the_counter() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai(0, PlayMode::SimultaneousMoves))
         .expect("real-time match without the end-turn setting");

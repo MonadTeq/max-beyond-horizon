@@ -5,7 +5,7 @@
 //! the profile sees every frame, and two identical runs give one digest
 //! (profiling and interpolation optimization do not change the simulation).
 //!
-//! The test is skipped if there is no game data next to the repository.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ fn repo_root() -> PathBuf {
 fn config() -> AppConfig {
     AppConfig::default()
         .with_data_dir(repo_root().join("max-original"))
-        .with_assets_dir(repo_root().join("assets"))
+        .with_assets_dir(repo_root().join("tests/fixtures/assets"))
         .with_autosave(false)
 }
 
@@ -34,9 +34,7 @@ fn soak_lock() -> std::sync::MutexGuard<'static, ()> {
 fn short_headless_soak_completes_and_is_deterministic() {
     let _guard = soak_lock();
 
-    if !repo_root().join("max-original/MAX.RES").is_file() {
-        return;
-    }
+    assert!(repo_root().join("max-original/MAX.RES").is_file(), concat!("required test fixture is missing: ", stringify!(!repo_root().join("max-original/MAX.RES").is_file())));
 
     let options = SoakOptions {
         turns: 6,
@@ -100,9 +98,7 @@ fn short_headless_soak_completes_and_is_deterministic() {
 fn soak_budget_helper_reports_a_fraction_of_the_frame() {
     let _guard = soak_lock();
 
-    if !repo_root().join("max-original/MAX.RES").is_file() {
-        return;
-    }
+    assert!(repo_root().join("max-original/MAX.RES").is_file(), concat!("required test fixture is missing: ", stringify!(!repo_root().join("max-original/MAX.RES").is_file())));
 
     let options = SoakOptions {
         turns: 2,

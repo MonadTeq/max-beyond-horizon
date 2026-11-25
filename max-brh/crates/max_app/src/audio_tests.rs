@@ -194,9 +194,7 @@ fn real_game_data_resolves_menu_click_and_unit_sounds() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");
     let max_res = dir.join("MAX.RES");
 
-    if !max_res.is_file() {
-        return;
-    }
+    assert!(max_res.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file())));
 
     let res = ResArchive::open(&max_res).expect("MAX.RES");
     let mut player = AudioPlayer::new();

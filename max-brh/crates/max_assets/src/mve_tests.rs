@@ -326,13 +326,16 @@ fn audio_frame_before_the_format_is_skipped_without_a_panic() {
     assert_eq!(decoder.audio_events_without_format(), 1);
 }
 
+#[ignore = "requires the real 71 MB MAXINT.MVE; decoder logic is covered by the synthetic tests decodes_raw_video_data_06, decodes_change_map_video_data_10 and decodes_compressed_stereo_audio_and_the_track_mask"]
 #[test]
 fn real_maxint_audio_track_matches_the_oracle_decoder() {
     let path = real_mve_path();
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(
+        path.is_file(),
+        "MAXINT.MVE is missing: {}",
+        path.display()
+    );
 
     let mve = Mve::open(&path).expect("MAXINT.MVE");
     let info = mve.info();
@@ -413,13 +416,16 @@ fn rejects_bad_header() {
     assert!(matches!(Mve::parse(bytes), Err(MveError::BadHeader)));
 }
 
+#[ignore = "requires the real 71 MB MAXINT.MVE; decoder logic is covered by the synthetic tests decodes_raw_video_data_06, decodes_change_map_video_data_10 and decodes_compressed_stereo_audio_and_the_track_mask"]
 #[test]
 fn real_maxint_metadata_and_reference_frames() {
     let path = real_mve_path();
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(
+        path.is_file(),
+        "MAXINT.MVE is missing: {}",
+        path.display()
+    );
 
     let mve = Mve::open(&path).expect("MAXINT.MVE");
     let info = mve.info();
@@ -468,13 +474,16 @@ fn real_maxint_metadata_and_reference_frames() {
     assert_eq!(decoder.frame_index(), 101);
 }
 
+#[ignore = "requires the real 71 MB MAXINT.MVE; decoder logic is covered by the synthetic tests decodes_raw_video_data_06, decodes_change_map_video_data_10 and decodes_compressed_stereo_audio_and_the_track_mask"]
 #[test]
 fn real_maxint_reaches_the_end() {
     let path = real_mve_path();
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(
+        path.is_file(),
+        "MAXINT.MVE is missing: {}",
+        path.display()
+    );
 
     // A full pass over 4391 frames — a quick check of indexing/finale
     // (without checking the pixels of each frame): the decoder does not crash and yields

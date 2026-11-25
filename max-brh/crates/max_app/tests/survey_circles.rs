@@ -54,7 +54,7 @@ fn empty_land_state() -> GameUniverse {
 fn assets_app_with_land() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     let mut config = AppConfig {
         max_res: max_res.clone(),
@@ -111,9 +111,7 @@ fn changed_pixels_in_cell(
 /// there, even though there is nothing to extract. An unsurveyed cell stays clean.
 #[test]
 fn a_surveyed_cell_without_a_resource_shows_the_circle() {
-    let Some(mut app) = assets_app_with_land() else {
-        return;
-    };
+    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
 
     // RED has explored two empty cells; `unknown` was never visited.
     let surveyed_a = Point::new(40, 41);
@@ -164,9 +162,7 @@ fn a_surveyed_cell_without_a_resource_shows_the_circle() {
 /// a known deposit still does.
 #[test]
 fn at_small_zoom_only_known_deposits_get_markers() {
-    let Some(mut app) = assets_app_with_land() else {
-        return;
-    };
+    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
 
     let empty = Point::new(40, 41);
     let deposit = Point::new(41, 40);

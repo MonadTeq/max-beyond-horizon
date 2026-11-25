@@ -59,7 +59,7 @@ fn local_app_split(pref_dir: &Path, data_save_dir: Option<&Path>) -> Option<App>
 
     let mut config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui)
         .with_save_dir(pref_dir);
     if let Some(data_save_dir) = data_save_dir {
@@ -118,10 +118,7 @@ fn run_until_player_turn(app: &mut App, limit: usize) {
 #[test]
 fn played_game_saves_as_v70_and_loads_in_a_fresh_app() {
     let dir = temp_dir("roundtrip");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup).expect("локальная партия стартует");
@@ -172,10 +169,7 @@ fn played_game_saves_as_v70_and_loads_in_a_fresh_app() {
 #[test]
 fn autosave_is_written_at_the_end_of_a_round() {
     let dir = temp_dir("autosave");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
@@ -215,10 +209,7 @@ fn autosave_is_written_at_the_end_of_a_round() {
 #[test]
 fn save_menu_lists_slots_with_preview_and_edits_the_name() {
     let dir = temp_dir("menu");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
@@ -294,10 +285,7 @@ fn save_menu_lists_slots_with_preview_and_edits_the_name() {
 #[test]
 fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
     let dir = temp_dir("hotkey");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
@@ -333,10 +321,7 @@ fn save_hotkey_opens_and_closes_the_menu_in_a_local_game() {
 #[test]
 fn local_load_resumes_without_replaying_the_turn_economy() {
     let dir = temp_dir("local_resume");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
 
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup)
@@ -440,10 +425,7 @@ fn snapshot(app: &App) -> Snapshot {
 #[test]
 fn save_seed_is_byte_exact_and_reseeds_the_generator() {
     let dir = temp_dir("seed");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
     for _ in 0..3 {
@@ -501,10 +483,7 @@ fn save_seed_is_byte_exact_and_reseeds_the_generator() {
 #[test]
 fn save_seed_is_deterministic_across_saves() {
     let dir = temp_dir("seed_repeat");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
 
@@ -532,10 +511,7 @@ fn save_seed_is_deterministic_across_saves() {
 #[test]
 fn overwritten_autosave_keeps_the_previous_slot_as_bak() {
     let dir = temp_dir("backup");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
 
@@ -572,10 +548,7 @@ fn overwritten_autosave_keeps_the_previous_slot_as_bak() {
 #[test]
 fn regular_save_does_not_create_a_backup() {
     let dir = temp_dir("no_backup");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
 
@@ -599,10 +572,7 @@ fn regular_save_does_not_create_a_backup() {
 #[test]
 fn quick_save_writes_the_last_slot_in_the_window_format() {
     let dir = temp_dir("quick_save");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
 
@@ -651,10 +621,7 @@ fn quick_save_writes_the_last_slot_in_the_window_format() {
 #[test]
 fn quick_save_opens_the_window_for_an_empty_last_slot() {
     let dir = temp_dir("quick_empty");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
     app.set_last_save_slot(7);
@@ -673,10 +640,7 @@ fn quick_save_opens_the_window_for_an_empty_last_slot() {
 #[test]
 fn quick_load_loads_the_last_slot() {
     let dir = temp_dir("quick_load");
-    let Some(mut app) = local_app(&dir) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
     app.save_game_to_slot(4, "Quick load").expect("сейв");
@@ -709,10 +673,7 @@ fn quick_load_loads_the_last_slot() {
 fn save_directory_follows_the_mission_category() {
     let pref = temp_dir("split_pref");
     let data = temp_dir("split_data");
-    let Some(mut app) = local_app_split(&pref, Some(&data)) else {
-        eprintln!("нет max-original/MAX.RES — тест пропущен");
-        return;
-    };
+    let mut app = local_app_split(&pref, Some(&data)).expect(concat!("test fixture is missing: ", stringify!(local_app_split(&pref, Some(&data)))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
 

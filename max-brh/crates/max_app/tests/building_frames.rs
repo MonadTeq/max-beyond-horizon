@@ -23,7 +23,7 @@
 //! `SpawnNewUnit`/`CancelBuilding` — `image_base`; the blinking of a powered-on factory
 //! comes from palette cycles (`max_render::palette::ColorCycles`).
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -48,10 +48,10 @@ fn repo_path(relative: &str) -> PathBuf {
 fn game_assets() -> Option<Assets> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("building_frames: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("building_frames: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
@@ -97,9 +97,7 @@ fn painted(frame: &RgbaBuffer) -> u32 {
 
 #[test]
 fn powered_generator_uses_the_on_frame_and_power_off_uses_the_off_frame() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     let on = unit_of(UnitType::PowerGenerator, UnitOrder::PowerOn, 0);
     let off = unit_of(UnitType::PowerGenerator, UnitOrder::PowerOff, 0);
@@ -146,9 +144,7 @@ fn powered_generator_uses_the_on_frame_and_power_off_uses_the_off_frame() {
 
 #[test]
 fn powered_mining_station_uses_its_clan_variant_and_on_frame() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     let mut unit = unit_of(UnitType::MiningStation, UnitOrder::PowerOn, 0);
     // Clan 7 (SevenKnights): C++ `image_base = (7 - 1) * 2 = 12`.
@@ -204,9 +200,7 @@ fn mining_station_body_frames_are_eight_clan_pairs_not_a_drill_cycle() {
     use max_app::render::MINING_DRILL_FRAMES_ENABLED;
     use max_assets::sprite::SpriteFrame;
 
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
     let sprite = assets.sprite(UnitType::MiningStation).expect("MININGST");
     assert_eq!(sprite.sheet.len(), 24, "16 body frames + 8 connectors");
     // Compile-time lock: flipping the switch to `true` must not build (see the
@@ -349,9 +343,7 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
     );
 
     // Connectors: all eight bits — frames 16..23 in C++ order.
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
     let sprite = assets.sprite(UnitType::MiningStation).expect("MININGST");
     let full = max_core::enums::CONNECTOR_NORTH_LEFT
         | max_core::enums::CONNECTOR_NORTH_RIGHT
@@ -384,9 +376,7 @@ fn mining_station_body_is_static_and_connectors_are_mask_driven() {
 fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
     use max_app::render::connector_frame_indices;
 
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
     let sprite = assets.sprite(UnitType::PowerGenerator).expect("POWGEN");
     let base = image_base_for(
         &unit_of(UnitType::PowerGenerator, UnitOrder::PowerOn, 0),
@@ -426,9 +416,7 @@ fn power_generator_body_is_static_and_its_four_frames_are_pipes() {
 /// `unit_frame_index` call at any dt gives the same frame.
 #[test]
 fn working_factory_holds_the_on_frame_and_an_idle_factory_is_off() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     let mut factory = unit_of(UnitType::TrainingHall, UnitOrder::Build, 0);
     factory.state = UnitOrderState::BuildInProgress;
@@ -559,9 +547,7 @@ fn radar_sentry_animation_cycles_its_cpp_frame_block() {
 /// `DrawSpriteFrame(image_index - 16)`).
 #[test]
 fn working_builder_uses_the_plus_sixteen_frame() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     for (unit_type, expected_frames) in [
         (UnitType::Engineer, 32usize),
@@ -603,9 +589,7 @@ fn working_builder_uses_the_plus_sixteen_frame() {
 /// a marker. `SMLTAPE`/`SMLCONES`/`SMLSLAB` — the small 1×1 versions.
 #[test]
 fn construction_site_decals_have_sprites() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     for unit_type in [
         UnitType::LargeTape,

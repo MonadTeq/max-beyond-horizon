@@ -167,15 +167,13 @@ fn file_references_are_ascii_names_without_paths() {
 /// Real `MAX.RES`: hundreds of ASCIIZ references to `*.spw` and other files.
 ///
 /// The check catches a discrepancy with the format (`spw.md` §1: 607 references to
-/// `.spw`, 721 in total). If the game data is absent, the test is skipped.
+/// `.spw`, 721 in total). A missing game data set fails the test.
 #[test]
 fn real_max_res_exposes_ascii_file_references() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAX.RES");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let archive = ResArchive::open(&path).expect("MAX.RES");
     assert_eq!(archive.file_reference("TANK1"), Some("tank1.spw"));

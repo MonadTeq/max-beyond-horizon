@@ -2,8 +2,8 @@
 //! by a repeated click, the item composition by type, modality, `Esc` and calls
 //! of the existing handlers.
 //!
-//! Tests with real frames (`Assets`/`.WRL`) are skipped if there is no game
-//! data next to the repository — like `move_input.rs` and `tests/app.rs`.
+//! The tests use real frames (`Assets`/`.WRL`), require the game data next to the
+//! repository — like `move_input.rs` and `tests/app.rs`.
 
 use std::path::{Path, PathBuf};
 
@@ -41,16 +41,16 @@ fn single_human() -> LocalSetup {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("unit_menu: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("unit_menu: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"));
+        .with_assets_dir(repo_path("tests/fixtures/assets"));
     let mut app = App::new(config);
     app.init_assets().expect("ассеты игры");
 
@@ -62,7 +62,7 @@ fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
     if !world_dir.join("SNOW_1.WRL").is_file() {
-        eprintln!("unit_menu: пропуск — нет SNOW_1.WRL");
+        eprintln!("unit_menu: нет данных — нет SNOW_1.WRL");
         return None;
     }
 
@@ -193,9 +193,7 @@ fn open_menu(app: &mut App, id: UnitId) {
 
 #[test]
 fn repeat_click_on_selected_unit_opens_menu() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let id = spawn(&mut app, UnitType::Tank);
     let grid = app.state_ref().unit(id).expect("танк").grid;
@@ -215,9 +213,7 @@ fn repeat_click_on_selected_unit_opens_menu() {
 
 #[test]
 fn menu_items_follow_unit_type() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     // Tank: `attack` (not ported) → `enter` → `sentry` → `Done`.
     let tank = spawn(&mut app, UnitType::Tank);
@@ -261,9 +257,7 @@ fn menu_items_follow_unit_type() {
 
 #[test]
 fn escape_closes_menu_and_does_not_leave_session() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     open_menu(&mut app, tank);
@@ -280,9 +274,7 @@ fn escape_closes_menu_and_does_not_leave_session() {
 
 #[test]
 fn menu_is_modal_for_the_map() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     let other = spawn(&mut app, UnitType::Scout);
@@ -304,9 +296,7 @@ fn menu_is_modal_for_the_map() {
 
 #[test]
 fn hotkey_and_click_activate_sentry() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     open_menu(&mut app, tank);
@@ -341,9 +331,7 @@ fn hotkey_and_click_activate_sentry() {
 
 #[test]
 fn build_item_opens_build_menu() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let builder = spawn(&mut app, UnitType::Constructor);
     open_menu(&mut app, builder);
@@ -361,9 +349,7 @@ fn build_item_opens_build_menu() {
 
 #[test]
 fn disabled_item_does_not_act() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     // The only remaining disabled item — the repair shop `activate`.
     let carrier = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
@@ -385,9 +371,7 @@ fn disabled_item_does_not_act() {
 
 #[test]
 fn builder_stop_cancels_the_build_and_build_returns() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let builder = spawn_with_free_2x2(&mut app, UnitType::Constructor);
 
@@ -465,9 +449,7 @@ fn builder_stop_cancels_the_build_and_build_returns() {
 
 #[test]
 fn frame_shows_menu_over_map() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     let before = app.render_frame();
@@ -541,9 +523,7 @@ fn unit_menu_actions_are_orders_on_the_wire() {
 
 #[test]
 fn cursor_mode_repairs_own_unit() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let repair = spawn(&mut app, UnitType::RepairUnit);
     app.universe_mut().unit_mut(repair).expect("repair").storage = 2;
@@ -588,9 +568,7 @@ fn cursor_mode_repairs_own_unit() {
 
 #[test]
 fn enter_mode_moves_to_unit() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
@@ -617,9 +595,7 @@ fn enter_mode_moves_to_unit() {
 
 #[test]
 fn done_item_deselects_and_keeps_game_running() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let tank = spawn(&mut app, UnitType::Tank);
     open_menu(&mut app, tank);

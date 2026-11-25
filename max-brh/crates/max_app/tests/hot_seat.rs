@@ -56,7 +56,7 @@ fn local_app() -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(max_app::AppMode::Ui);
 
     let mut app = App::new(config);
@@ -221,9 +221,7 @@ fn hot_seat_forces_turn_based_mode() {
 
 #[test]
 fn two_humans_alternate_with_the_begin_turn_dialog() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -308,9 +306,7 @@ fn two_humans_alternate_with_the_begin_turn_dialog() {
 
 #[test]
 fn four_humans_all_play_in_team_order() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -344,9 +340,7 @@ fn four_humans_all_play_in_team_order() {
 
 #[test]
 fn ai_plays_between_two_humans() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     // RED — human, GREEN — computer, BLUE — human.
     app.start_local_game(&hot_seat_setup([
@@ -401,9 +395,7 @@ fn ai_plays_between_two_humans() {
 
 #[test]
 fn notice_freezes_the_turn_timer_until_acknowledged() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     let mut setup = hot_seat_setup([
         TeamKind::Player,
@@ -446,9 +438,7 @@ fn notice_freezes_the_turn_timer_until_acknowledged() {
 
 #[test]
 fn only_the_active_human_controls_their_units() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -578,9 +568,7 @@ fn only_the_active_human_controls_their_units() {
 
 #[test]
 fn input_is_ignored_during_the_ai_turn() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -625,9 +613,7 @@ fn input_is_ignored_during_the_ai_turn() {
 
 #[test]
 fn orders_are_blocked_while_the_transition_notice_is_open() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -679,9 +665,7 @@ fn orders_are_blocked_while_the_transition_notice_is_open() {
 
 #[test]
 fn begin_turn_dialog_renders_over_the_game_frame() {
-    let Some(mut app) = local_app() else {
-        return;
-    };
+    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&hot_seat_setup([
         TeamKind::Player,
@@ -749,9 +733,7 @@ fn begin_turn_dialog_renders_over_the_game_frame() {
 
 #[test]
 fn screens_and_setup_render_with_hot_seat_forms() {
-    let Some(app) = local_app() else {
-        return;
-    };
+    let app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     let ctx = UiContext::new(Box::new(NoNetwork), 640, 480);
     let mut buffer = RgbaBuffer::new(640, 480);

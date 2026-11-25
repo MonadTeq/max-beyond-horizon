@@ -148,9 +148,7 @@ fn render(assets: &Assets, unit: &UnitInfo, presentation: &UnitPresentation) -> 
 /// same unit inside the fire sequence still draws the flash.
 #[test]
 fn loaded_mission_unit_renders_the_idle_frame_and_still_flashes_when_firing() {
-    let Some(assets) = game_assets() else {
-        return;
-    };
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
 
     let app = load_mission();
     let units = stale_firing_units(&app);

@@ -176,18 +176,7 @@ fn mission_one_terrain_matches_the_interplay_planet_map() {
     let data_dir = repo_path("max-original");
     let oracle_path = data_dir.join(ORACLE_WRL);
 
-    if !data_dir.join("MAX.RES").is_file()
-        || !data_dir.join("COLOR.PAL").is_file()
-        || !oracle_path.is_file()
-        || !patches_res().is_file()
-    {
-        eprintln!(
-            "mission_one_terrain_matches_the_interplay_planet_map: skipped — \
-             the game data is absent ({})",
-            data_dir.display()
-        );
-        return;
-    }
+    assert!(data_dir.join("MAX.RES").is_file() && data_dir.join("COLOR.PAL").is_file() && oracle_path.is_file() && patches_res().is_file(), concat!("required test fixture is missing: ", stringify!(!data_dir.join("MAX.RES").is_file() || !data_dir.join("COLOR.PAL").is_file() || !oracle_path.is_file() || !patches_res().is_file())));
 
     // Start from the default planet (`SNOW_1`) exactly like the GUI does.
     let config = AppConfig::default()

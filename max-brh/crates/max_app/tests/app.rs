@@ -660,21 +660,13 @@ fn assets_integration_smoke() {
     let data_dir = repo_path("max-original");
     let max_res = data_dir.join("MAX.RES");
     let color_pal = data_dir.join("COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!(
-            "assets_integration_smoke: пропуск — нет {} / {} / {}",
-            max_res.display(),
-            color_pal.display(),
-            patches.display()
-        );
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let config = AppConfig::default()
         .with_data_dir(&data_dir)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_screen(256, 192);
     let mut app = App::new(config);
     let report = app.init_assets().expect("данные игры разбираются");
@@ -764,7 +756,7 @@ fn assets_integration_smoke() {
 fn chrome_app() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -786,9 +778,7 @@ fn chrome_app() -> Option<App> {
 
 #[test]
 fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
 
     assert!(app.chrome_active(), "640×480 + FRAMEPIC = хром 1:1");
 
@@ -831,9 +821,7 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
 
 #[test]
 fn chrome_end_turn_click_is_a_button_not_a_map_click() {
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
     let rect = max_render::layout::END_TURN_BUTTON;
     let x = rect.ulx + rect.width / 2;
     let y = rect.uly + rect.height / 2;
@@ -897,9 +885,7 @@ const END_TURN_RECT: max_render::buffer::PixelRect =
 /// color `COLOR_RED` at `<= 20` and `0xA2` otherwise (`GameManager_DrawTurnTimer`).
 #[test]
 fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
 
     let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
         .expect("палитра FRAMEPIC");
@@ -945,9 +931,7 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
 /// (`GameManager_UpdateGui` → `MenuClickEndTurnButton`).
 #[test]
 fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
 
     let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
         .expect("палитра FRAMEPIC");
@@ -1019,9 +1003,7 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::geo::Point;
 
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
 
     let site = Point::new(30, 20);
     let team = app.player_team();
@@ -1082,9 +1064,7 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
 
 #[test]
 fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
     let click = |app: &mut App, rect: max_render::buffer::PixelRect| {
         max_app::ui::handle_session_input(
             app,
@@ -1124,13 +1104,11 @@ fn app_can_be_created_twice_and_start_exit_twice() {
     let config = || AppConfig {
         max_res: repo_path("max-original/MAX.RES"),
         color_pal: repo_path("max-original/COLOR.PAL"),
-        patches_res: repo_path("assets/PATCHES.RES"),
+        patches_res: repo_path("tests/fixtures/assets/PATCHES.RES"),
         ..Default::default()
     };
 
-    if !config().max_res.is_file() {
-        return;
-    }
+    assert!(config().max_res.is_file(), concat!("required test fixture is missing: ", stringify!(!config().max_res.is_file())));
 
     let dir = std::env::temp_dir().join(format!(
         "max_app_restart_{}_{}",
@@ -1189,7 +1167,7 @@ fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
     let config = AppConfig {
         max_res: repo_path("max-original/MAX.RES"),
         color_pal: repo_path("max-original/COLOR.PAL"),
-        patches_res: repo_path("assets/PATCHES.RES"),
+        patches_res: repo_path("tests/fixtures/assets/PATCHES.RES"),
         ..Default::default()
     };
 
@@ -1221,9 +1199,7 @@ fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn non_ascii_player_name_renders_with_the_fallback_glyph() {
-    let Some(question) = frame_for_player_name("?") else {
-        return;
-    };
+    let question = frame_for_player_name("?").expect(concat!("test fixture is missing: ", stringify!(frame_for_player_name("?"))));
     let ascii = frame_for_player_name("A").expect("кадр с ASCII-именем");
     let cyrillic = frame_for_player_name("Ж").expect("кадр с не-ASCII именем");
 
@@ -1276,7 +1252,7 @@ fn empty_land_state(
 fn assets_app_with_land() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -1435,9 +1411,7 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
 fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 
-    let Some(mut app) = chrome_app() else {
-        return;
-    };
+    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
 
     let site = Point::new(30, 20);
     let team = app.player_team();
@@ -1525,9 +1499,7 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::map::{ResourceKind, ResourceMapEntry};
 
-    let Some(mut app) = assets_app_with_land() else {
-        return;
-    };
+    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
 
     let known_cell = Point::new(40, 40);
     let unknown_cell = Point::new(42, 40);
@@ -1689,9 +1661,7 @@ fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     
 
-    let Some(mut app) = assets_app_with_land() else {
-        return;
-    };
+    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
 
     let mut site = Point::new(40, 40);
     let engineer = app

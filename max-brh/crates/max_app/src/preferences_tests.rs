@@ -59,12 +59,9 @@ fn setup_layout_stops_at_the_preferences_section() {
 /// The debug section (`invalid`) follows the C++ `Init` exactly: the in-game
 /// list starts at `-20`, the three read-only `options` labels are dropped and the
 /// six debug controls land at 313/313/333/333/353/353 — above the 383 button row.
+#[cfg(debug_assertions)]
 #[test]
 fn debug_layout_matches_the_cpp_window_uly_algorithm() {
-    if !DEBUG_SECTION_BUILT {
-        eprintln!("preferences: release build — the debug section is compiled out");
-        return;
-    }
 
     let prefs = Preferences {
         debug: true,

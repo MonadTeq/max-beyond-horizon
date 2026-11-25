@@ -9,8 +9,7 @@
 //!   ([`Flic::decode_all`]): dimensions, frame count, determinism, absence of
 //!   panics on real data.
 //!
-//! The test is skipped (with a message on stderr) if `max-original/` is absent — so
-//! `cargo test` works without the game data as well.
+//! The test requires `max-original/` and fails without it.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -102,14 +101,16 @@ fn manifest_flc_rows() -> Option<Vec<ManifestRow>> {
     Some(rows)
 }
 
+#[ignore = "requires the real 71 FLC records in MAX.RES; FLC decoding is covered by the synthetic tests in tests/flic_vectors.rs (vectors_match_cpp_flicsmgr_for_every_frame, decodes_byte_run_and_literal_frames, decodes_delta_flc_skip_last_byte_and_runs)"]
 #[test]
 fn max_res_has_71_flc_reference_records() {
     let max_res = data_dir().join("MAX.RES");
 
-    if !max_res.is_file() {
-        eprintln!("пропуск: нет {}", max_res.display());
-        return;
-    }
+    assert!(
+        max_res.is_file(),
+        "MAX.RES is missing: {}",
+        max_res.display()
+    );
 
     let archive = ResArchive::open(&max_res).expect("MAX.RES");
     let files = file_index();
@@ -168,18 +169,17 @@ fn max_res_has_71_flc_reference_records() {
     );
 }
 
+#[ignore = "requires the real 71 FLC records in MAX.RES; FLC decoding is covered by the synthetic tests in tests/flic_vectors.rs (vectors_match_cpp_flicsmgr_for_every_frame, decodes_byte_run_and_literal_frames, decodes_delta_flc_skip_last_byte_and_runs)"]
 #[test]
 fn max_res_flc_records_match_the_generated_manifest() {
-    let Some(rows) = manifest_flc_rows() else {
-        eprintln!("пропуск: нет max-brh-assets/images/manifest.csv");
-        return;
-    };
+    let rows = manifest_flc_rows().expect("max-brh-assets/images/manifest.csv");
     let max_res = data_dir().join("MAX.RES");
 
-    if !max_res.is_file() {
-        eprintln!("пропуск: нет {}", max_res.display());
-        return;
-    }
+    assert!(
+        max_res.is_file(),
+        "MAX.RES is missing: {}",
+        max_res.display()
+    );
 
     let archive = ResArchive::open(&max_res).expect("MAX.RES");
 
@@ -208,14 +208,16 @@ fn max_res_flc_records_match_the_generated_manifest() {
     }
 }
 
+#[ignore = "requires the real 71 FLC records in MAX.RES; FLC decoding is covered by the synthetic tests in tests/flic_vectors.rs (vectors_match_cpp_flicsmgr_for_every_frame, decodes_byte_run_and_literal_frames, decodes_delta_flc_skip_last_byte_and_runs)"]
 #[test]
 fn all_71_flc_resources_parse_and_decode_every_frame() {
     let max_res = data_dir().join("MAX.RES");
 
-    if !max_res.is_file() {
-        eprintln!("пропуск: нет {}", max_res.display());
-        return;
-    }
+    assert!(
+        max_res.is_file(),
+        "MAX.RES is missing: {}",
+        max_res.display()
+    );
 
     let archive = ResArchive::open(&max_res).expect("MAX.RES");
     let mut decoded_files = 0usize;

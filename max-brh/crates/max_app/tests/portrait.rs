@@ -8,7 +8,7 @@
 //! * `GameManager_AdvanceFlic`: frame change once per `TIMER_FPS_TO_MS(15)`;
 //! * clearing the selection — `GameManager_MenuDeleteFlic` + a black window.
 //!
-//! Tests are skipped if there is no game data nearby (like `unit_sprites.rs`).
+//! The test requires the game data (`max-original/`); a missing data set fails the test. (like `unit_sprites.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -30,17 +30,17 @@ fn repo_path(relative: &str) -> PathBuf {
 fn config() -> Option<AppConfig> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("portrait: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("portrait: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     Some(
         AppConfig::default()
             .with_data_dir(repo_path("max-original"))
-            .with_assets_dir(repo_path("assets")),
+            .with_assets_dir(repo_path("tests/fixtures/assets")),
     )
 }
 
@@ -98,9 +98,7 @@ fn render(app: &App) -> RgbaBuffer {
 
 #[test]
 fn every_unit_type_with_flics_maps_to_a_loaded_128x128_animation() {
-    let Some(app) = app() else {
-        return;
-    };
+    let app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let assets = assets(&app);
 
     let mut with_flic = 0usize;
@@ -158,9 +156,7 @@ fn every_unit_type_with_flics_maps_to_a_loaded_128x128_animation() {
 
 #[test]
 fn portrait_draws_the_flc_first_frame_and_dt_zero_keeps_it_still() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     let id = select(&mut app, UnitType::Tank);
     let portrait = app.portrait().expect("FLC-анимация танка");
@@ -215,9 +211,7 @@ fn portrait_draws_the_flc_first_frame_and_dt_zero_keeps_it_still() {
 
 #[test]
 fn portrait_advances_at_fifteen_fps_and_loops() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     select(&mut app, UnitType::Tank);
 
@@ -243,9 +237,7 @@ fn portrait_advances_at_fifteen_fps_and_loops() {
 
 #[test]
 fn clearing_the_selection_paints_the_portrait_black() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     select(&mut app, UnitType::Tank);
     assert!(app.portrait().is_some());
@@ -263,9 +255,7 @@ fn clearing_the_selection_paints_the_portrait_black() {
 
 #[test]
 fn type_without_flic_falls_back_to_the_sprite() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     // Debris (LRGRUBLE) has no `F_*`, but has a sprite — drawn ×2.
     select(&mut app, UnitType::LargeRubble);
@@ -286,9 +276,7 @@ fn type_without_flic_falls_back_to_the_sprite() {
 
 #[test]
 fn switching_units_rebuilds_the_animation_from_frame_zero() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     select(&mut app, UnitType::Tank);
     app.update_portrait(0.5);

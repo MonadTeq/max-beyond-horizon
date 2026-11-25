@@ -179,13 +179,11 @@ fn parses_real_kbuy0_spw() {
 ///
 /// The test reads the directory rather than a single file: this catches any discrepancy
 /// of the real data with the parser's assumptions. If the directory is absent (a build without
-/// game data), the check is skipped.
+/// game data), the test fails.
 #[test]
 fn all_real_spw_files_are_pcm16_22050_mono() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return;
-    };
+    let entries = fs::read_dir(&dir).expect("max-original directory with the SPW files");
     let mut checked = 0usize;
 
     for entry in entries.flatten() {

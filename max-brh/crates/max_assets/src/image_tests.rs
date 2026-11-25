@@ -130,9 +130,7 @@ fn snow_pic_decodes_all_rows() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let path = root.join("max-original/MAX.RES");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let archive = crate::res::ResArchive::open(&path).expect("MAX.RES");
     let bytes = archive.read("SNOW_PIC").expect("SNOW_PIC");

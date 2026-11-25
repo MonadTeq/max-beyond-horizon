@@ -244,9 +244,10 @@ fn landing_surface_is_loaded_from_wrl_only_when_present() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let data = root.join("max-original");
 
-    if !data.join("SNOW_1.WRL").is_file() {
-        return;
-    }
+    assert!(
+        data.join("SNOW_1.WRL").is_file(),
+        "SNOW_1.WRL is required for the second half of this test"
+    );
 
     let surface = max_app::landing::LandingScreen::load_surface(0, &data)
         .expect("SNOW_1.WRL читается");

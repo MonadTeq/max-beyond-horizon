@@ -19,8 +19,8 @@
 //! The port used to always route an enemy click into an attack order and never
 //! selected the enemy, so its panel was unreachable.
 //!
-//! Tests with real frames are skipped if there is no game data next to the
-//! repository (like `stat_panel.rs`).
+//! The tests use real frames and require the game data next to the repository
+//! (like `stat_panel.rs`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -47,20 +47,20 @@ fn app() -> Option<App> {
     // `PATCHES.RES` lives either in the delivery `assets/` directory or in the
     // C++ port's shared one (`PATCHES_RES_FALLBACKS` in `assets.rs`).
     let patches = [
-        repo_path("assets/PATCHES.RES"),
-        repo_path("max-cpp-port/assets/PATCHES.RES"),
-        repo_path("bin/linux-server-template/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
+        repo_path("tests/fixtures/assets/PATCHES.RES"),
     ]
     .into_iter()
     .find(|path| path.is_file());
 
     if !max_res.is_file() || !color_pal.is_file() {
-        eprintln!("enemy_unit_panel: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("enemy_unit_panel: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let Some(patches) = patches else {
-        eprintln!("enemy_unit_panel: пропуск — нет PATCHES.RES");
+        eprintln!("enemy_unit_panel: нет данных — нет PATCHES.RES");
         return None;
     };
 
@@ -171,9 +171,7 @@ fn world(app: &mut App) -> (UnitId, UnitId) {
 /// panel + portrait show the enemy.
 #[test]
 fn clicking_a_visible_enemy_selects_it_instead_of_ordering_an_attack() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
     // No selection — the empty panel row reference (window background).
@@ -284,9 +282,7 @@ fn clicking_a_visible_enemy_selects_it_instead_of_ordering_an_attack() {
 /// re-checks it (`game_manager.cpp:6238`).
 #[test]
 fn clicking_an_invisible_enemy_does_not_select_or_order() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
     let (own, enemy) = world(&mut app);
@@ -337,9 +333,7 @@ fn clicking_an_invisible_enemy_does_not_select_or_order() {
 /// must not swallow combat clicks.
 #[test]
 fn an_attackable_enemy_still_receives_the_attack_order() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
 
     let tank = app
         .universe_mut()

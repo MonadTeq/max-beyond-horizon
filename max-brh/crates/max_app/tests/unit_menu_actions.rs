@@ -22,9 +22,7 @@ fn local_app() -> (App, TeamId) {
     let setup = LocalSetup::default();
 
     if app.start_local_game(&setup).is_err() {
-        // Without map data a local match cannot be set up — the test is skipped,
-        // like the other integration tests of the repository.
-        return (app, TeamId::RED);
+        panic!("local match cannot be set up without the map data (max-original/)");
     }
 
     let team = app.player_team();
@@ -63,17 +61,13 @@ fn spawn(app: &mut App, unit_type: UnitType, team: TeamId, near: Point) -> Optio
 fn attack_item_toggles_targeting_mode() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(tank) = spawn(&mut app, UnitType::Tank, team, center) else {
-        return;
-    };
+    let tank = spawn(&mut app, UnitType::Tank, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::Tank, team, center))));
 
     app.hud_mut().select(Some(tank));
     assert!(app.open_unit_menu(), "меню танка открывается");
@@ -99,25 +93,14 @@ fn attack_item_toggles_targeting_mode() {
 fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(carrier) = spawn(&mut app, UnitType::ArmouredPersonnelCarrier, team, center) else {
-        return;
-    };
-    let Some(infantry) = spawn(
-        &mut app,
-        UnitType::Infantry,
-        team,
-        Point::new(center.x + 4, center.y),
-    ) else {
-        return;
-    };
+    let carrier = spawn(&mut app, UnitType::ArmouredPersonnelCarrier, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::ArmouredPersonnelCarrier, team, center))));
+    let infantry = spawn( &mut app, UnitType::Infantry, team, Point::new(center.x + 4, center.y), ).expect(concat!("test fixture is missing: ", stringify!(spawn( &mut app, UnitType::Infantry, team, Point::new(center.x + 4, center.y), ))));
 
     app.hud_mut().select(Some(carrier));
     assert!(app.open_unit_menu());
@@ -191,9 +174,7 @@ fn load_mode_orders_move_to_unit_and_lands_on_arrival() {
 fn infiltrator_orders_steal_and_disable_with_parent() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let mut state = app.universe_mut().clone();
     let center = Point::new(state.snapshot().map().size.width / 2, state.snapshot().map().size.height / 2);
@@ -277,17 +258,13 @@ fn infiltrator_orders_steal_and_disable_with_parent() {
 fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(_bulldozer) = spawn(&mut app, UnitType::Bulldozer, team, center) else {
-        return;
-    };
+    let _bulldozer = spawn(&mut app, UnitType::Bulldozer, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::Bulldozer, team, center))));
     // Small rubble — in the bulldozer cell (C++ takes it from `Hash_MapHash`).
     let bulldozer = app
         .hud()
@@ -351,17 +328,13 @@ fn bulldozer_remove_orders_clear_with_parent_and_build_time() {
 fn upgrade_all_spends_complex_materials_and_sends_orders() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(station) = spawn(&mut app, UnitType::PowerStation, team, center) else {
-        return;
-    };
+    let station = spawn(&mut app, UnitType::PowerStation, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::PowerStation, team, center))));
 
     // The upgrade is available: the current values are above the base.
     if let Some(team_units) = app.universe_mut().team_units_table_mut().get_mut(team.0 as usize) {
@@ -400,17 +373,13 @@ fn upgrade_all_spends_complex_materials_and_sends_orders() {
 fn self_destruct_dialog_arms_and_orders_explode() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(station) = spawn(&mut app, UnitType::PowerStation, team, center) else {
-        return;
-    };
+    let station = spawn(&mut app, UnitType::PowerStation, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::PowerStation, team, center))));
 
     app.hud_mut().select(Some(station));
     assert!(app.open_unit_menu());
@@ -461,9 +430,7 @@ fn self_destruct_dialog_arms_and_orders_explode() {
 fn alt_p_opens_pause_dialog_and_resumes() {
     let (mut app, _team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     assert!(matches!(
         handle_session_input(&mut app, InputEvent::Key(Key::Alt('P'))),
@@ -491,9 +458,7 @@ fn alt_p_opens_pause_dialog_and_resumes() {
 fn ui_events_queue_cpp_sounds() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
@@ -557,17 +522,13 @@ fn unit_status_voice_matches_cpp_chain() {
 fn auto_item_enables_auto_survey_and_leaves_sentry() {
     let (mut app, team) = local_app();
 
-    if !app.local_active() {
-        return;
-    }
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
 
     let center = Point::new(
         app.state_ref().map().size.width / 2,
         app.state_ref().map().size.height / 2,
     );
-    let Some(surveyor) = spawn(&mut app, UnitType::Surveyor, team, center) else {
-        return;
-    };
+    let surveyor = spawn(&mut app, UnitType::Surveyor, team, center).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::Surveyor, team, center))));
 
     // The C++ stance: a surveyor parked in `ORDER_SENTRY`.
     app.universe_mut()

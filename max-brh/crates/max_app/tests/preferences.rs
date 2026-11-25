@@ -3,7 +3,7 @@
 //!
 //! Oracle — `max-cpp-port/src/optionsmenu.cpp`, `menu.cpp:2325/2331`,
 //! `settings.cpp`, `saveload.cpp:920-934`. Tests that need game data are
-//! skipped if there is no `max-original/MAX.RES` nearby.
+//! require `max-original/MAX.RES` and fail without it.
 
 use std::path::{Path, PathBuf};
 
@@ -49,7 +49,7 @@ fn app_with_assets(save_dir: &Path) -> Option<App> {
 
     let config = AppConfig::default()
         .with_data_dir(&data)
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         .with_mode(AppMode::Ui)
         .with_save_dir(save_dir);
     let mut app = App::new(config);
@@ -100,9 +100,7 @@ fn changed_pixels(left: &max_render::buffer::RgbaBuffer, right: &max_render::buf
 #[test]
 fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
     let dir = temp_dir("panel");
-    let Some(mut app) = app_with_assets(&dir) else {
-        return;
-    };
+    let mut app = app_with_assets(&dir).expect(concat!("test fixture is missing: ", stringify!(app_with_assets(&dir))));
 
     let button = max_app::panels::PanelButton::Preferences.rect();
     let transition = max_app::ui::handle_session_input(
@@ -160,9 +158,7 @@ fn in_game_panel_button_opens_preferences_and_done_saves_effects() {
 #[test]
 fn effects_off_freezes_building_animation_frames() {
     let dir = temp_dir("effects");
-    let Some(mut app) = app_with_assets(&dir) else {
-        return;
-    };
+    let mut app = app_with_assets(&dir).expect(concat!("test fixture is missing: ", stringify!(app_with_assets(&dir))));
 
     let radar = app
         .universe_mut()
@@ -222,9 +218,7 @@ fn effects_off_freezes_building_animation_frames() {
 #[test]
 fn sound_flag_reaches_the_audio_layer() {
     let dir = temp_dir("sound");
-    let Some(mut app) = app_with_assets(&dir) else {
-        return;
-    };
+    let mut app = app_with_assets(&dir).expect(concat!("test fixture is missing: ", stringify!(app_with_assets(&dir))));
 
     let mut audio = AudioPlayer::with_backend(Box::new(NoopBackend));
     audio.preload(
@@ -269,9 +263,7 @@ fn sound_flag_reaches_the_audio_layer() {
 #[test]
 fn preferences_are_written_to_and_read_from_v70_ini_preferences() {
     let dir = temp_dir("v70");
-    let Some(mut app) = app_with_assets(&dir) else {
-        return;
-    };
+    let mut app = app_with_assets(&dir).expect(concat!("test fixture is missing: ", stringify!(app_with_assets(&dir))));
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
 
@@ -398,12 +390,9 @@ fn plain_app(save_dir: &Path) -> App {
 /// written only when the dialog closes — through the facade install API, never by
 /// the UI (rule C3). `Done` transfers both switches (`real_time` too), like
 /// `GameManager_MenuClickPreferencesButton` re-reading `settings`.
+#[cfg(debug_assertions)]
 #[test]
 fn debug_switches_install_through_the_facade_when_the_dialog_closes() {
-    if !DEBUG_SECTION_BUILT {
-        eprintln!("preferences: debug section is compiled out in a release build");
-        return;
-    }
 
     let dir = temp_dir("debug-install");
     let mut app = plain_app(&dir);
@@ -458,11 +447,9 @@ fn debug_switches_install_through_the_facade_when_the_dialog_closes() {
 /// reaches the settings on `Done` and the live `TeamInfo::team_type` through
 /// `GameUniverse::set_team_type` — the same slot C++ writes in
 /// `GameManager_MenuClickPreferencesButton`.
+#[cfg(debug_assertions)]
 #[test]
 fn debug_team_field_installs_the_team_control_slot() {
-    if !DEBUG_SECTION_BUILT {
-        return;
-    }
 
     let dir = temp_dir("debug-team");
     let mut app = plain_app(&dir);
@@ -529,11 +516,9 @@ fn debug_team_field_installs_the_team_control_slot() {
 /// switches it reveals are simulation fields (`game.rs:357/360`), so installing one
 /// **does** move the digest — by design, C++ sends both in the match setup packet
 /// (`remote.cpp:2469-2471`). While the dialog is open nothing is installed.
+#[cfg(debug_assertions)]
 #[test]
 fn debug_gate_keeps_the_snapshot_and_the_installed_switch_moves_it() {
-    if !DEBUG_SECTION_BUILT {
-        return;
-    }
 
     let dir = temp_dir("debug-digest");
     let mut app = plain_app(&dir);
@@ -586,11 +571,9 @@ fn debug_gate_keeps_the_snapshot_and_the_installed_switch_moves_it() {
 
 /// `Cancel` restores the values the dialog opened with and re-installs them, so the
 /// match keeps running with the settings it had (`last_rest_state` in C++).
+#[cfg(debug_assertions)]
 #[test]
 fn debug_cancel_restores_the_installed_values() {
-    if !DEBUG_SECTION_BUILT {
-        return;
-    }
 
     let dir = temp_dir("debug-cancel");
     let mut app = plain_app(&dir);
@@ -652,16 +635,12 @@ fn debug_cancel_restores_the_installed_values() {
 
 /// The panel itself: the six debug rows are painted over `PREFSPIC` above the
 /// dialog buttons, and `debug = 0` paints the old frame.
+#[cfg(debug_assertions)]
 #[test]
 fn debug_section_is_painted_above_the_dialog_buttons() {
-    if !DEBUG_SECTION_BUILT {
-        return;
-    }
 
     let dir = temp_dir("debug-draw");
-    let Some(app) = app_with_assets(&dir) else {
-        return;
-    };
+    let app = app_with_assets(&dir).expect(concat!("test fixture is missing: ", stringify!(app_with_assets(&dir))));
     let assets = app.assets().expect("assets");
     let info = PreferencesInfo::default();
     let off = max_app::preferences::PreferencesDialog::new(

@@ -33,10 +33,7 @@ fn data_dir() -> Option<PathBuf> {
 
 #[test]
 fn landing_frame_contains_real_wrl_tiles() {
-    let Some(data) = data_dir() else {
-        eprintln!("landing_wrl: пропуск — нет max-original/SNOW_1.WRL + MAX.RES");
-        return;
-    };
+    let data = data_dir().expect(concat!("test fixture is missing: ", stringify!(data_dir())));
 
     let landing = LandingScreen::load(TeamId::RED, 0, &data).expect("SNOW_1.WRL");
     assert!(landing.terrain.is_some(), "тайлы загружены");
@@ -138,9 +135,7 @@ fn landing_without_wrl_falls_back_to_flat_map() {
         Some(data) => max_assets::ResArchive::open(data.join("MAX.RES")).ok(),
         None => None,
     };
-    let Some(menu) = archive.as_ref().and_then(MenuAssets::load) else {
-        return;
-    };
+    let menu = archive.as_ref().and_then(MenuAssets::load).expect(concat!("test fixture is missing: ", stringify!(archive.as_ref().and_then(MenuAssets::load))));
     let mut frame = RgbaBuffer::filled(640, 480, Rgba::BLACK);
 
     assert!(landing.draw(&mut frame, &menu, None, None, "", None) > 0);

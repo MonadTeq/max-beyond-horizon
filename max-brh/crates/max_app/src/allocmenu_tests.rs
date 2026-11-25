@@ -127,9 +127,7 @@ fn increase_and_decrease_move_the_mine_counters() {
     let (mut state, id, _complex) = state_with_mine(1);
     let mut menu = AllocMenu::new(&mut state, id).expect("меню");
 
-    if menu.capacity_of(MiningKind::Raw) == 0 {
-        return;
-    }
+    assert!(!(menu.capacity_of(MiningKind::Raw) == 0), concat!("required test fixture is missing: ", stringify!(menu.capacity_of(MiningKind::Raw) == 0)));
 
     assert!(menu.increase(&mut state, MiningKind::Raw));
     assert_eq!(menu.production_of(MiningKind::Raw), 1);
@@ -149,9 +147,7 @@ fn level_change_is_absolute_like_a_bar_click() {
     let mut menu = AllocMenu::new(&mut state, id).expect("меню");
     let capacity = menu.capacity_of(MiningKind::Raw);
 
-    if capacity < 3 {
-        return;
-    }
+    assert!(!(capacity < 3), concat!("required test fixture is missing: ", stringify!(capacity < 3)));
 
     menu.set_level(&mut state, MiningKind::Raw, 3);
     assert_eq!(menu.production_of(MiningKind::Raw), 3);
@@ -245,9 +241,7 @@ fn bar_captions_follow_cpp_format() {
     let (mut state, id, _complex) = state_with_mine(1);
     let mut menu = AllocMenu::new(&mut state, id).expect("меню");
 
-    if menu.capacity_of(MiningKind::Raw) < 2 {
-        return;
-    }
+    assert!(!(menu.capacity_of(MiningKind::Raw) < 2), concat!("required test fixture is missing: ", stringify!(menu.capacity_of(MiningKind::Raw) < 2)));
 
     menu.set_level(&mut state, MiningKind::Raw, 2);
     assert_eq!(menu.bar_caption(0, 0), "2");
@@ -263,9 +257,7 @@ fn bar_geometry_follows_cpp() {
     let mut menu = AllocMenu::new(&mut state, id).expect("меню");
     let capacity = menu.capacity_of(MiningKind::Raw);
 
-    if capacity < 4 {
-        return;
-    }
+    assert!(!(capacity < 4), concat!("required test fixture is missing: ", stringify!(capacity < 4)));
 
     menu.set_level(&mut state, MiningKind::Raw, 4);
     // Fill `production * 240 / max(capacity, usage)`.

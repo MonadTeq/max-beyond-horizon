@@ -55,7 +55,7 @@ fn game_app() -> Option<App> {
     let world_dir = repo_path("max-original");
 
     if !world_dir.join("SNOW_1.WRL").is_file() || !world_dir.join("MAX.RES").is_file() {
-        eprintln!("air_transport_load: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("air_transport_load: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
@@ -72,10 +72,10 @@ fn game_app() -> Option<App> {
     let mut app = App::new(
         AppConfig::default()
             .with_data_dir(repo_path("max-original"))
-            .with_assets_dir(repo_path("assets")),
+            .with_assets_dir(repo_path("tests/fixtures/assets")),
     );
     if app.init_assets().is_err() {
-        eprintln!("air_transport_load: пропуск — ассеты игры недоступны");
+        eprintln!("air_transport_load: нет данных — ассеты игры недоступны");
         return None;
     }
 
@@ -149,9 +149,7 @@ fn open_menu(app: &mut App, id: UnitId) {
 /// aboard (`airpath.cpp:430-443` + `units_manager.cpp:3092`).
 #[test]
 fn air_transport_load_click_takes_the_passenger_aboard() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
     let transport = spawn(&mut app, UnitType::AirTransport);
     let passenger = spawn(&mut app, UnitType::Tank);

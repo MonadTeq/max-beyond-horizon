@@ -6,8 +6,8 @@
 //! `Hits`, `Cargo` and the complex stock (`Total`) are visible, and for a tank — all four
 //! (`Hits/Ammo/Speed/Shots`).
 //!
-//! The tests use the real `MAX.RES`/`PATCHES.RES` (like `portrait.rs`) and
-//! are skipped if there is no game data next to the repository.
+//! The tests use the real `MAX.RES`/`PATCHES.RES` (like `portrait.rs`) and require
+//! the game data next to the repository; a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -30,17 +30,17 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("stat_panel: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("stat_panel: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let mut app = App::new(
         AppConfig::default()
             .with_data_dir(repo_path("max-original"))
-            .with_assets_dir(repo_path("assets")),
+            .with_assets_dir(repo_path("tests/fixtures/assets")),
     );
 
     app.init_assets().ok()?;
@@ -98,9 +98,7 @@ fn row_counts(frame: &RgbaBuffer, palette: &UiPalette) -> [usize; 4] {
 
 #[test]
 fn mine_panel_frame_skips_speed_and_empty_rows_tank_keeps_them() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
     // Without a selection the statistics lines are the window background — the "empty line" reference.
@@ -175,9 +173,7 @@ fn changed_pixels(before: &RgbaBuffer, after: &RgbaBuffer, rect: PixelRect) -> u
 /// and the label — the icon strip stayed the window background.
 #[test]
 fn stat_rows_draw_the_pip_icons() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
     app.select_unit(None);
@@ -222,9 +218,7 @@ fn stat_rows_draw_the_pip_icons() {
 /// raw per turn while it builds, and is absent while the factory is off.
 #[test]
 fn factory_panel_frame_shows_raw_usage_only_while_producing() {
-    let Some(mut app) = app() else {
-        return;
-    };
+    let mut app = app().expect(concat!("test fixture is missing: ", stringify!(app())));
     let palette = UiPalette::from_assets(app.assets().expect("ассеты")).expect("палитра FRAMEPIC");
 
     app.select_unit(None);

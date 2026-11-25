@@ -5,9 +5,7 @@ fn real_max_res_has_all_resource_markers() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../max-original/MAX.RES");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let archive = ResArchive::open(&path).expect("MAX.RES");
     let markers = ResourceMarkers::load(&archive);

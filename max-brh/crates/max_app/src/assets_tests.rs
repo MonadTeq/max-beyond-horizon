@@ -6,7 +6,7 @@ fn real_assets() -> Option<Assets> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
         return None;
@@ -30,11 +30,9 @@ fn alien_derelict_sprites_are_loaded() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let config = AppConfig {
         max_res,
@@ -81,11 +79,9 @@ fn planet_pictures_cover_all_four_groups() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let max_res = root.join("max-original/MAX.RES");
     let color_pal = root.join("max-original/COLOR.PAL");
-    let patches = root.join("assets/PATCHES.RES");
+    let patches = root.join("tests/fixtures/assets/PATCHES.RES");
 
-    if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
 
     let assets = Assets::load(&AppConfig {
         max_res,
@@ -176,9 +172,7 @@ fn unit_sprite_table_mirrors_sc_units() {
 /// `SC_UNITS`), and `MASTER` — the only marker.
 #[test]
 fn every_unit_type_loads_its_body_and_shadow() {
-    let Some(assets) = real_assets() else {
-        return;
-    };
+    let assets = real_assets().expect(concat!("test fixture is missing: ", stringify!(real_assets())));
 
     let mut loaded = 0usize;
     let mut shadows = 0usize;
@@ -266,9 +260,7 @@ fn every_unit_type_loads_its_body_and_shadow() {
 /// matches `angle_offsets`.
 #[test]
 fn turret_frames_cover_every_flagged_type() {
-    let Some(assets) = real_assets() else {
-        return;
-    };
+    let assets = real_assets().expect(concat!("test fixture is missing: ", stringify!(real_assets())));
 
     let mut flagged = Vec::new();
 
@@ -570,16 +562,14 @@ fn missing_color_pal_falls_back_next_to_max_res() {
 
 /// Assets load from the fallback, while `patches_res` remains the handshake path.
 ///
-/// Skipped if there is no game data next to the repository (like
-/// `assets_integration_smoke` in `tests/app.rs`).
+/// Requires the game data next to the repository (like
+/// `assets_integration_smoke` in `tests/app.rs`); a missing data set fails the test.
 #[test]
 fn assets_load_from_fallback_when_configured_patches_res_is_missing() {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
 
-    if !max_res.is_file() || !color_pal.is_file() {
-        return;
-    }
+    assert!(max_res.is_file() && color_pal.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file())));
 
     let missing = repo_path("build/does-not-exist/PATCHES.RES");
     let config = AppConfig {

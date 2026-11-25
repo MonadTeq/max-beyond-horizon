@@ -3,8 +3,8 @@
 //! The director is driven exactly like in the client: [`App::take_music_events`] drains
 //! the facade event stream, [`MusicDirector::sync`] picks the track and
 //! [`crate::max_app::audio::AudioPlayer`] plays it. The tests use a recording backend, so
-//! no audio device is needed; the real `MAX.RES`/`*.MSC` checks are skipped when the game
-//! data is absent.
+//! no audio device is needed; the real `MAX.RES`/`*.MSC` checks require the game
+//! data and fail without it.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -191,9 +191,7 @@ fn real_max_res_references_the_music_tracks() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");
     let max_res = dir.join("MAX.RES");
 
-    if !max_res.is_file() {
-        return;
-    }
+    assert!(max_res.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file())));
 
     let res = ResArchive::open(&max_res).expect("MAX.RES");
     let mut audio = AudioPlayer::new();
@@ -225,9 +223,7 @@ fn real_msc_tracks_are_stereo_pcm16_wav() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");
     let path: PathBuf = dir.join("MAIN_MSC.MSC");
 
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), concat!("required test fixture is missing: ", stringify!(!path.is_file())));
 
     let clip = WavClip::open(&path).expect("MAIN_MSC.MSC");
 

@@ -14,7 +14,7 @@
 //! the simulation tick: `dt = 0` (QA/headless) must give a deterministic frame —
 //! the working pose `+16` and the full building size.
 //!
-//! Tests are skipped if there is no game data (`max-original/`) nearby.
+//! The test requires the game data (`max-original/`); a missing data set fails the test.
 
 use std::path::{Path, PathBuf};
 
@@ -36,16 +36,16 @@ fn repo_path(relative: &str) -> PathBuf {
 fn app_with_assets() -> Option<App> {
     let max_res = repo_path("max-original/MAX.RES");
     let color_pal = repo_path("max-original/COLOR.PAL");
-    let patches = repo_path("assets/PATCHES.RES");
+    let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
     if !max_res.is_file() || !color_pal.is_file() || !patches.is_file() {
-        eprintln!("construction_animation: пропуск — нет данных игры рядом с репозиторием");
+        eprintln!("construction_animation: нет данных — нет данных игры рядом с репозиторием");
         return None;
     }
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
-        .with_assets_dir(repo_path("assets"))
+        .with_assets_dir(repo_path("tests/fixtures/assets"))
         // 640×640 — the full-screen fallback without `FRAMEPIC`; the map is entirely ours.
         .with_screen(640, 640);
     let mut app = App::new(config);
@@ -70,9 +70,7 @@ fn changed_pixels(left: &RgbaBuffer, right: &RgbaBuffer) -> usize {
 /// the working pose `+16` — a deterministic frame.
 #[test]
 fn builder_sprite_cycles_through_work_frames_with_real_dt() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let builder = app
         .universe_mut()
@@ -127,9 +125,7 @@ fn builder_sprite_cycles_through_work_frames_with_real_dt() {
 /// size; `dt = 0` immediately gives the full one.
 #[test]
 fn scaling_unit_grows_to_full_size_over_real_time() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     app.viewport_mut().center_on_grid(40, 40);
     let background = app.render_frame();
@@ -178,9 +174,7 @@ fn scaling_unit_grows_to_full_size_over_real_time() {
 /// depend on `dt`.
 #[test]
 fn unit_without_scaler_is_never_scaled() {
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     let unit: UnitId = app
         .universe_mut()
@@ -216,9 +210,7 @@ fn growth_lasts_four_order_ticks() {
         max_app::GROWTH_ANIM_SECONDS
     );
 
-    let Some(mut app) = app_with_assets() else {
-        return;
-    };
+    let mut app = app_with_assets().expect(concat!("test fixture is missing: ", stringify!(app_with_assets())));
 
     app.viewport_mut().center_on_grid(40, 40);
     let background = app.render_frame();
