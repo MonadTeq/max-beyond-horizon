@@ -352,9 +352,7 @@ pub fn get_enemy_unit(
 
         let ground_cover = other.flags & unit_flags::GROUND_COVER != 0;
 
-        if !ground_cover
-            || matches!(other.unit_type, UnitType::LandMine | UnitType::SeaMine)
-        {
+        if !ground_cover || matches!(other.unit_type, UnitType::LandMine | UnitType::SeaMine) {
             return resolve_tape_parent(state, id);
         }
 
@@ -554,12 +552,13 @@ pub fn unit_action_cursor(
             // C++: `unit1->cursor == CURSOR_ARROW_SW` — 7, i.e. the `load` mode
             // (and `repair`/`reload`/`x-fer` fall into `else` below).
             if cursor == crate::unitmenu::CURSOR_LOAD && i32::from(unit1.storage) < capacity {
-                let land = state.get_team_unit_by_environments(
-                    grid,
-                    player_team,
-                    &[Environment::Ground, Environment::Amphibious],
-                )
-                .and_then(|id| state.unit(id));
+                let land = state
+                    .get_team_unit_by_environments(
+                        grid,
+                        player_team,
+                        &[Environment::Ground, Environment::Amphibious],
+                    )
+                    .and_then(|id| state.unit(id));
 
                 if let Some(land) = land {
                     if ready_to_take_orders(state, land) {
@@ -642,9 +641,9 @@ fn transfer_target_accepts(state: StateRef<'_>, unit1: &UnitInfo, target: &UnitI
 
     if unit1.is_mobile() && !target.is_mobile() {
         if let Some(complex) = target.complex {
-            return state.find_unit_with_cargo_type( target.team, complex, cargo,
-            )
-            .is_some();
+            return state
+                .find_unit_with_cargo_type(target.team, complex, cargo)
+                .is_some();
         }
     }
 
@@ -674,7 +673,7 @@ pub fn military_cursor(
         }
     }
 
-    let Some(target_id) = state.get_attack_target( selected, grid, false) else {
+    let Some(target_id) = state.get_attack_target(selected, grid, false) else {
         return CursorId::UnitNoGo;
     };
     let Some(target) = state.unit(target_id) else {
@@ -723,7 +722,7 @@ pub fn military_cursor(
         .base_values
         .get_attribute(max_core::unit_values::ATTRIB_RANGE);
 
-    if state.is_within_attack_range( selected, grid, range) {
+    if state.is_within_attack_range(selected, grid, range) {
         if selected.ammo > 0 {
             CursorId::Enemy
         } else {
@@ -764,7 +763,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     // (`HudState::targeting_mode`/`enter_mode`, `unitmenu` toggles them).
     let targeting_mode = app.hud().targeting_mode;
     let enter_mode = app.hud().enter_mode;
-    let team_unit_id = state.get_team_unit( grid, player_team, unit_flags::SELECTABLE);
+    let team_unit_id = state.get_team_unit(grid, player_team, unit_flags::SELECTABLE);
     let team_unit = team_unit_id.and_then(|id| state.unit(id));
     let active_kind = state
         .teams()
@@ -866,7 +865,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                 if enemy.unit_type != UnitType::Connector
                     && (enemy.flags & unit_flags::GROUND_COVER == 0
                         || matches!(enemy.unit_type, UnitType::LandMine | UnitType::SeaMine))
-                    && state.is_valid_attack_target( selected, enemy)
+                    && state.is_valid_attack_target(selected, enemy)
                 {
                     let result = military_cursor(state, selected, grid, cursor_mode);
 
@@ -891,12 +890,12 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             .base_values
             .get_attribute(max_core::unit_values::ATTRIB_RANGE);
 
-        if !state.is_within_attack_range( selected, grid, range) {
+        if !state.is_within_attack_range(selected, grid, range) {
             return CursorId::UnitNoGo;
         }
 
         if let Some(team_unit) = team_unit {
-            if !state.is_valid_attack_target( selected, team_unit) {
+            if !state.is_valid_attack_target(selected, team_unit) {
                 return CursorId::UnitNoGo;
             }
         }
@@ -910,7 +909,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             return CursorId::Friend;
         }
 
-        return if state.get_receiver_unit( selected, grid).is_some() {
+        return if state.get_receiver_unit(selected, grid).is_some() {
             CursorId::UnitGo
         } else {
             CursorId::UnitNoGo
@@ -927,22 +926,20 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
                     .base_values
                     .get_attribute(max_core::unit_values::ATTRIB_STORAGE)
         {
-            let land = state.get_team_unit_by_environments(
-                grid,
-                player_team,
-                &[Environment::Ground, Environment::Amphibious],
-            )
-            .and_then(|id| state.unit(id));
+            let land = state
+                .get_team_unit_by_environments(
+                    grid,
+                    player_team,
+                    &[Environment::Ground, Environment::Amphibious],
+                )
+                .and_then(|id| state.unit(id));
 
             if let Some(land) = land {
                 if land.orders != UnitOrder::Clear
                     && land.orders != UnitOrder::Build
-                    && state.get_team_unit_by_environments(
-                        grid,
-                        player_team,
-                        &[Environment::Air],
-                    )
-                    .is_none()
+                    && state
+                        .get_team_unit_by_environments(grid, player_team, &[Environment::Air])
+                        .is_none()
                 {
                     return CursorId::Load;
                 }
@@ -950,8 +947,7 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         }
 
         return if team_unit.is_some_and(|unit| {
-            unit.unit_type != UnitType::LandingPad
-                && unit.flags & unit_flags::GROUND_COVER == 0
+            unit.unit_type != UnitType::LandingPad && unit.flags & unit_flags::GROUND_COVER == 0
         }) {
             CursorId::Friend
         } else if app.shift_pressed() {
@@ -993,9 +989,9 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             };
 
             if !environments.is_empty() {
-                let candidate =
-                    state.get_team_unit_by_environments( grid, player_team, environments)
-                        .and_then(|id| state.unit(id));
+                let candidate = state
+                    .get_team_unit_by_environments(grid, player_team, environments)
+                    .and_then(|id| state.unit(id));
 
                 if let Some(candidate) = candidate {
                     let special = matches!(
@@ -1020,15 +1016,15 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         }
 
         if cursor_mode != 0 {
-            let target = state.get_team_unit( grid, player_team, unit_flags::SELECTABLE)
+            let target = state
+                .get_team_unit(grid, player_team, unit_flags::SELECTABLE)
                 .and_then(|id| state.unit(id));
 
             if let Some(target) = target {
                 if is_valid_transfer_target(state, &target, selected) {
                     match cursor_mode {
                         crate::unitmenu::CURSOR_TRANSFER => {
-                            let cargo =
-                                max_core::victory::cargo_type_of(selected.unit_type);
+                            let cargo = max_core::victory::cargo_type_of(selected.unit_type);
 
                             if max_core::victory::cargo_type_of(target.unit_type) == cargo
                                 && target.orders != UnitOrder::Clear
@@ -1082,13 +1078,33 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
         return (CursorId::Help, 0);
     }
 
+    // An open window (popup command menu, modal menu) is a window: `HANDPTR` over
+    // its actionable elements (`Cursor_GetDefaultWindowCursor`, `cursor.cpp:57-73`),
+    // the "no" sign over the elements that cannot be activated.
+    if let Some(cursor) = open_window_cursor(app, x, y) {
+        return (cursor, 0);
+    }
+
     if crate::panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y)
     {
         return (CursorId::Hand, 0);
     }
 
-    let Some((map_x, map_y)) = crate::panels::screen_to_map(x, y) else {
+    // Procedural HUD buttons of the fallback frame (no `FRAMEPIC` chrome).
+    let (width, height) = app.viewport().screen();
+    if crate::hud::hud_button_at(width, height, x, y).is_some() {
         return (CursorId::Hand, 0);
+    }
+
+    let Some((map_x, map_y)) = crate::panels::screen_to_map(x, y) else {
+        // Not the map and not a control: a non-interactive window element
+        // (statistics, log, coordinates, turn counter, frame) — the "forbidden"
+        // cursor, as the playtest defect asks.
+        if app.chrome_active() {
+            return (CursorId::UnitNoGo, 0);
+        }
+
+        return (CursorId::UnitNoGo, 0);
     };
 
     let viewport = crate::panels::map_viewport(app.viewport());
@@ -1104,10 +1120,50 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
         return (cursor_for_context(CursorContext::BuildSite { valid }), 0);
     }
 
-    (
-        window_cursor(app, Point::new(grid_x, grid_y)),
-        0,
-    )
+    (window_cursor(app, Point::new(grid_x, grid_y)), 0)
+}
+
+/// Cursor over an open UI window — `Cursor_GetDefaultWindowCursor`
+/// (`cursor.cpp:57-73`: every window maps to `HANDPTR`, only the map and the scroll
+/// strips have their own cursors).
+///
+/// `None` — the point is over no open window (the map/panel logic decides).
+///
+/// The command popup (`GameManager_PopupButtons`) hangs **over the map window**, so
+/// without this branch its buttons got the map cursor instead of the hand; and an
+/// item that cannot be picked (`UnitMenuItem::enabled == false`, e.g. `build` for a
+/// building) shows the forbidden cursor, which is exactly the playtest complaint
+/// "no hand over the clickable buttons / no forbidden look over the inactive ones".
+fn open_window_cursor(app: &crate::App, x: i32, y: i32) -> Option<CursorId> {
+    if let Some(menu) = app.unit_menu() {
+        if menu.rect.contains(x, y) {
+            return Some(match menu.item_at(x, y) {
+                Some(index) => match menu.items.get(index) {
+                    Some(item) if item.enabled => CursorId::Hand,
+                    Some(_) => CursorId::UnitNoGo,
+                    None => CursorId::Hand,
+                },
+                // The popup margin — a window area, not a control.
+                None => CursorId::Hand,
+            });
+        }
+    }
+
+    // Modal menus opened from the match: `AbstractMenu` calls
+    // `Cursor_SetCursor(CURSOR_HAND)` in its constructor (`menu.cpp:469`).
+    let modal_open = app.build_menu().is_some()
+        || app.upgrade_menu().is_some()
+        || app.research_menu().is_some()
+        || app.alloc_menu().is_some()
+        || app.transfer_menu().is_some()
+        || app.unit_stats().is_some()
+        || app.self_destruct().is_some()
+        || app.pause_dialog().is_some()
+        || app.save_load().is_some()
+        || app.preferences_dialog().is_some()
+        || app.help_screen().is_some();
+
+    modal_open.then_some(CursorId::Hand)
 }
 
 /// Whether the cursor has an animation (for the SDL tick).

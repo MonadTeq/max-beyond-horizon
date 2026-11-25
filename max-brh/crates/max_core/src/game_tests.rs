@@ -30,7 +30,7 @@ fn spawn_assigns_ids_and_lists_in_cpp_order() {
     assert_eq!(
         state.unit_list(UnitListKind::MobileLandSea),
         &[second, first],
-            "AddToDrawList кладёт мобильные наземные в начало списка (PushFront)"
+        "AddToDrawList кладёт мобильные наземные в начало списка (PushFront)"
     );
     let unit = state.unit(first).expect("unit");
     assert_eq!(unit.unit_list, UnitListKind::MobileLandSea);
@@ -59,7 +59,7 @@ fn units_at_keeps_the_newest_unit_first_like_cpp() {
     assert_eq!(
         state.units_at(cell),
         &[third, first],
-            "the newest unit must be first (C++ PushFront)"
+        "the newest unit must be first (C++ PushFront)"
     );
 
     // A position change removes and re-adds the unit; it also lands at the
@@ -257,7 +257,7 @@ fn process_orders_visits_five_lists_in_canonical_order() {
         assert_eq!(
             state.unit(*unit).unwrap().live_attack,
             attack.id,
-                "живая атака юнита {unit:?} создана не в каноническом порядке"
+            "живая атака юнита {unit:?} создана не в каноническом порядке"
         );
     }
     // A missile (`MISSILE_UNIT`) at the head of `UnitsManager_ProcessOrder` sets
@@ -305,6 +305,13 @@ fn scripted_combat_replay_is_deterministic() {
         // A series of shots: each FIRE order is one shot (after
         // the shot `RestoreOrders` returns AWAIT); the start of the turn
         // restores `shots` (`UpdateProduction`).
+        //
+        // The next shot waits in `ORDER_STATE_ATTACK_PENDING` until the hit effect
+        // (`HITEXPLD`, `UnitsManager_StartExplosion` with `hits > 0`) finishes its
+        // animation: with `unit_order::EXPLOSION_FRAME_STEPS` that is
+        // `5 × (5 − 1) + 1 = 21` simulation steps (~0.35 s — the oracle's
+        // `2 × (5 − 1) + 1` order ticks × 42 ms). The window per shot therefore
+        // covers a full cycle: one turn step + recoil + the hit animation.
         for _ in 0..8 {
             state.manage_economy(TeamId::RED);
             let mut data = state.order_data(red);
@@ -312,12 +319,10 @@ fn scripted_combat_replay_is_deterministic() {
             data.move_to = Point::new(13, 10);
             state.set_order_data(red, data);
             state.set_order(red, UnitOrder::Fire, UnitOrderState::Init);
-            for _ in 0..8 {
+            for _ in 0..40 {
                 state.tick();
             }
-            if !state.has_unit(green)
-                || state.unit(green).map(|unit| unit.hits).unwrap_or(0) == 0
-            {
+            if !state.has_unit(green) || state.unit(green).map(|unit| unit.hits).unwrap_or(0) == 0 {
                 break;
             }
         }
@@ -459,7 +464,7 @@ fn end_turn_restores_speed_and_updates_production() {
     assert_eq!(
         unit.speed,
         unit.base_values.get_attribute(ATTRIB_SPEED) as u16,
-            "UpdateProduction возвращает скорость на начало хода"
+        "UpdateProduction возвращает скорость на начало хода"
     );
     assert_eq!(
         unit.shots,
@@ -483,7 +488,7 @@ fn barriers_require_agreement_of_playing_teams() {
     assert_eq!(
         state.end_turn_barrier(),
         None,
-            "команды разошлись по счётчику"
+        "команды разошлись по счётчику"
     );
     state.turn_indices[1] = 3;
     assert_eq!(state.end_turn_barrier(), Some(3));
@@ -612,7 +617,7 @@ fn finish_turn_is_guarded_by_the_end_turn_phase() {
         state.game_state = phase;
         assert!(
             !state.finish_turn(),
-                "phase {phase:?} must not close the turn"
+            "phase {phase:?} must not close the turn"
         );
         assert_eq!(state.turn_counter, 0, "phase {phase:?}");
         assert_eq!(state.game_state, phase, "phase {phase:?} is left as is");
@@ -634,7 +639,7 @@ fn empty_game_has_no_barrier_and_still_advances_the_turn() {
     assert_eq!(
         state.end_turn_barrier(),
         None,
-            "no playing teams — no agreement"
+        "no playing teams — no agreement"
     );
     assert_eq!(state.begin_turn_barrier(), None);
     assert_eq!(state.crc_barrier(), None);
@@ -659,7 +664,7 @@ fn is_active_turn_follows_the_play_mode() {
     state.teams[TeamId::GREEN.0 as usize].team_type = TeamKind::Remote;
     assert!(
         state.is_active_turn(TeamId::GREEN),
-            "a remote team always processes its input"
+        "a remote team always processes its input"
     );
 
     state.play_mode = PlayMode::SimultaneousMoves;
@@ -688,7 +693,7 @@ fn barrier_requires_all_four_playing_teams_to_agree() {
     assert_eq!(
         state.end_turn_barrier(),
         None,
-            "ALIEN does not repair a disagreement"
+        "ALIEN does not repair a disagreement"
     );
 
     state.turn_indices[PLAYER_TEAM_COUNT - 1] = 9;
@@ -733,7 +738,7 @@ fn command_delivery_order_decides_the_final_order() {
     assert_eq!(
         forward.unit(id).expect("unit").orders,
         await_order,
-            "the last delivered order wins"
+        "the last delivered order wins"
     );
 
     let backward = run(&state, id, await_order, sentry);
@@ -741,7 +746,7 @@ fn command_delivery_order_decides_the_final_order() {
     assert_ne!(
         forward.snapshot_bytes(),
         backward.snapshot_bytes(),
-            "delivery order is part of the state"
+        "delivery order is part of the state"
     );
 
     // Repetition of the same delivery order stays bit-identical.
@@ -780,7 +785,7 @@ fn phase_team_and_turn_counter_enter_the_digest() {
     assert_eq!(
         crate::crc::state_checksum(&state),
         unit_crc,
-            "unit-list CRC must not depend on the phase"
+        "unit-list CRC must not depend on the phase"
     );
 }
 
@@ -801,7 +806,7 @@ fn unit_ids_stay_inside_the_thirteen_bit_index_space() {
             .expect("spawn");
         assert!(
             id.object_index() < 0x2000,
-                "object index {} escapes the 13-bit space",
+            "object index {} escapes the 13-bit space",
             id.object_index()
         );
         assert!(seen.insert(id), "duplicate unit id {id:?}");

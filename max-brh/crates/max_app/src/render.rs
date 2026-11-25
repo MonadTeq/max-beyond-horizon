@@ -3,17 +3,17 @@
 //! Only the **pure** parts of [`max_render`] are collected here:
 //! [`render_map_into`] (tiles/surfaces/resources), [`SpriteRenderer`]
 //! (palette, team LUTs, shadows) and [`draw_order`] (unit order by `y`,
-//! §5.4). The SDL layer (`max_render::sdl_window`) is connected exclusively in
+//! Р’В§5.4). The SDL layer (`max_render::sdl_window`) is connected exclusively in
 //! `src/main.rs` behind the `sdl` feature, so the application and its tests draw frames
 //! without a window and without a display.
 //!
 //! If the assets are not loaded ([`App::init_assets`] was not called) or the type
 //! resource is absent from [`crate::assets::UNIT_SPRITES`], the unit is drawn as a square
-//! team-colored marker. In the game data there is exactly one such type — `MASTER`
+//! team-colored marker. In the game data there is exactly one such type РІР‚вЂќ `MASTER`
 //! (`UNIT_TYPES_WITHOUT_SPRITE_DATA`); the map is always drawn with
 //! the real surface/resource colors from [`TileStyle`].
 //!
-//! The common unit drawing point — [`draw_unit_sprites`]: it is used by the map
+//! The common unit drawing point РІР‚вЂќ [`draw_unit_sprites`]: it is used by the map
 //! (`App::draw_units`) and the HUD portrait (`panels::draw_portrait`), so all
 //! 93 types are drawn the same way (body, shadow, turret with an offset).
 
@@ -26,7 +26,7 @@ use max_render::map_render::{render_map_into, TileStyle};
 use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
 use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
-use max_render::viewport::draw_order;
+use max_render::viewport::{draw_order, Viewport};
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -36,11 +36,119 @@ use max_core::universe::{Dispatcher, StateRef};
 use crate::panels::UiPalette;
 use crate::App;
 
+/// `COLOR_GREEN` (`color.h:38`) РІР‚вЂќ a route cell reachable within this turn.
+pub const PATH_MARKER_GREEN_INDEX: u8 = 0x02;
+
+/// `COLOR_BLUE` (`color.h:39`) РІР‚вЂќ a route cell of a following turn.
+pub const PATH_MARKER_BLUE_INDEX: u8 = 0x03;
+
+/// Draws the route preview arrows of the selected unit РІР‚вЂќ `Paths_DrawMarker`
+/// (`paths.cpp:376-395`) for every marker of `GroundPath::Draw`/`AirPath::Draw`.
+///
+/// Each marker is a triangle of three Bresenham lines through the direction table
+/// [`max_core::unit_order::PATH_MARKER_POINTS`]; the vertices are scaled with the zoom
+/// exactly like C++ (`(offset << 16) / Gfx_MapScalingFactor`, i.e. `offset * zoom / 64`).
+/// Green РІР‚вЂќ the unit reaches the cell this turn, blue РІР‚вЂќ in a later turn.
+///
+/// Returns the number of drawn markers (diagnostics).
+pub fn draw_path_markers(
+    buffer: &mut RgbaBuffer,
+    viewport: &Viewport,
+    markers: &[max_core::unit_order::PathMarker],
+    palette: &PaletteRgba,
+) -> usize {
+    let green = Rgba::from_rgb([
+        palette[usize::from(PATH_MARKER_GREEN_INDEX)][0],
+        palette[usize::from(PATH_MARKER_GREEN_INDEX)][1],
+        palette[usize::from(PATH_MARKER_GREEN_INDEX)][2],
+    ]);
+    let blue = Rgba::from_rgb([
+        palette[usize::from(PATH_MARKER_BLUE_INDEX)][0],
+        palette[usize::from(PATH_MARKER_BLUE_INDEX)][1],
+        palette[usize::from(PATH_MARKER_BLUE_INDEX)][2],
+    ]);
+
+    let mut drawn = 0;
+
+    for marker in markers {
+        let Some(points) = max_core::unit_order::PATH_MARKER_POINTS.get(usize::from(marker.angle))
+        else {
+            continue;
+        };
+
+        let color = if marker.this_turn { green } else { blue };
+        let mut screen = [(0i32, 0i32); 3];
+
+        for (slot, offset) in screen.iter_mut().zip(points) {
+            *slot = viewport.world_to_screen(marker.x + offset.0, marker.y + offset.1);
+        }
+
+        // `draw_line(a, b)`, `draw_line(b, c)`, `draw_line(c, a)`.
+        crate::hud::draw_line(buffer, screen[0], screen[1], color);
+        crate::hud::draw_line(buffer, screen[1], screen[2], color);
+        crate::hud::draw_line(buffer, screen[2], screen[0], color);
+        drawn += 1;
+    }
+
+    drawn
+}
+
+/// [`draw_path_markers`] for the procedural HUD frame, which has no game palette in
+/// scope: the same triangles, colored with the fixed HUD preview colors.
+pub fn draw_path_markers_hud(
+    buffer: &mut RgbaBuffer,
+    viewport: &Viewport,
+    markers: &[max_core::unit_order::PathMarker],
+) -> usize {
+    let mut drawn = 0;
+
+    for marker in markers {
+        let Some(points) = max_core::unit_order::PATH_MARKER_POINTS.get(usize::from(marker.angle))
+        else {
+            continue;
+        };
+
+        let color = if marker.this_turn {
+            crate::hud::PREVIEW_COLOR
+        } else {
+            crate::hud::PREVIEW_COLOR_BLUE
+        };
+        let mut screen = [(0i32, 0i32); 3];
+
+        for (slot, offset) in screen.iter_mut().zip(points) {
+            *slot = viewport.world_to_screen(marker.x + offset.0, marker.y + offset.1);
+        }
+
+        crate::hud::draw_line(buffer, screen[0], screen[1], color);
+        crate::hud::draw_line(buffer, screen[1], screen[2], color);
+        crate::hud::draw_line(buffer, screen[2], screen[0], color);
+        drawn += 1;
+    }
+
+    drawn
+}
+
+/// Whether `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:936-951`)
+/// draws the route of this unit: the selected unit is visible to the local team,
+/// belongs to it, and is executing a move (or a build) with a path.
+pub fn draws_unit_path(unit: &max_core::unit::UnitInfo, team: max_core::team::TeamId) -> bool {
+    if unit.path.is_none() || unit.team != team || !unit.is_visible_to_team(team) {
+        return false;
+    }
+
+    matches!(
+        unit.state,
+        UnitOrderState::ExecutingOrder
+            | UnitOrderState::MoveGettingPath
+            | UnitOrderState::ReadyToExecuteOrder
+    ) || unit.orders == UnitOrder::Build
+}
+
 /// Shift of the building (`flags & BUILDING`) anchor from the cell center.
 ///
 /// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`): `x = grid*64 + 32`, then
-/// for `flags & BUILDING` — `x += (GFX_MAP_TILE_SIZE / 2) - 1`, i.e. **+31**.
-/// A 2×2 building with hotspot `(58,55)` (`MININGST`) is drawn in its 2×2
+/// for `flags & BUILDING` РІР‚вЂќ `x += (GFX_MAP_TILE_SIZE / 2) - 1`, i.e. **+31**.
+/// A 2Р“вЂ”2 building with hotspot `(58,55)` (`MININGST`) is drawn in its 2Р“вЂ”2
 /// rectangle, not half a cell up-left. Without this the mine "drifted"
 /// onto the generator cell and their sprites overlapped.
 pub const BUILDING_ANCHOR_OFFSET: i32 = (64 / 2) - 1;
@@ -49,7 +157,7 @@ pub const BUILDING_ANCHOR_OFFSET: i32 = (64 / 2) - 1;
 ///
 /// C++ `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) for the engineer and
 /// `UnitInfo::PositionInTape` (`unitinfo.cpp:4451`) for the constructor. In
-/// the `ENGINEER` sprites there are 32 frames, `CONSTRCT` — 40, so `angle + 16` always
+/// the `ENGINEER` sprites there are 32 frames, `CONSTRCT` РІР‚вЂќ 40, so `angle + 16` always
 /// falls into the working animation block.
 pub const BUILDER_WORK_FRAME_OFFSET: usize = 16;
 
@@ -58,8 +166,8 @@ pub const BUILDER_WORK_FRAME_OFFSET: usize = 16;
 /// C++ `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`): while the order is
 /// `ORDER_BUILD`/`ORDER_STATE_BUILD_IN_PROGRESS`, the constructor's frame shifts
 /// by `+8` every second tick; if `image_index + 8 >= 40`, instead of
-/// that `image_index - 16` is taken — i.e. the frames loop
-/// `+16 → +24 → +32 → +16`. For the engineer the cycle does not advance: it keeps `+16`.
+/// that `image_index - 16` is taken РІР‚вЂќ i.e. the frames loop
+/// `+16 РІвЂ вЂ™ +24 РІвЂ вЂ™ +32 РІвЂ вЂ™ +16`. For the engineer the cycle does not advance: it keeps `+16`.
 pub const BUILDER_WORK_FRAME_STEP: usize = 8;
 
 /// How many different frames are in the constructor working cycle (`+16`, `+24`, `+32`).
@@ -68,17 +176,17 @@ pub const BUILDER_WORK_FRAME_STEPS: u8 = 3;
 /// Whether the mine drill frames `1..15` are advanced.
 ///
 /// **There are no drill frames, so this cannot be enabled.** `MININGST` has 16 body
-/// frames in `MAX.RES`, but they are **eight clan variants × two state frames**:
+/// frames in `MAX.RES`, but they are **eight clan variants Р“вЂ” two state frames**:
 /// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:281-283`) sets
-/// `image_base = (team_clan - 1) * sizeof(uint16_t)`, i.e. frames `0/1`, `2/3`, …,
-/// `14/15` are the same mine body with the eight clan emblems (`image_base` — off,
-/// `+1` — on). All 16 frames have an identical alpha mask; only the palette indices
+/// `image_base = (team_clan - 1) * sizeof(uint16_t)`, i.e. frames `0/1`, `2/3`, РІР‚В¦,
+/// `14/15` are the same mine body with the eight clan emblems (`image_base` РІР‚вЂќ off,
+/// `+1` РІР‚вЂќ on). All 16 frames have an identical alpha mask; only the palette indices
 /// change (the emblem recolour and the on-state beacon/indicator slots). Frames
 /// `16..23` are complex connectors (`D_MINING.connector_image_base = 16`), not
 /// drilling particles. The DOS capture (`max-original-dasm/formats/unit-animation.md`
-/// §7.2) saw no `0 → 1 → … → 15` transition in ~118 s; the visible activity of a
-/// working mine is the palette cycle of the drill indicator (slots 21–24,
-/// `World::InitColorCycles`, §7.3). Advancing this block would repaint the mine
+/// Р’В§7.2) saw no `0 РІвЂ вЂ™ 1 РІвЂ вЂ™ РІР‚В¦ РІвЂ вЂ™ 15` transition in ~118 s; the visible activity of a
+/// working mine is the palette cycle of the drill indicator (slots 21РІР‚вЂњ24,
+/// `World::InitColorCycles`, Р’В§7.3). Advancing this block would repaint the mine
 /// with another clan's emblem, so the switch stays `false`. **Rust-port artifact, not
 /// a C++/DOS feature: do NOT enable without a separate owner decision** (oracle-true,
 /// SDL/UI C1/C2 2026-11-24).
@@ -88,23 +196,23 @@ pub const MINING_DRILL_FRAMES_ENABLED: bool = false;
 ///
 /// Three independent counters repeat three different C++ mechanisms:
 ///
-/// * `builder_step` — `UnitsManager_ProcessOrderBuild` (`+8`, `-16` when
+/// * `builder_step` РІР‚вЂќ `UnitsManager_ProcessOrderBuild` (`+8`, `-16` when
 ///   `image_index + 8 >= 40`);
-/// * `sentry_step` — `UnitsManager_ProcessOrderSentry` for units with the
-///   `ANIMATED` flag: every tick `image_index + 1`, after the last —
+/// * `sentry_step` РІР‚вЂќ `UnitsManager_ProcessOrderSentry` for units with the
+///   `ANIMATED` flag: every tick `image_index + 1`, after the last РІР‚вЂќ
 ///   `image_index = image_base`;
-/// * `turret_step` — `UnitInfo::SpinningTurretAdvanceAnimation`
+/// * `turret_step` РІР‚вЂќ `UnitInfo::SpinningTurretAdvanceAnimation`
 ///   (`unitinfo.cpp:3891`), called from `UnitsManager_ProcessOrder`
 ///   (`units_manager.cpp:3263-3266`) for `SPINNING_TURRET` units: every tick
-///   `turret_image_index + 1`, after `image_index_max` — `turret_image_base`
+///   `turret_image_index + 1`, after `image_index_max` РІР‚вЂќ `turret_image_base`
 ///   (the rotating radar of `AWAC`/`SCANNER`).
 ///
 /// There are no **factory** frames here: C++ does not advance them by time. A factory with
 /// `ORDER_BUILD` keeps frame `image_base + 1` (`UnitInfo::StartBuilding`,
-/// `unitinfo.cpp:2789`), after `SpawnNewUnit`/`CancelBuilding` — `image_base`;
+/// `unitinfo.cpp:2789`), after `SpawnNewUnit`/`CancelBuilding` РІР‚вЂќ `image_base`;
 /// the visible "blinking" of a powered-on factory comes from **palette cycles**
-/// (`World::InitColorCycles`, `world.cpp:542`: slots 9–30, 6/9/2 fps), not from
-/// sprite frames (DOS capture §7.2/§7.3 and the `MAX.RES` frames:
+/// (`World::InitColorCycles`, `world.cpp:542`: slots 9РІР‚вЂњ30, 6/9/2 fps), not from
+/// sprite frames (DOS capture Р’В§7.2/Р’В§7.3 and the `MAX.RES` frames:
 /// `TRAINHAL`/`LIGHTPLT`/`AIRPLT` have exactly 2 body frames).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameAnimation {
@@ -139,7 +247,7 @@ pub fn builder_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
 /// ```
 ///
 /// Of the buildings this flag is present for `RADAR` (`SC_UNITS`: `ANIMATED`); mines and
-/// factories do not have it — C++ does not animate them by time.
+/// factories do not have it РІР‚вЂќ C++ does not animate them by time.
 pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.flags & unit_flags::ANIMATED != 0 && unit.orders == UnitOrder::Sentry
 }
@@ -157,8 +265,8 @@ pub fn sentry_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
 ///
 /// `image_index_max` for these units is `turret_image_base + turret_image_count - 1`
 /// (`UnitsManager_DeployUnit`, `units_manager.cpp:2446-2449`), so the dish cycles
-/// through exactly the `turret_image_count` frames of `D_*`: `AWAC` — 30,
-/// `SCANNER` — 16. The flag is present on both in `SC_UNITS` (and on no building).
+/// through exactly the `turret_image_count` frames of `D_*`: `AWAC` РІР‚вЂќ 30,
+/// `SCANNER` РІР‚вЂќ 16. The flag is present on both in `SC_UNITS` (and on no building).
 pub fn spinning_turret_animation_active(unit: &max_core::unit::UnitInfo) -> bool {
     unit.flags & unit_flags::SPINNING_TURRET != 0 && unit.orders != UnitOrder::Disable
 }
@@ -166,11 +274,11 @@ pub fn spinning_turret_animation_active(unit: &max_core::unit::UnitInfo) -> bool
 /// Turret frame index of a `SPINNING_TURRET` unit for `animation.turret_step`.
 ///
 /// The C++ sequence starts at the frame written by `UpdateTurretAngle`
-/// (`turret_image_base + turret_angle`, `unitinfo.cpp:2690-2696`) — for the
+/// (`turret_image_base + turret_angle`, `unitinfo.cpp:2690-2696`) РІР‚вЂќ for the
 /// `AWAC`/`SCANNER` radars `turret_angle` stays 0, because these types never aim
-/// (no `TURRET_SPRITE`, `UpdateAngle` does not touch the turret) — then goes
+/// (no `TURRET_SPRITE`, `UpdateAngle` does not touch the turret) РІР‚вЂќ then goes
 /// `+1` per tick and wraps to `turret_image_base` after `turret_image_count`
-/// frames. `None` — the `D_*` header declares no turret frames.
+/// frames. `None` РІР‚вЂќ the `D_*` header declares no turret frames.
 pub fn spinning_turret_frame_index(
     info: &max_assets::sprite::FrameInfo,
     unit: &max_core::unit::UnitInfo,
@@ -186,16 +294,16 @@ pub fn spinning_turret_frame_index(
     Some(usize::from(info.turret_image_base) + phase)
 }
 
-/// Whether a **stationary factory** is working — C++ keeps its frame
+/// Whether a **stationary factory** is working РІР‚вЂќ C++ keeps its frame
 /// `image_base + 1` (`UnitInfo::StartBuilding`, `unitinfo.cpp:2789`).
 ///
 /// C++ does not advance factory frames by time: `TRAINHAL`/`LIGHTPLT`/`LANDPLT`/
-/// `AIRPLT`/`SHIPYARD` in `MAX.RES` have exactly two body frames (`image_base` —
-/// off, `image_base + 1` — working) and 8 connector frames. The change of
-/// `image_base` ↔ `image_base + 1` follows the order: `StartBuilding` draws
-/// `+1`, `SpawnNewUnit`/`CancelBuilding`/`PowerDown` — the base frame. The visible
+/// `AIRPLT`/`SHIPYARD` in `MAX.RES` have exactly two body frames (`image_base` РІР‚вЂќ
+/// off, `image_base + 1` РІР‚вЂќ working) and 8 connector frames. The change of
+/// `image_base` РІвЂ вЂќ `image_base + 1` follows the order: `StartBuilding` draws
+/// `+1`, `SpawnNewUnit`/`CancelBuilding`/`PowerDown` РІР‚вЂќ the base frame. The visible
 /// "blinking" comes from palette cycles (`World::InitColorCycles`), not from frames
-/// (`max-original-dasm/formats/unit-animation.md` §7).
+/// (`max-original-dasm/formats/unit-animation.md` Р’В§7).
 pub fn factory_on_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
     max_core::production::is_factory(unit.unit_type)
         && unit.orders == UnitOrder::Build
@@ -209,18 +317,18 @@ pub fn factory_on_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
 // Building connectors (`UnitInfo::RenderWithConnectors`)
 // ---------------------------------------------------------------------------
 
-/// Connector frames: the `CONNECTOR_*` bit → offset from `connector_image_base`.
+/// Connector frames: the `CONNECTOR_*` bit РІвЂ вЂ™ offset from `connector_image_base`.
 ///
 /// The literal order of `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:3151`):
-/// first north/south (two connectors each for a 2×2 building), then east/west.
-/// The offsets are the same as in C++: `CONNECTOR_NORTH_LEFT → +0`,
-/// `NORTH_RIGHT → +4`, `SOUTH_LEFT → +2`, `SOUTH_RIGHT → +6`,
-/// `EAST_TOP → +1`, `EAST_BOTTOM → +5`, `WEST_TOP → +3`, `WEST_BOTTOM → +7`.
+/// first north/south (two connectors each for a 2Р“вЂ”2 building), then east/west.
+/// The offsets are the same as in C++: `CONNECTOR_NORTH_LEFT РІвЂ вЂ™ +0`,
+/// `NORTH_RIGHT РІвЂ вЂ™ +4`, `SOUTH_LEFT РІвЂ вЂ™ +2`, `SOUTH_RIGHT РІвЂ вЂ™ +6`,
+/// `EAST_TOP РІвЂ вЂ™ +1`, `EAST_BOTTOM РІвЂ вЂ™ +5`, `WEST_TOP РІвЂ вЂ™ +3`, `WEST_BOTTOM РІвЂ вЂ™ +7`.
 ///
 /// It is these frames that the DOS capture took for the mine's "8 drilling particles"
-/// (`unit-animation.md` §7.1): `D_MINING.connector_image_base = 16`,
+/// (`unit-animation.md` Р’В§7.1): `D_MINING.connector_image_base = 16`,
 /// `connector_image_count = 8`, and in a dense base all eight bits were set
-/// at the mine. For `POWGEN` (`D_SMLBLD`: base 2, 4 connectors) — four
+/// at the mine. For `POWGEN` (`D_SMLBLD`: base 2, 4 connectors) РІР‚вЂќ four
 /// "smoke puffs", actually N/E/S/W pipes.
 pub const CONNECTOR_FRAMES: [(u16, usize); 8] = [
     (max_core::enums::CONNECTOR_NORTH_LEFT, 0),
@@ -265,10 +373,10 @@ pub fn connector_frame_indices(sprite: &crate::assets::LoadedSprite, mask: u16) 
     frames
 }
 
-/// Team building in a cell — `Access_GetTeamBuilding` (`access.cpp:2157`).
+/// Team building in a cell РІР‚вЂќ `Access_GetTeamBuilding` (`access.cpp:2157`).
 ///
 /// C++ looks for the first unit of the cell with the same team, not `ORDER_IDLE`, and
-/// `IsComplexMember()`; `Hash_MapHash` registers all four cells for 2×2 buildings,
+/// `IsComplexMember()`; `Hash_MapHash` registers all four cells for 2Р“вЂ”2 buildings,
 /// so a query by any of them finds the building.
 fn team_building_at(
     state: StateRef<'_>,
@@ -285,7 +393,7 @@ fn team_building_at(
         })
 }
 
-/// Building connector mask — **for the frame** (duplicates the simulation
+/// Building connector mask РІР‚вЂќ **for the frame** (duplicates the simulation
 /// `complex::update_connectors`).
 ///
 /// C++ computes the bits when the complex is built/rebuilt and stores them in
@@ -293,15 +401,15 @@ fn team_building_at(
 /// [`max_core::complex::update_connectors`], saved in V70 and included in the
 /// snapshot/CRC). This function repeats the same formula over the map **only for
 /// the frame**: it does not write to the state. The real mask is merged with it in
-/// [`drawn_connector_mask`] — this way the loaded V70 saves, where the bits are already set,
+/// [`drawn_connector_mask`] РІР‚вЂќ this way the loaded V70 saves, where the bits are already set,
 /// and a fresh simulation are drawn the same.
 ///
 /// Rules (exactly as in C++): the neighbor above `(gx, gy-1)` gives `NORTH_LEFT`,
-/// above-right `(gx+1, gy-1)` — `NORTH_RIGHT`; below `(gx, gy+size)` —
-/// `SOUTH_LEFT`, below-right `(gx+1, gy+size)` — `SOUTH_RIGHT`; right
-/// `(gx+size, gy)` — `EAST_TOP`, right-below `(gx+size, gy+1)` —
-/// `EAST_BOTTOM`; left `(gx-1, gy)` — `WEST_TOP`, left-below
-/// `(gx-1, gy+1)` — `WEST_BOTTOM`. 1×1 buildings (`POWGEN`) have only
+/// above-right `(gx+1, gy-1)` РІР‚вЂќ `NORTH_RIGHT`; below `(gx, gy+size)` РІР‚вЂќ
+/// `SOUTH_LEFT`, below-right `(gx+1, gy+size)` РІР‚вЂќ `SOUTH_RIGHT`; right
+/// `(gx+size, gy)` РІР‚вЂќ `EAST_TOP`, right-below `(gx+size, gy+1)` РІР‚вЂќ
+/// `EAST_BOTTOM`; left `(gx-1, gy)` РІР‚вЂќ `WEST_TOP`, left-below
+/// `(gx-1, gy+1)` РІР‚вЂќ `WEST_BOTTOM`. 1Р“вЂ”1 buildings (`POWGEN`) have only
 /// `NORTH_LEFT`/`SOUTH_LEFT`/`EAST_TOP`/`WEST_TOP`.
 pub fn connector_mask_for(state: StateRef<'_>, unit: &max_core::unit::UnitInfo) -> u16 {
     use max_core::enums::{
@@ -349,10 +457,10 @@ pub fn connector_mask_for(state: StateRef<'_>, unit: &max_core::unit::UnitInfo) 
     mask
 }
 
-/// The mask the connectors are actually drawn with: stored ∪ computed.
+/// The mask the connectors are actually drawn with: stored РІв‚¬Р„ computed.
 ///
-/// The stored mask — from the V70 save/simulation (`UnitInfo::connectors`,
-/// [`max_core::complex::update_connectors`]); the computed one — [`connector_mask_for`]
+/// The stored mask РІР‚вЂќ from the V70 save/simulation (`UnitInfo::connectors`,
+/// [`max_core::complex::update_connectors`]); the computed one РІР‚вЂќ [`connector_mask_for`]
 /// (in case the state was loaded without recomputing connectors).
 pub fn drawn_connector_mask(state: StateRef<'_>, unit: &max_core::unit::UnitInfo) -> u16 {
     unit.connectors | connector_mask_for(state, unit)
@@ -362,8 +470,8 @@ pub fn drawn_connector_mask(state: StateRef<'_>, unit: &max_core::unit::UnitInfo
 ///
 /// C++ `UnitInfo::RenderSprite`/`RenderShadow` (`unitinfo.cpp:3085/3050`)
 /// divide the frame size by `scaling_factor = 1 << (scaler_adjust + 1)`, i.e.
-/// relative to a normal frame (`scaler_adjust = 0`, divisor 2) — `1 / 2^n`:
-/// `4 → 1/16`, `3 → 1/8`, `2 → 1/4`, `1 → 1/2`, `0 → 1`. `0` — full size.
+/// relative to a normal frame (`scaler_adjust = 0`, divisor 2) РІР‚вЂќ `1 / 2^n`:
+/// `4 РІвЂ вЂ™ 1/16`, `3 РІвЂ вЂ™ 1/8`, `2 РІвЂ вЂ™ 1/4`, `1 РІвЂ вЂ™ 1/2`, `0 РІвЂ вЂ™ 1`. `0` РІР‚вЂќ full size.
 pub fn scaler_scale(scaler_adjust: u8) -> f32 {
     let scaler = scaler_adjust.min(4);
     1.0 / f32::from(1u16 << scaler)
@@ -372,10 +480,10 @@ pub fn scaler_scale(scaler_adjust: u8) -> f32 {
 /// Body frame base taking the clan into account.
 ///
 /// C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:281`): for a mine
-/// `image_base = (team_clan - 1) * sizeof(uint16_t)` — 8 clan variants of
+/// `image_base = (team_clan - 1) * sizeof(uint16_t)` РІР‚вЂќ 8 clan variants of
 /// 2 frames (off/on). The other types take the base from `D_*` (`unit.image_base`).
 /// `TeamClan::Random` (0) is not resolved to a specific clan in max_core, so
-/// for it and for saves with a zero base clan 1 (base 0) is used — as it was
+/// for it and for saves with a zero base clan 1 (base 0) is used РІР‚вЂќ as it was
 /// drawn before.
 pub fn image_base_for(unit: &max_core::unit::UnitInfo, team_clan: Option<TeamClan>) -> i16 {
     if unit.unit_type == UnitType::MiningStation && unit.image_base <= 0 {
@@ -388,10 +496,10 @@ pub fn image_base_for(unit: &max_core::unit::UnitInfo, team_clan: Option<TeamCla
     }
 }
 
-/// Body frame index: `image_base + angle`, and for a powered-on building — +1.
+/// Body frame index: `image_base + angle`, and for a powered-on building РІР‚вЂќ +1.
 ///
 /// C++ `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) with
-/// `ORDER_POWER_ON` draws `DrawSpriteFrame(image_base + 1)`, `PowerDown` —
+/// `ORDER_POWER_ON` draws `DrawSpriteFrame(image_base + 1)`, `PowerDown` РІР‚вЂќ
 /// `DrawSpriteFrame(image_base)` (`unitinfo.cpp:5132`). This is not frame-by-frame
 /// animation by time: buildings have exactly two state frames (off/
 /// on), the other frames are connectors/directions.
@@ -405,17 +513,17 @@ pub fn unit_frame_index(
 
 /// [`unit_frame_index`] with an explicit body angle.
 ///
-/// The unit sprite — `image_base + angle` (8 directions), so the frame must
+/// The unit sprite РІР‚вЂќ `image_base + angle` (8 directions), so the frame must
 /// be chosen by the angle with which the sprite actually moves on the map
 /// (`App::visual_angle`), not only by the simulation one: the visual route
 /// lags behind the simulation, and otherwise the frame would turn before the turn cell.
 ///
 /// The bridge is the exception: its frames are the **elevation states**
-/// (`UnitInfo::IsBridgeElevated` — `image_index != image_base`,
+/// (`UnitInfo::IsBridgeElevated` РІР‚вЂќ `image_index != image_base`,
 /// `unitinfo.cpp:3030`; `ORDER_STATE_ELEVATE`/`LOWER` walk `image_index` one
 /// frame at a time through the `BRIDGE` sprite). C++ renders the stored
 /// `image_index` (`UnitInfo::Render`, `unitinfo.cpp:3141`), so the raised bridge
-/// must be drawn with it — otherwise the animation never shows and the bridge
+/// must be drawn with it РІР‚вЂќ otherwise the animation never shows and the bridge
 /// looks lowered while a ship passes under.
 ///
 /// During construction C++ draws the builder working pose:
@@ -423,7 +531,7 @@ pub fn unit_frame_index(
 /// `4451` for the constructor), and `UnitsManager_ProcessOrderBuild` for the constructor
 /// additionally advances `+8` (`units_manager.cpp:2856-2868`). The sprites
 /// `ENGINEER` (32 frames) and `CONSTRCT` (40) contain these frames, so here
-/// exactly `+16` is added while the order is `ORDER_BUILD`, the state —
+/// exactly `+16` is added while the order is `ORDER_BUILD`, the state РІР‚вЂќ
 /// `ORDER_STATE_BUILD_IN_PROGRESS`. After completion (`ORDER_AWAIT`) the frame is
 /// base again: C++ returns `DrawSpriteFrame(image_index - 16)`.
 pub fn unit_frame_index_for_angle(
@@ -434,7 +542,7 @@ pub fn unit_frame_index_for_angle(
 ) -> usize {
     let last = image_count.saturating_sub(1);
 
-    // `UnitInfo::IsBridgeElevated` — the stored elevation frame.
+    // `UnitInfo::IsBridgeElevated` РІР‚вЂќ the stored elevation frame.
     if max_core::unit_order::is_bridge_elevated(unit) {
         return usize::try_from(unit.image_index.max(0))
             .unwrap_or(0)
@@ -442,12 +550,18 @@ pub fn unit_frame_index_for_angle(
     }
 
     let base = usize::try_from(image_base.max(0)).unwrap_or(0);
-    let mut index = base.saturating_add(usize::from(angle % 8));
+    // C++ `UnitInfo::UnitInfo` (`unitinfo.cpp:285`): `image_index = image_base + angle`
+    // and `UnitInfo::Render` draws exactly `GetImageIndex()`. For every 8-direction
+    // unit `angle` is `0..7`; projectiles keep the **16-direction** firing angle
+    // (`D_ROCKET` 16 frames, `D_ALNMISSL` 32), so the angle must not be masked to
+    // three bits РІР‚вЂќ `image_base + angle % 8` drew a missile fired south (8) with the
+    // north frame. `min(last)` still clips a type with fewer frames than the angle.
+    let mut index = base.saturating_add(usize::from(angle));
 
     // C++ `UnitsManager_ProcessOrderPowerOn` (`units_manager.cpp:2945`) and
     // `UnitInfo::StartBuilding` (`unitinfo.cpp:2789`) draw `image_base + 1`
     // (a powered-on building/working factory), `PowerDown`/`SpawnNewUnit`/
-    // `CancelBuilding` — `image_base`.
+    // `CancelBuilding` РІР‚вЂќ `image_base`.
     if index < last && (unit.orders == UnitOrder::PowerOn || factory_on_frame_active(unit)) {
         index += 1;
     }
@@ -465,7 +579,7 @@ pub fn unit_frame_index_for_angle(
 /// Whether the shot flash (recoil) is active.
 ///
 /// C++ `UnitInfo::PrepareFire` (`unitinfo.cpp:4709`) sets
-/// `firing_recoil_frames` (3; ×5 for `ANTIAIR`, ×2 for `SP_FLAK`/`FASTBOAT`;
+/// `firing_recoil_frames` (3; Р“вЂ”5 for `ANTIAIR`, Р“вЂ”2 for `SP_FLAK`/`FASTBOAT`;
 /// 8 for `COMMANDO`/`INFANTRY`) and draws the firing frame; each
 /// `UnitInfo::ProgressFire` (`:4824`) decrements the counter and at zero returns
 /// the normal frame. The counter is a state field, so the flash is deterministic and
@@ -478,8 +592,8 @@ pub fn unit_frame_index_for_angle(
 /// the counter. The V70 save, however, carries a single `recoil_delay` byte that
 /// `UnitInfo::FileLoad` (`unitinfo.cpp:2461-2473`) restores straight into
 /// `firing_recoil_frames`; the scenario mission files hold arbitrary non-zero values
-/// there (1…255) for units outside the fire sequence. Deriving the frame from the
-/// counter alone — the port does not draw the saved `image_index` — painted the shot
+/// there (1РІР‚В¦255) for units outside the fire sequence. Deriving the frame from the
+/// counter alone РІР‚вЂќ the port does not draw the saved `image_index` РІР‚вЂќ painted the shot
 /// flash over those units from the first frame of a mission. The order/state gate is
 /// what keeps the flash inside the actual firing sequence, exactly as in C++.
 pub fn firing_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
@@ -491,15 +605,15 @@ pub fn firing_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
 
 /// The **body** frame during recoil (`UnitInfo::PrepareFire`).
 ///
-/// * `COMMANDO`/`INFANTRY` — the special 8-frame C++ queue: `DrawSpriteFrame(
-///   unit_angle + 104)`, then every `ProgressFire` — `image_index + 8`
+/// * `COMMANDO`/`INFANTRY` РІР‚вЂќ the special 8-frame C++ queue: `DrawSpriteFrame(
+///   unit_angle + 104)`, then every `ProgressFire` РІР‚вЂќ `image_index + 8`
 ///   (unitinfo.cpp:4732-4742/4831-4832), i.e. the frame
-///   `104 + angle + 8·(8 − firing_recoil_frames)`;
-/// * other units without a turret (`flags & TURRET_SPRITE == 0`) —
+///   `104 + angle + 8Р’В·(8 РІв‚¬вЂ™ firing_recoil_frames)`;
+/// * other units without a turret (`flags & TURRET_SPRITE == 0`) РІР‚вЂќ
 ///   `DrawSpriteFrame(unit_angle + firing_image_base)`;
 /// * units with a turret keep the body unchanged (C++ draws only the turret).
 ///
-/// `None` — the body is drawn with the normal frame ([`unit_frame_index_with_animation`]).
+/// `None` РІР‚вЂќ the body is drawn with the normal frame ([`unit_frame_index_with_animation`]).
 pub fn firing_body_frame_index(
     info: &max_assets::sprite::FrameInfo,
     unit: &max_core::unit::UnitInfo,
@@ -512,7 +626,7 @@ pub fn firing_body_frame_index(
     let angle = usize::from(body_angle % 8);
 
     if matches!(unit.unit_type, UnitType::Infiltrator | UnitType::Infantry) {
-        // `unit_angle + 104`, then +8 for each recoil tick (8 → 0).
+        // `unit_angle + 104`, then +8 for each recoil tick (8 РІвЂ вЂ™ 0).
         let step = 8usize.saturating_sub(usize::from(unit.firing_recoil_frames));
         return Some(104 + angle + 8 * step);
     }
@@ -532,12 +646,12 @@ pub fn firing_body_frame_index(
 ///
 /// C++ `DrawSpriteTurretFrame(turret_angle + firing_image_base)`, and for
 /// `ANTIAIR`/`SP_FLAK`/`FASTBOAT` each `ProgressFire` additionally
-/// toggles `turret_image_index ± 8` (`unitinfo.cpp:4828-4830`), so the
+/// toggles `turret_image_index Р’В± 8` (`unitinfo.cpp:4828-4830`), so the
 /// flash alternates with the normal turret frame. The sign of the first toggle
 /// depends on the parity of the initial counter (15 for `ANTIAIR`, 6 for
-/// `SP_FLAK`/`FASTBOAT`) — here it is computed from `firing_recoil_frames`.
+/// `SP_FLAK`/`FASTBOAT`) РІР‚вЂќ here it is computed from `firing_recoil_frames`.
 ///
-/// `None` — the unit has no turret/firing frames, the turret is drawn with the normal frame.
+/// `None` РІР‚вЂќ the unit has no turret/firing frames, the turret is drawn with the normal frame.
 pub fn firing_turret_frame_index(
     info: &max_assets::sprite::FrameInfo,
     unit: &max_core::unit::UnitInfo,
@@ -560,7 +674,7 @@ pub fn firing_turret_frame_index(
     );
 
     let shift = if special {
-        // Initial `PrepareFire` counter: 3 × 5 for ANTIAIR, 3 × 2 for the others.
+        // Initial `PrepareFire` counter: 3 Р“вЂ” 5 for ANTIAIR, 3 Р“вЂ” 2 for the others.
         let initial = if unit.unit_type == UnitType::AntiAir {
             15
         } else {
@@ -568,7 +682,7 @@ pub fn firing_turret_frame_index(
         };
 
         if initial % 2 == 1 {
-            // ANTIAIR: 15 → 14 (even) toggles to firing+8.
+            // ANTIAIR: 15 РІвЂ вЂ™ 14 (even) toggles to firing+8.
             if recoil % 2 == 0 {
                 8
             } else {
@@ -602,7 +716,7 @@ pub fn missile_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32
 /// Pixel anchor of a trail effect unit (rocket smoke/torpedo bubbles).
 ///
 /// C++ `Paths_DrawMissile` (`airpath.cpp:392-404`) puts three particles into
-/// the vacated cell and spreads the **draw zones** over 0/⅓/⅔ of the segment
+/// the vacated cell and spreads the **draw zones** over 0/РІвЂ¦вЂњ/РІвЂ¦вЂќ of the segment
 /// (`OffsetDrawZones`); `unit->x/y` remain the cell center. The port
 /// keeps the spread in `x/y` (see `unit_order::spawn_missile_trail`), so
 /// the effect renderer takes them directly.
@@ -616,8 +730,8 @@ pub fn effect_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)
 
 /// Unit frame taking the builder frame-by-frame animation into account (`build_step`).
 ///
-/// `build_step` — number of the constructor working cycle frame (0, 1, 2) from
-/// [`crate::App::build_animation_step`]; `0` — the construction start frame `+16`, as
+/// `build_step` РІР‚вЂќ number of the constructor working cycle frame (0, 1, 2) from
+/// [`crate::App::build_animation_step`]; `0` РІР‚вЂќ the construction start frame `+16`, as
 /// `DrawSpriteFrame(image_index + 16)` in C++. Then the C++ cycle repeats
 /// `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2856`):
 ///
@@ -628,7 +742,7 @@ pub fn effect_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)
 ///
 /// The exact C++ formula is applied to the current index (not to `angle+16+8n`),
 /// so the sequence wraps exactly as in the original:
-/// `16 → 24 → 32 → 16` (for angle 0). `ENGINEER` has no cycle — frame `+16`
+/// `16 РІвЂ вЂ™ 24 РІвЂ вЂ™ 32 РІвЂ вЂ™ 16` (for angle 0). `ENGINEER` has no cycle РІР‚вЂќ frame `+16`
 /// is constant, like `DrawSpriteFrame(image_index + 16)` in `StartBuilding`.
 pub fn unit_frame_index_for_animation(
     unit: &max_core::unit::UnitInfo,
@@ -653,11 +767,11 @@ pub fn unit_frame_index_for_animation(
 
 /// Unit frame with all C++ frame-by-frame animations (builder and `ANIMATED`).
 ///
-/// `image_count` — the number of body sprite frames (the index bound);
-/// `sentry_frames` — `Unit::GetFrameInfo().image_count` (`D_*`), i.e.
+/// `image_count` РІР‚вЂќ the number of body sprite frames (the index bound);
+/// `sentry_frames` РІР‚вЂќ `Unit::GetFrameInfo().image_count` (`D_*`), i.e.
 /// how many frames the animation block occupies. `RADAR` has 20 frames in the sprite, but
 /// `D_RADAR.image_count = 16` (the last 4 are connectors), and C++
-/// `image_index_max` counts by `FrameInfo` — so the animation must
+/// `image_index_max` counts by `FrameInfo` РІР‚вЂќ so the animation must
 /// wrap at 16, not at 20.
 ///
 /// Order as in C++:
@@ -671,9 +785,9 @@ pub fn unit_frame_index_for_animation(
 ///
 /// `effects = false` disables item 3, like `settings["effects"]` in C++.
 ///
-/// **Building frames are not advanced by time** (DOS capture §7.2,
+/// **Building frames are not advanced by time** (DOS capture Р’В§7.2,
 /// `max-original-dasm/formats/unit-animation.md`): factories have two state
-/// frames, the visible blinking of a powered-on factory — palette cycles
+/// frames, the visible blinking of a powered-on factory РІР‚вЂќ palette cycles
 /// (`World::InitColorCycles`), not the sprite. Therefore there is no factory frame
 /// counter here: `dt = 0` and `dt > 0` give the same body frame, and only
 /// the palette blinks ([`max_render::palette::ColorCycles`]).
@@ -691,7 +805,7 @@ pub fn unit_frame_index_with_animation(
 
     // `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`) moves
     // the effect unit's `image_index`, and `UnitInfo::Render` draws exactly
-    // `GetImageIndex()`. Explosions have no phases/rotations — the frame is taken directly.
+    // `GetImageIndex()`. Explosions have no phases/rotations РІР‚вЂќ the frame is taken directly.
     if unit.flags & unit_flags::EXPLODING != 0 {
         return usize::try_from(unit.image_index.max(0))
             .unwrap_or(0)
@@ -714,12 +828,12 @@ pub fn unit_frame_index_with_animation(
         let base = usize::try_from(image_base.max(0)).unwrap_or(0);
         let frames = sentry_frames.max(1);
 
-        // C++ `ProcessOrderSentry` (`units_manager.cpp:3029-3041`): start —
+        // C++ `ProcessOrderSentry` (`units_manager.cpp:3029-3041`): start РІР‚вЂќ
         // `image_base + angle` (from the `UnitInfo` constructor), then `+1` until
-        // `image_index_max`, after the last frame — `image_base` again
+        // `image_index_max`, after the last frame РІР‚вЂќ `image_base` again
         // (not `image_base + angle`). This is exactly
         // `base + ((angle + step) % image_count)`; for `RADAR` (angle = 0,
-        // `D_RADAR.image_count = 16`) — 16 rotation frames.
+        // `D_RADAR.image_count = 16`) РІР‚вЂќ 16 rotation frames.
         let phase = (usize::from(angle % 8) + animation.sentry_step as usize) % frames;
         index = base + phase;
     }
@@ -727,11 +841,11 @@ pub fn unit_frame_index_with_animation(
     index.min(last)
 }
 
-/// World point of the sprite anchor: the center of the visual cell, for buildings — +31.
+/// World point of the sprite anchor: the center of the visual cell, for buildings РІР‚вЂќ +31.
 ///
 /// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`) and `Render`
 /// (`unitinfo.cpp:3138`) draw at `unit.x/unit.y`; for `BUILDING` this is the center of
-/// the 2×2 rectangle, for the others — the cell center.
+/// the 2Р“вЂ”2 rectangle, for the others РІР‚вЂќ the cell center.
 pub fn unit_anchor_world(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) -> (i32, i32) {
     let mut x = (visual.0 * 64.0 + 32.0).round() as i32;
     let mut y = (visual.1 * 64.0 + 32.0).round() as i32;
@@ -750,10 +864,10 @@ pub struct RenderStats {
     /// How many map cells were drawn.
     pub map_tiles: u32,
     /// How many resource marker pixels were drawn ([`Self::resource_icon_cells`]
-    /// — how many cells).
+    /// РІР‚вЂќ how many cells).
     pub resource_icons: u32,
     /// How many survey markers were drawn (`Survey_RenderMarkers`,
-    /// `survey.cpp:123`): every **surveyed** cell of the view gets one — `*MK1..16`
+    /// `survey.cpp:123`): every **surveyed** cell of the view gets one РІР‚вЂќ `*MK1..16`
     /// for a known deposit, `*MK0` for an explored cell without a resource.
     pub resource_icon_cells: u32,
     /// How many units were drawn with sprites.
@@ -762,12 +876,15 @@ pub struct RenderStats {
     pub units_marker: usize,
     /// How many `BLDMRK*` construction markers were drawn (`DrawMap_RenderBuildMarker`).
     pub build_markers: usize,
+    /// How many route arrows of the selected unit were drawn
+    /// (`GameManager_RenderScanRangeIndicators` в†’ `Paths_DrawMarker`).
+    pub route_markers: usize,
     /// How many selection indicators were drawn (`GameManager_DrawUnitSelector`).
     pub selector_units: usize,
     /// How many units were skipped (not in the lists/not visible to the camera).
     pub units_skipped: usize,
-    /// How many pixels of the 3×3 button overlays (GRID/HITS/AMMO/COLORS/STATUS/
-    /// NAMES/RANGE/SCAN) were drawn — [`crate::overlays`].
+    /// How many pixels of the 3Р“вЂ”3 button overlays (GRID/HITS/AMMO/COLORS/STATUS/
+    /// NAMES/RANGE/SCAN) were drawn РІР‚вЂќ [`crate::overlays`].
     pub overlay_pixels: u32,
 }
 
@@ -781,18 +898,18 @@ impl RenderStats {
 /// What was drawn for one unit (diagnostics and type coverage tests).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UnitSpriteStats {
-    /// Body pixels (together with the shadow — it only darkens what is already
+    /// Body pixels (together with the shadow РІР‚вЂќ it only darkens what is already
     /// drawn, so on an empty frame this is exactly the body).
     pub unit: u32,
-    /// Turret/gun pixels; 0 — the type has no turret or flag.
+    /// Turret/gun pixels; 0 РІР‚вЂќ the type has no turret or flag.
     pub turret: u32,
-    /// Connector pixels (`UnitInfo::RenderWithConnectors`): for a mine — 8
-    /// frames of `D_MINING.connector_image_base = 16`, for `POWGEN` — 4 pipes
-    /// `D_SMLBLD.connector_image_base = 2`. 0 — no connectors/no neighbors.
+    /// Connector pixels (`UnitInfo::RenderWithConnectors`): for a mine РІР‚вЂќ 8
+    /// frames of `D_MINING.connector_image_base = 16`, for `POWGEN` РІР‚вЂќ 4 pipes
+    /// `D_SMLBLD.connector_image_base = 2`. 0 РІР‚вЂќ no connectors/no neighbors.
     pub connectors: u32,
 }
 
-/// Draws a unit with sprites: shadow → body → connectors → turret/gun.
+/// Draws a unit with sprites: shadow РІвЂ вЂ™ body РІвЂ вЂ™ connectors РІвЂ вЂ™ turret/gun.
 ///
 /// Repeats C++ `UnitInfo::RenderWithConnectors`/`Render`: body with
 /// `zoom/64`, shadow with the `shadow_offset` shift, complex connectors as separate
@@ -803,7 +920,7 @@ pub struct UnitSpriteStats {
 /// call [`draw_unit_sprites_with_base`] with
 /// `image_base_for(unit, clan)`, so the mine shows its clan.
 ///
-/// Returns `None` if there is no loaded sprite/frame for the type — then the
+/// Returns `None` if there is no loaded sprite/frame for the type РІР‚вЂќ then the
 /// caller draws the team marker (the only such type in the game data is
 /// `MASTER`, see [`crate::assets::UNIT_TYPES_WITHOUT_SPRITE_DATA`]).
 ///
@@ -854,9 +971,9 @@ pub fn draw_unit_sprites_with_base(
 
 /// [`draw_unit_sprites_with_base`] with an explicit body angle for the frame.
 ///
-/// `body_angle` — the direction with which the sprite **currently** moves on the map
+/// `body_angle` РІР‚вЂќ the direction with which the sprite **currently** moves on the map
 /// (in the window loop this is `App::visual_angle`). The body takes the frame
-/// `image_base + body_angle`, and the turret — its own `turret_image_base +
+/// `image_base + body_angle`, and the turret РІР‚вЂќ its own `turret_image_base +
 /// turret_angle` with the `angle_offsets[body_angle]` shift, as in
 /// `UnitInfo::RenderWithConnectors` (`unitinfo.cpp:4838`). The other
 /// callers (HUD portrait, tests) pass `unit.angle`.
@@ -886,11 +1003,11 @@ pub fn draw_unit_sprites_with_angle(
     )
 }
 
-/// `UnitInfo::ShakeAir` (`unitinfo.cpp:4636-4678`) — the hovering flight bob.
+/// `UnitInfo::ShakeAir` (`unitinfo.cpp:4636-4678`) РІР‚вЂќ the hovering flight bob.
 ///
 /// C++ calls `Animate()` once per order tick for airborne units (`HOVERING`);
 /// `ShakeAir` advances the 6-bit `moved` counter and, on every **even** tick,
-/// applies `OffsetDrawZones(±DIRECTION_OFFSETS[moved / 8])`:
+/// applies `OffsetDrawZones(Р’В±DIRECTION_OFFSETS[moved / 8])`:
 ///
 /// ```text
 /// distance = moved / 8;                       // 0..7, one direction per 8 ticks
@@ -904,7 +1021,7 @@ pub fn draw_unit_sprites_with_angle(
 /// offset` (`unitinfo.cpp:4666-4667`), i.e. its absolute motion is three times
 /// the hull's.
 ///
-/// Returns the hull offset in map pixels for `moved` (`0..64`) — the same
+/// Returns the hull offset in map pixels for `moved` (`0..64`) РІР‚вЂќ the same
 /// absolute offset that the cumulative `OffsetDrawZones` calls produce.
 pub fn shake_air_offset(moved: u8) -> (i32, i32) {
     let distance = usize::from(moved / 8) % max_core::geo::DIRECTION_OFFSETS.len();
@@ -943,14 +1060,14 @@ pub fn bobbed_shadow_offset(presentation: &UnitPresentation, bob: (i32, i32)) ->
     )
 }
 
-/// Shadow shift handed to the sprite renderer — `UnitInfo::RenderShadow`
+/// Shadow shift handed to the sprite renderer РІР‚вЂќ `UnitInfo::RenderShadow`
 /// (`unitinfo.cpp:3067`: `point -= shadow_offset`).
 ///
 /// [`UnitPresentation::shadow_offset`] stores the C++ value verbatim (`(-64, -64)`
 /// for a hovering aircraft, see `max_core::unit_order::air_shadow_offset`), while
 /// [`SpriteRenderer::draw_unit_scaled`] places the shadow at `anchor + offset`;
 /// hence the sign flip. A flying aircraft therefore gets its shadow one cell
-/// down-right of the hull — the original's "airborne" look that the port was
+/// down-right of the hull РІР‚вЂќ the original's "airborne" look that the port was
 /// missing (defect 1 of the manual 1.2 run: aircraft drawn like parked units).
 pub fn shadow_render_offset(presentation: &UnitPresentation) -> (i32, i32) {
     (
@@ -961,18 +1078,18 @@ pub fn shadow_render_offset(presentation: &UnitPresentation) -> (i32, i32) {
 
 /// [`draw_unit_sprites_with_angle`] with the unit frame clock.
 ///
-/// `animation` — [`FrameAnimation`] from [`crate::App::unit_animation`]:
-/// the builder (`+16 → +24 → +32`), the `ANIMATED` building
+/// `animation` РІР‚вЂќ [`FrameAnimation`] from [`crate::App::unit_animation`]:
+/// the builder (`+16 РІвЂ вЂ™ +24 РІвЂ вЂ™ +32`), the `ANIMATED` building
 /// (`ProcessOrderSentry`) and the `SPINNING_TURRET` radar
 /// (`SpinningTurretAdvanceAnimation`: AWAC/SCANNER). Mines and factories have
 /// **no** time-based frame cycle
 /// (they hold the C++ state frame; the blinking is the palette). The HUD and tests
 /// pass [`FrameAnimation::default()`] (the static C++ frame, as with `dt = 0`).
 ///
-/// `effects` — `settings["effects"]`; `false` disables frame-by-frame animations,
+/// `effects` РІР‚вЂќ `settings["effects"]`; `false` disables frame-by-frame animations,
 /// as in C++.
 ///
-/// The palette — the game system palette (`Assets::system_palette`); the map
+/// The palette РІР‚вЂќ the game system palette (`Assets::system_palette`); the map
 /// passes a snapshot with palette cycles here (`App::animated_palette`),
 /// so that the building beacons blink. Connectors are drawn by the `connectors` mask
 /// (see [`connector_frame_indices`]).
@@ -996,7 +1113,7 @@ pub fn draw_unit_sprites_with_animation(
     // `image_base = 8` (`unitinfo.cpp:2825-2829`), i.e. the **second** block of
     // eight hull frames of the same `D_*`/`S_*` resource; the simulation field is
     // `0` while the boat is submerged. `SUBMARNE`/`CLNTRANS` sprites have exactly
-    // 16 frames, so the base is used verbatim — adding another 8 addressed frames
+    // 16 frames, so the base is used verbatim РІР‚вЂќ adding another 8 addressed frames
     // 16..23 that do not exist and the surfaced unit vanished from the frame.
     // The frame inside the block is still derived from the order state.
     // `FrameInfo` (`D_*`) defines the length of the animation frame block; for RADAR it is 16,
@@ -1018,7 +1135,7 @@ pub fn draw_unit_sprites_with_animation(
         );
 
         // Shot flash (`UnitInfo::PrepareFire`/`ProgressFire`): the frame
-        // `firing_image_base` (or 104+… for infantry) is held for the whole recoil.
+        // `firing_image_base` (or 104+РІР‚В¦ for infantry) is held for the whole recoil.
         if let Some(info) = sprite.frame_info.as_ref() {
             if let Some(fire) = firing_body_frame_index(info, unit, body_angle) {
                 index = fire.min(sprite.sheet.len().saturating_sub(1));
@@ -1045,7 +1162,7 @@ pub fn draw_unit_sprites_with_animation(
     // `UnitPresentation::shadow_offset` keeps the C++ sign convention (a hovering
     // aircraft has `(-64, -64)`, see `max_core::unit_order::air_shadow_offset`), and
     // the sprite renderer places the shadow at `anchor + offset`, so the value is
-    // negated here — the shadow of a flying aircraft lands one cell **down-right**
+    // negated here РІР‚вЂќ the shadow of a flying aircraft lands one cell **down-right**
     // of the hull, which is the original's "airborne" look.
     let shadow_offset = shadow_render_offset(presentation);
     let mut stats = UnitSpriteStats::default();
@@ -1054,10 +1171,10 @@ pub fn draw_unit_sprites_with_animation(
         .draw_unit_scaled(frame, sprite_frame, shadow, anchor, shadow_offset, zoom)
         .drawn;
 
-    // Complex connectors — `UnitInfo::RenderWithConnectors`
+    // Complex connectors РІР‚вЂќ `UnitInfo::RenderWithConnectors`
     // (`unitinfo.cpp:3157`): each has its own frame `connector_image_base + n`,
     // drawn at the same anchor as the body (the frame hotspot defines
-    // the side), the shadow — from the same `S_*` as the body.
+    // the side), the shadow РІР‚вЂќ from the same `S_*` as the body.
     stats.connectors = 0;
 
     for index in connector_frame_indices(sprite, connectors) {
@@ -1075,7 +1192,7 @@ pub fn draw_unit_sprites_with_animation(
         }
     }
 
-    // Turret/gun — a separate frame over the body with the shift
+    // Turret/gun РІР‚вЂќ a separate frame over the body with the shift
     // `angle_offsets[body_angle]` (`UnitInfo::RenderWithConnectors`).
     if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
         // During recoil the turret is drawn with the firing frame
@@ -1086,7 +1203,7 @@ pub fn draw_unit_sprites_with_animation(
             .and_then(|info| firing_turret_frame_index(info, unit))
             .filter(|index| *index < sprite.sheet.len());
 
-        // `SPINNING_TURRET` — the rotating radar (`AWAC`/`SCANNER`):
+        // `SPINNING_TURRET` РІР‚вЂќ the rotating radar (`AWAC`/`SCANNER`):
         // `UnitInfo::SpinningTurretAdvanceAnimation` (`unitinfo.cpp:3891`) walks
         // `turret_image_index` through the `turret_image_count` frames of `D_*`.
         // The stored C++ frame is `turret_image_base + turret_angle`; the port
@@ -1133,7 +1250,7 @@ pub fn draw_unit_sprites_with_animation(
     Some(stats)
 }
 
-/// Team marker colors (fallback without sprites): the original team order —
+/// Team marker colors (fallback without sprites): the original team order РІР‚вЂќ
 /// `RED, GREEN, BLUE, GRAY, ALIEN`.
 pub const MARKER_COLORS: [Rgba; 5] = [
     Rgba::rgb(224, 48, 48),
@@ -1146,13 +1263,13 @@ pub const MARKER_COLORS: [Rgba; 5] = [
 /// Blink period of the selection indicator (`GameManager_MarkerColor`).
 ///
 /// C++ (`game_manager.cpp:1189-1192`): `GameManager_MarkerColor ^= 0xFF` every
-/// `TIMER_FPS_TO_MS(24) * 5` = 42 ms × 5 = **210 ms**. The color is the palette index
+/// `TIMER_FPS_TO_MS(24) * 5` = 42 ms Р“вЂ” 5 = **210 ms**. The color is the palette index
 /// `0xFF` (white) or `0x00` (black); `DrawUnitSelector` draws three nested
 /// frames with alternation (`color ^= 0xFF` after each).
 pub const UNIT_SELECTOR_BLINK_SECONDS: f32 = 0.210;
 
-/// Palette for the selection/construction markers without assets: index `0xFF` — white,
-/// `0x00` — black.
+/// Palette for the selection/construction markers without assets: index `0xFF` РІР‚вЂќ white,
+/// `0x00` РІР‚вЂќ black.
 fn fallback_selector_palette() -> PaletteRgba {
     let mut palette = [[0u8, 0, 0, 255]; 256];
     palette[0xFF] = [255, 255, 255, 255];
@@ -1160,7 +1277,7 @@ fn fallback_selector_palette() -> PaletteRgba {
 }
 
 /// Pixel segment with clipping by the buffer (only horizontal or
-/// vertical — there are no other `draw_line` in `GameManager_DrawUnitSelector`).
+/// vertical РІР‚вЂќ there are no other `draw_line` in `GameManager_DrawUnitSelector`).
 fn selector_line(frame: &mut RgbaBuffer, x0: i32, y0: i32, x1: i32, y1: i32, color: Rgba) -> u32 {
     let mut painted = 0;
 
@@ -1183,14 +1300,14 @@ fn selector_line(frame: &mut RgbaBuffer, x0: i32, y0: i32, x1: i32, y1: i32, col
     painted
 }
 
-/// Selected unit indicator — `GameManager_DrawUnitSelector`
+/// Selected unit indicator РІР‚вЂќ `GameManager_DrawUnitSelector`
 /// (`game_manager.cpp:744-836`), called from `DrawMap_RenderUnit`
 /// (`drawmap.cpp:813-833`).
 ///
-/// `anchor` — the screen center of the sprite (`UnitInfo::x/y`, i.e. the cell center,
-/// for `BUILDING` — `+31`, for the builder — with the tape shift). `is_building`
+/// `anchor` РІР‚вЂќ the screen center of the sprite (`UnitInfo::x/y`, i.e. the cell center,
+/// for `BUILDING` РІР‚вЂќ `+31`, for the builder РІР‚вЂќ with the tape shift). `is_building`
 /// selects the corner length: C++ `size1` = 32 for a building and 16 for the others, the frame
-/// step `size2` = 128/64, the anchor "half-size" — 64/32; everything is converted to
+/// step `size2` = 128/64, the anchor "half-size" РІР‚вЂќ 64/32; everything is converted to
 /// screen pixels as `value * 64 / Gfx_MapScalingFactor` =
 /// `value * zoom / 64`.
 ///
@@ -1257,16 +1374,16 @@ pub fn draw_unit_selector(
 }
 
 impl<D: Dispatcher> App<D> {
-    /// Draws a frame of the current state into the `screen_width × screen_height` buffer.
+    /// Draws a frame of the current state into the `screen_width Р“вЂ” screen_height` buffer.
     pub fn render_frame(&self) -> RgbaBuffer {
         self.render_frame_with_stats().0
     }
 
     /// The same as [`App::render_frame`], plus drawing statistics.
     ///
-    /// If the window chrome (`FRAMEPIC`) is loaded and the frame size is 640×480, the
-    /// 1:1 window is drawn as in the original: background panels from `MAX.RES`, and the map — in the
-    /// [`max_render::layout::MAIN_MAP`] area (7×7 cells). Otherwise — the former
+    /// If the window chrome (`FRAMEPIC`) is loaded and the frame size is 640Р“вЂ”480, the
+    /// 1:1 window is drawn as in the original: background panels from `MAX.RES`, and the map РІР‚вЂќ in the
+    /// [`max_render::layout::MAIN_MAP`] area (7Р“вЂ”7 cells). Otherwise РІР‚вЂќ the former
     /// full-screen mode.
     pub fn render_frame_with_stats(&self) -> (RgbaBuffer, RenderStats) {
         let (width, height) = self.viewport().screen();
@@ -1285,7 +1402,7 @@ impl<D: Dispatcher> App<D> {
         let mut frame = RgbaBuffer::filled(width, height, style.unknown);
         let mut stats = RenderStats::default();
 
-        // Surface: if the planet data is loaded — real 64×64 tiles from
+        // Surface: if the planet data is loaded РІР‚вЂќ real 64Р“вЂ”64 tiles from
         // `.WRL` (as in the original), otherwise the procedural `TileStyle` placeholder.
         match self.assets() {
             Some(assets) if !assets.terrain.is_empty() => {
@@ -1299,21 +1416,21 @@ impl<D: Dispatcher> App<D> {
 
         self.draw_grid_overlay(&mut frame, self.viewport(), &mut stats);
         self.draw_units(&mut frame, self.viewport(), &mut stats);
-        // 3×3 buttons of the left panel (`game_manager.cpp`): COLORS/STATUS/HITS/
-        // AMMO/NAMES — over the sprites, RANGE/SCAN — circles over everything.
+        // 3Р“вЂ”3 buttons of the left panel (`game_manager.cpp`): COLORS/STATUS/HITS/
+        // AMMO/NAMES РІР‚вЂќ over the sprites, RANGE/SCAN РІР‚вЂќ circles over everything.
         self.draw_toggle_overlays(&mut frame, self.viewport(), &mut stats);
-        // Resource icons — over units/buildings (`GameManager_RenderSurveyIndicator`).
+        // Resource icons РІР‚вЂќ over units/buildings (`GameManager_RenderSurveyIndicator`).
         self.draw_resource_icons(&mut frame, self.viewport(), &mut stats);
-        // Construction markers — last, like `DrawMap_RedrawDirtyZones`.
+        // Construction markers РІР‚вЂќ last, like `DrawMap_RedrawDirtyZones`.
         self.draw_build_markers(&mut frame, self.viewport(), &mut stats);
-        // Construction site ghost (`ORDER_STATE_SELECT_SITE`) — over the units.
+        // Construction site ghost (`ORDER_STATE_SELECT_SITE`) РІР‚вЂќ over the units.
         self.draw_build_site_ghost(&mut frame, self.viewport(), &mut stats);
 
         // `BuildMenu` in full-screen mode (without `FRAMEPIC`).
         self.draw_build_menu(&mut frame);
-        // Save/load window (P3) — modal, like `AbstractMenu` in C++.
+        // Save/load window (P3) РІР‚вЂќ modal, like `AbstractMenu` in C++.
         self.draw_save_load(&mut frame);
-        // Quick save/load `OKCancelMenu` (S1.3) — over the game.
+        // Quick save/load `OKCancelMenu` (S1.3) РІР‚вЂќ over the game.
         self.draw_save_confirm(&mut frame);
         // Upgrades screen (P6).
         self.draw_upgrade_menu(&mut frame);
@@ -1321,18 +1438,18 @@ impl<D: Dispatcher> App<D> {
         self.draw_research_menu(&mut frame);
         // Mine extraction allocation dialog (`AllocMenu`, `ALLOCFRM`).
         self.draw_alloc_menu(&mut frame);
-        // X-FER window (`TransferMenu`, `XFERPIC`) — over the map.
+        // X-FER window (`TransferMenu`, `XFERPIC`) РІР‚вЂќ over the map.
         self.draw_transfer_menu(&mut frame);
         // Selected unit command menu (`GameManager_PopupButtons`).
         self.draw_unit_menu(&mut frame);
-        // Unit statistics window (`UnitStats_Menu`) — the full-screen `STATS`.
+        // Unit statistics window (`UnitStats_Menu`) РІР‚вЂќ the full-screen `STATS`.
         self.draw_unit_stats(&mut frame);
         // `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
         // Building self-destruct dialog (UnitsManager_SelfDestructMenu).
         self.draw_self_destruct(&mut frame);
-        // Pause dialog (PauseMenu_Menu -> DialogMenu, Alt+P) — over everything.
+        // Pause dialog (PauseMenu_Menu -> DialogMenu, Alt+P) РІР‚вЂќ over everything.
         self.draw_pause_dialog(&mut frame);
 
         if self.hud().hint.is_some() {
@@ -1343,7 +1460,7 @@ impl<D: Dispatcher> App<D> {
         (frame, stats)
     }
 
-    /// `MESSAGE_BOX_INFO` message window above the map — `MessageManager_
+    /// `MESSAGE_BOX_INFO` message window above the map РІР‚вЂќ `MessageManager_
     /// DrawMessage` (`message_manager.cpp:144`): the selected unit hint
     /// (`GameManager_DrawUnitStatusMessage`).
     fn draw_status_message(&self, frame: &mut RgbaBuffer, area: PixelRect) {
@@ -1385,7 +1502,7 @@ impl<D: Dispatcher> App<D> {
 
         // The map is drawn into its own buffer the size of the map area: this way it
         // clips itself by the `MAIN_MAP` edges (as in the original), while the camera and zoom
-        // remain shared with the application. `map_viewport` — the same camera that
+        // remain shared with the application. `map_viewport` РІР‚вЂќ the same camera that
         // mouse input uses (`App::map_viewport`), otherwise the clicks drift.
         let area = max_render::layout::MAIN_MAP;
         let viewport = self.map_viewport();
@@ -1404,39 +1521,38 @@ impl<D: Dispatcher> App<D> {
 
         self.draw_grid_overlay(&mut map, &viewport, &mut stats);
         self.draw_units(&mut map, &viewport, &mut stats);
-        // 3×3 buttons of the left panel: overlays over the sprites, like
+        // 3Р“вЂ”3 buttons of the left panel: overlays over the sprites, like
         // `DrawMap_RenderUnitDisplays`/`GameManager_RenderScanRangeIndicators`.
         self.draw_toggle_overlays(&mut map, &viewport, &mut stats);
-        // `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991-995`) —
+        // `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991-995`) РІР‚вЂќ
         // **after** the units, so the resource icons lie over buildings.
         self.draw_resource_icons(&mut map, &viewport, &mut stats);
-        // Construction markers — around the selected builder/building
+        // Construction markers РІР‚вЂќ around the selected builder/building
         // (`DrawMap_RenderBuildMarker`); C++ draws them in
         // `DrawMap_RedrawDirtyZones` last, over the resource icons.
         self.draw_build_markers(&mut map, &viewport, &mut stats);
-        // Construction site ghost — into the map area, like `GameManager_TempTape`
+        // Construction site ghost РІР‚вЂќ into the map area, like `GameManager_TempTape`
         // (`ORDER_STATE_SELECT_SITE`), before the cell is confirmed.
         self.draw_build_site_ghost(&mut map, &viewport, &mut stats);
-        // Route preview (the LMB move-order green line) — over the units, like
-        // `GameManager_DrawMapView`: in windowed mode `render_hud` is not
-        // called (the panels are drawn by `FRAMEPIC`), so without this line
-        // the preview was visible only in the full-screen fallback.
-        if let Some(preview) = &self.hud.preview {
-            crate::hud::draw_path_preview(&mut map, &viewport, preview);
-        }
+        // Route preview вЂ” over the units, like `GameManager_RenderScanRangeIndicators`
+        // (`game_manager.cpp:936-951`): `path->Draw()` of the selected unit. In
+        // windowed mode `render_hud` is not called (the panels are drawn by
+        // `FRAMEPIC`), so without this the arrows were visible only in the
+        // full-screen fallback.
+        self.draw_selected_unit_path(&mut map, &viewport, &mut stats);
         crate::chrome::blit_map(&mut frame, &map);
 
         // Panels over the map: buttons, portrait, statistics, grid, zoom,
-        // coordinates — like `GameManager_Draw*` in the original.
+        // coordinates РІР‚вЂќ like `GameManager_Draw*` in the original.
         if let Some(panels) = self.assets().and_then(|assets| assets.panels.as_ref()) {
             panels.draw(&mut frame, self);
         }
 
-        // Selected builder hint — the `MESSAGE_BOX_INFO` message window
+        // Selected builder hint РІР‚вЂќ the `MESSAGE_BOX_INFO` message window
         // at the start of the map area (`MessageManager_DrawMessage`).
         self.draw_status_message(&mut frame, area);
 
-        // `BuildMenu` — a modal screen over the frame (C++ `AbstractMenu`
+        // `BuildMenu` РІР‚вЂќ a modal screen over the frame (C++ `AbstractMenu`
         // closes the main menu: `GameManager_DisableMainMenu`).
         self.draw_build_menu(&mut frame);
         // Save/load window (P3).
@@ -1447,20 +1563,20 @@ impl<D: Dispatcher> App<D> {
         self.draw_upgrade_menu(&mut frame);
         // Research screen (P7) and the help window over it.
         self.draw_research_menu(&mut frame);
-        // Mine extraction allocation dialog — the full-screen `ALLOCFRM`.
+        // Mine extraction allocation dialog РІР‚вЂќ the full-screen `ALLOCFRM`.
         self.draw_alloc_menu(&mut frame);
-        // X-FER window (`XFERPIC`) — over the map and panels.
+        // X-FER window (`XFERPIC`) РІР‚вЂќ over the map and panels.
         self.draw_transfer_menu(&mut frame);
-        // Selected unit command menu — over the map and panels.
+        // Selected unit command menu РІР‚вЂќ over the map and panels.
         self.draw_unit_menu(&mut frame);
-        // Unit statistics window (`UnitStats_Menu`) — the full-screen `STATS`.
+        // Unit statistics window (`UnitStats_Menu`) РІР‚вЂќ the full-screen `STATS`.
         self.draw_unit_stats(&mut frame);
         // `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
         // Building self-destruct dialog (UnitsManager_SelfDestructMenu).
         self.draw_self_destruct(&mut frame);
-        // Pause dialog (PauseMenu_Menu -> DialogMenu, Alt+P) — over everything.
+        // Pause dialog (PauseMenu_Menu -> DialogMenu, Alt+P) РІР‚вЂќ over everything.
         self.draw_pause_dialog(&mut frame);
 
         (frame, stats)
@@ -1485,7 +1601,7 @@ impl<D: Dispatcher> App<D> {
 
     /// Draws the open unit statistics window (`UnitStats_Menu`, `STATS`).
     ///
-    /// The window covers the whole 640×480 frame, so it is drawn after the map
+    /// The window covers the whole 640Р“вЂ”480 frame, so it is drawn after the map
     /// and the panels; the help window (`?`/`Help`) is drawn after it, exactly
     /// like `HelpMenu_Menu("STATS_SETUP")` from `UnitStatsMenu::Run`.
     pub(crate) fn draw_unit_stats(&self, frame: &mut RgbaBuffer) {
@@ -1550,8 +1666,8 @@ impl<D: Dispatcher> App<D> {
 
     /// Draws the open help window over the frame (P7).
     ///
-    /// The palette — the window palette (`FRAMEPIC`), like the other modal windows;
-    /// if there is no chrome — the menu palette.
+    /// The palette РІР‚вЂќ the window palette (`FRAMEPIC`), like the other modal windows;
+    /// if there is no chrome РІР‚вЂќ the menu palette.
     pub(crate) fn draw_help(&self, frame: &mut RgbaBuffer) {
         let (Some(help), Some(assets)) = (self.help_screen(), self.assets()) else {
             return;
@@ -1613,7 +1729,7 @@ impl<D: Dispatcher> App<D> {
         );
     }
 
-    /// Draws the pause dialog (`PauseMenu_Menu` → `DialogMenu`, `Alt+P`).
+    /// Draws the pause dialog (`PauseMenu_Menu` РІвЂ вЂ™ `DialogMenu`, `Alt+P`).
     pub(crate) fn draw_pause_dialog(&self, frame: &mut RgbaBuffer) {
         let Some(dialog) = self.pause_dialog() else {
             return;
@@ -1642,8 +1758,8 @@ impl<D: Dispatcher> App<D> {
     /// `DrawMap_RenderMapTiles(..., GameManager_DisplayButtonGrid)`
     /// (`game_manager.cpp:1177`): the cell grid over the tiles and **under** the units.
     ///
-    /// `complex_grid_overlay` — the `settings` setting (`settings.cpp`), not ported
-    /// in the port; the C++ default is taken (`0` — a simple grid
+    /// `complex_grid_overlay` РІР‚вЂќ the `settings` setting (`settings.cpp`), not ported
+    /// in the port; the C++ default is taken (`0` РІР‚вЂќ a simple grid
     /// in one color, `DrawMap_RenderSimpleGridOverlay`).
     fn draw_grid_overlay(
         &self,
@@ -1662,7 +1778,7 @@ impl<D: Dispatcher> App<D> {
         stats.overlay_pixels += crate::overlays::draw_grid(frame, self, viewport, &palette, false);
     }
 
-    /// 3×3 button overlays (`DrawMap_RenderUnitDisplays`,
+    /// 3Р“вЂ”3 button overlays (`DrawMap_RenderUnitDisplays`,
     /// `GameManager_RenderScanRangeIndicators`): COLORS/STATUS/HITS/AMMO/NAMES and
     /// the RANGE/SCAN circles.
     fn draw_toggle_overlays(
@@ -1698,7 +1814,7 @@ impl<D: Dispatcher> App<D> {
                 stats.units_skipped += 1;
                 continue;
             };
-            // Visibility and drawing order — by the visual position: while
+            // Visibility and drawing order РІР‚вЂќ by the visual position: while
             // the sprite walks the route, the simulation cell may already be
             // ahead (`update_visual_units`).
             let (visual_x, visual_y) = self
@@ -1718,7 +1834,7 @@ impl<D: Dispatcher> App<D> {
             // Visibility (fog of war); the debug `--no-fow` mode draws every unit
             // (`GameManager_AllVisible` observation mode). While the frame follows
             // the visual anchors, a foreign unit must also be inside the scan of an
-            // own unit **at its visual cell** — the radar of a moving unit reveals
+            // own unit **at its visual cell** РІР‚вЂќ the radar of a moving unit reveals
             // the enemy when the sprite arrives (`App::presented_visible`).
             if !self.no_fow() && !self.presented_visible(unit) {
                 continue;
@@ -1737,7 +1853,7 @@ impl<D: Dispatcher> App<D> {
         }
 
         // Selection indicator palette: `0xFF`/`0x00` indices of the game window
-        // (`GameManager_MarkerColor`). Without assets — white/black.
+        // (`GameManager_MarkerColor`). Without assets РІР‚вЂќ white/black.
         let selector_palette = match self.assets() {
             Some(assets) => window_palette(assets),
             None => fallback_selector_palette(),
@@ -1747,15 +1863,15 @@ impl<D: Dispatcher> App<D> {
             let Some(unit) = self.state_ref().unit(visible[index]) else {
                 continue;
             };
-            // Visual position — a fractional cell walking the route
-            // (see `App::update_visual_units`). The anchor — the cell center in world
-            // pixels (for `BUILDING` buildings — +31, like `UnitInfo::SetPosition`),
+            // Visual position РІР‚вЂќ a fractional cell walking the route
+            // (see `App::update_visual_units`). The anchor РІР‚вЂќ the cell center in world
+            // pixels (for `BUILDING` buildings РІР‚вЂќ +31, like `UnitInfo::SetPosition`),
             // then the camera converts it to screen coordinates.
             let (grid_x, grid_y) = self
                 .visual_position(visible[index])
                 .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
             // Rocket/torpedo trail particles (`Paths_DrawMissile`) and the
-            // projectiles themselves (`AirPath::Execute` — pixel step): C++ spreads
+            // projectiles themselves (`AirPath::Execute` РІР‚вЂќ pixel step): C++ spreads
             // only the draw zones, the port keeps this in pixel `x/y`.
             let (world_x, world_y) = effect_pixel_anchor(unit)
                 .or_else(|| missile_pixel_anchor(unit))
@@ -1763,11 +1879,11 @@ impl<D: Dispatcher> App<D> {
             // Flight bob (`UnitInfo::ShakeAir`, `unitinfo.cpp:4636-4678`): a
             // hovering aircraft sways by up to two pixels along a rotating
             // direction, the shadow by three times as much (see `hover_offset`).
-            // `dt = 0` (QA/headless) — zero, the goldens do not drift.
+            // `dt = 0` (QA/headless) РІР‚вЂќ zero, the goldens do not drift.
             let (bob_x, bob_y) = self.hover_offset(visible[index]);
             // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
-            // the constructor shifts by 8 px per tick toward the 2×2 tape center, 32 px in total
-            // (half a cell) — to the center of the construction site. This is a frame
+            // the constructor shifts by 8 px per tick toward the 2Р“вЂ”2 tape center, 32 px in total
+            // (half a cell) РІР‚вЂќ to the center of the construction site. This is a frame
             // shift of the sprite, the builder grid does not change.
             let (tape_offset_x, tape_offset_y) =
                 crate::buildsite::tape_center_offset(self.state_ref(), unit);
@@ -1783,27 +1899,27 @@ impl<D: Dispatcher> App<D> {
                     .get(unit.team.0 as usize)
                     .map(|team| team.team_clan),
             );
-            // Body angle — of the current visual segment (`visual_angle`):
+            // Body angle РІР‚вЂќ of the current visual segment (`visual_angle`):
             // the simulation turns the unit at the route cell, while the sprite walks
             // it at the real speed; otherwise the frame would "run ahead" and the unit
             // would face sideways while moving straight.
             let body_angle = self.visual_angle(visible[index]).unwrap_or(unit.angle);
-            // Frame-by-frame animation of the builder and `ANIMATED` buildings — the
+            // Frame-by-frame animation of the builder and `ANIMATED` buildings РІР‚вЂќ the
             // visual clock of `App` (real `dt`), not part of the snapshot/CRC. Mines and
             // factories are **not** advanced by time (oracle `unitinfo.cpp:2768` holds
-            // `image_base + 1`; DOS capture §7.2): their blinking comes from the palette
+            // `image_base + 1`; DOS capture Р’В§7.2): their blinking comes from the palette
             // cycles. `dt = 0` (QA/headless) gives the static C++ frame (`+16` for the
-            // builder, the base/powered-on building frame) — so the goldens do not drift.
+            // builder, the base/powered-on building frame) РІР‚вЂќ so the goldens do not drift.
             let animation = self.unit_animation(visible[index]);
             // Complex connectors (`UnitInfo::RenderWithConnectors`): the stored
-            // mask from the save ∪ computed by neighbors (see [`drawn_connector_mask`]).
+            // mask from the save РІв‚¬Р„ computed by neighbors (see [`drawn_connector_mask`]).
             let connectors = drawn_connector_mask(self.state_ref(), unit);
             // C++ `settings["effects"]` (`settings.cpp:128`): `effects = false`
             // disables frame-by-frame sprite animations (`UnitInfo::Animate`,
-            // `units_manager.cpp:2857/3030`) — the frame is static.
+            // `units_manager.cpp:2857/3030`) РІР‚вЂќ the frame is static.
             let effects = self.preferences.effects;
             let zoom = self.unit_render_zoom(visible[index], viewport.zoom());
-            // Presentation fields (shadow/brightness) — a separate table
+            // Presentation fields (shadow/brightness) РІР‚вЂќ a separate table
             // `GameState::presentation` (phase 5.3/B), not `UnitInfo`.
             let mut presentation = self
                 .state_ref()
@@ -1815,12 +1931,11 @@ impl<D: Dispatcher> App<D> {
             // `offset`, so the stored value takes `-2 * offset` and the shadow ends
             // up three times as far from its base as the hull.
             if bob_x != 0 || bob_y != 0 {
-                presentation.shadow_offset =
-                    bobbed_shadow_offset(&presentation, (bob_x, bob_y));
+                presentation.shadow_offset = bobbed_shadow_offset(&presentation, (bob_x, bob_y));
             }
             let drawn = self.assets().and_then(|assets| {
                 // Frame palette: a snapshot with palette cycles or the original
-                // system palette (`dt = 0` — no changes).
+                // system palette (`dt = 0` РІР‚вЂќ no changes).
                 let palette = self.animated_palette().unwrap_or(&assets.system_palette);
                 draw_unit_sprites_with_animation(
                     assets,
@@ -1847,7 +1962,7 @@ impl<D: Dispatcher> App<D> {
             }
 
             // `GameManager_DrawUnitSelector` (`game_manager.cpp:744`) from
-            // `DrawMap_RenderUnit` (`drawmap.cpp:813-833`): for the selected unit —
+            // `DrawMap_RenderUnit` (`drawmap.cpp:813-833`): for the selected unit РІР‚вЂќ
             // three nested corner frames with the blinking `GameManager_MarkerColor` color.
             if self.hud().selected == Some(visible[index]) {
                 if draw_unit_selector(
@@ -1869,7 +1984,7 @@ impl<D: Dispatcher> App<D> {
     ///
     /// C++ spawns a real `LRGTAPE`/`SMLTAPE` tape for the time of
     /// `ORDER_STATE_SELECT_SITE` and moves it after the cursor; the port draws **the same
-    /// sprite** without writing into the match state — the order is not issued before LMB, and
+    /// sprite** without writing into the match state РІР‚вЂќ the order is not issued before LMB, and
     /// the unit counter/CRC/save do not change.
     fn draw_build_site_ghost(
         &self,
@@ -1886,12 +2001,53 @@ impl<D: Dispatcher> App<D> {
         }
     }
 
+    /// Route arrows of the selected unit вЂ” `GameManager_RenderScanRangeIndicators`
+    /// (`game_manager.cpp:936-951`): `unit->path->Draw(unit, window)` for the own,
+    /// visible, moving selected unit.
+    ///
+    /// Green markers are reachable this turn, blue ones in the following turns
+    /// ([`draw_path_markers`]). While the move order has been clicked but the next
+    /// tick has not applied it yet (no simulation path), the HUD preview line of
+    /// [`crate::hud::draw_path_preview`] is shown as a fallback.
+    fn draw_selected_unit_path(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        let Some(assets) = self.assets() else {
+            return;
+        };
+
+        let state = self.state_ref();
+        let team = state.player_team();
+
+        let mut markers = Vec::new();
+
+        if let Some(unit) = self.hud().selected.and_then(|id| state.unit(id)) {
+            if draws_unit_path(unit, team) {
+                markers = state.path_markers(unit);
+            }
+        }
+
+        if !markers.is_empty() {
+            let palette = window_palette(assets);
+            stats.route_markers = draw_path_markers(frame, viewport, &markers, &palette);
+            return;
+        }
+
+        // Fallback: the clicked order that the next tick has not applied yet.
+        if let Some(preview) = &self.hud.preview {
+            crate::hud::draw_path_preview(frame, viewport, preview);
+        }
+    }
+
     /// `Access_IsSurveyorOverlayActive` (`access.cpp:341-351`): the selected
-    /// unit — own team, type `SURVEYOR` and order **not** `ORDER_IDLE`.
+    /// unit РІР‚вЂќ own team, type `SURVEYOR` and order **not** `ORDER_IDLE`.
     ///
     /// In C++ this is cached in `GameManager_IsSurveyorSelected` on unit selection
     /// (`GameManager_MenuUnitSelect`, `game_manager.cpp:7165`); the port computes
-    /// the value from the current state — the same thing, but without a "stuck" flag
+    /// the value from the current state РІР‚вЂќ the same thing, but without a "stuck" flag
     /// if the scout managed to become `ORDER_IDLE` while already selected.
     pub fn selected_surveyor_active(&self) -> bool {
         self.hud()
@@ -1907,21 +2063,21 @@ impl<D: Dispatcher> App<D> {
     /// `GameManager_RenderSurveyIndicator` (`game_manager.cpp:991`):
     /// `GameManager_DisplayButtonSurvey || GameManager_IsSurveyorSelected`.
     ///
-    /// The SURVEY button (`hud.panels.survey` — `GameManager_DisplayButtonSurvey`,
+    /// The SURVEY button (`hud.panels.survey` РІР‚вЂќ `GameManager_DisplayButtonSurvey`,
     /// `game_manager.cpp:3985`) and the selected scout enable showing resource
     /// icons; without them the icons are not drawn at all.
     pub fn survey_overlay_active(&self) -> bool {
         self.hud().panels.survey || self.selected_surveyor_active()
     }
 
-    /// Current selection indicator color — `GameManager_MarkerColor`
+    /// Current selection indicator color РІР‚вЂќ `GameManager_MarkerColor`
     /// (`game_manager.cpp:222/1191`): `0xFF` (white) or `0x00` (black),
     /// toggled every [`UNIT_SELECTOR_BLINK_SECONDS`] (210 ms).
     pub fn marker_color_index(&self) -> u8 {
         self.marker_color_index
     }
 
-    /// Survey markers — `DrawMap_RenderSurveyDisplay` (`drawmap.cpp:1065`) +
+    /// Survey markers РІР‚вЂќ `DrawMap_RenderSurveyDisplay` (`drawmap.cpp:1065`) +
     /// `Survey_RenderMarkers` (`survey.cpp:123`).
     ///
     /// C++ (`game_manager.cpp:991-995`): `GameManager_RenderSurveyIndicator`
@@ -1961,7 +2117,7 @@ impl<D: Dispatcher> App<D> {
             viewport,
             &style,
             self.state_ref().player_team().0,
-            // `GameManager_MaxSurvey` — a cheat (`CHEAT_CODE_MAXSURVEY`), not implemented
+            // `GameManager_MaxSurvey` РІР‚вЂќ a cheat (`CHEAT_CODE_MAXSURVEY`), not implemented
             // in the port: we show only surveyed cells.
             false,
         );
@@ -1970,14 +2126,14 @@ impl<D: Dispatcher> App<D> {
         stats.resource_icon_cells += cells;
     }
 
-    /// Blinking construction markers `BLDMRK1..5` — `DrawMap_RenderBuildMarker`
+    /// Blinking construction markers `BLDMRK1..5` РІР‚вЂќ `DrawMap_RenderBuildMarker`
     /// (`drawmap.cpp:353`) + `DrawMap_RedrawUnit` (`drawmap.cpp:304`).
     ///
     /// Drawn when an own team unit is selected in `ORDER_IDLE` (a completed
     /// building waits for a manager) or a mobile builder in
     /// `ORDER_BUILD`/`ORDER_STATE_UNIT_READY` (completed and waiting for the order to leave
     /// the site): the symbols are placed on the cells around the **parent** of the selected
-    /// unit (`Access_IsAccessible` filters occupied ones), and a click on such a cell —
+    /// unit (`Access_IsAccessible` filters occupied ones), and a click on such a cell РІР‚вЂќ
     /// a regular move order, which in this state gives
     /// `ORDER_ACTIVATE` (`game_manager.cpp:6879`). The hint `_(276c)` directly
     /// refers to these symbols.
@@ -2022,7 +2178,7 @@ impl<D: Dispatcher> App<D> {
             let centre = (rect.ulx + rect.width / 2, rect.uly + rect.height / 2);
 
             // `WindowManager_RescaleSimpleImage(image, Gfx_MapScalingFactor)`:
-            // 62×62 — the full 64 px cell frame, scale `zoom/64`.
+            // 62Р“вЂ”62 РІР‚вЂќ the full 64 px cell frame, scale `zoom/64`.
             if max_render::map_render::blit_simple_image(frame, image, &palette, centre, zoom, 64)
                 > 0
             {
@@ -2037,9 +2193,9 @@ impl<D: Dispatcher> App<D> {
 ///
 /// C++ condition: `unit->team == PlayerTeam` and `(order == ORDER_IDLE ||
 /// (order == ORDER_BUILD && state == ORDER_STATE_UNIT_READY && !(flags &
-/// STATIONARY)))`, the parent exists and it is not `AIRTRANS`. The start —
+/// STATIONARY)))`, the parent exists and it is not `AIRTRANS`. The start РІР‚вЂќ
 /// `(parent.x - 1, parent.y + 1)`, for a building `(+1 in y, limit = 3)`, then
-/// four directions (`N, E, S, W` — `direction += 2`) for `limit` steps,
+/// four directions (`N, E, S, W` РІР‚вЂќ `direction += 2`) for `limit` steps,
 /// cumulatively; only passable cells get into the list
 /// (`Access_IsAccessible(... AccessModifier_SameClassBlocks)`).
 pub fn build_marker_cells(
@@ -2099,7 +2255,7 @@ pub fn build_marker_cells(
 /// Window system palette for simple images (resource markers, cursors).
 ///
 /// In game this is the `FRAMEPIC` palette (C++ sets it as the system one when loading the chrome);
-/// without the chrome — `COLOR.PAL` as a reasonable fallback.
+/// without the chrome РІР‚вЂќ `COLOR.PAL` as a reasonable fallback.
 pub fn window_palette(assets: &crate::assets::Assets) -> PaletteRgba {
     if let Some(chrome) = assets.chrome.as_ref() {
         return UiPalette::from_big_image(&chrome.frame).palette_rgba();
@@ -2141,7 +2297,7 @@ fn render_resources(
         )
     } else {
         // Simplified rendering (without `MAX.RES` data): resource dots are drawn
-        // always — this is a debug map, not a game frame.
+        // always РІР‚вЂќ this is a debug map, not a game frame.
         (
             max_render::map_render::render_resources_into(frame, map, viewport, style),
             0,
@@ -2149,8 +2305,8 @@ fn render_resources(
     }
 }
 
-/// 6×6 unit marker at the `anchor` point (cell center), scaled with
-/// the map (`zoom`, 64 — 1:1).
+/// 6Р“вЂ”6 unit marker at the `anchor` point (cell center), scaled with
+/// the map (`zoom`, 64 РІР‚вЂќ 1:1).
 fn draw_marker(frame: &mut RgbaBuffer, anchor: (i32, i32), team: u8, zoom: u32) {
     let color = MARKER_COLORS
         .get(usize::from(team))
@@ -2165,7 +2321,7 @@ fn draw_marker(frame: &mut RgbaBuffer, anchor: (i32, i32), team: u8, zoom: u32) 
     }
 }
 
-/// Writes a [`RgbaBuffer`] into a binary PPM (`P6`) — viewing a frame without SDL.
+/// Writes a [`RgbaBuffer`] into a binary PPM (`P6`) РІР‚вЂќ viewing a frame without SDL.
 ///
 /// PPM was chosen because the format is three header lines and raw RGB, without
 /// codecs and dependencies: a frame from a headless run can be opened by any

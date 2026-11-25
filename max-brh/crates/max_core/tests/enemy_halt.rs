@@ -231,3 +231,88 @@ fn a_foreign_team_spotting_a_unit_does_not_ping_the_player() {
         "чужой скан не рисует сообщение игроку: {reported:?}"
     );
 }
+
+/// Effects are **not units**: `UnitInfo::RadarPing` (`unitinfo.cpp:3711-3717`)
+/// announces a spotted enemy only when
+/// `orders != ORDER_BUILD/CLEAR && (!(flags & STATIONARY) || mine) && (flags & SELECTABLE)`.
+///
+/// Explosions, rocket smoke and torpedo bubbles are `STATIONARY` without
+/// `SELECTABLE` in `SC_UNITS`, so the original never showed «Enemy Land Explosion
+/// in radar range». The port announced every `SpotByTeam` of the player's team —
+/// every shot and every blast produced a bogus «unit "explosion" in radar range»
+/// message (the playtest defect).
+#[test]
+fn spotted_effects_do_not_ping_the_radar() {
+    use max_core::enums::unit_flags::STATIONARY;
+    use max_core::universe::GameEvent;
+
+    for effect in [
+        UnitType::LandExplosion,
+        UnitType::AirExplosion,
+        UnitType::SeaExplosion,
+        UnitType::BuildingExplosion,
+        UnitType::HitExplosion,
+        UnitType::RocketSmoke,
+        UnitType::TorpedoBubble,
+    ] {
+        let mut state = state();
+        // An own unit with scan coverage creates the heat map the reveal runs on.
+        let watcher = state
+            .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 20), 0)
+            .expect("танк");
+        let effect_id = state.spawn_unit(effect, TeamId::GREEN, Point::new(20, 21), 0);
+
+        let Some(effect_id) = effect_id else {
+            // Some effect types are rejects for `spawn_unit` in a bare state;
+            // the flags check below is then the only probe available.
+            let flags = max_core::access::unit_type_flags(effect);
+            assert!(flags & STATIONARY != 0, "{effect:?}: STATIONARY");
+            assert_eq!(
+                flags & max_core::enums::unit_flags::SELECTABLE,
+                0,
+                "{effect:?}: эффекты не SELECTABLE"
+            );
+            continue;
+        };
+
+        let mut effect_unit = state.snapshot().unit(effect_id).cloned().expect("эффект");
+        effect_unit.visible_to_team = [false; 5];
+        state.write_unit(effect_id, effect_unit);
+
+        // The reveal path: the own unit scans the effect's cell.
+        state.update_map_status(watcher, true);
+        state.spot_by_team(effect_id, TeamId::RED);
+
+        let mut events = state.subscribe();
+        state.tick();
+        let reported = events.drain(&mut state);
+
+        assert!(
+            !reported.iter().any(
+                |event| matches!(event, GameEvent::EnemySpotted { unit } if *unit == effect_id)
+            ),
+            "{effect:?}: эффект не должен давать radar ping: {reported:?}"
+        );
+    }
+}
+
+/// The filter must not silence real units: a visible enemy tank still pings.
+#[test]
+fn a_spotted_enemy_tank_still_pings_the_radar() {
+    use max_core::universe::GameEvent;
+
+    let (mut state, _, enemy) = setup_two_units(true);
+    let mut events = state.subscribe();
+
+    state.spot_by_team(enemy, TeamId::RED);
+    state.tick();
+
+    let reported = events.drain(&mut state);
+
+    assert!(
+        reported
+            .iter()
+            .any(|event| matches!(event, GameEvent::EnemySpotted { unit } if *unit == enemy)),
+        "боевой юнит обязан дать radar ping: {reported:?}"
+    );
+}

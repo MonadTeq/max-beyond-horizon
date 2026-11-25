@@ -32,7 +32,7 @@ fn damage_formula_matches_cpp() {
     assert_eq!(
         attacker.base_values.get_attribute(ATTRIB_ATTACK),
         16,
-            "атрибуты танка из таблицы SC_ATTRI"
+        "атрибуты танка из таблицы SC_ATTRI"
     );
     assert_eq!(target.base_values.get_attribute(ATTRIB_ARMOR), 10);
     assert_eq!(get_attack_damage(&attacker, &target, 0), 6);
@@ -182,6 +182,90 @@ fn missile_prepare_fire_transfers_live_attack_to_particle() {
     let particle_unit = state.unit(particle).unwrap();
     assert_eq!(particle_unit.live_attack, 7);
     assert_eq!(state.order_data(particle).fire_on, Point::new(9, 9));
+}
+
+/// `UnitInfo::PrepareFire` (`unitinfo.cpp:4749-4788`): the projectile carries the
+/// **16-direction** firing angle (`UnitsManager_GetFiringAngle`,
+/// `units_manager.cpp:1767`) — `D_ROCKET`/`D_TORPEDO` have 16 frames, `D_ALNMISSL`
+/// 32. Masking it to the 8 hull directions (`angle & 0x07`) drew a missile fired
+/// south (8) with the north frame: "missiles fly backwards".
+#[test]
+fn a_projectile_keeps_the_sixteen_direction_firing_angle() {
+    // (dx, dy, expected firing angle) — the four cardinal directions and a diagonal.
+    for (dx, dy, expected_angle) in [(4, 0, 4), (0, 4, 8), (-4, 0, 12), (0, -4, 0), (4, 4, 6)] {
+        let mut state = state();
+        let launcher = state
+            .spawn_unit(
+                UnitType::MissileCrawler,
+                TeamId::RED,
+                Point::new(10, 10),
+                MOBILE_LAND_UNIT | SELECTABLE,
+            )
+            .unwrap();
+        let fire_on = Point::new(10 + dx, 10 + dy);
+
+        let mut data = state.order_data(launcher);
+        data.fire_on = fire_on;
+        state.set_order_data(launcher, data);
+
+        let mut unit = state.unit(launcher).unwrap().clone();
+        prepare_fire(&mut state, &mut unit);
+
+        let particle = state
+            .unit_list(UnitListKind::Particle)
+            .iter()
+            .copied()
+            .find(|id| {
+                state
+                    .unit(*id)
+                    .map(|unit| unit.parent_unit == Some(launcher))
+                    .unwrap_or(false)
+            })
+            .expect("particle");
+        let particle_unit = state.unit(particle).unwrap();
+
+        assert_eq!(
+            i32::from(particle_unit.angle),
+            expected_angle,
+            "снаряд в {fire_on:?}: направление выстрела, не маскированное до 8"
+        );
+    }
+
+    // `ALNMISSL` doubles the firing angle (`unitinfo.cpp:4783-4785`, 32 frames).
+    let mut state = state();
+    let plane = state
+        .spawn_unit(
+            UnitType::AlienPlane,
+            TeamId::GREEN,
+            Point::new(10, 10),
+            MOBILE_LAND_UNIT | SELECTABLE,
+        )
+        .unwrap();
+    let mut data = state.order_data(plane);
+    data.fire_on = Point::new(10, 14);
+    state.set_order_data(plane, data);
+
+    let mut unit = state.unit(plane).unwrap().clone();
+    prepare_fire(&mut state, &mut unit);
+
+    let particle = state
+        .unit_list(UnitListKind::Particle)
+        .iter()
+        .copied()
+        .find(|id| {
+            state
+                .unit(*id)
+                .map(|unit| unit.parent_unit == Some(plane))
+                .unwrap_or(false)
+        })
+        .expect("particle");
+    let particle_unit = state.unit(particle).unwrap();
+    assert_eq!(particle_unit.unit_type, UnitType::AlienMissile);
+    assert_eq!(
+        i32::from(particle_unit.angle),
+        16,
+        "ALNMISSL: угол выстрела ×2 (8 → 16), кадров в D_ALNMISSL — 32"
+    );
 }
 
 #[test]
@@ -430,12 +514,12 @@ fn damage_covers_all_weapon_classes() {
         assert_eq!(
             attacker.base_values.get_attribute(ATTRIB_ATTACK),
             attack,
-                "{unit_type:?} attack from SC_ATTRI"
+            "{unit_type:?} attack from SC_ATTRI"
         );
         assert_eq!(
             get_attack_damage(&attacker, &target, 0),
             attack - armor,
-                "{unit_type:?}"
+            "{unit_type:?}"
         );
     }
 
@@ -478,7 +562,7 @@ fn area_attack_potential_boundaries() {
     assert_eq!(
         get_attack_damage(&attacker, &target, 1),
         5,
-            "1 is not scaled"
+        "1 is not scaled"
     );
     assert_eq!(get_attack_damage(&attacker, &target, 2), 1, "15*3/4=11");
     assert_eq!(get_attack_damage(&attacker, &target, 3), 1, "15*2/4=7");
@@ -487,7 +571,7 @@ fn area_attack_potential_boundaries() {
     assert_eq!(
         get_attack_damage(&attacker, &target, 6),
         ATTACK_DAMAGE_MIN,
-            "negative scaled attack"
+        "negative scaled attack"
     );
     // Negative potential is not an area distance — left unscaled.
     assert_eq!(get_attack_damage(&attacker, &target, -1), 5);
@@ -551,7 +635,7 @@ fn should_attack_restrictions() {
         let target = state.unit(ground).unwrap();
         assert!(
             !should_attack(&state, state.unit(anti_air).unwrap(), target),
-                "{order:?}/{order_state:?} must not react"
+            "{order:?}/{order_state:?} must not react"
         );
     }
     state.unit_mut(anti_air).unwrap().orders = UnitOrder::Sentry;
@@ -607,7 +691,7 @@ fn fog_of_war_blocks_reaction_until_spotted() {
         for raw in 1..=4u8 {
             assert!(
                 !stealth.is_visible_to_team(TeamId(raw)),
-                    "{unit_type:?} visible to team {raw}"
+                "{unit_type:?} visible to team {raw}"
             );
         }
     }
@@ -624,7 +708,7 @@ fn fog_of_war_blocks_reaction_until_spotted() {
         for raw in 1..=4u8 {
             assert!(
                 !ordinary.is_visible_to_team(TeamId(raw)),
-                    "{unit_type:?} visible to team {raw} without AllVisible"
+                "{unit_type:?} visible to team {raw} without AllVisible"
             );
         }
     }
@@ -654,7 +738,7 @@ fn zone_walker_boundaries() {
         for point in &cells {
             assert!(
                 point.x >= 0 && point.y >= 0 && point.x < MAP_WIDTH && point.y < MAP_HEIGHT,
-                    "cell outside the map: {point:?} from {grid:?}"
+                "cell outside the map: {point:?} from {grid:?}"
             );
         }
         let mut sorted = cells.clone();
@@ -682,7 +766,7 @@ fn angle_sectors_cover_all_directions() {
         assert_eq!(
             get_target_angle(-dx, -dy),
             (angle + 4) & 7,
-                "opposite target ({dx},{dy})"
+            "opposite target ({dx},{dy})"
         );
     }
 
@@ -701,7 +785,7 @@ fn angle_sectors_cover_all_directions() {
         assert_eq!(
             get_firing_angle(-dx, -dy),
             (angle + 8) & 15,
-                "opposite firing ({dx},{dy})"
+            "opposite firing ({dx},{dy})"
         );
     }
 
@@ -736,46 +820,26 @@ fn stealth_chance_boundaries() {
     // turns(TANK) = 4: (experience * 96 + 640) / 4, capped at 90.
     saboteur.experience = 0;
     assert_eq!(
-        get_stealth_chance_percentage(
-            &state,
-            &saboteur,
-            &target_unit,
-            UnitOrder::AwaitDisableUnit
-        ),
+        get_stealth_chance_percentage(&state, &saboteur, &target_unit, UnitOrder::AwaitDisableUnit),
         90
     );
     assert_eq!(
-        get_stealth_chance_percentage(
-            &state,
-            &saboteur,
-            &target_unit,
-            UnitOrder::AwaitStealUnit
-        ),
+        get_stealth_chance_percentage(&state, &saboteur, &target_unit, UnitOrder::AwaitStealUnit),
         40,
-            "steal is a quarter of the base chance"
+        "steal is a quarter of the base chance"
     );
 
     saboteur.experience = 100;
     assert_eq!(
-        get_stealth_chance_percentage(
-            &state,
-            &saboteur,
-            &target_unit,
-            UnitOrder::AwaitDisableUnit
-        ),
+        get_stealth_chance_percentage(&state, &saboteur, &target_unit, UnitOrder::AwaitDisableUnit),
         90,
-            "capped"
+        "capped"
     );
 
     // A team without values yields `turns == 0`; the function guards the division.
     let empty = GameState::new();
     assert_eq!(
-        get_stealth_chance_percentage(
-            &empty,
-            &saboteur,
-            &target_unit,
-            UnitOrder::AwaitDisableUnit
-        ),
+        get_stealth_chance_percentage(&empty, &saboteur, &target_unit, UnitOrder::AwaitDisableUnit),
         90
     );
 }
@@ -796,7 +860,7 @@ fn gain_experience_only_for_regenerating_units() {
     assert_ne!(
         state.unit(alien).unwrap().flags & crate::enums::unit_flags::REGENERATING_UNIT,
         0,
-            "ALNTANK carries REGENERATING_UNIT in SC_UNITS"
+        "ALNTANK carries REGENERATING_UNIT in SC_UNITS"
     );
 
     gain_experience(&mut state, alien, 0);
@@ -890,7 +954,7 @@ fn experience_is_skipped_for_remote_and_eliminated_attacker_teams() {
         assert_eq!(
             state.unit(attacker).unwrap().experience,
             expected,
-                "attacker team {kind:?}"
+            "attacker team {kind:?}"
         );
     }
 }
@@ -919,7 +983,7 @@ fn invariant_c1_reaction_needs_shots_and_range() {
 
     assert!(
         check_reaction(&mut state, red, green),
-            "C1: in-range target with shots must trigger a reaction"
+        "C1: in-range target with shots must trigger a reaction"
     );
 
     // Reset the fire order and take the shot budget away.
@@ -931,7 +995,7 @@ fn invariant_c1_reaction_needs_shots_and_range() {
     }
     assert!(
         !check_reaction(&mut state, red, green),
-            "C1: a unit with shots == 0 must not react"
+        "C1: a unit with shots == 0 must not react"
     );
 
     // Restore shots and move the target out of the 4-cell range.
@@ -952,7 +1016,7 @@ fn invariant_c1_reaction_needs_shots_and_range() {
 
     assert!(
         !check_reaction(&mut state, red, green),
-            "C1: an out-of-range target must not trigger a reaction"
+        "C1: an out-of-range target must not trigger a reaction"
     );
 }
 
@@ -986,21 +1050,21 @@ fn invariant_c2_reaction_needs_target_visibility() {
 
     assert!(
         !state.unit(green).unwrap().is_visible_to_team(TeamId::RED),
-            "C2: the target must start outside RED's scan coverage"
+        "C2: the target must start outside RED's scan coverage"
     );
     assert!(
         !check_reaction(&mut state, red, green),
-            "C2: an invisible target must not trigger reaction fire"
+        "C2: an invisible target must not trigger reaction fire"
     );
 
     state.spot_by_team(green, TeamId::RED);
     assert!(
         state.unit(green).unwrap().is_visible_to_team(TeamId::RED),
-            "C2: SpotByTeam must reveal the target"
+        "C2: SpotByTeam must reveal the target"
     );
     assert!(
         check_reaction(&mut state, red, green),
-            "C2: a visible in-range target must trigger reaction fire"
+        "C2: a visible in-range target must trigger reaction fire"
     );
 }
 
@@ -1015,7 +1079,12 @@ fn invariant_c4_prepare_fire_spends_ammo_and_shots() {
     let mut state = state();
     let red = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
 
-    for &(shots, ammo, real_time) in &[(2u8, 10u8, false), (1, 1, false), (2, 5, true), (1, 3, true)] {
+    for &(shots, ammo, real_time) in &[
+        (2u8, 10u8, false),
+        (1, 1, false),
+        (2, 5, true),
+        (1, 3, true),
+    ] {
         {
             let unit = state.unit_mut(red).unwrap();
             unit.shots = shots;
@@ -1029,7 +1098,7 @@ fn invariant_c4_prepare_fire_spends_ammo_and_shots() {
         assert_eq!(
             unit.ammo,
             ammo.wrapping_sub(1),
-                "C4: a shot must always spend one ammo (shots {shots}, ammo {ammo})"
+            "C4: a shot must always spend one ammo (shots {shots}, ammo {ammo})"
         );
         let expected_shots = if real_time {
             shots.min(ammo.wrapping_sub(1))
@@ -1038,13 +1107,13 @@ fn invariant_c4_prepare_fire_spends_ammo_and_shots() {
         };
         assert_eq!(
             unit.shots, expected_shots,
-                "C4: shots after firing (turn-based decrement / real-time cap), \
+            "C4: shots after firing (turn-based decrement / real-time cap), \
                  real_time={real_time}"
         );
         assert_eq!(
             unit.state,
             UnitOrderState::FireInProgress,
-                "C4: the shot must enter ORDER_STATE_FIRE_IN_PROGRESS"
+            "C4: the shot must enter ORDER_STATE_FIRE_IN_PROGRESS"
         );
     }
 }
@@ -1075,17 +1144,17 @@ fn invariant_c7_hits_never_go_negative_and_zero_explodes() {
         let unit = state.unit(target).unwrap();
         assert_eq!(
             unit.hits, expected_hits,
-                "C7: {hits} hits minus 6 damage must clamp to {expected_hits}"
+            "C7: {hits} hits minus 6 damage must clamp to {expected_hits}"
         );
         assert!(
             unit.hits < u16::MAX,
-                "C7: hits must never wrap into the unsigned maximum"
+            "C7: hits must never wrap into the unsigned maximum"
         );
         if expected_hits == 0 {
             assert_eq!(
                 unit.orders,
                 UnitOrder::Explode,
-                    "C7: a destroyed unit must enter ORDER_EXPLODE"
+                "C7: a destroyed unit must enter ORDER_EXPLODE"
             );
             assert_eq!(unit.state, UnitOrderState::Init);
         }

@@ -15,10 +15,17 @@ use max_core::team::TeamId;
 
 use support::{game, spawn, ticks};
 
-/// `UnitsManager_ProgressExplosion`: the explosion advances one frame every other
-/// tick and is removed at `image_index_max`. The whole sequence is deterministic.
+/// `UnitsManager_ProgressExplosion`: the explosion advances one frame per
+/// [`max_core::unit_order::EXPLOSION_FRAME_STEPS`] simulation steps and is removed at
+/// `image_index_max`. The whole sequence is deterministic.
+///
+/// Oracle timing: `units_manager.cpp:4030-4036` advances the frame when `moved & 1`
+/// (one frame per two order ticks), and an order tick is `TIMER_FPS_TO_MS(24)` ≈ 42 ms
+/// (`game_manager.cpp:5103`, `timer.h:27`) → one frame per ~83 ms. The port's step is
+/// 60 Hz, so 5 steps per frame: 14 frames of `LNDEXPLD` ≈ 1.1 s (the playtest defect was
+/// that explosions ran 2.5× too fast).
 #[test]
-fn explosion_frames_advance_every_other_tick_and_despawn() {
+fn explosion_frames_advance_every_five_ticks_and_despawn() {
     fn run() -> (Vec<i16>, Vec<Vec<u8>>) {
         let mut state = game();
         let explosion = state
@@ -38,7 +45,7 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
         let mut snapshots = Vec::new();
         let mut removed_at = None;
 
-        for tick in 0..64 {
+        for tick in 0..160 {
             state.tick();
             match state.snapshot().unit(explosion) {
                 Some(effect) => {
@@ -53,20 +60,26 @@ fn explosion_frames_advance_every_other_tick_and_despawn() {
             }
         }
 
-        assert_eq!(removed_at, Some(26), "13 frame advances, one per two ticks");
+        // 13 advances × 5 steps + the removal check step (60 Hz: `66 × 16.7 ms ≈ 1.1 s`,
+        // the oracle's `28 × 42 ms ≈ 1.17 s`).
+        assert_eq!(
+            removed_at,
+            Some(65),
+            "13 frame advances, one per five ticks"
+        );
         assert_eq!(observed.first().copied(), Some(0), "frame 0 is shown");
         assert_eq!(observed.last().copied(), Some(max));
-        assert_eq!(observed.len(), 26);
-        // Frames 1..=12 are held for two ticks; the first and the last frame
-        // appear once (the animation starts and is removed at the last frame).
+        assert_eq!(observed.len(), 65);
+        // Frames 1..=12 are held for five ticks; the first frame is held for four
+        // (the counter starts at zero) and the last appears once.
         for frame in 1..max {
             assert_eq!(
                 observed.iter().filter(|value| **value == frame).count(),
-                2,
+                5,
                 "frame {frame} timing: {observed:?}"
             );
         }
-        assert_eq!(observed.iter().filter(|value| **value == 0).count(), 1);
+        assert_eq!(observed.iter().filter(|value| **value == 0).count(), 4);
         assert_eq!(observed.iter().filter(|value| **value == max).count(), 1);
         assert!(
             observed

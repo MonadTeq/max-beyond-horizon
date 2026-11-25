@@ -561,7 +561,18 @@ pub(crate) fn prepare_fire(state: &mut GameState, unit: &mut UnitInfo) {
             state.set_order_data(particle_id, data);
 
             if let Some(mut particle) = state.unit(particle_id).cloned() {
-                particle.angle = angle & 0x07;
+                // `UnitsManager_DeployUnit(particle_unit, team, nullptr, grid_x, grid_y,
+                // unit_angle, true)` (`unitinfo.cpp:4788`) passes the **16-direction**
+                // firing angle and `UnitInfo::UnitInfo` stores it unchanged
+                // (`unitinfo.cpp:188`): `image_index = image_base + angle`
+                // (`:285`), and the projectile sprites are 16/32-frame rotations
+                // (`D_ROCKET` 16 frames, `D_ALNMISSL` 32 — `ALNMISSL` doubles the
+                // angle, `unitinfo.cpp:4783-4785`). Masking it to three bits
+                // (`angle & 0x07`) collapsed every 16-direction rotation onto the first
+                // eight frames — a projectile fired south (angle 8) was drawn pointing
+                // north, i.e. "missiles fly backwards". `Attack` divides by two
+                // (`unitinfo.cpp:2730`) and expects the same unmasked value.
+                particle.angle = angle;
                 particle.target_grid = fire_on;
                 particle.parent_unit = Some(unit.id);
                 particle.live_attack = unit.live_attack;
@@ -1167,11 +1178,7 @@ pub(crate) fn disable_unit(state: &mut GameState, unit_id: UnitId, parent_id: Un
 
                 if parent.unit_type == UnitType::ResearchCentre {
                     // `UnitInfo::PowerDown` (`unitinfo.cpp:5134`).
-                    state.update_research_progress(
-                        parent.team,
-                        parent.research_topic,
-                        -1,
-                    );
+                    state.update_research_progress(parent.team, parent.research_topic, -1);
                 }
             }
             _ => {}

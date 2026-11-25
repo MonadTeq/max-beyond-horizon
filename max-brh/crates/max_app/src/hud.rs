@@ -92,6 +92,9 @@ pub const TEAM_COLORS: [Rgba; 5] = [
 
 /// Path preview color (does not overlap the panel and team colors).
 pub const PREVIEW_COLOR: Rgba = Rgba::rgb(120, 255, 152);
+/// Route cell of a following turn (`COLOR_BLUE`, the "not this turn" arrow of the
+/// procedural HUD frame; the game frame uses palette index 3).
+pub const PREVIEW_COLOR_BLUE: Rgba = Rgba::rgb(120, 168, 255);
 /// HUD panel background.
 pub const HUD_PANEL: Rgba = Rgba::rgb(14, 18, 26);
 /// HUD panel frame.
@@ -1423,10 +1426,26 @@ pub struct HudView<'a> {
 pub fn render_hud(buffer: &mut RgbaBuffer, view: &HudView<'_>) {
     let layout = hud_layout(buffer.width(), buffer.height());
 
-    if let Some(preview) = &view.hud.preview {
-        draw_path_preview(buffer, view.viewport, preview);
-    }
+    // Route arrows of the selected unit (`GameManager_RenderScanRangeIndicators`,
+    // `game_manager.cpp:936-951`); the line below is the "order clicked, next tick
+    // not applied yet" fallback.
+    let markers = view
+        .hud
+        .selected
+        .and_then(|id| view.state.unit(id))
+        .filter(|unit| crate::render::draws_unit_path(unit, view.team))
+        .map(|unit| view.state.path_markers(unit))
+        .unwrap_or_default();
 
+    if markers.is_empty() {
+        if let Some(preview) = &view.hud.preview {
+            draw_path_preview(buffer, view.viewport, preview);
+        }
+    } else {
+        // The HUD frame has no game palette in scope: the markers use the fixed
+        // preview colors, the shape/color split comes from the simulation path.
+        crate::render::draw_path_markers_hud(buffer, view.viewport, &markers);
+    }
     // Resource bar.
     if !layout.top_bar.is_empty() {
         buffer.fill_rect(layout.top_bar, HUD_PANEL);

@@ -524,6 +524,17 @@ impl<'a> StateRef<'a> {
         self.state.game_state
     }
 
+    /// Route preview markers of a unit — `GroundPath::Draw`/`AirPath::Draw`
+    /// (`groundpath.cpp:436`, `airpath.cpp:297`).
+    ///
+    /// `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:936-951`) draws
+    /// them for the selected own unit: green markers are reachable this turn, blue
+    /// ones belong to the following turns. Pure query — the markers are computed
+    /// from the simulation path and the current movement points, nothing is stored.
+    pub fn path_markers(&self, unit: &crate::unit::UnitInfo) -> Vec<crate::unit_order::PathMarker> {
+        crate::unit_order::path_markers(self.state, unit)
+    }
+
     /// `GameManager_PlayMode`.
     pub fn play_mode(&self) -> PlayMode {
         self.state.play_mode
@@ -986,11 +997,7 @@ impl<'a> StateRef<'a> {
     }
 
     /// `Complex::GetCargoMining` (`alloc.rs`) — extraction and capacity.
-    pub fn cargo_mining(
-        &self,
-        team: TeamId,
-        complex: crate::team::ComplexId,
-    ) -> (Cargo, Cargo) {
+    pub fn cargo_mining(&self, team: TeamId, complex: crate::team::ComplexId) -> (Cargo, Cargo) {
         crate::alloc::get_cargo_mining(self.state, team, complex)
     }
 
@@ -1619,7 +1626,8 @@ impl<D: Dispatcher> GameUniverse<D> {
             return false;
         }
         info.team_type = TeamKind::Eliminated;
-        self.bus.push(GameEvent::PlayerEliminated { team, sequence });
+        self.bus
+            .push(GameEvent::PlayerEliminated { team, sequence });
         true
     }
 
@@ -1654,11 +1662,7 @@ impl<D: Dispatcher> GameUniverse<D> {
     }
 
     /// `GameState::complex_mut` (`game.rs:3148`) — the alloc-dialog writer.
-    pub fn complex_mut(
-        &mut self,
-        team: TeamId,
-        complex_id: u16,
-    ) -> Option<&mut Complex> {
+    pub fn complex_mut(&mut self, team: TeamId, complex_id: u16) -> Option<&mut Complex> {
         self.state.complex_mut(team, complex_id)
     }
 
@@ -1679,7 +1683,12 @@ impl<D: Dispatcher> GameUniverse<D> {
 
     /// `ResearchMenu_UpdateResearchProgress` (`game.rs:1972`) — the research-centre
     /// allocation of one topic.
-    pub fn update_research_progress(&mut self, team: TeamId, topic: ResearchTopic, allocation: i32) {
+    pub fn update_research_progress(
+        &mut self,
+        team: TeamId,
+        topic: ResearchTopic,
+        allocation: i32,
+    ) {
         self.state.update_research_progress(team, topic, allocation);
     }
 

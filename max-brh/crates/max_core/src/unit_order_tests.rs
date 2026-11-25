@@ -381,7 +381,7 @@ fn all_eight_directions_move_facing_the_step() {
                 assert_eq!(
                     paths_get_angle(i32::from(dx), i32::from(dy)),
                     direction,
-                        "шаг {direction} ушёл не в ту сторону: {previous:?} → {:?}",
+                    "шаг {direction} ушёл не в ту сторону: {previous:?} → {:?}",
                     unit.grid
                 );
                 // On a straight line the next step matches — the angle must be
@@ -389,7 +389,7 @@ fn all_eight_directions_move_facing_the_step() {
                 assert_eq!(
                     i32::from(unit.angle),
                     direction,
-                        "прямой ход {direction}: угол не совпал с шагом"
+                    "прямой ход {direction}: угол не совпал с шагом"
                 );
                 moves += 1;
                 previous = unit.grid;
@@ -399,7 +399,7 @@ fn all_eight_directions_move_facing_the_step() {
             let delta = angle_delta(unit.angle, last_angle);
             assert!(
                 (-1..=1).contains(&delta),
-                    "поворот {direction}: скачок угла {last_angle} → {} за тик",
+                "поворот {direction}: скачок угла {last_angle} → {} за тик",
                 unit.angle
             );
             last_angle = unit.angle;
@@ -414,7 +414,7 @@ fn all_eight_directions_move_facing_the_step() {
         assert_eq!(
             i32::from(unit.angle),
             direction,
-                "после остановки угол — последнее направление {direction}"
+            "после остановки угол — последнее направление {direction}"
         );
 
         // After stopping the angle does not change.
@@ -478,7 +478,7 @@ fn turn_at_cell_boundary_precedes_the_next_step() {
             let moved_angle = paths_get_angle(dx, dy) as u8;
             assert!(
                 angle_delta(unit.angle, moved_angle).abs() <= 1,
-                    "кадр/сим повернулся на 45°+ против движения: {:?} → {:?}, angle {}",
+                "кадр/сим повернулся на 45°+ против движения: {:?} → {:?}, angle {}",
                 previous,
                 unit.grid,
                 unit.angle
@@ -515,7 +515,7 @@ fn angle_updates_deterministically_in_snapshot() {
         assert_eq!(
             first.snapshot_bytes(),
             second.snapshot_bytes(),
-                "снапшот разошёлся на тике {tick}"
+            "снапшот разошёлся на тике {tick}"
         );
         angle_changed |= first.unit(first_id).unwrap().angle != 7;
     }
@@ -596,7 +596,7 @@ fn air_transport_loads_passenger_on_arrival() {
 
     assert!(
         saw_load,
-            "the air transport must take ORDER_LOAD on arrival at the passenger cell"
+        "the air transport must take ORDER_LOAD on arrival at the passenger cell"
     );
 
     let transport_unit = state.unit(transport).expect("transport");
@@ -605,14 +605,14 @@ fn air_transport_loads_passenger_on_arrival() {
     assert_eq!(transport_unit.state, UnitOrderState::ExecutingOrder);
     assert!(
         transport_unit.parent_unit.is_none(),
-            "`ProcessLoading` clears the transport parent"
+        "`ProcessLoading` clears the transport parent"
     );
 
     let passenger_unit = state.unit(passenger).expect("passenger");
     assert_eq!(
         passenger_unit.parent_unit,
         Some(transport),
-            "passenger parent is the transport"
+        "passenger parent is the transport"
     );
     assert_eq!(passenger_unit.orders, UnitOrder::Idle);
     assert!(
@@ -714,7 +714,10 @@ fn unloading_puts_the_cargo_back_on_the_transport_cell() {
     assert!(unloaded, "the passenger must leave the hold");
 
     let passenger_unit = state.unit(passenger).expect("passenger").clone();
-    assert_eq!(passenger_unit.grid, cargo_grid, "released on the carrier cell");
+    assert_eq!(
+        passenger_unit.grid, cargo_grid,
+        "released on the carrier cell"
+    );
     assert!(
         state.units_at(cargo_grid).contains(&passenger),
         "the released unit is back in Hash_MapHash"
@@ -823,9 +826,11 @@ fn explode_of_dying_infantry_reaches_destroy() {
     // (`image_base = 168 + (angle / 2) * 8`, `image_index_max = base + 7`).
     assert_eq!(unit.image_base, 168);
     assert_eq!(unit.image_index_max, 175);
-    // The animation goes one frame per two ticks, then the unit is destroyed.
+    // The animation advances one frame per `EXPLOSION_FRAME_STEPS` (5) simulation
+    // steps — the oracle's two order ticks (`units_manager.cpp:4030`), so the
+    // 8-frame death animation takes `5 × 7 + 1 = 36` steps; then the unit is destroyed.
     let mut destroyed = false;
-    for _ in 0..24 {
+    for _ in 0..48 {
         state.tick();
         if !state.has_unit(id) {
             destroyed = true;
@@ -930,7 +935,10 @@ fn distance_to_line(point: (i32, i32), start: (i32, i32), end: (i32, i32)) -> f6
 fn missile_flies_a_pixel_straight_line() {
     let (mut state, missile, _target, start) = state_with_missile_in_flight();
     // The aim point is the cell center (13,14).
-    let end = (13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2, 14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2);
+    let end = (
+        13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2,
+        14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2,
+    );
 
     let mut samples = Vec::new();
     for _ in 0..12 {
@@ -947,7 +955,7 @@ fn missile_flies_a_pixel_straight_line() {
         let distance = distance_to_line(*point, start, end);
         assert!(
             distance <= 1.5,
-                "точка {point:?} не на прямой {start:?}→{end:?}: отклонение {distance:.2} px"
+            "точка {point:?} не на прямой {start:?}→{end:?}: отклонение {distance:.2} px"
         );
     }
     // The position really changes from tick to tick (a pixel step, not
@@ -960,14 +968,17 @@ fn missile_flies_a_pixel_straight_line() {
         distance_to_line(last, start, end) <= 1.5
             && (last.0 - end.0).abs() <= GFX_MAP_TILE_SIZE
             && (last.1 - end.1).abs() <= GFX_MAP_TILE_SIZE,
-            "снаряд не дошёл до цели: {last:?}"
+        "снаряд не дошёл до цели: {last:?}"
     );
 }
 
 #[test]
 fn missile_trail_particles_lie_on_the_line() {
     let (mut state, missile, _target, start) = state_with_missile_in_flight();
-    let end = (13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2, 14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2);
+    let end = (
+        13 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2,
+        14 * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2,
+    );
 
     // One tick: the projectile traverses the first cell and leaves three particles behind.
     state.tick();
@@ -981,7 +992,7 @@ fn missile_trail_particles_lie_on_the_line() {
 
     assert!(
         particles.len() >= 3,
-            "Paths_DrawMissile: три частицы на покинутую клетку, найдено {}",
+        "Paths_DrawMissile: три частицы на покинутую клетку, найдено {}",
         particles.len()
     );
     for particle in &particles {
@@ -989,7 +1000,7 @@ fn missile_trail_particles_lie_on_the_line() {
         let distance = distance_to_line(point, start, end);
         assert!(
             distance <= 1.5,
-                "частица следа {point:?} не на прямой (отклонение {distance:.2} px)"
+            "частица следа {point:?} не на прямой (отклонение {distance:.2} px)"
         );
     }
     let _ = missile;
@@ -1037,7 +1048,7 @@ fn missile_impact_uses_the_engine_cell_and_destroys_the_round() {
     assert_eq!(
         impact_cell,
         Some(Point::new(13, 14)),
-            "`parent->Attack(grid_x, grid_y)`: удар в клетке цели"
+        "`parent->Attack(grid_x, grid_y)`: удар в клетке цели"
     );
     // And the target took damage.
     let tank = state.unit(target).expect("танк");
@@ -1047,7 +1058,7 @@ fn missile_impact_uses_the_engine_cell_and_destroys_the_round() {
                 < tank
                     .base_values
                     .get_attribute(crate::unit_values::ATTRIB_HITS) as u16,
-            "попадание должно нанести урон"
+        "попадание должно нанести урон"
     );
 }
 
@@ -1233,7 +1244,7 @@ fn set_new_order_int_override_boundaries() {
     assert_eq!(
         allocating.prior_orders,
         UnitOrder::Await,
-            "NewAllocate kept out of prior"
+        "NewAllocate kept out of prior"
     );
 }
 
@@ -1314,7 +1325,7 @@ fn cancel_building_variants() {
     assert_eq!(
         structure.build_list,
         vec![UnitType::Tank],
-            "queue kept until halt"
+        "queue kept until halt"
     );
     assert_eq!(structure.build_time, 3);
 
@@ -1571,14 +1582,14 @@ fn invariant_c5_air_step_spends_speed() {
         assert_eq!(
             unit.speed,
             (8 - cost) as u16,
-                "C5: an air step of {cost} must spend {cost} speed"
+            "C5: an air step of {cost} must spend {cost} speed"
         );
 
         // `shots = rounds * speed / ATTRIB_SPEED`, only decreasing.
         let expected_shots = ((4 * (8 - cost)) / 8).max(0) as u8;
         assert_eq!(
             unit.shots, expected_shots,
-                "C5: shots must follow the remaining speed (cost {cost})"
+            "C5: shots must follow the remaining speed (cost {cost})"
         );
     }
 
@@ -1603,7 +1614,7 @@ fn air_shadow_offset_follows_the_hovering_flag() {
     assert_eq!(
         air_shadow_offset(MOBILE_AIR_UNIT),
         Point::ZERO,
-            "an aircraft on the ground has no shift"
+        "an aircraft on the ground has no shift"
     );
     assert_eq!(
         air_shadow_offset(MOBILE_AIR_UNIT | HOVERING),
@@ -1612,7 +1623,7 @@ fn air_shadow_offset_follows_the_hovering_flag() {
     assert_eq!(
         air_shadow_offset(HOVERING | MOBILE_LAND_UNIT),
         Point::ZERO,
-            "a non-air unit never gets the air shadow"
+        "a non-air unit never gets the air shadow"
     );
 }
 
@@ -1702,10 +1713,7 @@ fn ship_raises_the_bridge_and_it_lowers_after_it_passes() {
 
     // A water lane 8..=12 on row 10 with a bridge in the middle.
     for x in 8..=12 {
-        state
-            .map
-            .surface
-            .set(x, 10, crate::enums::Surface::WATER);
+        state.map.surface.set(x, 10, crate::enums::Surface::WATER);
     }
     let bridge_grid = Point::new(10, 10);
     let bridge = state
@@ -1817,7 +1825,7 @@ fn paths_update_angle_wraps_between_7_and_0() {
 
     assert!(
         !paths_update_angle(&mut unit, 0),
-            "already facing the target"
+        "already facing the target"
     );
 
     unit.angle = 0;

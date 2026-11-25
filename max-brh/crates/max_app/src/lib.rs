@@ -97,9 +97,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use max_core::crc;
 use max_core::deploy::TeamDeployment;
-use max_core::enums::{
-    unit_flags, GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState,
-};
+use max_core::enums::{unit_flags, GameStateType, Planet, TeamClan, UnitOrder, UnitOrderState};
 use max_core::events::ApplyOutcome;
 use max_core::game::PLAYER_TEAM_COUNT;
 use max_core::geo::Point;
@@ -162,9 +160,9 @@ pub use render::{
     unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
 };
 pub use saveload::{
-    save_meta_for_local_game, save_meta_for_local_game_with, save_seed, ConfirmChoice,
-    SaveConfirm, SaveConfirmAction, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
-    AUTOSAVE_SLOT, DEFAULT_SAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
+    save_meta_for_local_game, save_meta_for_local_game_with, save_seed, ConfirmChoice, SaveConfirm,
+    SaveConfirmAction, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT,
+    DEFAULT_SAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use subtitles::{SubtitleEntry, SubtitleError, SubtitleTrack};
@@ -1750,6 +1748,17 @@ impl<D: Dispatcher> App<D> {
         self.unit_menu = None;
     }
 
+    /// A map view change (scroll/zoom/center) closes the command popup.
+    ///
+    /// Oracle: `GameManager_UpdateMainMapView` (`game_manager.cpp:1745-1775`) runs
+    /// `GameManager_DeinitPopupButtons(false)` after a **successful**
+    /// `MAP_VIEW_ZOOM`/`MAP_VIEW_CENTER`/`MAP_VIEW_SCROLL` — the popup buttons would
+    /// otherwise hang in screen space while the map moves under them (the playtest
+    /// defect: scrolling the map left the unit/building command menu open).
+    pub fn deinit_popup_buttons(&mut self) {
+        self.unit_menu = None;
+    }
+
     /// Input in the open command menu — [`unitmenu::menu_event`].
     pub fn unit_menu_input(&mut self, event: InputEvent) -> Option<unitmenu::MenuEvent> {
         let Some(mut menu) = self.unit_menu.take() else {
@@ -2392,16 +2401,12 @@ impl<D: Dispatcher> App<D> {
                 }
 
                 // The first stored passenger (`ORDER_IDLE`, parent = transport).
-                let cargo = self
-                    .state_ref()
-                    .unit_ids_in_order()
-                    .into_iter()
-                    .find(|id| {
-                        self.state_ref().unit(*id).is_some_and(|unit| {
-                            unit.orders == max_core::enums::UnitOrder::Idle
-                                && unit.parent_unit == Some(unit_id)
-                        })
-                    });
+                let cargo = self.state_ref().unit_ids_in_order().into_iter().find(|id| {
+                    self.state_ref().unit(*id).is_some_and(|unit| {
+                        unit.orders == max_core::enums::UnitOrder::Idle
+                            && unit.parent_unit == Some(unit_id)
+                    })
+                });
 
                 let Some(cargo) = cargo else {
                     return Some("activate: груз не найден".to_string());
@@ -3051,7 +3056,15 @@ impl<D: Dispatcher> App<D> {
 
         // `GameManager_ScrollMainMapView` returns `false` if the map boundaries
         // did not change; at the map edge the step is not counted as scrolling.
-        (self.viewport.center() != before).then_some((dx, dy))
+        if self.viewport.center() == before {
+            return None;
+        }
+
+        // A real scroll is a `MAP_VIEW_SCROLL` update: the command popup closes
+        // (`GameManager_DeinitPopupButtons`, `game_manager.cpp:1769`).
+        self.deinit_popup_buttons();
+
+        Some((dx, dy))
     }
 
     // -----------------------------------------------------------------------
@@ -3099,6 +3112,10 @@ impl<D: Dispatcher> App<D> {
         }
 
         self.viewport.center_on_grid(grid.x, grid.y);
+        // `UnitInfo::FollowUnit` (`unitinfo.cpp:3602`) goes through
+        // `GameManager_UpdateMainMapView(MAP_VIEW_CENTER, …)`, which closes the
+        // command popup (`game_manager.cpp:1769`).
+        self.deinit_popup_buttons();
 
         true
     }
@@ -3516,6 +3533,17 @@ impl<D: Dispatcher> App<D> {
     /// change the simulation.
     pub fn visual_angle(&self, id: UnitId) -> Option<u8> {
         let unit = self.state_ref().unit(id)?;
+
+        // A projectile keeps the launch angle for the whole flight: C++
+        // `AirPath::AirPath` (`airpath.cpp:52-59`) takes `m_angle = unit->angle` and
+        // `AirPath::Execute` compares it with `Paths_UpdateAngle`, which returns
+        // `false` while the angles match — the sprite never turns. That angle is the
+        // 16-direction firing angle of `UnitsManager_GetFiringAngle`, not the
+        // 8-direction route step, so the visual segment of a missile must not
+        // override it (otherwise the projectile is drawn with a wrong frame).
+        if unit.flags & unit_flags::MISSILE_UNIT != 0 {
+            return Some(unit.angle);
+        }
 
         Some(
             match self.visual_paths.get(&id).and_then(|queue| queue.front()) {

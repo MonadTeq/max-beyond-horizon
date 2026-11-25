@@ -1807,7 +1807,11 @@ impl Screen {
                     Some(format) => format!(
                         ", звук {} Гц/{}/{} бит",
                         format.sample_rate,
-                        if format.channels == 2 { "стерео" } else { "моно" },
+                        if format.channels == 2 {
+                            "стерео"
+                        } else {
+                            "моно"
+                        },
                         format.bits
                     ),
                     None => ", без звука".to_string(),
@@ -3238,6 +3242,9 @@ where
 
     if let Some(grid) = hud::minimap_grid_at(&layout, x, y) {
         app.viewport_mut().center_on_grid(grid.x, grid.y);
+        // `GameManager_UpdateMainMapView(MAP_VIEW_CENTER, …)` → `DeinitPopupButtons`
+        // (`game_manager.cpp:1769`).
+        app.deinit_popup_buttons();
         return Transition::None;
     }
 
@@ -3274,6 +3281,8 @@ where
             panels::minimap_grid_at(x, y, map_width, map_height, app.viewport(), two_x)
         {
             app.viewport_mut().center_on_grid(grid_x, grid_y);
+            // `GameManager_UpdateMainMapView(MAP_VIEW_CENTER, …)` → `DeinitPopupButtons`.
+            app.deinit_popup_buttons();
         }
 
         return Transition::None;
@@ -4127,11 +4136,7 @@ where
 /// The order itself ([`session_map_order_click`] on an already known cell) —
 /// shared with the minimap right click, where the cell comes from
 /// `GameManager_GetMinimapPosition` instead of the camera.
-fn session_map_order_at<D: Dispatcher>(
-    app: &mut App<D>,
-    grid_x: i16,
-    grid_y: i16,
-) -> Transition
+fn session_map_order_at<D: Dispatcher>(app: &mut App<D>, grid_x: i16, grid_y: i16) -> Transition
 where
     App<D>: SessionLocal,
 {

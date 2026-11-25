@@ -396,7 +396,9 @@ fn explosions_use_the_cpp_unit_type_and_animate_until_destroyed() {
         let mut seen_frames = Vec::new();
         let mut explosion = None;
 
-        for _ in 0..80 {
+        // The longest blast is `BLDEXPLD` (28 frames): `5 × 27 + 1 = 136`
+        // simulation steps with `unit_order::EXPLOSION_FRAME_STEPS`.
+        for _ in 0..200 {
             state.tick();
 
             for id in state.snapshot().unit_ids_in_order() {

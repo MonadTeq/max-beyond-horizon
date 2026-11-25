@@ -1,16 +1,16 @@
-//! AI: `AiPlayer`, `TaskManager`, tasks, threat maps — a port of `ai.cpp`.
+//! AI: `AiPlayer`, `TaskManager`, tasks, threat maps вЂ” a port of `ai.cpp`.
 //!
 //! # Composition
 //!
 //! | Module | C++ oracle |
 //! |---|---|
-//! | [`attack`] | `aiattack.cpp` — attack decisions |
-//! | [`build_orders`] | `aiplayer.cpp` — `GetWeightTable`, `GetExtendedWeightTable`, `Choose*BuildOrders` |
-//! | [`reminders`] | `reminders.cpp` — deferred task calls |
-//! | [`research`] | `aiplayer.cpp` — `DetermineResearchProjects`, `ChooseUpgrade`, `UpgradeUnitType` |
-//! | [`strategy`] | `aiplayer.cpp` — `AiPlayer`, strategy, threat maps |
-//! | [`task`] | `task.cpp` — task base, priorities, `Task_*` |
-//! | [`task_manager`] | `task_manager.cpp` — queues, `FindTaskForUnit` |
+//! | [`attack`] | `aiattack.cpp` вЂ” attack decisions |
+//! | [`build_orders`] | `aiplayer.cpp` вЂ” `GetWeightTable`, `GetExtendedWeightTable`, `Choose*BuildOrders` |
+//! | [`reminders`] | `reminders.cpp` вЂ” deferred task calls |
+//! | [`research`] | `aiplayer.cpp` вЂ” `DetermineResearchProjects`, `ChooseUpgrade`, `UpgradeUnitType` |
+//! | [`strategy`] | `aiplayer.cpp` вЂ” `AiPlayer`, strategy, threat maps |
+//! | [`task`] | `task.cpp` вЂ” task base, priorities, `Task_*` |
+//! | [`task_manager`] | `task_manager.cpp` вЂ” queues, `FindTaskForUnit` |
 //! | [`tasks`] | 49 `task*.cpp` classes |
 //! | [`threat`] | `heatmap.cpp`, `threatmap.cpp`, `zonewalker.cpp` |
 //! | [`weight`] | `weighttable.cpp` |
@@ -27,7 +27,7 @@
 //! `TaskManager`, `Ai_AiReactionState`, team heat maps,
 //! `ResourceManager_GetSettings()`). Thus the state enters the game digest and
 //! does not require changing `TeamInfo` (P3) or introducing global mutation
-//! (DESIGN §1.4 item 5).
+//! (DESIGN В§1.4 item 5).
 //!
 //! # The `with_task_manager` idiom
 //!
@@ -45,7 +45,7 @@
 //! });
 //! ```
 //!
-//! Inside the closure `world.ai.task_manager` is empty — all accesses to the manager
+//! Inside the closure `world.ai.task_manager` is empty вЂ” all accesses to the manager
 //! must go through the `tm` parameter (the same rule applies in task
 //! handlers, see [`tasks::TaskCtx`]).
 
@@ -75,6 +75,7 @@ pub use tasks::{TaskCtx, TaskKind};
 pub use threat::{HeatMap, ThreatMap, ZoneWalker};
 pub use weight::WeightTable;
 
+use crate::enums::unit_flags::{SELECTABLE, STATIONARY};
 use crate::enums::{AiStrategy, CautionLevel, Opponent, PlayMode, UnitOrder, UnitType};
 use crate::game::{GameState, PLAYER_TEAM_COUNT};
 use crate::geo::Point;
@@ -94,7 +95,7 @@ pub enum AiReactionState {
     AnimationsActive = 2,
 }
 
-/// AI settings — `ResourceManager_GetSettings()` in the scope the AI reads.
+/// AI settings вЂ” `ResourceManager_GetSettings()` in the scope the AI reads.
 ///
 /// Default values come from `settings.cpp`: `max_percent` = 90,
 /// `opponent` = 1 (`OPPONENT_TYPE_APPRENTICE`), `proximity_range` = 14,
@@ -105,11 +106,11 @@ pub struct AiSettings {
     pub opponent: u8,
     /// `max_percent` (stealth action threshold).
     pub max_percent: i32,
-    /// `proximity_range` — map-cell radius of the continent proximity checks
+    /// `proximity_range` вЂ” map-cell radius of the continent proximity checks
     /// (`Continent::IsCloseProximity`/`IsDangerousProximity`).
     pub proximity_range: i32,
     /// `menu_team_strategy_setting[team]` (`settings.cpp` keys
-    /// `red_team_strategy` … `alien_team_strategy`) — a forced AI strategy per
+    /// `red_team_strategy` вЂ¦ `alien_team_strategy`) вЂ” a forced AI strategy per
     /// team slot. `None` when the setting is empty, `random` or unknown: in all
     /// three cases C++ leaves the choice to the score-weighted roll.
     pub team_strategy: [Option<AiStrategy>; PLAYER_TEAM_COUNT],
@@ -218,7 +219,7 @@ impl AiState {
 }
 
 // ---------------------------------------------------------------------------
-// The "AI ⇄ game state" bridge (`ai.cpp`)
+// The "AI в‡„ game state" bridge (`ai.cpp`)
 // ---------------------------------------------------------------------------
 
 impl GameState {
@@ -289,7 +290,7 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2810`) — spotting a unit
+    /// `UnitInfo::SpotByTeam` (`unitinfo.cpp:2810`) вЂ” spotting a unit
     /// by a team: visibility, marking as spotted, notifying the AI.
     pub fn spot_by_team(&mut self, id: UnitId, team: TeamId) {
         let Some(unit) = self.unit(id).cloned() else {
@@ -305,7 +306,7 @@ impl GameState {
             info.spot_by_team(team);
 
             // `UnitInfo::SpotByTeam` (`unitinfo.cpp:2825-2829`): a submarine or a
-            // personnel carrier on water is **surfaced** once spotted —
+            // personnel carrier on water is **surfaced** once spotted вЂ”
             // `image_base = 8`, the second block of eight hull frames of `S_SUBMAR`
             // / the carrier sprite. The renderer draws the surfaced block while the
             // field holds 8.
@@ -332,17 +333,30 @@ impl GameState {
         ai_unit_spotted(self, id, team);
 
         // `UnitInfo::SpotByTeam` (`unitinfo.cpp:2833-2834`):
-        // `if (team == GameManager_PlayerTeam) RadarPing();` — the radar ping
-        // sound and the `MESSAGE_BOX_NOTICE` «Enemy %s in radar range.»
+        // `if (team == GameManager_PlayerTeam) RadarPing();` вЂ” the radar ping
+        // sound and the `MESSAGE_BOX_NOTICE` В«Enemy %s in radar range.В»
         // (`GameManager_NotifyEvent(this, 0)`, `game_manager.cpp:3458`). The
         // client drains these reports from the facade event stream; they are a
         // UI report, not simulation state.
-        if team == self.player_team && self.player_team != TeamId::ALIEN {
+        //
+        // `UnitInfo::RadarPing` (`unitinfo.cpp:3711-3717`) filters the report:
+        // `orders != ORDER_BUILD && orders != ORDER_CLEAR &&
+        //  (!(flags & STATIONARY) || unit_type == LANDMINE || unit_type == SEAMINE) &&
+        //  (flags & SELECTABLE)`.
+        // Effects (`LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/`HITEXPLD`,
+        // `RKTSMOKE`, `TRPBUBLE`, rubble) are `STATIONARY` without `SELECTABLE` in
+        // `SC_UNITS`, so the oracle never announced them: without this guard every
+        // shot and every explosion produced В«unit "explosion"/"bubbles" in radar
+        // rangeВ» (the playtest defect вЂ” effects are not units).
+        if team == self.player_team
+            && self.player_team != TeamId::ALIEN
+            && radar_ping_reports(&unit)
+        {
             self.spotted_reports.push(id);
         }
     }
 
-    /// `Ai_CheckReactions` (`ai.cpp:407`) — the tick call site.
+    /// `Ai_CheckReactions` (`ai.cpp:407`) вЂ” the tick call site.
     pub fn ai_check_reactions(&mut self) {
         if self.play_mode == PlayMode::Unknown {
             return;
@@ -466,6 +480,29 @@ fn world_is_computer(world: &GameState, team: TeamId) -> bool {
     world.teams[team.0 as usize].team_type == TeamKind::Computer
 }
 
+/// The radar-ping filter of `UnitInfo::RadarPing` (`unitinfo.cpp:3711-3717`).
+///
+/// C++:
+///
+/// ```text
+/// if (orders != ORDER_BUILD && orders != ORDER_CLEAR &&
+///     (!(flags & STATIONARY) || unit_type == LANDMINE || unit_type == SEAMINE) &&
+///     (flags & SELECTABLE)) { PlaySfx(RADRPING); GameManager_NotifyEvent(this, 0); }
+/// ```
+///
+/// `SpotByTeam` called it for **every** newly spotted unit of the player's team.
+/// Effects (`LNDEXPLD`/`AIREXPLD`/`SEAEXPLD`/`BLDEXPLD`/`HITEXPLD`, `RKTSMOKE`,
+/// `TRPBUBLE`, rubble) carry `STATIONARY` and no `SELECTABLE` in `SC_UNITS`
+/// ([`crate::classification::EFFECT_UNIT_TYPES`] вЂ” effects are non-units), so the
+/// oracle never showed the "enemy in radar range" message for them.
+pub(crate) fn radar_ping_reports(unit: &UnitInfo) -> bool {
+    unit.orders != UnitOrder::Build
+        && unit.orders != UnitOrder::Clear
+        && (unit.flags & STATIONARY == 0
+            || matches!(unit.unit_type, UnitType::LandMine | UnitType::SeaMine))
+        && unit.flags & SELECTABLE != 0
+}
+
 // ---------------------------------------------------------------------------
 // `ai.cpp` functions
 // ---------------------------------------------------------------------------
@@ -483,14 +520,14 @@ pub(crate) fn ai_init(world: &mut GameState) {
     }
 }
 
-/// `Ai_FileLoad` (`ai.cpp:164`) — the AI half of a V70 load.
+/// `Ai_FileLoad` (`ai.cpp:164`) вЂ” the AI half of a V70 load.
 ///
 /// The task lists are **not** serialized (`AiPlayer::FileSave`, `aiplayer.cpp:4091`),
 /// so the file load starts with `Ai_Init`: the queue is empty and `need_init` is
 /// set, which makes the first `Ai_BeginTurn` rebuild the tasks of the team
 /// (`aiplayer.cpp:2242`). The `AiPlayer` fields (strategy, maps, spotted units,
 /// target) come from [`crate::game::GameState::load_state`]; this function only
-/// re-applies the part of `Ai_Init` that depends on the *settings* opponent —
+/// re-applies the part of `Ai_Init` that depends on the *settings* opponent вЂ”
 /// the 18 weight tables (`aiplayer.cpp:2951-3305`).
 ///
 /// C++ calls it at the end of `SaveLoad_Load` (`saveload.cpp:1046`), before the
@@ -507,7 +544,7 @@ pub(crate) fn ai_file_load(world: &mut GameState, opponent: u8) {
         let player = &mut world.ai.players[team];
 
         // `AiPlayer::Init` (`aiplayer.cpp:2902`): the tables, `need_init` and the
-        // "has work" flag. The loaded strategy/maps/spotted units are kept — C++
+        // "has work" flag. The loaded strategy/maps/spotted units are kept вЂ” C++
         // `AiPlayer::FileLoad` restores them right after `Ai_Init`.
         player.init_weight_tables(opponent);
         player.need_init = true;
@@ -515,7 +552,7 @@ pub(crate) fn ai_file_load(world: &mut GameState, opponent: u8) {
     }
 }
 
-/// `Ai_SetupStrategy` (`ai.cpp:116`) — strategy selection only, without
+/// `Ai_SetupStrategy` (`ai.cpp:116`) вЂ” strategy selection only, without
 /// regenerating the map.
 pub(crate) fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
     let mut player = std::mem::replace(&mut world.ai.players[team.0 as usize], AiPlayer::new(team));
@@ -526,7 +563,7 @@ pub(crate) fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {
     result
 }
 
-/// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) — the "has work" flag for computers.
+/// `Ai_SetTasksPendingFlag` (`ai.cpp:140`) вЂ” the "has work" flag for computers.
 pub(crate) fn ai_set_tasks_pending_flag(world: &mut GameState) {
     for team in 0..PLAYER_TEAM_COUNT {
         if world.teams[team].team_type == TeamKind::Computer {
@@ -558,7 +595,7 @@ pub(crate) fn ai_add_unit_to_tracker_list(world: &mut GameState, unit: UnitId) {
     world.ai_add_unit_to_tracker_list(unit);
 }
 
-/// `Ai_EnableAutoSurvey` (`ai.cpp:184`) — create `TaskAutoSurvey`.
+/// `Ai_EnableAutoSurvey` (`ai.cpp:184`) вЂ” create `TaskAutoSurvey`.
 #[allow(dead_code)] // Oracle trace: keeps the C++ `tasks_enabled` guard; no caller yet.
 pub(crate) fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
@@ -571,11 +608,11 @@ pub(crate) fn ai_enable_auto_survey(world: &mut GameState, unit: UnitId) {
 }
 
 impl GameState {
-    /// `TaskAutoSurvey::TaskAutoSurvey` (`taskautosurvey.cpp:35-58`) — the task
+    /// `TaskAutoSurvey::TaskAutoSurvey` (`taskautosurvey.cpp:35-58`) вЂ” the task
     /// itself (`Ai_EnableAutoSurvey`, `ai.cpp:184`, only creates it).
     ///
     /// The survey spiral is centred on the team's **mining station** (the first
-    /// `MININGST` in the stationary list), falling back to the unit's own cell —
+    /// `MININGST` in the stationary list), falling back to the unit's own cell вЂ”
     /// that is how the original keeps the scout working around the deposit instead
     /// of walking off in one direction. All spiral cursors start empty:
     /// `radius = 0` (the "look for a known deposit first" mode), `direction = 0`,
@@ -589,7 +626,10 @@ impl GameState {
 
         let mut central_site = info.grid;
 
-        for id in self.unit_list(crate::unit::UnitListKind::Stationary).to_vec() {
+        for id in self
+            .unit_list(crate::unit::UnitListKind::Stationary)
+            .to_vec()
+        {
             let Some(other) = self.unit(id) else { continue };
 
             if other.team == info.team && other.unit_type == UnitType::MiningStation {
@@ -637,8 +677,8 @@ pub(crate) fn ai_is_dangerous_location(
     strategy::get_damage_potential(world, unit.team, unit, destination, caution_level) >= unit_hits
 }
 
-/// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) — in max_core
-/// `TerrainDistanceField` is not set up (P5 — only `pathfinding::TerrainDistanceField`
+/// `Ai_UpdateTerrainDistanceField` (`ai.cpp:215`) вЂ” in max_core
+/// `TerrainDistanceField` is not set up (P5 вЂ” only `pathfinding::TerrainDistanceField`
 /// within path search), so the second half is ported: accounting for military strength.
 #[allow(dead_code)] // Oracle trace: partial C++ port kept for the future full port.
 pub(crate) fn ai_update_terrain_distance_field(world: &mut GameState, unit: UnitId) {
@@ -740,7 +780,7 @@ pub(crate) fn ai_unit_hidden(world: &mut GameState, unit: UnitId, team: TeamId) 
     }
 }
 
-/// `Ai_CheckMines` (`ai.cpp:365`) — the minelayer reports mines to teams.
+/// `Ai_CheckMines` (`ai.cpp:365`) вЂ” the minelayer reports mines to teams.
 pub(crate) fn ai_check_mines(world: &mut GameState, unit: UnitId) {
     let Some(info) = world.unit(unit).cloned() else {
         return;
@@ -817,7 +857,7 @@ pub(crate) fn task_manager_need_to_reserve_raw_materials(world: &GameState, team
 /// `Ai_SelectStartingPosition` (`ai.cpp:105`).
 ///
 /// Part of setup (P2), but entirely on RNG and `TeamMissionSupplies`: ported
-/// 1:1 — up to 64 attempts to find a safe point in `[3, size-3]`.
+/// 1:1 вЂ” up to 64 attempts to find a safe point in `[3, size-3]`.
 #[cfg(test)]
 pub(crate) fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     let mut position = Point::ZERO;
@@ -842,7 +882,7 @@ pub(crate) fn ai_select_starting_position(world: &mut GameState, team: TeamId) {
     }
 }
 
-/// `Ai_IsValidStartingPosition` (`ai.cpp:68`) — a 5×5 area around the point is land.
+/// `Ai_IsValidStartingPosition` (`ai.cpp:68`) вЂ” a 5Г—5 area around the point is land.
 #[cfg(test)]
 fn is_valid_starting_position(world: &GameState, bounds: (i32, i32, i32, i32)) -> bool {
     let (ulx, uly, lrx, lry) = bounds;

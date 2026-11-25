@@ -178,7 +178,10 @@ fn explode_lifecycle_spawns_and_despawns_the_effect() {
 
         // Frames advance while the effect lives.
         let mut frames = Vec::new();
-        for _ in 0..40 {
+        // The animation lasts `EXPLOSION_FRAME_STEPS × image_index_max + 1` steps
+        // (5 × 13 + 1 = 66, `unit_order::EXPLOSION_FRAME_STEPS`), so the window
+        // must cover it.
+        for _ in 0..80 {
             state.tick();
             if let Some(effect) = state.snapshot().unit(explosion) {
                 frames.push(effect.image_index);

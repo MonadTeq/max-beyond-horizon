@@ -1,4 +1,4 @@
-//! Order machine: `UnitOrder` (32) × `UnitOrderState` (47).
+//! Order machine: `UnitOrder` (32) Г— `UnitOrderState` (47).
 //!
 //! Oracle: `max-cpp-port/src/units_manager.cpp` (`UnitsManager_SetNewOrderInt`,
 //! `UnitsManager_SetNewOrder`, `UnitsManager_ProcessOrder`,
@@ -16,13 +16,13 @@
 //! `GroundPath::UpdateUnitAngle`, `CancelMovement`),
 //! `airpath.cpp` (`AirPath::Execute`, `Paths_FinishMove`), `paths.cpp`
 //! (`Paths_GetAngle`, `Paths_UpdateAngle`,
-//! `Paths_CalculateStep`), DESIGN.md §5.2.
+//! `Paths_CalculateStep`), DESIGN.md В§5.2.
 //!
 //! There is no separate `unitorder.cpp` file in the C++ port: the order machine lives in
 //! `units_manager.cpp` (dispatcher and processors) and `unitinfo.cpp` (the
 //! `UnitInfo` methods implementing the transitions). The port repeats this split: processors
-//! and the dispatcher — here, operations on the unit — [`UnitInfo`] methods,
-//! list traversal and inter-unit effects — [`crate::game::GameState`].
+//! and the dispatcher вЂ” here, operations on the unit вЂ” [`UnitInfo`] methods,
+//! list traversal and inter-unit effects вЂ” [`crate::game::GameState`].
 //!
 //! # Model
 //!
@@ -32,7 +32,7 @@
 //! `ProcessOrders` visits each list exactly once and does not re-execute
 //! the same unit in the same pass. Inter-unit effects (parent,
 //! target, live attack, lists) are performed by explicit `GameState` methods, so
-//! they are visible to other units immediately — as in C++.
+//! they are visible to other units immediately вЂ” as in C++.
 //!
 //! # P5/P6 integration
 //!
@@ -43,24 +43,24 @@
 //! `MoveToAttack` search for a path to the attack position, `IsEngaged`/`CanReceiveUnits`/
 //! `SetUnitDestination` come from `access`. P6 AI hooks are connected:
 //! `MoveFinished` calls `Ai_EvaluateAttackTargets` and `Ai_CheckMines`,
-//! `PerformAutoSurvey` — `Ai_EnableAutoSurvey`, `ScheduleDelayedTasks` —
+//! `PerformAutoSurvey` вЂ” `Ai_EnableAutoSurvey`, `ScheduleDelayedTasks` вЂ”
 //! `TaskManager::ScheduleDelayedTasks`. The remaining `TODO(P3)` are economy and
 //! complexes; `TODO(P5)` at points that require `UnitsManager_DeployUnit`
 //! of concrete types (master builder, activation).
 //!
 //! # Divergences from C++
 //!
-//! 1. **Movement** (DESIGN §5.1, divergence 3): C++ moves the unit pixel by pixel
+//! 1. **Movement** (DESIGN В§5.1, divergence 3): C++ moves the unit pixel by pixel
 //!    (`UnitInfo::Move`: `velocity`/`moved`/`GFX_MAP_TILE_SIZE`) and in a network
 //!    game completes at most one cell per tick. `max_core` is lockstep, and
 //!    [`unit_move`] completes exactly one cell per tick: the path step is considered
 //!    traversed, the offset is subtracted from the current `PathStep` (as in C++
-//!    `Move()`: `path_steps[step_index]->x -= offset_x`). The pixel animation —
+//!    `Move()`: `path_steps[step_index]->x -= offset_x`). The pixel animation вЂ”
 //!    P5.
 //! 2. `Paths_CalculateStep` is ported in full (`speed` spend, `move_fraction`,
 //!    `shots`, `max_velocity`), so the per-turn movement range matches C++
 //!    with the same attributes.
-//! 3. `Animate`/`RefreshScreen`/`AddToDrawList` rendering — UI, not ported.
+//! 3. `Animate`/`RefreshScreen`/`AddToDrawList` rendering вЂ” UI, not ported.
 //! 4. The `Effects` setting (construction animation, `UnitInfo::Animate`) is
 //!    accounted for in the simulation only where it changes state fields
 //!    (`moved` in `ORDER_BUILD`); see [`crate::game::GameState::settings_effects`].
@@ -78,17 +78,17 @@ use crate::unit_values::{ATTRIB_AMMO, ATTRIB_MOVE_AND_FIRE, ATTRIB_ROUNDS, ATTRI
 /// `UnitInfo::MOVEMENT_WAIT_LIMIT` (`unitinfo.hpp:400`).
 pub const MOVEMENT_WAIT_LIMIT: u16 = 512;
 
-/// `GFX_MAP_TILE_SIZE` — the cell side in pixels (`unitinfo.cpp`).
+/// `GFX_MAP_TILE_SIZE` вЂ” the cell side in pixels (`unitinfo.cpp`).
 pub const GFX_MAP_TILE_SIZE: i32 = 64;
 
 // ---------------------------------------------------------------------------
 // Bridges in AI (P6)
 // ---------------------------------------------------------------------------
 
-/// `UnitInfo::Animate` / `RefreshScreen` — UI animation and dirty regions (not needed by P4).
+/// `UnitInfo::Animate` / `RefreshScreen` вЂ” UI animation and dirty regions (not needed by P4).
 fn animate(_unit: &UnitInfo) {}
 
-/// `UnitInfo::RefreshScreen` — UI.
+/// `UnitInfo::RefreshScreen` вЂ” UI.
 fn refresh_screen(_unit: &UnitInfo) {}
 
 /// `Ai_SetTasksPendingFlag(name)` (`ai.cpp:140`).
@@ -104,7 +104,7 @@ fn ai_task_flag(state: &mut GameState, _name: &str) {
     crate::ai::ai_set_tasks_pending_flag(state);
 }
 
-/// `UnitInfo::ScheduleDelayedTasks` — P6: remind the unit's top task
+/// `UnitInfo::ScheduleDelayedTasks` вЂ” P6: remind the unit's top task
 /// about movement completion (C++ `Task_RemindMoveFinished`).
 fn schedule_delayed_tasks(state: &mut GameState, id: UnitId, priority: bool) {
     state.with_task_manager(|task_manager, world| {
@@ -126,7 +126,7 @@ pub fn is_bridge_elevated(unit: &UnitInfo) -> bool {
 /// Amphibious units have two sprite blocks: the submerged/water pose and the
 /// surface pose. For `CLNTRANS` (the personnel carrier) water is the hidden pose
 /// (`image_base = 0`) and land the surfaced one (`8`); for every other amphibious
-/// type water is `8` and land `0`. `COMMANDO` always returns to `0` — it is the
+/// type water is `8` and land `0`. `COMMANDO` always returns to `0` вЂ” it is the
 /// sprites' ambush pose, not terrain.
 pub(crate) fn set_sprite_frame_for_terrain(state: &GameState, unit: &mut UnitInfo, grid: Point) {
     let amphibious =
@@ -252,7 +252,7 @@ pub fn set_new_order_int(unit: &mut UnitInfo, order: UnitOrder, state: UnitOrder
     delete_path
 }
 
-/// `UnitsManager_ScaleUnit` (`units_manager.cpp:1847`) — start the building
+/// `UnitsManager_ScaleUnit` (`units_manager.cpp:1847`) вЂ” start the building
 /// scaling animation; returns `delete_path` from `SetNewOrderInt`.
 pub fn scale_unit(unit: &mut UnitInfo, state: UnitOrderState) -> bool {
     set_new_order_int(unit, UnitOrder::AwaitScaling, state)
@@ -266,7 +266,7 @@ pub fn new_order_while_scaling(unit: &mut UnitInfo) {
     if unit.state == UnitOrderState::Expand {
         unit.scaler_adjust = 0;
         // `UnitsManager_UpdateConnectors(unit)` requires `GameState`; the callers
-        // of its branches (order/packet 08) do it themselves — see
+        // of its branches (order/packet 08) do it themselves вЂ” see
         // [`crate::complex::update_connectors`]. A pure function cannot.
     } else {
         unit.scaler_adjust = 4;
@@ -274,7 +274,7 @@ pub fn new_order_while_scaling(unit: &mut UnitInfo) {
     }
 }
 
-/// `UnitsManager_FinishUnitScaling` (`units_manager.cpp:2471`) — version without
+/// `UnitsManager_FinishUnitScaling` (`units_manager.cpp:2471`) вЂ” version without
 /// game state (for the `NewOrderWhileScaling` packet path); "container does not
 /// accept" is the safe variant, otherwise the unit would stay in `ORDER_IDLE`.
 pub fn finish_unit_scaling(unit: &mut UnitInfo) {
@@ -351,8 +351,8 @@ pub(crate) fn finish_unit_scaling_in(state: &mut GameState, unit: &mut UnitInfo)
 
 /// `UnitInfo::BlockedOnPathRequest` (`unitinfo.cpp:3628`).
 ///
-/// `disable_fire` — the setting that disables reaction fire (DESIGN §6.5:
-/// game settings are input facts; in max_core — a `GameState` field).
+/// `disable_fire` вЂ” the setting that disables reaction fire (DESIGN В§6.5:
+/// game settings are input facts; in max_core вЂ” a `GameState` field).
 pub fn blocked_on_path_request(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
     unit.path = None;
 
@@ -373,7 +373,7 @@ pub fn blocked_on_path_request(unit: &mut UnitInfo, mode: bool, disable_fire: bo
 ///
 /// Setting `delayed_reaction` and adding to the delayed reaction list
 /// are done by the caller layer ([`OrderContext::move_finished`]) because
-/// they need game state access. Here — reset of the movement counters,
+/// they need game state access. Here вЂ” reset of the movement counters,
 /// which are entirely local to the unit.
 ///
 /// `Ai_CheckMines` also requires the game, so it is called from
@@ -385,7 +385,7 @@ pub fn move_finished(unit: &mut UnitInfo, mode: bool, disable_fire: bool) {
     clear_movement_wait(unit);
 
     if unit.unit_type == UnitType::Infantry || unit.unit_type == UnitType::Infiltrator {
-        // `UpdateSpriteFrame(0, image_index_max)` — UI.
+        // `UpdateSpriteFrame(0, image_index_max)` вЂ” UI.
     }
 
     unit.in_transit = false;
@@ -404,7 +404,7 @@ pub fn stop_move(unit: &mut UnitInfo, disable_fire: bool) {
     }
 }
 
-/// `UnitInfo::StopMovement` (`unitinfo.cpp:3222`) — emergency stop.
+/// `UnitInfo::StopMovement` (`unitinfo.cpp:3222`) вЂ” emergency stop.
 pub fn stop_movement(unit: &mut UnitInfo, disable_fire: bool) {
     if unit.orders == UnitOrder::Move && unit.path.is_some() {
         if unit.state == UnitOrderState::InProgress || unit.state == UnitOrderState::InTransition {
@@ -445,7 +445,7 @@ pub fn check_if_destroyed(unit: &mut UnitInfo) {
     }
 }
 
-/// `UnitInfo::Land` (`unitinfo.cpp:3829`) — landing animation, `moved` grows
+/// `UnitInfo::Land` (`unitinfo.cpp:3829`) вЂ” landing animation, `moved` grows
 /// by 1 per call; `true` on the 9th call.
 pub fn land(unit: &mut UnitInfo) -> bool {
     refresh_screen(unit);
@@ -459,7 +459,7 @@ pub fn land(unit: &mut UnitInfo) -> bool {
     }
 }
 
-/// `UnitInfo::Take` (`unitinfo.cpp:3862`) — takeoff animation, `true` on the 5th
+/// `UnitInfo::Take` (`unitinfo.cpp:3862`) вЂ” takeoff animation, `true` on the 5th
 /// call.
 pub fn take(unit: &mut UnitInfo) -> bool {
     refresh_screen(unit);
@@ -473,21 +473,18 @@ pub fn take(unit: &mut UnitInfo) -> bool {
     }
 }
 
-/// `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`) — the shadow shift of the unit.
+/// `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`) вЂ” the shadow shift of the unit.
 ///
 /// In C++ the shadow is drawn at `point - shadow_offset` (`RenderShadow`,
 /// `unitinfo.cpp:3067`), so a **hovering aircraft** (`MOBILE_AIR_UNIT` +
-/// `HOVERING`) gets `shadow_offset = (-64, -64)` — the shadow one cell
+/// `HOVERING`) gets `shadow_offset = (-64, -64)` вЂ” the shadow one cell
 /// down-right of the hull, which is what makes a flying aircraft look airborne;
 /// every other unit has `(0, 0)` (the shadow under the hull). The value is stored
 /// in [`max_types::unit::UnitPresentation::shadow_offset`] (the C++ `UnitInfo`
 /// field, also in the V70 save) and is **not** part of the snapshot/CRC.
 pub fn air_shadow_offset(flags: u32) -> Point {
     if flags & MOBILE_AIR_UNIT != 0 && flags & HOVERING != 0 {
-        Point::new(
-            -(GFX_MAP_TILE_SIZE as i16),
-            -(GFX_MAP_TILE_SIZE as i16),
-        )
+        Point::new(-(GFX_MAP_TILE_SIZE as i16), -(GFX_MAP_TILE_SIZE as i16))
     } else {
         Point::ZERO
     }
@@ -512,13 +509,13 @@ pub(crate) fn power_down(state: &mut GameState, unit: &mut UnitInfo) {
 
 /// `UnitInfo::StartBuilding` (`unitinfo.cpp:2751`).
 ///
-/// For a mobile builder it places the construction site — [`crate::production::
+/// For a mobile builder it places the construction site вЂ” [`crate::production::
 /// deploy_construction_site`] (`DeployConstructionSiteUtilities` +
 /// `PrepareConstructionSite`): tape/cones/slab on the `target_grid` cell.
 /// The function is idempotent: `ProductionManager::commit` (the `Done` click in
 /// `BuildMenu`) and `events::apply_command` (packet 08/P4 after a map click)
 /// already place the site synchronously, so here on the next tick there is no
-/// repeated spawn — only `ORDER_STATE_BUILD_IN_PROGRESS` and `PositionInTape`.
+/// repeated spawn вЂ” only `ORDER_STATE_BUILD_IN_PROGRESS` and `PositionInTape`.
 pub(crate) fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
     // `SDL_assert(build_list.GetCount() > 0)`: the first type in the queue.
     let Some(unit_to_build) = unit.build_list.first().copied() else {
@@ -533,12 +530,8 @@ pub(crate) fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
     } else {
         // `DeployConstructionSiteUtilities(unit_to_build)` +
         // `PrepareConstructionSite`: the site on the `move_to`/`target_grid` cell.
-        let _ = production::deploy_construction_site(
-            state,
-            unit.id,
-            unit_to_build,
-            unit.target_grid,
-        );
+        let _ =
+            production::deploy_construction_site(state, unit.id, unit_to_build, unit.target_grid);
 
         unit.moved = 0;
         unit.state = UnitOrderState::BuildInProgress;
@@ -550,12 +543,12 @@ pub(crate) fn start_building(state: &mut GameState, unit: &mut UnitInfo) {
                 UnitOrderState::TapePositioningInit,
             );
         } else {
-            // `DrawSpriteFrame(image_index + 16)` — the engineer's working pose;
+            // `DrawSpriteFrame(image_index + 16)` вЂ” the engineer's working pose;
             // the frame is chosen by `max_app::render::unit_frame_index` from
             // `ORDER_BUILD`/`BUILD_IN_PROGRESS`.
         }
 
-        // `ClearUnitList()` — removing the group order (P5 access).
+        // `ClearUnitList()` вЂ” removing the group order (P5 access).
     }
 }
 
@@ -592,7 +585,7 @@ pub fn cancel_building(unit: &mut UnitInfo) {
 /// Active construction of a mobile builder: the site cell (`target_grid`).
 ///
 /// C++ `ORDER_BUILD` of a mobile builder passes states
-/// `INIT → IN_PROGRESS → BUILD_IN_PROGRESS`, and the constructor also
+/// `INIT в†’ IN_PROGRESS в†’ BUILD_IN_PROGRESS`, and the constructor also
 /// `ORDER_AWAIT_TAPE_POSITIONING` with `TAPE_POSITIONING_*` states. The site by
 /// that moment already stands (`UnitInfo::StartBuilding`), progress is in
 /// `build_list`/`build_time`. `SELECT_SITE`/`UNIT_READY` are not included:
@@ -623,7 +616,7 @@ pub fn active_build_site(unit: &UnitInfo) -> Option<Point> {
     }
 
     // Construction progress lives in the queue: `SpawnNewUnit` clears it on
-    // completion, `CancelBuilding` — on cancellation. An empty queue means that
+    // completion, `CancelBuilding` вЂ” on cancellation. An empty queue means that
     // `AWAIT_TAPE_POSITIONING` is already the builder **leaving** a completed site
     // (`TAPE_POSITIONING_DEINIT`, `ActivateEngineer`), not construction: utilities and the slab
     // under the completed building must not be removed.
@@ -635,16 +628,16 @@ pub fn active_build_site(unit: &UnitInfo) -> Option<Point> {
 }
 
 // Moving a mobile builder away from an unfinished site is **impossible** without an explicit
-// cancellation — this is an excluded path from C++.
+// cancellation вЂ” this is an excluded path from C++.
 //
 // In C++ a movement order to the builder during construction is not issued via the map
 // (`GameManager_GetBuilderUnitCursor`, `game_manager.cpp:5927-5931`: for
 // `BUILD_IN_PROGRESS` the cursor is `CURSOR_UNIT_NO_GO`), and cancellation goes only through
-// the popup `stop` (`UnitsManager_Popup_OnClick_BuildStop` →
-// `GameManager_SelectBuildSite` → `ORDER_BUILD`/`BUILD_CANCEL` →
+// the popup `stop` (`UnitsManager_Popup_OnClick_BuildStop` в†’
+// `GameManager_SelectBuildSite` в†’ `ORDER_BUILD`/`BUILD_CANCEL` в†’
 // `UnitInfo::CancelBuilding`). The former port behavior "auto-cancel on move-away"
 // contradicted the oracle and was removed: a new order (packet 08/38, AI, group)
-// does not cancel construction — the order just changes `orders`, and the site/queue
+// does not cancel construction вЂ” the order just changes `orders`, and the site/queue
 // remain until an explicit `stop`.
 //
 // A completed site (`ORDER_STATE_UNIT_READY`) is the exception: there the exit by order
@@ -667,18 +660,18 @@ pub fn clear_build_list_and_path(unit: &mut UnitInfo) {
     unit.build_list.clear();
 }
 
-/// `UnitInfo::GetTargetUnitAngle` (`unitinfo.cpp:4147`) — the direction in
+/// `UnitInfo::GetTargetUnitAngle` (`unitinfo.cpp:4147`) вЂ” the direction in
 /// which the builder enters the tape center and leaves it.
 ///
-/// * `TAPE_POSITIONING_ENTER` — by cells: the tape is on the builder's cell
-///   (`Access_GetConstructionUtility(team, grid_x, grid_y)`), its `grid` is the 2×2
+/// * `TAPE_POSITIONING_ENTER` вЂ” by cells: the tape is on the builder's cell
+///   (`Access_GetConstructionUtility(team, grid_x, grid_y)`), its `grid` is the 2Г—2
 ///   anchor. Comparing `grid_x/grid_y` with the anchor yields exactly one of the four
-///   diagonal corners: both axes match — `SE`, only `x` — `NE`, only
-///   `y` — `SW`, otherwise `NW`. A 2×2 builder always stands in one of the four
-///   tape cells, so normally the angle is always diagonal (45°).
-/// * the other states (`LEAVE`) — toward `move_to` (C++
-///   `move_to_grid_x/move_to_grid_y`, in the port — `OrderData::move_to`): the sign
-///   of the difference on each axis independently; the builder's pixel position — the center
+///   diagonal corners: both axes match вЂ” `SE`, only `x` вЂ” `NE`, only
+///   `y` вЂ” `SW`, otherwise `NW`. A 2Г—2 builder always stands in one of the four
+///   tape cells, so normally the angle is always diagonal (45В°).
+/// * the other states (`LEAVE`) вЂ” toward `move_to` (C++
+///   `move_to_grid_x/move_to_grid_y`, in the port вЂ” `OrderData::move_to`): the sign
+///   of the difference on each axis independently; the builder's pixel position вЂ” the center
 ///   of its cell (`UnitInfo::SetPosition`; in the port `x/y` are not recomputed when
 ///   walking, so the cell is used).
 pub(crate) fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to: Point) -> i32 {
@@ -689,7 +682,7 @@ pub(crate) fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to:
 
     if unit.state == UnitOrderState::TapePositioningEnter {
         // `Access_GetConstructionUtility(team, grid_x, grid_y)`: for a building
-        // the tape is registered in the hash in all four 2×2 cells, but its
+        // the tape is registered in the hash in all four 2Г—2 cells, but its
         // `grid` is the anchor (top-left corner).
         let tape_grid = production::construction_utility(state, unit.team, unit.grid)
             .and_then(|id| state.unit(id))
@@ -727,21 +720,22 @@ pub(crate) fn get_target_unit_angle(state: &GameState, unit: &UnitInfo, move_to:
     }
 }
 
-/// The sign of the builder's "entry" into the tape on each axis — how many pixels it has
+/// The sign of the builder's "entry" into the tape on each axis вЂ” how many pixels it has
 /// already traveled from the center of its cell to the site center
 /// (`OffsetDrawZones(DIRECTION_OFFSETS[angle] * 8)`, `TAPE_STEPS` ticks).
 ///
-/// For a 2×2 tape the builder stands in one of its four cells, so entry is
-/// always diagonal: `−1` on the side where the anchor matched its cell.
-/// For a 1×1 tape (engineer) the builder is exactly on its cell — there is no entry.
+/// For a 2Г—2 tape the builder stands in one of its four cells, so entry is
+/// always diagonal: `в€’1` on the side where the anchor matched its cell.
+/// For a 1Г—1 tape (engineer) the builder is exactly on its cell вЂ” there is no entry.
 fn tape_enter_direction(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
-    let Some(tape) = production::construction_utility(state, unit.team, unit.grid)
-        .and_then(|id| state.unit(id))
+    let Some(tape) =
+        production::construction_utility(state, unit.team, unit.grid).and_then(|id| state.unit(id))
     else {
         return (0, 0);
     };
 
-    if tape.unit_type != UnitType::LargeTape || !production::site_covers(tape.unit_type, tape.grid, unit.grid)
+    if tape.unit_type != UnitType::LargeTape
+        || !production::site_covers(tape.unit_type, tape.grid, unit.grid)
     {
         return (0, 0);
     }
@@ -757,7 +751,7 @@ fn tape_enter_direction(state: &GameState, unit: &UnitInfo) -> (i32, i32) {
 ///
 /// The builder's pixel is the center of its cell plus `32 * enter` (entry into the tape) plus
 /// `32 * leave` (exit). `x / 64` of that sum gives the cell shift:
-/// `enter + leave >= 1` → `+1`, `<= -2` → `-1`, otherwise the cell does not change.
+/// `enter + leave >= 1` в†’ `+1`, `<= -2` в†’ `-1`, otherwise the cell does not change.
 fn tape_leave_shift(enter: i32, leave: i32) -> i16 {
     match enter + leave {
         sum if sum >= 1 => 1,
@@ -766,19 +760,18 @@ fn tape_leave_shift(enter: i32, leave: i32) -> i16 {
     }
 }
 
-
 /// `UnitInfo::PositionInTape` (`unitinfo.cpp:4414`).
 ///
-/// The positioning loop is ported: `INIT → ENTER`, `DEINIT → LEAVE`,
+/// The positioning loop is ported: `INIT в†’ ENTER`, `DEINIT в†’ LEAVE`,
 /// final rotation `Paths_UpdateAngle` toward [`get_target_unit_angle`], `moved` up to 4, then
 /// `RestoreOrders`. As in C++, while the builder has not turned to the center, `moved`
-/// **does not grow** — first rotation in place, then sliding (four steps
+/// **does not grow** вЂ” first rotation in place, then sliding (four steps
 /// `OffsetDrawZones` of 8 px).
 ///
-/// `move_to` — the exit target (C++ `move_to_grid_x/move_to_grid_y`): on
+/// `move_to` вЂ” the exit target (C++ `move_to_grid_x/move_to_grid_y`): on
 /// LEAVE completion C++ recomputes the cell from the pixel position
-/// (`grid_x = x / GFX_MAP_TILE_SIZE`) — the builder ends up in the tape cell
-/// closest to the target, and then walks (`ActivateEngineer` → `ORDER_MOVE`).
+/// (`grid_x = x / GFX_MAP_TILE_SIZE`) вЂ” the builder ends up in the tape cell
+/// closest to the target, and then walks (`ActivateEngineer` в†’ `ORDER_MOVE`).
 pub(crate) fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_to: Point) {
     ai_task_flag(state, "Positioning in tape");
 
@@ -800,21 +793,21 @@ pub(crate) fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_
         unit.moved = 0;
 
         if unit.unit_type == UnitType::MasterBuilder {
-            // `PrepareConstructionSite` + `ScaleUnit(this, SHRINK)` — P3/P5.
+            // `PrepareConstructionSite` + `ScaleUnit(this, SHRINK)` вЂ” P3/P5.
             let _ = scale_unit(unit, UnitOrderState::Shrink);
         } else if unit.unit_type == UnitType::Constructor
             && old_state == UnitOrderState::TapePositioningEnter
         {
             // `PrepareConstructionSite` has already been done by `StartBuilding`
             // (the site is placed immediately on order, see
-            // `production::deploy_construction_site`). C++ turns the builder once more by 45°
+            // `production::deploy_construction_site`). C++ turns the builder once more by 45В°
             // (`Paths_UpdateAngle(this, (angle + 1) & 0x07)`) and
             // draws the working pose `DrawSpriteFrame(image_index + 16)`; the frame
             // is chosen by the renderer from `ORDER_BUILD`/`BUILD_IN_PROGRESS`.
             let target_angle = (i32::from(unit.angle) + 1) & 0x07;
             let _ = paths_update_angle(unit, target_angle);
         } else if old_state != UnitOrderState::TapePositioningEnter {
-            // `Hash_MapHash.Remove(this)` → `grid_x = x / GFX_MAP_TILE_SIZE` →
+            // `Hash_MapHash.Remove(this)` в†’ `grid_x = x / GFX_MAP_TILE_SIZE` в†’
             // `Hash_MapHash.Add(this)`: the cell is recomputed from the pixel
             // position after four 8 px shifts.
             let angle = get_target_unit_angle(state, unit, move_to);
@@ -894,7 +887,7 @@ pub fn paths_get_angle(x: i32, y: i32) -> i32 {
 /// Copies `UnitInfo::UpdateAngle` (`unitinfo.cpp:1161`) in the part affecting
 /// the simulation: for a unit with `TURRET_SPRITE` the turret rotates with the hull
 /// (`turret_angle = (turret_angle + image_diff) & 7`, where `image_diff` is the same
-/// 45° step). The frame cache (`image_index`/`turret_image_index`/draw zones) — UI,
+/// 45В° step). The frame cache (`image_index`/`turret_image_index`/draw zones) вЂ” UI,
 /// not stored in max_core.
 pub fn paths_update_angle(unit: &mut UnitInfo, angle: i32) -> bool {
     if i32::from(unit.angle) == angle {
@@ -925,10 +918,10 @@ pub fn paths_update_angle(unit: &mut UnitInfo, angle: i32) -> bool {
 /// `GroundPath::UpdateUnitAngle` (`groundpath.cpp:430`).
 ///
 /// C++ calls this from `UnitInfo::Move` when a cell completes
-/// (`moved == GFX_MAP_TILE_SIZE`): the hull makes **one** 45° step toward
+/// (`moved == GFX_MAP_TILE_SIZE`): the hull makes **one** 45В° step toward
 /// the next route step (if any), rather than turning instantly.
 /// The next `GroundPath::Execute` finishes turning the unit and only then
-/// starts movement — so rotation and movement are always consistent.
+/// starts movement вЂ” so rotation and movement are always consistent.
 ///
 /// The function is extracted for tests: in [`unit_move`] the same step is performed on
 /// a `PathStep` snapshot, to avoid holding a `unit.path` borrow while
@@ -943,10 +936,160 @@ pub fn ground_path_update_unit_angle(unit: &mut UnitInfo, path: &GroundPath) -> 
     }
 }
 
-/// `Paths_CalculateStep` (`paths.cpp`) — charging the step cost from `speed`.
+/// One arrow of the unit route preview вЂ” `GroundPath::Draw`/`AirPath::Draw`
+/// (`groundpath.cpp:436-556`, `airpath.cpp:297-360`) feed
+/// `Paths_DrawMarker(window, angle, x, y, color)` (`paths.cpp:376`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathMarker {
+    /// Anchor of the marker in **world pixels** (cell center for a ground route).
+    pub x: i32,
+    /// Anchor in world pixels.
+    pub y: i32,
+    /// Direction 0..7 (`Paths_GetAngle` order) вЂ” the triangle points this way.
+    pub angle: u8,
+    /// `true` вЂ” reachable within the current turn's movement points (`COLOR_GREEN`),
+    /// `false` вЂ” a later turn (`COLOR_BLUE`).
+    pub this_turn: bool,
+}
+
+/// The marker triangle vertices for one direction (`Paths_8DirPointsArrayMarkerA/B/C`,
+/// `paths.cpp:37-44`), in world pixels at zoom 64.
+pub const PATH_MARKER_POINTS: [[(i32, i32); 3]; 8] = [
+    [(0, -10), (-10, 10), (10, 10)],
+    [(8, -8), (-12, 0), (0, 12)],
+    [(10, 0), (-10, -10), (-10, 10)],
+    [(8, 8), (0, -12), (-12, 0)],
+    [(0, 10), (10, -10), (-10, -10)],
+    [(-8, 8), (12, 0), (0, -12)],
+    [(-10, 0), (10, 10), (10, -10)],
+    [(-8, -8), (0, 12), (12, 0)],
+];
+
+/// Route preview markers of a unit вЂ” `GroundPath::Draw` (`groundpath.cpp:436`) and
+/// `AirPath::Draw` (`airpath.cpp:297`).
+///
+/// The marker colors encode the turn in which the unit reaches the cell: C++ walks
+/// the remaining path spending the **current** movement points
+/// (`limited_speed = speed * 4 + move_fraction`, the quarter-point scale of
+/// `Access_IsAccessible`, diagonal steps cost 1.5Г—); once the points run out the cell
+/// is drawn `COLOR_BLUE` (a later turn) and the next turn refills them from
+/// `ATTRIB_SPEED * 4`. Cells reachable this turn are `COLOR_GREEN`.
+///
+/// `GameManager_RenderScanRangeIndicators` (`game_manager.cpp:936-951`) calls the
+/// path's `Draw` for the **selected** unit when it is visible to the player and
+/// belongs to them; the caller applies that gate.
+pub(crate) fn path_markers(state: &GameState, unit: &UnitInfo) -> Vec<PathMarker> {
+    let Some(path) = unit.path.as_ref() else {
+        return Vec::new();
+    };
+
+    // Raw movement points of the unit type (`ATTRIB_SPEED`): the ground route works in
+    // quarter-points (`Г— 4`, `groundpath.cpp:466`), an air route in whole points.
+    let base_speed = unit.base_values.get_attribute(ATTRIB_SPEED).max(0);
+
+    match path {
+        UnitPath::Ground(ground) => {
+            let mut limited_speed = if unit.group_speed != 0 {
+                i32::from(unit.group_speed) - 1
+            } else {
+                i32::from(unit.speed)
+            };
+            limited_speed = limited_speed * 4 + i32::from(unit.move_fraction);
+
+            let mut grid = unit.grid;
+            let mut step = (0i32, 0i32);
+            let mut markers = Vec::new();
+            let steps = ground
+                .steps
+                .get(ground.step_index as usize..)
+                .unwrap_or(&[]);
+
+            for index in 0..=steps.len() {
+                if index != steps.len() {
+                    step = (i32::from(steps[index].x), i32::from(steps[index].y));
+
+                    if limited_speed < 0 {
+                        limited_speed += base_speed * 4;
+                    }
+
+                    grid = Point::new(
+                        grid.x.wrapping_add(step.0 as i16),
+                        grid.y.wrapping_add(step.1 as i16),
+                    );
+
+                    let mut cost =
+                        access::is_accessible_unit(state, unit, grid, access::ACCESS_MODIFIER_NONE)
+                            as i32;
+
+                    if step.0 != 0 && step.1 != 0 {
+                        cost = (cost * 3) / 2;
+                    }
+
+                    limited_speed -= cost;
+                } else {
+                    // `groundpath.cpp:496` вЂ” the destination marker of a route is
+                    // always "this turn" (the loop forces `limited_speed = -1`).
+                    limited_speed = -1;
+                }
+
+                if step.0 != 0 || step.1 != 0 {
+                    markers.push(PathMarker {
+                        x: i32::from(grid.x) * 64 + 32,
+                        y: i32::from(grid.y) * 64 + 32,
+                        angle: paths_get_angle(i32::from(step.0), i32::from(step.1)) as u8,
+                        this_turn: limited_speed < 0,
+                    });
+                }
+            }
+
+            markers
+        }
+        UnitPath::Air(air) => {
+            if unit.max_velocity == 0 {
+                return Vec::new();
+            }
+
+            let steps = i32::from(air.length) / i32::from(unit.max_velocity);
+
+            if steps == 0 {
+                return Vec::new();
+            }
+
+            let mut max_speed = if unit.group_speed != 0 {
+                i32::from(unit.group_speed) - 1
+            } else {
+                i32::from(unit.speed)
+            };
+            let mut step_x = air.step_x;
+            let mut step_y = air.step_y;
+            let mut markers = Vec::new();
+
+            for _ in 0..=steps {
+                markers.push(PathMarker {
+                    x: (step_x >> 16) + i32::from(air.start_x),
+                    y: (step_y >> 16) + i32::from(air.start_y),
+                    angle: air.angle as u8,
+                    this_turn: max_speed == 0,
+                });
+
+                if max_speed == 0 {
+                    max_speed = base_speed;
+                }
+
+                max_speed -= 1;
+                step_x = step_x.wrapping_add(i32::from(unit.max_velocity) * air.delta_x);
+                step_y = step_y.wrapping_add(i32::from(unit.max_velocity) * air.delta_y);
+            }
+
+            markers
+        }
+        UnitPath::Builder(_) => Vec::new(),
+    }
+}
+
 ///
 /// Returns `false` if the unit lacks speed (the step does not start).
-/// `real_time` — the `GameManager_RealTime` setting: the step does not spend `speed`.
+/// `real_time` вЂ” the `GameManager_RealTime` setting: the step does not spend `speed`.
 pub fn paths_calculate_step(
     unit: &mut UnitInfo,
     cost: i32,
@@ -1023,19 +1166,19 @@ pub fn paths_calculate_step(
     }
 }
 
-/// `Paths_TakeStep` (`airpath.cpp:458`) — charging one cell of **air** movement.
+/// `Paths_TakeStep` (`airpath.cpp:458`) вЂ” charging one cell of **air** movement.
 ///
 /// `AirPath::Execute` spends `speed` not per pixel but once per
 /// `m_length % max_velocity == 0` step (`airpath.cpp:272-278`): `m_length` counts
 /// quarter-cells (`Paths_GetAirPath`: `length = steps_distance * max_velocity`,
 /// `max_velocity = 4`), so exactly **one** `speed` point is spent per crossed cell.
 /// In the port's one-cell-per-tick model ([`air_path_execute`]) the call therefore
-/// happens once per cell — the aircraft flies `speed` cells, then the `speed == 0`
+/// happens once per cell вЂ” the aircraft flies `speed` cells, then the `speed == 0`
 /// check at the top of `AirPath::Execute` (`airpath.cpp:186-199`) stops it.
 ///
 /// Unlike [`paths_calculate_step`] (ground: `Paths_CalculateStep`, `paths.cpp:292`)
 /// there is no `move_fraction`/`max_velocity` recalculation and no "not enough
-/// speed" branch. `real_time` — the `GameManager_RealTime` debug setting: the step
+/// speed" branch. `real_time` вЂ” the `GameManager_RealTime` debug setting: the step
 /// costs nothing.
 pub fn paths_take_step(unit: &mut UnitInfo, cost: i32, real_time: bool) {
     let cost = if real_time { 0 } else { cost };
@@ -1120,7 +1263,7 @@ impl<'a> OrderContext<'a> {
     ///
     /// C++ `Land()` shifts `shadow_offset` by `+8` on every animation step
     /// (`unitinfo.cpp:3848-3849`) and on the final step clears `HOVERING` and calls
-    /// `Redraw()` (`:1452-1459`), which sets the offset from the flag — `(-64, -64)`
+    /// `Redraw()` (`:1452-1459`), which sets the offset from the flag вЂ” `(-64, -64)`
     /// for a hovering aircraft, `(0, 0)` otherwise. The offset lives in
     /// [`max_types::unit::UnitPresentation`] (the C++ `UnitInfo` field, V70), so the
     /// update goes through the presentation table, not [`UnitInfo`].
@@ -1176,7 +1319,7 @@ impl<'a> OrderContext<'a> {
     pub fn move_finished(&mut self, mode: bool) {
         move_finished(&mut self.unit, mode, self.world.disable_fire);
 
-        // `Ai_CheckMines(this)` (`ai.cpp:365`) — the minelayer reports to teams.
+        // `Ai_CheckMines(this)` (`ai.cpp:365`) вЂ” the minelayer reports to teams.
         if matches!(
             self.unit.unit_type,
             UnitType::MineLayer | UnitType::SeaMineLayer
@@ -1261,7 +1404,7 @@ fn execute_move(ctx: &mut OrderContext<'_>) -> bool {
         }
     } else if ctx.unit.flags & MISSILE_UNIT != 0 {
         // C++ `UnitInfo::ExecuteMove`: a missile without a path explodes on the current
-        // cell — the parent strikes, the missile itself is destroyed.
+        // cell вЂ” the parent strikes, the missile itself is destroyed.
         if let Some(parent_id) = ctx.unit.parent_unit {
             let position = ctx.unit.grid;
             ctx.world.end_attack(ctx.id);
@@ -1282,7 +1425,7 @@ fn path_execute(ctx: &mut OrderContext<'_>) -> bool {
         Some(UnitPath::Ground(_)) => ground_path_execute(ctx),
         Some(UnitPath::Air(path)) => {
             // `AirPath::Execute` (`airpath.cpp:175-295`) for a projectile
-            // (`MISSILE_UNIT`) steps **pixel by pixel** along the line `m_start_* →
+            // (`MISSILE_UNIT`) steps **pixel by pixel** along the line `m_start_* в†’
             // `m_end_*`; `unit_move` (a cell per tick) does not apply to projectiles.
             if ctx.unit.flags & MISSILE_UNIT != 0 {
                 missile_path_execute(ctx, &path);
@@ -1354,7 +1497,7 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
             ctx.unit.state = UnitOrderState::ExecutingOrder;
             ctx.move_finished(true);
         } else {
-            // `ClearUnitList()` — removing the group order (P5 access).
+            // `ClearUnitList()` вЂ” removing the group order (P5 access).
             ctx.blocked_on_path_request(true);
         }
         return false;
@@ -1470,7 +1613,7 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     }
 }
 
-/// `AirPath::Execute` (`airpath.cpp`) — a step toward the end cell by `m_angle`;
+/// `AirPath::Execute` (`airpath.cpp`) вЂ” a step toward the end cell by `m_angle`;
 /// the pixel interpolation of the segment (`m_delta_*`) is replaced in the lockstep
 /// model by a one-cell-per-tick transition (divergence 1 in the module header).
 fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
@@ -1491,7 +1634,7 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
             }
         } else {
             // `AirPath::Execute` (`airpath.cpp:281-283`): the last pixel step calls
-            // `Paths_FinishMove` — the arrival is not a plain "blocked" end of move.
+            // `Paths_FinishMove` вЂ” the arrival is not a plain "blocked" end of move.
             paths_finish_move(ctx);
         }
         return false;
@@ -1500,9 +1643,9 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     if ctx.unit.is_air() {
         // C++ `AirPath::Execute` (`airpath.cpp:186-199`): the speed and engine
         // check is **inside** `if (unit->flags & MOBILE_AIR_UNIT)`, and the speed
-        // compared is the usable one (with a group order — `group_speed - 1`). For
+        // compared is the usable one (with a group order вЂ” `group_speed - 1`). For
         // projectiles (`MISSILE_UNIT`, `speed = 0` from `SC_ATTRI`) there is no
-        // such check — they fly by `m_length` and finish with `Paths_FinishMove`.
+        // such check вЂ” they fly by `m_length` and finish with `Paths_FinishMove`.
         let mut speed = ctx.unit.speed;
 
         if ctx.unit.group_speed > 0 {
@@ -1534,7 +1677,7 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     true
 }
 
-/// `Paths_FinishMove` (`airpath.cpp:408-456`) — the air path is exhausted
+/// `Paths_FinishMove` (`airpath.cpp:408-456`) вЂ” the air path is exhausted
 /// (`m_length == 0`): the unit lands into a bay, starts loading into a transport, or
 /// finishes its move.
 ///
@@ -1544,15 +1687,15 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
 /// passenger was never taken aboard.
 ///
 /// Divergence from C++: the `path->GetEndX() != grid_x` branch (re-requesting an air path
-/// for the rest of a speed-limited route) is not reachable here — [`air_path_execute`]
+/// for the rest of a speed-limited route) is not reachable here вЂ” [`air_path_execute`]
 /// reaches its end cell along `path.end_x/end_y` or stops earlier on `speed == 0`, so
 /// "at the path end" always means "at the order destination".
 fn paths_finish_move(ctx: &mut OrderContext<'_>) {
-    // `unit->Redraw()` — the shadow of a hovering aircraft; the presentation layer
+    // `unit->Redraw()` вЂ” the shadow of a hovering aircraft; the presentation layer
     // recomputes it from `HOVERING` (`air_shadow_offset`).
     ctx.unit.path = None;
 
-    // `if (!UnitsManager_LoadUnit(unit)) { … unit->BlockedOnPathRequest(); }`
+    // `if (!UnitsManager_LoadUnit(unit)) { вЂ¦ unit->BlockedOnPathRequest(); }`
     if load_unit(ctx) {
         return;
     }
@@ -1585,7 +1728,7 @@ fn paths_finish_move(ctx: &mut OrderContext<'_>) {
     ctx.blocked_on_path_request(true);
 }
 
-/// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`) — an air unit that finished its
+/// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`) вЂ” an air unit that finished its
 /// path over its own landing pad or hangar starts landing instead of stopping.
 ///
 /// Returns `true` when the order was taken over; the caller then skips the rest of
@@ -1630,7 +1773,7 @@ fn load_unit(ctx: &mut OrderContext<'_>) -> bool {
     false
 }
 
-/// `BuilderPath::Execute` (`builderpath.cpp`) — the builder's step to the target.
+/// `BuilderPath::Execute` (`builderpath.cpp`) вЂ” the builder's step to the target.
 fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     let target = ctx.data.move_to;
     let Some(step) = pathfinding::builder_path_step(ctx.world, &ctx.unit, target) else {
@@ -1663,16 +1806,16 @@ fn builder_path_execute(ctx: &mut OrderContext<'_>) -> bool {
 /// if (grid_x || grid_y) {                     // :229
 ///     if (MISSILE_UNIT) Paths_DrawMissile(unit, position_x, position_y);  // :231
 /// }
-/// unit->OffsetDrawZones(offset_x, offset_y);  // :240 — x/y := position
+/// unit->OffsetDrawZones(offset_x, offset_y);  // :240 вЂ” x/y := position
 /// unit->grid_x = unit->x >> 6;                 // :241-242
 /// --m_length;                                  // :244
 /// ```
 ///
-/// `m_delta_*` — the 22-bit step fraction (pixels/tick), `m_start_*` — the pixel
-/// of the launch cell center, `m_length` — the number of ticks (≈ the number of cells of distance).
+/// `m_delta_*` вЂ” the 22-bit step fraction (pixels/tick), `m_start_*` вЂ” the pixel
+/// of the launch cell center, `m_length` вЂ” the number of ticks (в‰€ the number of cells of distance).
 /// Result: the projectile traverses **the same segment** as in the original, not an 8-direction
 /// polyline over cells. The cell (`grid`) is recomputed from the pixel, and
-/// the trail (`Paths_DrawMissile`) is placed from "was → became" — also along the line.
+/// the trail (`Paths_DrawMissile`) is placed from "was в†’ became" вЂ” also along the line.
 fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
     let mut path = *path;
 
@@ -1710,7 +1853,7 @@ fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
         // `Paths_DrawMissile(unit, position_x, position_y)` (`airpath.cpp:231`,
         // `:362-406`): three particles in the **left** cell (`grid_x/grid_y` are still
         // old: C++ calls this before updating `unit->grid_*`) on the segment "old
-        // pixel → new pixel".
+        // pixel в†’ new pixel".
         spawn_missile_trail(
             ctx.world,
             &ctx.unit,
@@ -1731,7 +1874,7 @@ fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
     }
 
     // `Paths_FinishMove` (`airpath.cpp:408-420`) for `MISSILE_UNIT`:
-    // `UnitsManager_EndAttack` → `parent->Attack(grid_x, grid_y)` →
+    // `UnitsManager_EndAttack` в†’ `parent->Attack(grid_x, grid_y)` в†’
     // `UnitsManager_DestroyUnit(unit)`.
     ctx.unit.path = None;
 
@@ -1743,23 +1886,23 @@ fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
     }
 }
 
-/// `Paths_DrawMissile` (`airpath.cpp:362-406`) — the trail behind a flying projectile.
+/// `Paths_DrawMissile` (`airpath.cpp:362-406`) вЂ” the trail behind a flying projectile.
 ///
 /// C++ on every projectile cell transition (`AirPath::Execute`,
 /// `airpath.cpp:229-232`, the `grid_x || grid_y` branch for `MISSILE_UNIT`) calls
 /// `Paths_DrawMissile` and places **three** effect units on the cell the projectile
 /// leaves:
-/// * `ROCKET` → `RKTSMOKE` (5 frames `D_RKTSMOKE`), `TORPEDO` → `TRPBUBLE`
+/// * `ROCKET` в†’ `RKTSMOKE` (5 frames `D_RKTSMOKE`), `TORPEDO` в†’ `TRPBUBLE`
 ///   (3 frames `D_TRPBUBLE`);
 /// * `UnitsManager_DeployUnit(..., skip_map_status_update = true)` with flags from
 ///   `SC_UNITS`: both have `EXPLODING|ANIMATED|MISSILE_UNIT` (`TRPBUBLE` also
 ///   `GROUND_COVER`), so `UnitInfo` immediately gets
 ///   `ORDER_EXPLODE`/`ORDER_STATE_DESTROY` (`units_manager.cpp:2390-2393`);
 /// * frames are advanced by `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`):
-///   `moved & 1` → `image_index + 1`, removal at `image_index ==
+///   `moved & 1` в†’ `image_index + 1`, removal at `image_index ==
 ///   `image_index_max` (4 for smoke, 2 for bubbles);
 /// * `OffsetDrawZones` spreads the three particles along the segment "old projectile pixel
-///   → new pixel" at 0, 1/3 and 2/3 — this is drawing only (`unit->x/y` of the
+///   в†’ new pixel" at 0, 1/3 and 2/3 вЂ” this is drawing only (`unit->x/y` of the
 ///   particles themselves does not change).
 ///
 /// The port stores the spread in the particles' pixel `x/y` (the effect renderer takes them
@@ -1767,9 +1910,9 @@ fn missile_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) {
 /// on visibility: in C++ `Paths_DrawMissile` is called only with
 /// `IsVisibleToTeam(GameManager_PlayerTeam)`, but `GameManager_PlayerTeam` is a
 /// local UI field, and binding to it would diverge client states
-/// (DESIGN §6.1). Particle visibility is set by `UnitInfo::InitStealthStatus`
+/// (DESIGN В§6.1). Particle visibility is set by `UnitInfo::InitStealthStatus`
 /// (own team; `skip_map_status_update = true`), so foreign trails are not
-/// drawn — as in C++.
+/// drawn вЂ” as in C++.
 fn spawn_missile_trail(
     state: &mut GameState,
     unit: &UnitInfo,
@@ -1802,7 +1945,7 @@ fn spawn_missile_trail(
             // 0, 1/3 and 2/3 of the segment.
             particle.x = (start_x + delta_x * index / 3) as u16;
             particle.y = (start_y + delta_y * index / 3) as u16;
-            // Visibility — like `UnitInfo::InitStealthStatus` at
+            // Visibility вЂ” like `UnitInfo::InitStealthStatus` at
             // `UnitsManager_DeployUnit`: the particle is seen only by its own team
             // (`Paths_DrawMissile` skips `Access_UpdateMapStatus`).
             state.write_unit(particle_id, particle);
@@ -1810,7 +1953,7 @@ fn spawn_missile_trail(
     }
 }
 
-/// `UnitInfo::Move` (`unitinfo.cpp:1730`) — completing a cell transition.
+/// `UnitInfo::Move` (`unitinfo.cpp:1730`) вЂ” completing a cell transition.
 ///
 /// In P4 one call completes one cell (divergence 1 in the module header).
 fn unit_move(ctx: &mut OrderContext<'_>) {
@@ -1837,7 +1980,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     ctx.unit.in_transit = false;
 
     // `GroundPath::Execute` (`groundpath.cpp:327-360`): an amphibious unit
-    // switches its sprite block with the terrain it just entered — the carrier
+    // switches its sprite block with the terrain it just entered вЂ” the carrier
     // submerges on water and surfaces on land, `SUBMARNE` keeps its underwater
     // block (the surfaced one is set by `SpotByTeam`).
     if ctx.unit.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)
@@ -1864,7 +2007,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     // (`Paths_DrawMissile`, `airpath.cpp:229-232`).
 
     // C++ `Move()` at `moved == GFX_MAP_TILE_SIZE`:
-    // `path_steps[step_index]->x -= offset_x` — the step is "eaten" by the transition.
+    // `path_steps[step_index]->x -= offset_x` вЂ” the step is "eaten" by the transition.
     if let Some(UnitPath::Ground(path)) = ctx.unit.path.as_mut() {
         if let Some(step) = path.steps.get_mut(path.step_index as usize) {
             step.x = step.x.wrapping_sub(offset.x as i8);
@@ -1889,7 +2032,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
 
     // C++ `UnitInfo::Move` (`unitinfo.cpp:1835-1844`): when a cell is completed and
     // the order is `ORDER_BUILD` with a non-empty queue, the builder starts the next
-    // building on the cell it just entered — `UnitInfo::Build`:
+    // building on the cell it just entered вЂ” `UnitInfo::Build`:
     // `IssueBuildOrder(this, &grid_x, &grid_y, *build_list[0])` (the four anchors
     // around the builder, `units_manager.cpp:4998`), then `build_time` from
     // `BuildMenu_GetTurnsToBuild` and `StartBuilding()` at that site. This is the
@@ -1910,7 +2053,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
             let _ = production::deploy_construction_site(ctx.world, ctx.id, head, site);
 
             if ctx.unit.unit_type == UnitType::Constructor {
-                // `StartBuilding`: the 2×2 constructor first centers on the tape.
+                // `StartBuilding`: the 2Г—2 constructor first centers on the tape.
                 ctx.set_new_order(
                     UnitOrder::AwaitTapePositioning,
                     UnitOrderState::TapePositioningInit,
@@ -1918,7 +2061,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
             }
         } else {
             // `UnitInfo::Build` with a path: `IssueBuildOrder` failed (no passable
-            // anchor around the builder) → `SetParent(nullptr)` +
+            // anchor around the builder) в†’ `SetParent(nullptr)` +
             // `ClearBuildListAndPath`.
             ctx.unit.parent_unit = None;
             clear_build_list_and_path(&mut ctx.unit);
@@ -1926,7 +2069,7 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     }
 
     if ctx.unit.has_move_order() {
-        // `FollowUnit()` — group order (P5 access).
+        // `FollowUnit()` вЂ” group order (P5 access).
     }
 
     // The C++ repeat-transition loop (`while (IN_TRANSITION &&
@@ -1959,7 +2102,7 @@ fn perform_auto_survey(ctx: &mut OrderContext<'_>) {
         ctx.unit.auto_survey = false;
     } else {
         // C++ `UnitsManager_PerformAutoSurvey` (`units_manager.cpp:2584-2603`):
-        // `if (!unit->GetTask()) Ai_EnableAutoSurvey(unit);` — the task is created
+        // `if (!unit->GetTask()) Ai_EnableAutoSurvey(unit);` вЂ” the task is created
         // **once**; the surveyor then owns it and is re-entered through the
         // "movement finished" reminder. The port used to create a fresh
         // `TaskAutoSurvey` on every tick (two tasks per move), so the surveyor
@@ -2022,7 +2165,7 @@ fn process_order_transform(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::Init => {
             // `UnitsManager_DeployMasterBuilderInit`:
-            //   DeployConstructionSiteUtilities(MININGST) — P5 access;
+            //   DeployConstructionSiteUtilities(MININGST) вЂ” P5 access;
             //   SetOrderState(PROGRESS_TRANSFORMING);
             //   SetNewOrderInt(AWAIT_TAPE_POSITIONING, TAPE_POSITIONING_INIT).
             ctx.unit.state = UnitOrderState::ProgressTransforming;
@@ -2032,7 +2175,7 @@ fn process_order_transform(ctx: &mut OrderContext<'_>) {
             );
         }
         UnitOrderState::ProgressTransforming => {
-            // TODO(P3/P5): `UnitsManager_DeployMasterBuilder` — destruction
+            // TODO(P3/P5): `UnitsManager_DeployMasterBuilder` вЂ” destruction
             // of the constructor and placement of the mine/generator/slab.
         }
         UnitOrderState::FinishTransforming => {
@@ -2148,7 +2291,7 @@ fn remove_from_list(state: &mut GameState, id: UnitId, kind: UnitListKind) -> bo
 /// `UnitsManager_PursueEnemy` (`units_manager.cpp:3516`).
 ///
 /// The order conditions and transitions are ported; the path search itself
-/// (`Paths_RequestPath`) — P5, attack range (`Access_IsWithinAttackRange`) —
+/// (`Paths_RequestPath`) вЂ” P5, attack range (`Access_IsWithinAttackRange`) вЂ”
 /// P5 (replaced by the squared distance in cells).
 fn pursue_enemy(ctx: &mut OrderContext<'_>) -> bool {
     if ctx.unit.orders != UnitOrder::MoveToAttack
@@ -2208,7 +2351,7 @@ fn pursue_enemy(ctx: &mut OrderContext<'_>) -> bool {
         && (ctx.unit.path.is_none() || move_to.x != enemy.grid.x || move_to.y != enemy.grid.y)
         && (!enemy_is_moving || enemy.state == UnitOrderState::ExecutingOrder)
     {
-        // `Paths_RequestPath(unit, SameClassBlocks)` — the path to the attack position.
+        // `Paths_RequestPath(unit, SameClassBlocks)` вЂ” the path to the attack position.
         pathfinding::request_path(ctx.world, ctx.id, access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
         return false;
     }
@@ -2238,7 +2381,7 @@ fn attack_position(ctx: &OrderContext<'_>, enemy: &UnitInfo) -> Point {
     access::get_attack_position(ctx.world, &ctx.unit, enemy)
 }
 
-/// `Access_GetSquaredDistance` (`access.cpp`) — the squared distance in cells.
+/// `Access_GetSquaredDistance` (`access.cpp`) вЂ” the squared distance in cells.
 fn squared_distance(first: Point, second: Point) -> i32 {
     let dx = i32::from(first.x) - i32::from(second.x);
     let dy = i32::from(first.y) - i32::from(second.y);
@@ -2252,11 +2395,11 @@ fn init_unit_move(ctx: &mut OrderContext<'_>) -> bool {
     init_unit_path(ctx);
 
     if ctx.unit.state == UnitOrderState::Init {
-        // `FollowUnit()` + `Redraw()` — P5/UI.
+        // `FollowUnit()` + `Redraw()` вЂ” P5/UI.
         ctx.unit.state = UnitOrderState::InProgress;
 
         if ctx.world.network_game && ctx.unit.is_air() {
-            // `Remote_SendNetPacket_38(unit)` — network (max_net), not max_core.
+            // `Remote_SendNetPacket_38(unit)` вЂ” network (max_net), not max_core.
             return false;
         }
     }
@@ -2268,7 +2411,7 @@ fn init_unit_move(ctx: &mut OrderContext<'_>) -> bool {
 ///
 /// The air path is computed immediately (`Paths_GetAirPath`); the ground one is put into
 /// the [`pathfinding::request_path`] queue (synchronous pathfinding, DESIGN
-/// §1.4/risk 2), and the order moves to `MOVE_GETTING_PATH`/`NEW_ORDER` until
+/// В§1.4/risk 2), and the order moves to `MOVE_GETTING_PATH`/`NEW_ORDER` until
 /// the result is applied in `poll_results`.
 fn init_unit_path(ctx: &mut OrderContext<'_>) {
     ctx.unit.path = None;
@@ -2312,7 +2455,7 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
     }
 }
 
-/// Linear route (`GroundPath::AppendLinearSteps`) — used by
+/// Linear route (`GroundPath::AppendLinearSteps`) вЂ” used by
 /// the network layer/tests (packet 38), not by the simulation search.
 #[allow(dead_code)]
 fn build_linear_path(ctx: &mut OrderContext<'_>) {
@@ -2346,7 +2489,7 @@ fn store_unit(ctx: &mut OrderContext<'_>) {
         ctx.world.write_unit(parent_id, parent);
     }
 
-    // `ClearUnitList()` — P5.
+    // `ClearUnitList()` вЂ” P5.
     ctx.unit.orders = UnitOrder::Idle;
     ctx.unit.state = UnitOrderState::Store;
 }
@@ -2437,17 +2580,17 @@ fn process_order_build(ctx: &mut OrderContext<'_>) {
         }
         UnitOrderState::BuildClearing => {
             ai_task_flag(ctx.world, "Build clearing");
-            // TODO(P3/P5): UnitsManager_BuildClearing — destruction
+            // TODO(P3/P5): UnitsManager_BuildClearing вЂ” destruction
             // of the construction, rubble, utilities, unit return.
         }
         UnitOrderState::UnitReady => {
             // C++ `UnitsManager_ProcessOrderBuild` (`units_manager.cpp:2891`):
             // `if (unit->path) UnitsManager_BuildNext(unit); else unit->Animate();`
-            // — a builder that completed a building with a **Path** queue starts the
+            // вЂ” a builder that completed a building with a **Path** queue starts the
             // next site of the route; without a path it just stands and animates.
             // The exit order is given by the **player** clicking a cell
-            // (`game_manager.cpp:6879-6890`: `ORDER_STATE_UNIT_READY` →
-            // `ORDER_ACTIVATE`/`IN_TRANSITION`), by the AI — the task
+            // (`game_manager.cpp:6879-6890`: `ORDER_STATE_UNIT_READY` в†’
+            // `ORDER_ACTIVATE`/`IN_TRANSITION`), by the AI вЂ” the task
             // `TaskActivate` (`crate::unit_order::issue_builder_exit`).
             if ctx.unit.path.is_some() {
                 // `UnitsManager_BuildNext`: continue while material is left and the
@@ -2471,7 +2614,7 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
     match ctx.unit.state {
         UnitOrderState::ExecutingOrder => {
             // `UnitsManager_ActivateUnit(unit)` (`units_manager.cpp:3826`):
-            // `unit` — the container (factory/transport), `unit->GetParent()` —
+            // `unit` вЂ” the container (factory/transport), `unit->GetParent()` вЂ”
             // the ready unit the player brings out by clicking (packet 08/P3) or the AI
             // (`issue_factory_exit`).
             activate_unit(ctx);
@@ -2494,12 +2637,12 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
     }
 }
 
-/// `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`) — bringing a ready
+/// `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`) вЂ” bringing a ready
 /// unit out of the container.
 ///
 /// Called for the **container**: at a factory `parent_unit` is the ready unit
 /// (`UnitInfo::SpawnNewUnit`, `unitinfo.cpp:3513`:
-/// `SetParent(factory_unit.Get())`), at a transport — the passenger. C++
+/// `SetParent(factory_unit.Get())`), at a transport вЂ” the passenger. C++
 /// (`units_manager.cpp:3827-3936`):
 ///
 /// ```text
@@ -2524,9 +2667,9 @@ fn process_order_activate(ctx: &mut OrderContext<'_>) {
 /// } else { unit->RestoreOrders(); }
 /// ```
 ///
-/// An air unit exits **by itself** (`ORDER_MOVE`/`INIT` → `ExecuteMove` →
+/// An air unit exits **by itself** (`ORDER_MOVE`/`INIT` в†’ `ExecuteMove` в†’
 /// `ORDER_TAKE_OFF`), a ground/naval one is moved to the click cell. If the
-/// cell is occupied/impassable — the order returns to the deferred one (the factory stays
+/// cell is occupied/impassable вЂ” the order returns to the deferred one (the factory stays
 /// in `ORDER_BUILD`/`UNIT_READY`), exactly as in C++.
 fn activate_unit(ctx: &mut OrderContext<'_>) {
     let Some(client_id) = ctx.unit.parent_unit else {
@@ -2541,7 +2684,7 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
     let move_to = ctx.data.move_to;
     let is_air = client.is_air();
     let destination_ok = if is_air {
-        // An air unit does not need a site — only fuel/engine:
+        // An air unit does not need a site вЂ” only fuel/engine:
         // `(client->flags & MOBILE_AIR_UNIT) && client->speed > 0`.
         client.speed > 0
     } else {
@@ -2560,7 +2703,7 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
         return;
     }
 
-    // `--unit->storage; unit->SetParent(nullptr);` — the container released the unit.
+    // `--unit->storage; unit->SetParent(nullptr);` вЂ” the container released the unit.
     ctx.unit.storage = ctx.unit.storage.saturating_sub(1);
     ctx.unit.parent_unit = None;
 
@@ -2595,8 +2738,8 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
         ctx.world.set_order_data(client_id, data);
 
         // `UnitsManager_ScaleUnit(client, ORDER_STATE_EXPAND)`: the aircraft
-        // "grows" out of the factory (`scaler_adjust` 4 → 0), then
-        // `RestoreOrders` returns `ORDER_MOVE`/`INIT` → takeoff.
+        // "grows" out of the factory (`scaler_adjust` 4 в†’ 0), then
+        // `RestoreOrders` returns `ORDER_MOVE`/`INIT` в†’ takeoff.
         ctx.world.scale_unit(client_id, UnitOrderState::Expand);
     } else {
         // `UnitsManager_UpdateMapHash(client, move_to)` +
@@ -2643,7 +2786,7 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
 
 /// `UnitsManager_ActivateEngineer` (`units_manager.cpp:3407`).
 fn activate_engineer(ctx: &mut OrderContext<'_>) {
-    // `Access_DestroyUtilities(grid, false, false, false, false)` — only
+    // `Access_DestroyUtilities(grid, false, false, false, false)` вЂ” only
     // the construction site tapes/cones are removed.
     access::destroy_utilities(ctx.world, ctx.unit.grid, false, false, false, false);
     ctx.unit.prior_orders = UnitOrder::Await;
@@ -2661,20 +2804,20 @@ fn activate_engineer(ctx: &mut OrderContext<'_>) {
     }
 }
 
-/// `TaskActivate::Activate` — the first passable cell around the container.
+/// `TaskActivate::Activate` вЂ” the first passable cell around the container.
 ///
 /// C++ (`taskactivate.cpp:106-167`): start at
 /// `(container.grid_x - 1, container.grid_y + unit_size)`, where `unit_size` is
 /// the **container** size (2 for a building, 1 for a transport), then four
-/// directions (`N, E, S, W` — `direction += 2`) for `unit_size + 1` steps
+/// directions (`N, E, S, W` вЂ” `direction += 2`) for `unit_size + 1` steps
 /// cumulatively; the first cell passable for the **exiting** type
-/// (`Access_IsAccessible(client->type, …, SameClassBlocks)`) becomes the target.
+/// (`Access_IsAccessible(client->type, вЂ¦, SameClassBlocks)`) becomes the target.
 pub(crate) fn activation_exit_cell(
     state: &GameState,
     client: &UnitInfo,
     container: &UnitInfo,
 ) -> Option<Point> {
-    // **Container** size: 2 for a 2×2 structure, 1 for 1×1 (including a turret —
+    // **Container** size: 2 for a 2Г—2 structure, 1 for 1Г—1 (including a turret вЂ”
     // `Footprint::Single`, although semantically it is a building).
     let unit_size: i16 = if container.is_quad() { 2 } else { 1 };
 
@@ -2711,7 +2854,7 @@ pub(crate) fn activation_exit_cell(
     None
 }
 
-/// A builder leaves a completed site — `TaskActivate::Activate`
+/// A builder leaves a completed site вЂ” `TaskActivate::Activate`
 /// (`taskactivate.cpp:104-167`), the **AI** path.
 ///
 /// In C++ for the player the exit order is born in the click handler
@@ -2720,7 +2863,7 @@ pub(crate) fn activation_exit_cell(
 /// the port sends the same by packet 08/P3 (`hud::build_builder_exit_order`).
 /// The AI has no click: `TaskCreateBuilding::Activate` attaches `TaskActivate`, which
 /// searches the first passable cell around the building (`builder_exit_cell`) and issues
-/// the same order. `true` — the order was set.
+/// the same order. `true` вЂ” the order was set.
 pub(crate) fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> bool {
     let Some(builder) = state.unit(builder_id).cloned() else {
         return false;
@@ -2747,7 +2890,7 @@ pub(crate) fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> b
     }
 
     // `UnitsManager_SetNewOrder(unit_to_activate.Get(), ORDER_ACTIVATE,
-    //  ORDER_STATE_IN_TRANSITION);` — `prior` = `ORDER_BUILD`/`UNIT_READY`.
+    //  ORDER_STATE_IN_TRANSITION);` вЂ” `prior` = `ORDER_BUILD`/`UNIT_READY`.
     state.set_order(
         builder_id,
         UnitOrder::Activate,
@@ -2757,19 +2900,19 @@ pub(crate) fn issue_builder_exit(state: &mut GameState, builder_id: UnitId) -> b
     true
 }
 
-/// A factory brings out a ready unit — `TaskCreateUnit::BeginTurn`
+/// A factory brings out a ready unit вЂ” `TaskCreateUnit::BeginTurn`
 /// (`taskcreateunit.cpp:147-155`) via `TaskActivate::Activate`
 /// (`taskactivate.cpp:135-144`), the **AI** path.
 ///
 /// For the player the same order is born by clicking a cell at the factory
-/// (`game_manager.cpp:6918-6926`, `CURSOR_ACTIVATE` branch) — the port sends it
+/// (`game_manager.cpp:6918-6926`, `CURSOR_ACTIVATE` branch) вЂ” the port sends it
 /// by packet 08/P3 (`hud::build_activate_order`). The AI has no click: the task searches
 /// the first passable cell around the factory ([`activation_exit_cell`]) and sets
 /// **the factory** to `ORDER_ACTIVATE`/`ORDER_STATE_EXECUTING_ORDER` (at the factory
 /// `parent_unit` is the ready unit, `UnitInfo::SpawnNewUnit`,
 /// `unitinfo.cpp:3513`), after which `UnitsManager_ActivateUnit` brings the unit out.
 ///
-/// `true` — the order was set.
+/// `true` вЂ” the order was set.
 pub(crate) fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> bool {
     let Some(factory) = state.unit(factory_id).cloned() else {
         return false;
@@ -2806,7 +2949,7 @@ pub(crate) fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> b
         state.write_unit(factory_id, unit);
     }
 
-    // `unit_parent->SetParent(unit_to_activate)` — at the factory the parent is already the ready
+    // `unit_parent->SetParent(unit_to_activate)` вЂ” at the factory the parent is already the ready
     // unit (`SpawnNewUnit`), the link does not change.
     state.set_order(
         factory_id,
@@ -2817,14 +2960,14 @@ pub(crate) fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> b
     true
 }
 
-/// `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) —
+/// `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) вЂ”
 /// `UnitsManager_ProcessOrderIdle` for a completed building.
 ///
 /// The building stands on the site in `ORDER_IDLE`/`BUILDING_READY` (and is not drawn)
 /// until its builder parent leaves the building footprint. Then
 /// the tape and cones are removed (the slab remains with `remove_slabs = false` as the
 /// foundation), orders are restored, `scaler_adjust = 4`, and the building
-/// unfolds via `ScaleUnit(EXPAND)` — exactly the C++ order.
+/// unfolds via `ScaleUnit(EXPAND)` вЂ” exactly the C++ order.
 fn building_ready(ctx: &mut OrderContext<'_>) {
     let parent = ctx.unit.parent_unit.and_then(|id| ctx.other(id));
     let is_found;
@@ -2835,12 +2978,12 @@ fn building_ready(ctx: &mut OrderContext<'_>) {
                 if parent.orders == UnitOrder::Move
                     && parent.state != UnitOrderState::ExecutingOrder
                 {
-                    // The builder is still moving — the building waits.
+                    // The builder is still moving вЂ” the building waits.
                     is_found = false;
                 } else {
                     is_found = !production::unit_bounds_contains(&ctx.unit, parent.grid);
 
-                    // The builder returned into the 2×2 footprint (the path did not take it
+                    // The builder returned into the 2Г—2 footprint (the path did not take it
                     // off the site): C++ `ReturnToConstructionSite` returns it
                     // to the center so that it leaves again.
                     if !is_found
@@ -2901,7 +3044,7 @@ fn building_ready(ctx: &mut OrderContext<'_>) {
     ctx.unit.target_grid = ctx.unit.grid;
     ctx.set_new_order(UnitOrder::AwaitScaling, UnitOrderState::Expand);
 
-    // `Access_UpdateMapStatus(unit, true)` — coverage is recomputed by
+    // `Access_UpdateMapStatus(unit, true)` вЂ” coverage is recomputed by
     // `GameState::write_unit` on order/cell change; a separate call is not
     // required in the port.
 }
@@ -2909,7 +3052,7 @@ fn building_ready(ctx: &mut OrderContext<'_>) {
 /// `UnitInfo::ReturnToConstructionSite` (`unitinfo.cpp:4488`).
 fn return_to_construction_site(ctx: &mut OrderContext<'_>, builder: UnitInfo) {
     // A builder without speed will not move: leave the building waiting
-    // (otherwise the repeats "return to center → leave" spin without progress and do not
+    // (otherwise the repeats "return to center в†’ leave" spin without progress and do not
     // let the AI finish the turn).
     if builder.speed == 0 {
         return;
@@ -3014,7 +3157,7 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     // `if (unit->hits > 0) PlaySfx(unit, SFX_TYPE_HIT);   // hit
     //  else                PlaySfx(unit, SFX_TYPE_EXPLOAD); // explosion`
     // The sound belongs to the **unit itself** (its `SC_UNITS` table), so in the
-    // event — the target id; resource/volume is chosen by the client (`max_app::sfx`).
+    // event вЂ” the target id; resource/volume is chosen by the client (`max_app::sfx`).
     ctx.world.unit_sounds.push(crate::game::UnitSound {
         unit: ctx.id,
         unit_type: ctx.unit.unit_type,
@@ -3080,7 +3223,7 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     // the target itself must see it (`UnitInfo::InitStealthStatus` leaves the effect visible only
     // to its own team, and `Access_UpdateMapStatus` is skipped for it in C++:
     // `DeployUnit(..., skip_map_status_update = true)`). We transfer the target's
-    // visibility to the effect — otherwise the hit animation is not drawn for the attacker.
+    // visibility to the effect вЂ” otherwise the hit animation is not drawn for the attacker.
     if let Some(explosion_id) = explosion {
         let visible = ctx.unit.visible_to_team;
         if let Some(mut effect) = ctx.world.unit(explosion_id).cloned() {
@@ -3104,6 +3247,24 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
     }
 }
 
+/// Simulation steps per explosion frame.
+///
+/// Oracle: `UnitsManager_ProgressExplosion` (`units_manager.cpp:4030-4036`) advances
+/// the frame only when `moved & 0x01` вЂ” **one frame per two order ticks**. The
+/// oracle's order tick is set by `GameManager_IsTickDue` (`game_manager.cpp:5103`):
+/// `TickTimer_HaveTimeToThink(TIMER_FPS_TO_MS(24))`, i.e. `1000/24 в‰€ 42 ms`
+/// (`timer.h:27`), so a frame lasts `2 Г— 42 ms в‰€ 83 ms` and `LNDEXPLD` (14 frames)
+/// is visible for `28 Г— 42 ms в‰€ 1.17 s`; `BLDEXPLD` (28 frames) for ~2.3 s.
+///
+/// The port's simulation step is fixed at 60 Hz (`max_app::presentation::SIMULATION_DT`),
+/// so one oracle tick is 2.5 port steps and the same wall-clock frame rate needs one
+/// frame per five simulation steps. Advancing on `moved & 0x01` here made every
+/// explosion 2.5Г— too fast (the "explosions of buildings/units are too fast" playtest
+/// defect). The step count enters the snapshot (`moved`, `image_index`, the effect's
+/// lifetime), so this legitimately changes the CRC of a scenario that has explosions;
+/// the wall-clock animation now matches the oracle.
+pub const EXPLOSION_FRAME_STEPS: u32 = 5;
+
 /// `UnitsManager_ProgressExplosion` (`units_manager.cpp:4006`).
 fn progress_explosion(ctx: &mut OrderContext<'_>) {
     if ctx.unit.image_index == ctx.unit.image_index_max {
@@ -3113,9 +3274,9 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
         // the parent (the dead unit); if its `hits == 0`, it is deleted by
         // `UnitsManager_BuildClearing(parent, true)`. Without this the dead unit
         // would remain in `ORDER_STATE_DESTROY` forever, and `UnitsManager_ProcessOrder`
-        // would set `OrdersPending` every tick — the AI turn would not close.
+        // would set `OrdersPending` every tick вЂ” the AI turn would not close.
         //
-        // `BuildClearing` (not `DestroyUnit`) — this is exactly where C++ leaves
+        // `BuildClearing` (not `DestroyUnit`) вЂ” this is exactly where C++ leaves
         // rubble: `SMLRUBLE` for a unit and `LRGRUBLE` for a building
         // (`access::build_clearing`).
         if let Some(parent_id) = ctx.unit.parent_unit {
@@ -3132,7 +3293,9 @@ fn progress_explosion(ctx: &mut OrderContext<'_>) {
             }
         }
 
-        if ctx.unit.moved & 0x01 != 0 {
+        // `units_manager.cpp:4030-4036`: one frame per [`EXPLOSION_FRAME_STEPS`]
+        // simulation steps вЂ” the oracle's two order ticks.
+        if ctx.unit.moved % (EXPLOSION_FRAME_STEPS as u8) == (EXPLOSION_FRAME_STEPS as u8) - 1 {
             ctx.unit.image_index = ctx.unit.image_index.wrapping_add(1);
         }
         ctx.unit.moved = ctx.unit.moved.wrapping_add(1);
@@ -3199,7 +3362,7 @@ fn progress_unloading(ctx: &mut OrderContext<'_>) {
 
     // `UnitsManager_UpdateMapHash(client, unit->grid)` moves the entry. When the
     // unload cell equals the stale loading cell (`write_unit` then skips the
-    // hash), the unit still has to be added again — it was removed from the hash
+    // hash), the unit still has to be added again вЂ” it was removed from the hash
     // when it was stored; adding it twice when the cell did change would
     // duplicate the id, because `MapHash::Add` does not deduplicate.
     let cell_changed = client.grid != landing_grid;
@@ -3241,11 +3404,11 @@ fn process_order_clear(ctx: &mut OrderContext<'_>) {
     if ctx.unit.state == UnitOrderState::Init {
         ai_task_flag(ctx.world, "Clear start");
         // `UnitsManager_StartClearing`: spawning cones/tape, `ClearUnitList`,
-        // state = IN_PROGRESS, for LRGTAPE — AWAIT_TAPE_POSITIONING.
+        // state = IN_PROGRESS, for LRGTAPE вЂ” AWAIT_TAPE_POSITIONING.
         // TODO(P3/P5): DeployUnit(LRGCONES/LRGTAPE/SMLCONES/SMLTAPE).
         ctx.unit.state = UnitOrderState::InProgress;
 
-        // The large tape (`LRGTAPE`) — only for a 2×2 parent (footprint, not
+        // The large tape (`LRGTAPE`) вЂ” only for a 2Г—2 parent (footprint, not
         // semantics: a turret has `SMLTAPE`).
         let parent_is_quad = ctx.parent().map(|parent| parent.is_quad()).unwrap_or(false);
 
@@ -3490,7 +3653,7 @@ fn process_order_transfer(ctx: &mut OrderContext<'_>) {
     // Transfer of materials/fuel/gold between the unit and the parent: the sign of
     // `transfer_cargo` sets the direction, `ProcessTransfer` itself calls
     // `RestoreOrders`. `ctx.commit()` at the end writes the `ctx.unit` snapshot, so
-    // we re-read the unit after the processor — otherwise the `storage`/order changes
+    // we re-read the unit after the processor вЂ” otherwise the `storage`/order changes
     // would be overwritten by the stale copy.
     crate::transfer::process_transfer(ctx.world, ctx.id);
 
@@ -3506,7 +3669,7 @@ fn process_order_halt_building(ctx: &mut OrderContext<'_>) {
         cancel_building(&mut ctx.unit);
         // See `ProcessOrderBuild`: the port does not move the builder onto the site,
         // so utilities are removed from `target_grid`, not from `grid`;
-        // the flag set — as in `CancelBuilding` (`true, false, false, false`).
+        // the flag set вЂ” as in `CancelBuilding` (`true, false, false, false`).
         access::destroy_utilities(ctx.world, ctx.unit.target_grid, true, false, false, false);
     }
 }
@@ -3605,7 +3768,7 @@ fn process_order_await_disable_steal_unit(ctx: &mut OrderContext<'_>) {
     }
 }
 
-/// `UnitsManager_AttemptStealthAction` — a thin wrapper over
+/// `UnitsManager_AttemptStealthAction` вЂ” a thin wrapper over
 /// [`combat::attempt_stealth_action`] (see the call in the order processor).
 #[allow(dead_code)]
 fn attempt_stealth_action(ctx: &mut OrderContext<'_>) -> bool {
@@ -3614,7 +3777,7 @@ fn attempt_stealth_action(ctx: &mut OrderContext<'_>) -> bool {
 
 /// `UnitsManager_ProcessOrderDisable` (`units_manager.cpp:3226`).
 fn process_order_disable(ctx: &mut OrderContext<'_>) {
-    // `unit->Animate()` — UI; the state does not change while disable turns
+    // `unit->Animate()` вЂ” UI; the state does not change while disable turns
     // are passing (`UpdateProduction` decrements `disabled_turns_remaining`).
     animate(&ctx.unit);
 }
@@ -3678,7 +3841,7 @@ fn place_mine(state: &mut GameState, unit: &mut UnitInfo) {
 
     let flags = access::unit_type_flags(mine_type);
     if let Some(mine) = state.spawn_unit(mine_type, unit.team, unit.grid, flags) {
-        // The mine is visible to all surveyor-unit teams in 3×3 (`SpotByTeam`).
+        // The mine is visible to all surveyor-unit teams in 3Г—3 (`SpotByTeam`).
         let mut surveyor_teams = Vec::new();
         for dy in -1..=1 {
             for dx in -1..=1 {
@@ -3740,12 +3903,12 @@ fn pick_up_mine(state: &mut GameState, unit: &mut UnitInfo) {
     }
 }
 
-/// `UnitsManager_ProcessOrder` (`units_manager.cpp:3257`) — dispatcher of 32
+/// `UnitsManager_ProcessOrder` (`units_manager.cpp:3257`) вЂ” dispatcher of 32
 /// orders.
 ///
-/// The mappings are preserved verbatim, including `ORDER_MOVE_TO_UNIT`/`_TO_ATTACK` →
-/// `ProcessOrderMove` and `ORDER_HALT_BUILDING_2` → `ProcessOrderHaltBuilding`.
-/// `ORDER_17` (0x12) has no `switch` branch in C++ — also unhandled.
+/// The mappings are preserved verbatim, including `ORDER_MOVE_TO_UNIT`/`_TO_ATTACK` в†’
+/// `ProcessOrderMove` and `ORDER_HALT_BUILDING_2` в†’ `ProcessOrderHaltBuilding`.
+/// `ORDER_17` (0x12) has no `switch` branch in C++ вЂ” also unhandled.
 ///
 /// `ORDER_STATE_10` (0xA) and `ORDER_STATE_21` (0x15) are declared in
 /// `enums.hpp`, but the C++ port never uses them, so there are no branches for them
@@ -3770,7 +3933,7 @@ pub(crate) fn process_order(state: &mut GameState, id: UnitId) {
     }
 
     if ctx.unit.flags & SPINNING_TURRET != 0 && ctx.unit.orders != UnitOrder::Disable {
-        // `SpinningTurretAdvanceAnimation` — UI.
+        // `SpinningTurretAdvanceAnimation` вЂ” UI.
     }
 
     if ctx.unit.flags & MISSILE_UNIT != 0 || ctx.unit.state == UnitOrderState::Destroy {

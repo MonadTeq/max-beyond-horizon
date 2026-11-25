@@ -48,7 +48,13 @@ const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x4901);
 /// only by the later `Access_UpdateVisibilityStatus`. The enemy reaches
 /// `Ai_UnitSpotted` one step earlier; `state_checksum` and the replay digest are
 /// unchanged, the snapshot digest (AI lists/ordering) differs.
-const FACTORY_CRCS: (u16, u16, u16) = (0x48DC, 0x2AB3, 0xF43D);
+///
+/// Repinned again (2026-11-26, explosion tempo): `unit_order::EXPLOSION_FRAME_STEPS`
+/// — one blast frame per five 60 Hz simulation steps instead of two (the oracle's
+/// two 42 ms order ticks, `units_manager.cpp:4030`). `HITEXPLD` therefore stays
+/// alive 21 steps, and `ORDER_STATE_ATTACK_PENDING` waits for it, so the shot
+/// cadence (and the `moved`/`image_index` counters in the snapshot) shifts.
+const FACTORY_CRCS: (u16, u16, u16) = (0xEDDD, 0x6357, 0x4DD1);
 /// Pinned digests of the combat scenario (A.4: spotted facility attacked, 6
 /// rounds).
 ///
@@ -57,7 +63,11 @@ const FACTORY_CRCS: (u16, u16, u16) = (0x48DC, 0x2AB3, 0xF43D);
 /// (`Access_DrawUnit`) instead of by the explicit visibility refresh. The packet
 /// 45 checksum and the replay digest are unchanged; only the snapshot digest
 /// (AI task/spotted lists) differs.
-const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xECCA, 0xED7A);
+///
+/// Repinned again (2026-11-26) for the explosion tempo — see [`FACTORY_CRCS`]:
+/// every shot's hit explosion now runs 21 steps, so the attack sequence (and the
+/// effect counters in the snapshot) differ.
+const COMBAT_CRCS: (u16, u16, u16) = (0x5D58, 0xC2D6, 0xD081);
 /// Pinned digests of the research scenario (A.5: upgrades + powered centre, 4
 /// rounds).
 ///
@@ -190,8 +200,7 @@ fn assert_deterministic(
     );
     let actual = crcs(&first);
     assert_eq!(
-        actual,
-        pinned,
+        actual, pinned,
         "{name}: pinned CRC changed; update the table in ai-port-status.md"
     );
 
@@ -309,4 +318,3 @@ fn production_scenario_setup() -> GameUniverse {
     green_base(&mut state, Point::new(32, 32));
     state
 }
-
