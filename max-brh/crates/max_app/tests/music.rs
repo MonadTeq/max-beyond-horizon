@@ -216,6 +216,36 @@ fn real_max_res_references_the_music_tracks() {
     }
 }
 
+/// The music path is lazy: `play_music` opens the `*.MSC` headers and the PCM is
+/// decoded at the first playback, then handed to the backend once.
+#[test]
+fn real_music_plays_through_the_lazy_wav_source() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original");
+    let max_res = dir.join("MAX.RES");
+
+    assert!(
+        max_res.is_file(),
+        "required test fixture is missing: {}",
+        max_res.display()
+    );
+
+    let res = ResArchive::open(&max_res).expect("MAX.RES");
+    let started = Arc::new(Mutex::new(0));
+    let mut audio = AudioPlayer::with_backend(Box::new(RecordingBackend {
+        started: started.clone(),
+        playing: Arc::new(Mutex::new(false)),
+    }));
+
+    audio.attach_res(&res);
+    assert!(audio.set_sound_dir(&dir), "*.MSC files next to MAX.RES");
+    assert!(audio.play_music("MAIN_MSC", 0.5));
+
+    assert_eq!(audio.music_name(), Some("main_msc.msc"));
+    assert_eq!(*started.lock().expect("lock"), 1);
+    assert_eq!(audio.plays(), 1);
+    assert!(audio.errors().is_empty(), "{:?}", audio.errors());
+}
+
 /// The music documents are ordinary stereo PCM16 WAVs (the oracle feeds them to
 /// miniaudio as files): 22050 Hz, 2 channels.
 #[test]

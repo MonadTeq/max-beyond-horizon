@@ -205,3 +205,169 @@ fn all_real_spw_files_are_pcm16_22050_mono() {
 
     assert!(checked >= 200, "ожидались сотни .SPW, найдено {checked}");
 }
+
+// ---------------------------------------------------------------------------
+// Lazy `*.MSC` source (`WavSource`).
+// ---------------------------------------------------------------------------
+
+/// Writes `bytes` to a unique temporary file (the lazy source needs a path).
+fn temp_wav(name: &str, bytes: &[u8]) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "max_assets_wav_source_{}_{name}.wav",
+        std::process::id()
+    ));
+
+    fs::write(&path, bytes).expect("temp wav");
+
+    path
+}
+
+#[test]
+fn lazy_source_opens_headers_and_decodes_like_parse() {
+    let path = temp_wav("stereo", &build_wav(2, 44100, &[10, 20, 30, 40]));
+    let source = WavSource::open(&path).expect("PCM16 headers");
+
+    assert_eq!(source.sample_rate(), 44100);
+    assert_eq!(source.channels(), 2);
+    assert_eq!(source.frames(), 2);
+    assert!(!source.is_empty());
+    assert!((source.duration().as_secs_f64() - 2.0 / 44100.0).abs() < 1e-9);
+    assert_eq!(source.path(), path.as_path());
+
+    let clip = source.decode().expect("lazy decode");
+    assert_eq!(clip.sample_rate, 44100);
+    assert_eq!(clip.channels, 2);
+    assert_eq!(clip.samples, vec![10, 20, 30, 40]);
+    assert_eq!(clip.frames(), 2);
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn lazy_source_skips_unknown_odd_and_trailing_chunks() {
+    let mut wav = build_wav(1, 22050, &[7, 8]);
+    let mut junk = Vec::new();
+    junk.extend_from_slice(b"junk");
+    junk.extend_from_slice(&3u32.to_le_bytes());
+    junk.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0x00]);
+
+    wav.splice(12..12, junk);
+    wav.extend_from_slice(b"smpl");
+    wav.extend_from_slice(&60u32.to_le_bytes());
+    wav.extend_from_slice(&[0u8; 60]);
+
+    let path = temp_wav("chunks", &wav);
+    let source = WavSource::open(&path).expect("foreign chunks are skipped");
+
+    assert_eq!(source.frames(), 2);
+
+    let clip = source.decode().expect("lazy decode");
+    assert_eq!(clip.samples, vec![7, 8]);
+    assert_eq!(clip.sample_rate, 22050);
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn lazy_source_truncates_data_to_whole_frames() {
+    // Stereo with a "half" frame: 3 samples instead of 4.
+    let mut wav = build_wav(2, 22050, &[1, 2, 3, 4]);
+    wav.truncate(wav.len() - 2);
+    wav[40..44].copy_from_slice(&6u32.to_le_bytes());
+
+    let path = temp_wav("half_frame", &wav);
+    let source = WavSource::open(&path).expect("half frame is not an error");
+
+    assert_eq!(source.frames(), 1);
+
+    let clip = source.decode().expect("lazy decode");
+    assert_eq!(clip.channels, 2);
+    assert_eq!(clip.samples, vec![1, 2]);
+
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn lazy_source_rejects_malformed_files_at_open() {
+    // The whole chunk layout is validated by `open` (the audio body is not read).
+    let truncated_path = {
+        let mut wav = build_wav(1, 22050, &[1]);
+        wav.truncate(wav.len() - 1);
+        temp_wav("truncated", &wav)
+    };
+    assert!(matches!(
+        WavSource::open(&truncated_path),
+        Err(WavError::TruncatedChunk { .. })
+    ));
+    let _ = fs::remove_file(&truncated_path);
+
+    let no_data_path = {
+        let mut wav = build_wav(1, 22050, &[1]);
+        wav[36..40].copy_from_slice(b"junk");
+        temp_wav("no_data", &wav)
+    };
+    assert!(matches!(
+        WavSource::open(&no_data_path),
+        Err(WavError::MissingData)
+    ));
+    let _ = fs::remove_file(&no_data_path);
+
+    let no_fmt_path = {
+        let mut wav = build_wav(1, 22050, &[1]);
+        wav[12..16].copy_from_slice(b"junk");
+        temp_wav("no_fmt", &wav)
+    };
+    assert!(matches!(
+        WavSource::open(&no_fmt_path),
+        Err(WavError::MissingFmt)
+    ));
+    let _ = fs::remove_file(&no_fmt_path);
+
+    let bad_riff_path = temp_wav("bad_riff", b"NOPE\0\0\0\0WAVE");
+    assert!(matches!(
+        WavSource::open(&bad_riff_path),
+        Err(WavError::BadRiff { .. })
+    ));
+    let _ = fs::remove_file(&bad_riff_path);
+
+    let empty_path = temp_wav("empty", b"");
+    assert!(matches!(
+        WavSource::open(&empty_path),
+        Err(WavError::TooShort { .. })
+    ));
+    let _ = fs::remove_file(&empty_path);
+
+    let missing = std::env::temp_dir().join("max_assets_wav_source_missing_12345.wav");
+    assert!(matches!(
+        WavSource::open(&missing),
+        Err(WavError::Io { .. })
+    ));
+}
+
+/// The real music track: the lazy path decodes exactly what the eager parser does.
+#[test]
+fn lazy_source_decodes_real_main_msc_like_the_eager_parser() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../max-original/MAIN_MSC.MSC");
+
+    assert!(
+        path.is_file(),
+        "required test fixture is missing: {}",
+        path.display()
+    );
+
+    let source = WavSource::open(&path).expect("MAIN_MSC.MSC headers");
+    assert_eq!(source.sample_rate(), 22_050);
+    assert_eq!(source.channels(), 2);
+    assert!(source.frames() > 22_050, "трек длиннее секунды");
+
+    let frames = source.frames();
+    let clip = source.decode().expect("MAIN_MSC.MSC decodes lazily");
+    assert_eq!(clip.sample_rate, 22_050);
+    assert_eq!(clip.channels, 2);
+    assert_eq!(clip.frames(), frames);
+    assert_eq!(clip.samples.len(), frames * 2);
+    assert!(clip.samples.iter().any(|&sample| sample != 0));
+
+    let eager = WavClip::open(&path).expect("MAIN_MSC.MSC eager");
+    assert_eq!(clip.samples, eager.samples);
+}

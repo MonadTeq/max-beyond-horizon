@@ -6,7 +6,8 @@
 //! * the first sprite decode (`TANK`) and the first palette decode (`FRAMEPIC` - a
 //!   big image carrying the 256-colour palette the client installs);
 //! * `Mve::open(MAXINT.MVE)` (68 MiB) plus the first decoded frame;
-//! * `WavClip::open(MAIN_MSC.MSC)` (a 17 MiB PCM16 WAV - the music path).
+//! * `WavClip::open(MAIN_MSC.MSC)` (a 17 MiB PCM16 WAV - the eager effects path)
+//!   and `WavSource::open` + first `decode` (the lazy music path of phase 1).
 //!
 //! Peak memory is the high-water mark of **live bytes** tracked by a counting global
 //! allocator (logical allocations, not RSS); the OS working-set counters are printed
@@ -32,7 +33,7 @@ use max_assets::image::BigImage;
 use max_assets::mve::Mve;
 use max_assets::res::ResArchive;
 use max_assets::sprite::decode_sprite;
-use max_assets::wav::WavClip;
+use max_assets::wav::{WavClip, WavSource};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -447,7 +448,9 @@ fn bench_palette(data_dir: &Path, runs: usize) {
     report("palette", "palette bytes copy", &copy_stats);
 }
 
-/// Music: `WavClip::open(MAIN_MSC.MSC)` - whole-file read + PCM16 decode.
+/// Music: `MAIN_MSC.MSC` - the eager `WavClip::open` (whole-file read + PCM16
+/// decode) against the lazy music path (`WavSource::open` = headers only, then
+/// the first `WavSource::decode` at playback).
 fn bench_msc(data_dir: &Path, runs: usize) {
     let path = data_dir.join("MAIN_MSC.MSC");
     let len = file_len(&path);
@@ -458,27 +461,53 @@ fn bench_msc(data_dir: &Path, runs: usize) {
 
     bench_fs_read("msc", &path, runs);
 
-    let mut stats = Vec::with_capacity(runs);
-    let mut details = String::new();
+    // Phase 0 baseline: the whole file and the decoded PCM live together.
+    let mut eager_stats = Vec::with_capacity(runs);
 
     for _ in 0..runs {
         let (clip, run) = measure(|| WavClip::open(&path));
         let clip = clip.expect("MAIN_MSC.MSC decodes");
-        if details.is_empty() {
-            details = format!(
-                "rate={} Hz channels={} samples={} frames={} duration={:.2} s",
-                clip.sample_rate,
-                clip.channels,
-                clip.samples.len(),
-                clip.frames(),
-                clip.duration().as_secs_f64(),
-            );
-        }
-        stats.push(run);
+        eager_stats.push(run);
         drop(clip);
     }
 
-    report("msc", "WavClip::open", &stats);
+    report("msc", "WavClip::open (eager baseline)", &eager_stats);
+
+    // Phase 1: opening reads the RIFF headers only; the PCM appears at the first
+    // decode (playback) and is read in pieces, so the file is never held next to
+    // the samples.
+    let mut open_stats = Vec::with_capacity(runs);
+    let mut decode_stats = Vec::with_capacity(runs);
+    let mut details = String::new();
+
+    for _ in 0..runs {
+        let (source, run) = measure(|| WavSource::open(&path));
+        let source = source.expect("MAIN_MSC.MSC headers are valid");
+        if details.is_empty() {
+            let samples = source.frames() * usize::from(source.channels());
+            details = format!(
+                "rate={} Hz channels={} samples={} frames={} duration={:.2} s",
+                source.sample_rate(),
+                source.channels(),
+                samples,
+                source.frames(),
+                source.duration().as_secs_f64(),
+            );
+        }
+        open_stats.push(run);
+
+        let (clip, run) = measure(|| source.decode());
+        let clip = clip.expect("MAIN_MSC.MSC decodes lazily");
+        assert_eq!(
+            clip.samples.len(),
+            clip.frames() * usize::from(clip.channels)
+        );
+        decode_stats.push(run);
+        drop(clip);
+    }
+
+    report("msc", "WavSource::open (lazy, headers only)", &open_stats);
+    report("msc", "first WavSource::decode (playback)", &decode_stats);
     println!("[msc] clip: {details}");
 }
 
@@ -610,7 +639,7 @@ fn main() {
     } else {
         "release"
     };
-    println!("asset benchmark - max_assets (phase 0 of asset-storage.md)");
+    println!("asset benchmark - max_assets (phase 0/1 of asset-storage.md)");
     println!(
         "profile={profile} os={} arch={} runs={runs}",
         std::env::consts::OS,

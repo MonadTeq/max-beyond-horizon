@@ -507,16 +507,21 @@ enum Event {
 
 #[derive(Debug)]
 struct Inner {
-    data: Arc<[u8]>,
+    /// The whole file, owned by the shared `Arc<Inner>`. `Mve::parse` moves the
+    /// caller's `Vec` in, so opening a 68 MiB movie does not copy it into an
+    /// `Arc<[u8]>` (which would need a second 68 MiB allocation: the `Arc`
+    /// header cannot be prepended to the `Vec` buffer). Every `Mve`/`MveDecoder`
+    /// clone shares these bytes through the `Arc<Inner>`.
+    data: Vec<u8>,
     events: Vec<Event>,
     info: MveInfo,
 }
 
 /// Parsed MVE file: metadata + indexed frames.
 ///
-/// The file itself (`Arc<[u8]>`) is shared between clones and decoders; frames
-/// are decoded on demand by [`MveDecoder`], so the 71 MB of `maxint.mve` do not
-/// turn into 600 MB of decompressed frames.
+/// The file bytes live inside the shared `Arc<Inner>` and are never copied;
+/// frames are decoded on demand by [`MveDecoder`], so the 71 MB of
+/// `maxint.mve` do not turn into 600 MB of decompressed frames.
 #[derive(Debug, Clone)]
 pub struct Mve {
     inner: Arc<Inner>,
@@ -534,6 +539,9 @@ impl Mve {
     }
 
     /// Parses MVE from bytes.
+    ///
+    /// The `Vec` is moved into the film, not copied: the caller's buffer becomes
+    /// the decoder's buffer (one allocation for the whole file).
     pub fn parse(bytes: Vec<u8>) -> Result<Self, MveError> {
         if bytes.len() < FILE_HEADER_SIZE {
             return Err(MveError::TooShort {
@@ -554,7 +562,10 @@ impl Mve {
             return Err(MveError::BadHeader);
         }
 
-        let data: Arc<[u8]> = Arc::from(bytes);
+        // No `Arc::from(bytes)` here: `Arc<[u8]>` would allocate a new buffer and
+        // memcpy all 68 MiB of `maxint.mve`. The `Vec` is stored as is inside
+        // `Arc<Inner>`, which already provides the sharing.
+        let data = bytes;
         let mut events = Vec::new();
         let mut width = 0u16;
         let mut height = 0u16;

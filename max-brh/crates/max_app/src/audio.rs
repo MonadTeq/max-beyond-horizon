@@ -4,7 +4,9 @@
 //! already decoded sounds:
 //!
 //! * [`max_assets::wav`] decodes `*.SPW` (PCM16) into [`WavClip`] — this
-//!   works **always**, without external dependencies;
+//!   works **always**, without external dependencies; the 16–18 MB `*.MSC` music
+//!   tracks go through [`max_assets::WavSource`] and are decoded at the first
+//!   playback, not at open;
 //! * [`AudioPlayer`] caches clips, resolves names through the reference resources
 //!   `MAX.RES` (`TANK1` → `"tank1.spw"`, `max-original-dasm/formats/spw.md` §1)
 //!   and hands them to the backend;
@@ -35,7 +37,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use max_assets::{parse_file_ref, ResArchive, WavClip};
+use max_assets::{parse_file_ref, ResArchive, WavClip, WavSource};
 
 /// Menu click resource tag (`KBUY0` → `kbuy0.spw`).
 ///
@@ -152,8 +154,9 @@ pub struct AudioPlayer {
     references: BTreeMap<String, String>,
     /// lowercase file name → decoded clip.
     cache: HashMap<String, Arc<WavClip>>,
-    /// Music clips by file name (preloaded or decoded once; the `*.MSC` files are tens
-    /// of megabytes, so they are not kept in [`Self::cache`] together with the effects).
+    /// Music clips by file name (only preloaded ones; the `*.MSC` files are tens
+    /// of megabytes, so a decoded track is not kept in the cache after playback
+    /// and never shares [`Self::cache`] with the effects).
     music_cache: HashMap<String, Arc<WavClip>>,
     /// Currently requested music file (for diagnostics/tests).
     music_name: Option<String>,
@@ -584,10 +587,14 @@ impl AudioPlayer {
         }
     }
 
-    /// Gets the music clip from the cache or decodes the file.
+    /// Gets the music clip from the cache or opens and decodes the file.
     ///
-    /// The `*.MSC` tracks are 14–18 MB WAV files; only preloaded/converted clips stay in
-    /// the cache, the file is read on every track change (one track at a time).
+    /// The `*.MSC` tracks are 16–18 MB WAV files, so they go through
+    /// [`WavSource`]: `open` validates the RIFF headers without reading the audio,
+    /// and the PCM is decoded immediately afterwards — at the first playback —
+    /// reading the `data` chunk in pieces instead of holding the whole file next
+    /// to the samples. Only preloaded/converted clips stay in the cache, the file
+    /// is decoded on every track change (one track at a time).
     fn music_clip_for(&mut self, file_name: &str) -> Option<Arc<WavClip>> {
         if let Some(clip) = self.music_cache.get(file_name) {
             return Some(clip.clone());
@@ -595,7 +602,7 @@ impl AudioPlayer {
 
         let path = self.files.get(file_name)?.clone();
 
-        match WavClip::open(&path) {
+        match WavSource::open(&path).and_then(WavSource::decode) {
             Ok(clip) => Some(Arc::new(clip)),
             Err(error) => {
                 self.push_error(format!("{}: {error}", path.display()));
