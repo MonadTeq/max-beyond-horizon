@@ -68,12 +68,18 @@ fn scan_reveals_enemies_in_fov_but_not_outside_it() {
         .spawn_unit(UnitType::Tank, TeamId::GREEN, Point::new(80, 80), 0)
         .expect("дальний враг");
 
-    // The own team's scan is not recomputed when a foreign unit spawns.
-    assert!(!state
-        .snapshot()
-        .unit(near)
-        .unwrap()
-        .is_visible_to_team(TeamId::RED));
+    // `UnitsManager_DeployUnit` в†’ `Access_UpdateMapStatus(unit, true)` в†’
+    // `Access_DrawUnit` (`access.cpp:762,691`): a unit deployed inside a cell
+    // the team has already scanned is spotted at once, without a separate
+    // `Access_UpdateVisibilityStatus` pass.
+    assert!(
+        state
+            .snapshot()
+            .unit(near)
+            .unwrap()
+            .is_visible_to_team(TeamId::RED),
+        "deployment inside the scanned area spots the enemy immediately"
+    );
 
     // `Access_UpdateVisibilityStatus(false)`: rebuilds scan coverage.
     state.update_visibility_status(false);

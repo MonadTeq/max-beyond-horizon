@@ -534,6 +534,73 @@ impl GameState {
         }
     }
 
+    /// `UnitInfo::Draw(team)` (`unitinfo.cpp:2842`), the simulation part: a unit
+    /// that has left the team's scan coverage loses its visibility.
+    ///
+    /// The C++ sprite bookkeeping (`image_base` of surfaced submarines and
+    /// commandos) is presentation; the visibility flag is what the simulation
+    /// reads (`UnitInfo::IsVisibleToTeam`).
+    fn hide_unit_from_team(world: &mut GameState, id: UnitId, team: TeamId) {
+        let Some(unit) = world.unit(id).cloned() else {
+            return;
+        };
+
+        if unit.team == team || !unit.is_visible_to_team(team) {
+            return;
+        }
+
+        let mut unit = unit;
+        unit.set_visible_to_team(team, false);
+        world.write_unit(id, unit);
+    }
+
+    /// `Access_DrawUnit` (`access.cpp:691`) вЂ” the per-team visibility pass run by
+    /// `Access_UpdateMapStatus(unit, true)` for the unit being updated.
+    ///
+    /// Heat-map callouts (`Access_OnCellRevealed`) only fire when a cell becomes
+    /// covered for the first time. A unit that **moves into an already scanned
+    /// cell** therefore has to be spotted by this pass; without it the mover
+    /// stays invisible to the scanning team, and its sentry units never react
+    /// (`UnitsManager_ShouldAttack` requires `IsVisibleToTeam`).
+    fn access_draw_unit(&mut self, unit: &UnitInfo) {
+        let grid_x = i32::from(unit.grid.x);
+        let grid_y = i32::from(unit.grid.y);
+
+        for team_index in 0..crate::game::PLAYER_TEAM_COUNT {
+            let team = TeamId(team_index as u8);
+
+            // C++ `Access_DrawUnit`: `PLAYER_TEAM_RED .. PLAYER_TEAM_MAX - 1`
+            // (`PLAYER_TEAM_ALIEN` has no heat map).
+            if self.teams[team_index].team_type == TeamKind::None {
+                continue;
+            }
+            if heat_map_index(team).is_none() {
+                continue;
+            }
+
+            // `heat_map->GetStealthSea(grid)` вЂ” a submerged unit inside the
+            // team's sea-stealth coverage is spotted.
+            if self.ai_heat_map_stealth_sea(team, grid_x, grid_y) != 0
+                && self.is_unit_under_water(unit)
+            {
+                self.spot_by_team(unit.id, team);
+            }
+
+            // `heat_map->GetStealthLand(grid)` вЂ” the same for commandos.
+            if unit.unit_type == UnitType::Infiltrator
+                && self.ai_heat_map_stealth_land(team, grid_x, grid_y) != 0
+            {
+                self.spot_by_team(unit.id, team);
+            }
+
+            if self.is_visible_on_heat_map(unit, team) {
+                Self::draw_stealth(self, unit.id, team);
+            } else {
+                Self::hide_unit_from_team(self, unit.id, team);
+            }
+        }
+    }
+
     /// Counting "new targets" when a cell is revealed (`Access_OnCellRevealed`).
     fn reveal_cell(&mut self, team: TeamId, grid_x: i32, grid_y: i32) -> u32 {
         let grid = Point::new(grid_x as i16, grid_y as i16);
@@ -808,6 +875,22 @@ impl GameState {
                 }
             }
             return;
+        }
+
+        // `Access_UpdateMapStatus` (`access.cpp:762-816`): for a unit that is not
+        // `ORDER_IDLE` the update also refreshes the unit's **own** visibility
+        // flags (`Access_DrawUnit`). The scan loop below only records coverage: a
+        // unit that moves into a cell the team has already scanned produces no
+        // heat-map callout, so without this pass the mover stays invisible to
+        // that team вЂ” and its sentry units never receive a reaction
+        // (`UnitsManager_ShouldAttack` requires `IsVisibleToTeam`).
+        //
+        // The removal pass (`mode = false`) is not repeated here: C++ calls it on
+        // a `MakeCopy()` of the unit on a cell change (`unitinfo.cpp:1814-1815`),
+        // so the `UnitInfo::Draw` there only repaints the temporary copy; the
+        // visibility of a moving unit is decided by the following add pass.
+        if mode && unit.orders != UnitOrder::Idle {
+            self.access_draw_unit(unit);
         }
 
         // `ORDER_IDLE`, the `SELECTABLE` bit and the `ATTRIB_SCAN` radius: the one

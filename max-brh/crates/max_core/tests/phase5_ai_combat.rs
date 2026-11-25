@@ -160,11 +160,14 @@ fn unspotted_enemy_is_not_attacked() {
     let mut state = strategy_state(AiStrategy::TankHorde, Opponent::Average);
     red_base(&mut state, Point::new(8, 8), 500);
 
+    // Deployed outside every red scan radius (the base tank at (8,13) scans 4
+    // cells): `Access_UpdateMapStatus` cannot spot it, and there is no sentry or
+    // visibility refresh, so the AI must never see the facility.
     let facility = spawn(
         &mut state,
         UnitType::TrainingHall,
         TeamId::GREEN,
-        Point::new(11, 12),
+        Point::new(35, 36),
     );
     spawn(
         &mut state,
@@ -172,8 +175,6 @@ fn unspotted_enemy_is_not_attacked() {
         TeamId::GREEN,
         Point::new(36, 36),
     );
-
-    // No sentry, no visibility refresh: the base tank stays `ORDER_IDLE`.
     let hits_before = state
         .snapshot()
         .unit(facility)

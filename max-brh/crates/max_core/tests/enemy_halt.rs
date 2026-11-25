@@ -211,6 +211,12 @@ fn a_foreign_team_spotting_a_unit_does_not_ping_the_player() {
     use max_core::universe::GameEvent;
 
     let (mut state, mover, _) = setup_two_units(true);
+
+    // Deployment is itself an `Access_UpdateMapStatus(unit, true)`: a unit placed
+    // inside the player's already scanned area is reported right away, as in the
+    // oracle. Consume that setup-time report before isolating the foreign spot.
+    state.tick();
+
     let mut events = state.subscribe();
 
     state.spot_by_team(mover, TeamId::GREEN);

@@ -41,10 +41,23 @@ const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0xD94E, 0xB2DB);
 const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x4901);
 /// Pinned digests of the factory scenario (A.1/A.3: spotted enemy tank → heavy
 /// plant orders a tank, 4 rounds).
-const FACTORY_CRCS: (u16, u16, u16) = (0x1DE6, 0xF849, 0x2DA9);
+///
+/// Repinned after the fog-of-war fix (2026-11-25): `Access_UpdateMapStatus`
+/// now runs its per-unit visibility pass (`Access_DrawUnit`, `access.cpp:691`),
+/// so the enemy tank deployed at (11,13) is spotted on deployment instead of
+/// only by the later `Access_UpdateVisibilityStatus`. The enemy reaches
+/// `Ai_UnitSpotted` one step earlier; `state_checksum` and the replay digest are
+/// unchanged, the snapshot digest (AI lists/ordering) differs.
+const FACTORY_CRCS: (u16, u16, u16) = (0x48DC, 0x2AB3, 0xF43D);
 /// Pinned digests of the combat scenario (A.4: spotted facility attacked, 6
 /// rounds).
-const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xECCA, 0x8536);
+///
+/// Repinned after the same fix (2026-11-25): the `TRAINHAL` deployed at (11,12)
+/// lies inside the base tank's scan and is spotted on deployment
+/// (`Access_DrawUnit`) instead of by the explicit visibility refresh. The packet
+/// 45 checksum and the replay digest are unchanged; only the snapshot digest
+/// (AI task/spotted lists) differs.
+const COMBAT_CRCS: (u16, u16, u16) = (0x56BC, 0xECCA, 0xED7A);
 /// Pinned digests of the research scenario (A.5: upgrades + powered centre, 4
 /// rounds).
 ///

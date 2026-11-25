@@ -1153,6 +1153,43 @@ impl<D: Dispatcher> App<D> {
             .surface_map())
     }
 
+    /// Installs the planet of a V70 save — `ResourceManager_InitInGameAssets(world_index)`
+    /// (`saveload.cpp:796`, `resource_manager.cpp:1147,1183-1185`).
+    ///
+    /// The map of a V70 file is **data**: the surface and cargo bytes are read
+    /// from the save itself (`saveload.cpp:825-829`). The terrain tiles
+    /// (`gfx.cpp:175`), the minimap and the music of the match come from the
+    /// planet `World` (`SNOW_1 + world_index`, `resource_manager.cpp:1183-1185`),
+    /// which the oracle rebuilds on load and records in `settings["world"]`.
+    /// The port keeps that planet in [`AppConfig`]: a headless run without
+    /// assets only remembers it for a later [`App::init_assets`], while an
+    /// application with loaded assets re-reads them for the save's planet.
+    ///
+    /// Without this step a loaded match keeps the planet of the menu/`--world`
+    /// assets: `SAVE1.CAM` (`world = 16`, Islandia / `GREEN_5`) was drawn with
+    /// the `SNOW_1` tiles of the default configuration.
+    fn install_save_planet(&mut self, planet: Planet) -> Result<()> {
+        let reload = match self.assets.as_ref() {
+            // Headless run: nothing to re-read, the planet is kept for `init_assets`.
+            None => false,
+            Some(assets) => assets.planet != planet,
+        };
+        let previous = self.config.planet;
+        self.config.planet = planet;
+
+        if !reload {
+            return Ok(());
+        }
+
+        match self.init_assets() {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.config.planet = previous;
+                Err(error.context(format!("V70 load: no planet assets for {planet:?}")))
+            }
+        }
+    }
+
     /// Carries the user settings of the lobby application into the network one
     /// (stage C §4.2).
     ///
@@ -3900,8 +3937,20 @@ impl App<LocalDispatcher> {
     /// [`App::adopt_universe`] — the same adoption the generator uses, so the
     /// application state around a loaded match is reset exactly like around a
     /// generated one.
+    ///
+    /// The planet assets are installed from the save header
+    /// (`install_save_planet`, `saveload.cpp:796`): the map bytes are the
+    /// save's (surface/cargo), the terrain/minimap/music are the header's
+    /// `world`. A headless application without assets only records the planet
+    /// for a later [`App::init_assets`].
     pub fn load_save_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         let save = SaveFile::parse(bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        // `SaveLoad_LoadFormatV70` (`saveload.cpp:796`): the loader installs the
+        // planet of the header (`ResourceManager_InitInGameAssets(world_index)`)
+        // before the map is used. The state below (surface/cargo maps included)
+        // comes from the save; the terrain/minimap/music follow the header's `world`.
+        self.install_save_planet(save.header.world)?;
 
         // Stage A: the facade owns the state, so a load replaces the universe
         // (`GameUniverse::from_save` counts the load as a state version).

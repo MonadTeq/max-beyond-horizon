@@ -378,13 +378,26 @@ seed-пути» остаётся открытым: тесты фиксируют
 |---|---|---|---|---|
 | `strategy` (A.2: клан AyersHand → MISSILES) | 6 | `0x4C90` | `0xD94E` | `0xB2DB` |
 | `production` (A.3: голая база, стройка) | 12 | `0x7682` | `0x0404` | `0x4901` |
-| `factory` (A.1/A.3: замеченный танк → LANDPLT заказывает TANK) | 4 | `0x1DE6` | `0xF849` | `0x2DA9` |
-| `combat` (A.4: замеченный TRAINHAL, штурм) | 6 | `0x56BC` | `0xECCA` | `0x8536` |
+| `factory` (A.1/A.3: замеченный танк → LANDPLT заказывает TANK) | 4 | `0x48DC` | `0x2AB3` | `0xF43D` |
+| `combat` (A.4: замеченный TRAINHAL, штурм) | 6 | `0x56BC` | `0xECCA` | `0xED7A` |
 | `research` (A.5: апгрейды + включённый центр) | 4 | `0xCC41` | `0x6407` | `0x38C5` |
 | `recon` (A.6: разведчик) | 8 | `0x122B` | `0x54BB` | `0xF5E7` |
 
 При изменении ИИ таблицу обновлять здесь; значения закреплены константами
 `*_CRCS` в `phase5_ai_determinism.rs`.
+
+**2026-11-25, перепин видимости (дефект sentry-реакции):** `update_map_status_unit`
+(`ai/threat.rs`) теперь выполняет пропущенную часть `Access_UpdateMapStatus`
+(`access.cpp:762`) — проход видимости самого юнита: `Access_DrawUnit`
+(`access.cpp:691`) со `UnitInfo::Draw` (`unitinfo.cpp:2842`) для клетки вне скана.
+Юнит, оказавшийся в уже просканированной клетке (перемещение,
+высадка), в C++ засвечивается сразу; без этого прохода `visible_to_team`
+оставался `false`, и `UnitsManager_ShouldAttack` (`units_manager.cpp:4623`)
+отклонял цель — sentry не реагировал. Следствия: `factory` и `combat`
+переснимают `state_digest` (враг попадает в `Ai_UnitSpotted` на шаге развёртывания,
+а не на явном `Access_UpdateVisibilityStatus`), `state_checksum` и
+`replay_digest_crc` не изменились. Регресс-тест:
+`max_core/tests/sentry_reaction.rs`.
 
 **2026-11-24, перепин экономики (дефект 3 ручного прогона):** экономика команды
 перенесена на **начало её хода** в порядке оракула
