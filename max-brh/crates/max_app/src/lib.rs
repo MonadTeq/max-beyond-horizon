@@ -13,6 +13,7 @@
 //! | [`App::init_assets`] | reads `MAX.RES`, `PATCHES.RES`, `COLOR.PAL`, the planet map (`SNOW_1`…`DESERT_6`) and the [`assets::UNIT_SPRITES`] sprites |
 //! | [`App::load_game`] / [`App::load_save`] | V70 save → [`max_core::game::GameState`] (`SaveLoad_LoadFormatV70` normalizations) |
 //! | [`App::new_game`] / [`App::new_game_on_surface`] | `setup::generate_map` + settings + alien debris |
+//! | [`App::start_mission_from_registry`] | headless mission start: registry → descriptor → `SAVE*.CAM` → the local match (`menu.cpp:2052-2098`) |
 //! | [`App::tick`] | one simulation tick (`GameManager_ProcessTick`) |
 //! | [`App::submit`] | the single lockstep entry: queues a `max_core::input::Command` (network packet or local input) |
 //! | [`App::render_frame`] | a [`max_render::buffer::RgbaBuffer`] frame without SDL |
@@ -55,6 +56,7 @@ pub mod landing;
 pub mod local;
 pub mod mem;
 pub mod menu;
+pub mod mission;
 pub mod mobilize;
 pub mod music;
 pub mod net;
@@ -133,6 +135,7 @@ pub use local::{
     LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, SessionChannel, LOCAL_TEAM_COUNT,
 };
 pub use mem::{memory_line, process_memory, ProcessMemory};
+pub use mission::MissionStart;
 pub use mobilize::Mobilization;
 pub use net::{
     connect_horizon, run_network, run_network_with_sink, DirectEndpoint, FrameSink, LobbyInfo,

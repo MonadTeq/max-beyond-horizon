@@ -1831,12 +1831,40 @@ impl<'a> SaveReader<'a> {
     }
 }
 
+/// Save-header file type of a mission category — the inverse of
+/// [`MissionCategory::from_file_type`] (`SaveLoad_TranslateSaveFileCategory`,
+/// `saveload.cpp:1609-1664`).
+///
+/// `Debug`/`Text` have no mission category of their own (both load as `Custom`),
+/// so the function is defined only on the categories that can appear in
+/// `GameState`. `SaveLoad_Save` writes the category itself (`saveload.cpp:391-396`);
+/// for V70 that byte is the file type of the original save.
+fn file_type_for_mission(category: MissionCategory) -> max_core::enums::FileType {
+    use max_core::enums::FileType;
+
+    match category {
+        MissionCategory::Custom => FileType::Custom,
+        MissionCategory::Training => FileType::Tutorial,
+        MissionCategory::Campaign => FileType::Campaign,
+        MissionCategory::HotSeat => FileType::HotSeat,
+        MissionCategory::Multiplayer => FileType::Multiplayer,
+        MissionCategory::Demo => FileType::Demo,
+        MissionCategory::Scenario => FileType::Scenario,
+        MissionCategory::MultiPlayerScenario => FileType::MultiScenario,
+    }
+}
+
 impl App {
     /// Starts a local match **from a V70 save** (`SaveLoad_Load` + the local loop).
     ///
     /// Loading V70 in local mode: the state from the file, `network_game = false`,
     /// the teams and `player_team` — from the save, the game mode and timers — from the setup
     /// screen. After loading the usual M-SP loop runs (AI turns, End Turn).
+    ///
+    /// Also the loader of a **mission** start (`GAME_STATE_10_LOAD_GAME`,
+    /// `game_manager.cpp:1929-1961`): the mission identity (`mission_category`,
+    /// `mission_index`) comes from the save header, not from the setup — see
+    /// [`crate::mission::MissionStart`] and [`App::start_mission_from_registry`].
     pub fn start_local_game_from_save(
         &mut self,
         setup: &LocalSetup,
@@ -1889,6 +1917,10 @@ impl App {
             self.universe.set_player_team(player);
         }
 
+        // The mission category of the loaded file (`SaveLoad_TranslateSaveFileCategory`,
+        // `saveload.cpp:1609-1664`) — read before the facade is mutably borrowed below.
+        let saved_category = self.state_ref().mission_category();
+
         let universe = &mut self.universe;
         universe.set_network_game(false);
         universe.set_play_mode(play_mode);
@@ -1917,11 +1949,22 @@ impl App {
         // A save with several human teams is played as hot-seat.
         loaded.hot_seat = loaded.is_hot_seat();
 
-        universe.set_mission_category(if loaded.is_hot_seat() {
-            MissionCategory::HotSeat
-        } else {
-            MissionCategory::Custom
+        universe.set_mission_category(match saved_category {
+            // The port-only M-HS behavior: a *custom* save with several human
+            // teams is played as hot-seat (`GameManager_HumanPlayerCount > 1`).
+            MissionCategory::Custom if loaded.is_hot_seat() => MissionCategory::HotSeat,
+            // `GAME_STATE_10_LOAD_GAME` (`game_manager.cpp:1929-1936`): the mission
+            // category is the loaded mission's, not the setup screen's — C++ calls
+            // `SaveLoad_Load(filepath, mission->GetCategory(), …)` and the loader
+            // stores the header category (`game.rs:562-564`). A mission keeps its
+            // category, so `mission_win_loss` runs the mission script instead of the
+            // generic rules.
+            category => category,
         });
+        // `mission_index` is deliberately **not** written here: the 1-based value
+        // from the save header (`saveload.cpp:772`, `game.rs:562`) is what the
+        // mission rules receive (`victory.rs:1444`); zeroing it would silently fall
+        // back to the generic `mission_index == 0` rules.
         // P3: if the screen settings overrode the mode/victory from the file, we bring
         // `SaveMeta` to the same form — otherwise a repeated save would "drift"
         // relative to the just loaded one.
@@ -1933,11 +1976,10 @@ impl App {
             let victory_type = snapshot.victory_type();
             let victory_limit = snapshot.victory_limit();
             let meta = universe.save_meta_mut();
-            meta.save_game_type = if mission_category == MissionCategory::HotSeat {
-                max_core::enums::FileType::HotSeat
-            } else {
-                max_core::enums::FileType::Custom
-            };
+            // The header type follows the loaded category: `SaveLoad_Save` writes the
+            // mission category (`saveload.cpp:391-396`), so a re-save of a loaded
+            // mission keeps its own file type instead of becoming a custom game.
+            meta.save_game_type = file_type_for_mission(mission_category);
             meta.ini_options.play_mode = play_mode;
             meta.ini_options.victory_type = victory_type;
             meta.ini_options.victory_limit = victory_limit;

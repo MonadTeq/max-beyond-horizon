@@ -63,3 +63,48 @@ LUA — win/loss уже захардкожено; game-rules — по катег
 3. `hash`-верификация — warning, не блокер.
 4. Прогрессия — нужен персистентный settings (`last_campaign`/`game_file_number`).
 5. Hot Seat Scenarios / MultiPlayerScenario — вне этого объёма.
+
+## Реализация этапа 1 (2026-11-25, Разработчик)
+
+Поток старта миссии без UI (M4): реестр → дескриптор → файл миссии → локальная партия.
+
+- **API** (`max_app::mission`):
+  `App::start_mission_from_registry(registry, category, index, setup)` — вход
+  «категория + индекс» из `GameSetupMenu` (`index` 0-based, как C++
+  `game_file_number - 1`, `menu.cpp:2052-2056`), и
+  `App::start_mission_from_descriptor(descriptor, setup)` — тот же поток по уже
+  разрешённому дескриптору. Оба читают файл миссии и вызывают
+  `App::start_local_game_from_save`, поэтому путь реестра не может разойтись с
+  прямым сейв-лоадом. Отчёт `MissionStart` (tag/title/category/mission_index/path)
+  понадобится экрану выбора (этап 2).
+- **Идентичность миссии — из заголовка V70**: `mission_category` и 1-based
+  `mission_index` попадают в `GameState` через `GameState::load_state`
+  (`game.rs:562-564`, `saveload.cpp:772`, `SaveLoad_TranslateSaveFileCategory`
+  `saveload.cpp:1609-1664`) — как C++ восстанавливает дескриптор по заголовку при
+  загрузке (`saveload.cpp:196`). Реестр выбирает только файл; `mission_index` не
+  перезаписывается нулём (`0` молча включил бы generic-правила, `victory.rs:26`).
+  Расхождение заголовка и дескриптора — предупреждение (уровень hash-warning,
+  `mission.cpp:263`), не ошибка старта.
+- **`start_local_game_from_save` не форсирует `Custom`/`HotSeat`**: категория
+  загруженного сейва сохраняется — `SaveLoad_Load(filepath, mission->GetCategory(), …)`
+  (`game_manager.cpp:1930-1936`); портовое M-HS-поведение (несколько людей в
+  *custom*-сейве → hot-seat) осталось только для `Custom`. `SaveMeta::save_game_type`
+  пишется обратной таблицей категории (`local.rs::file_type_for_mission`), поэтому
+  повторный сейв загруженной миссии остаётся сейвом миссии.
+- **Headless:** загрузка идёт через `App::load_save_bytes` → `App::adopt_universe`
+  (install-API C3), `CargoMenu`/`SelectSite` не открываются; после старта партия
+  сразу turn-active (`GAME_STATE_11_TURN_ACTIVE` → `GAME_STATE_8_IN_GAME`),
+  `build_menu`/`build_site` — `None`.
+- **Взаимодействие с save/load (S1):** `App::load_v70_path` и quick load идут через
+  тот же `start_local_game_from_save`, поэтому загруженная кампания теперь сохраняет
+  категорию — автосейв и quick save пишут `save10.cam` в data-каталог, а не
+  `save10.dta` в pref-каталог (`SaveLoad_GetFilePath`, `saveload.cpp:72-78`).
+- **Гейт:** `max_app/tests/mission_start.rs` — для всех четырёх файловых категорий
+  (Campaign/Scenario/Training/MultiPlayerScenario) старт из реестра даёт побайтово
+  те же `snapshot_bytes`, что прямой `start_local_game_from_save` (на старте и после
+  5 тиков; digest совпадает), партия turn-active, `mission_win_loss` для Campaign 1
+  отдаёт `Pending`, а не generic `Generic`. Победа Campaign 1 по условиям
+  (теплицы/исследовательские центры) покрыта `max_core/tests/p7.rs`.
+- **Валидация:** `cargo check --workspace` — зелёный; `cargo test -p max_core
+  -p max_app --no-default-features` — 1689 тестов, 0 failed.
+
