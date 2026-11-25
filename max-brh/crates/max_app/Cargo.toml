@@ -35,16 +35,21 @@ rodio = { version = "0.19", optional = true, default-features = false }
 # GUI by default: `cargo run -p max_app` (and a regular build) opens the game.
 # `sdl-from-source` is self-contained — SDL3 3.4.20 is built from source
 # (vendored `sdl3-src`) via CMake, without system SDL3 and without vcpkg; only
-# a C compiler and cmake are needed. Headless builds (CI, server, `--demo`) are built
-# with `--no-default-features` — then SDL is not pulled in at all.
-default = ["sdl-from-source"]
+# a C compiler and cmake are needed. The default GUI also includes `sound`: the
+# original main menu is audible (`KBUY0`/`MBUTT0`...), and without the backend the
+# UI hooks are silent (they stay in place, so the headless build works as before).
+# Headless builds (CI, server, `--demo`) are built with `--no-default-features` —
+# then neither SDL nor rodio is pulled in. A silent GUI build is
+# `--no-default-features --features sdl-from-source`.
+default = ["sdl-from-source", "sound"]
 # Horizon over TLS (https://) — forwards `tls` to max_net. Regular builds
 # (including the Windows cross build) do not pull in TLS: Horizon is plaintext http://.
 tls = ["max_net/tls"]
 # WAV playback via rodio/cpal. On Linux libasound2-dev is needed at
-# build time and libasound2 at runtime; without the feature — a silent no-op backend. NOT part of
-# default: sound pulls in ALSA/WASAPI, while the GUI must build without it.
-# Enabled explicitly: `--features sound`.
+# build time and libasound2 at runtime; without the feature — a silent no-op backend.
+# Part of the default GUI build (see above): the menu clicks and unit effects are part
+# of the original presentation. Headless builds drop it with `--no-default-features`;
+# a GUI without audio is `--no-default-features --features sdl-from-source`.
 sound = ["dep:rodio"]
 # SDL3 window (interactive mode) with system SDL3 (libsdl3-dev / vcpkg).
 sdl = ["max_render/sdl"]

@@ -850,6 +850,21 @@ fn create_params_carry_password_and_opponents() {
     assert_eq!(form.password_value().as_deref(), Some("sesame"));
 }
 
+/// `main.cpp:39-46`: the client starts on the intro when the movie is readable and
+/// falls back to the main menu when there is no data (the startup path never shows
+/// the `Introduction` placeholder).
+#[test]
+fn startup_screen_needs_a_readable_intro_movie() {
+    assert_eq!(startup_screen(None, None), Screen::MainMenu);
+    assert_eq!(
+        startup_screen(
+            Some(std::path::PathBuf::from("no-such-dir/maxint.mve")),
+            None
+        ),
+        Screen::MainMenu
+    );
+}
+
 /// M6.2: a click on a menu button calls `AudioPlayer::play_once(KBUY0)`.
 ///
 /// The clip is put into the cache (`preload`), so the test needs neither game

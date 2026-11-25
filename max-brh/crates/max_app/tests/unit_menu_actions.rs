@@ -589,3 +589,90 @@ fn auto_item_enables_auto_survey_and_leaves_sentry() {
         "`unit->RemoveTasks()` снимает задачу"
     );
 }
+
+/// `activate` on an air transport releases one stored passenger.
+///
+/// Oracle `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:910-921`) →
+/// `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-678`): for an `AIRTRANS`
+/// the carrier gets `ORDER_UNLOAD/INIT` with the passenger as its parent. The
+/// port previously left the item disabled ("RepairShopMenu не портирован") and
+/// the cargo could not be activated at all.
+#[test]
+fn air_transport_activate_unloads_the_cargo() {
+    let (mut app, team) = local_app();
+
+    assert!(app.local_active(), concat!("required test fixture is missing: ", stringify!(!app.local_active())));
+
+    let center = Point::new(
+        app.state_ref().map().size.width / 2,
+        app.state_ref().map().size.height / 2,
+    );
+
+    // The carrier must stand on a land cell: `RepairShopMenu::Activate` checks
+    // `Access_IsAccessible(cargo type, ...)` and a ground unit cannot be dropped
+    // on water.
+    let carrier_point = free_point(&app, center);
+    app.universe_mut()
+        .map_mut()
+        .surface
+        .set(carrier_point.x, carrier_point.y, max_core::Surface::LAND);
+
+    let transport = app
+        .universe_mut()
+        .spawn_unit(
+            UnitType::AirTransport,
+            team,
+            carrier_point,
+            max_core::access::unit_type_flags(UnitType::AirTransport),
+        )
+        .expect("air transport");
+    let tank = spawn(&mut app, UnitType::Tank, team, Point::new(center.x + 4, center.y)).expect(concat!("test fixture is missing: ", stringify!(spawn(&mut app, UnitType::Tank, team, Point::new(center.x + 4, center.y)))));
+
+    // The hold state left by `ProcessLoading`: one bay used, the passenger in
+    // `ORDER_IDLE` with the transport as its parent. A loaded air transport is
+    // in flight (`HOVERING`), so its own cell does not block the released unit
+    // in `Access_IsAccessible`.
+    {
+        let carrier = app.universe_mut().unit_mut(transport).expect("transport");
+        carrier.storage = 1;
+        carrier.flags |= max_core::enums::unit_flags::HOVERING;
+    }
+    {
+        let cargo = app.universe_mut().unit_mut(tank).expect("tank");
+        cargo.orders = UnitOrder::Idle;
+        cargo.state = UnitOrderState::Store;
+        cargo.parent_unit = Some(transport);
+    }
+
+    app.hud_mut().select(Some(transport));
+    assert!(app.open_unit_menu(), "the transport popup opens");
+
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(max_app::unitmenu::ItemId::Activate))
+        .expect("activate item");
+    assert!(
+        app.unit_menu().expect("menu").items[index].enabled,
+        "activate must be live for an air transport with cargo"
+    );
+
+    let line = app.activate_unit_menu_item(index).expect("activate runs");
+    assert!(line.contains("ORDER_UNLOAD"), "log: {line}");
+
+    let pending = &app.hud().pending;
+    assert_eq!(pending.len(), 1, "one order queued");
+    match &pending[0] {
+        max_core::input::Command::Order(packet) => {
+            assert_eq!(packet.unit, transport, "the order goes to the carrier");
+            match &packet.payload {
+                max_core::input::OrderPayload::P2(p2) => {
+                    assert_eq!(p2.p1.order, UnitOrder::Unload);
+                    assert_eq!(p2.p1.state, UnitOrderState::Init);
+                    assert_eq!(p2.parent_unit, Some(tank), "the released passenger");
+                }
+                other => panic!("expected 08/P2, got {other:?}"),
+            }
+        }
+        other => panic!("expected Order, got {other:?}"),
+    }
+}

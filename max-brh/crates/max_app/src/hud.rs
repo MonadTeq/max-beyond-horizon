@@ -382,7 +382,7 @@ impl HudButton {
 pub struct HudState {
     /// Selected unit (may become stale — check [`App::selected_unit`]).
     pub selected: Option<UnitId>,
-    /// Route preview (the last `RMB` order).
+    /// Route preview (the last LMB move order).
     pub preview: Option<PathPreview>,
     /// Message log (ring buffer).
     pub log: MessageLog,
@@ -488,7 +488,7 @@ impl HudState {
         self.log.push(line);
     }
 
-    /// Clears the selection and the preview (Esc/right click on the unit).
+    /// Clears the selection and the preview (Esc).
     pub fn clear_interaction(&mut self) {
         self.selected = None;
         self.preview = None;
@@ -496,6 +496,20 @@ impl HudState {
         self.enter_mode = false;
         self.targeting_mode = false;
         self.hint = None;
+    }
+
+    /// Resets the order modes but keeps the selection.
+    ///
+    /// C++ `GameManager_ProcessInput` right-button branch on an empty map cell
+    /// (`game_manager.cpp:6764-6770`): `targeting_mode = 0`,
+    /// `enter_mode = 0`, `cursor = CURSOR_HIDDEN`; `GameManager_SelectedUnit`
+    /// is **not** cleared. The route preview belongs to the cancelled order,
+    /// so it goes away with the modes.
+    pub fn cancel_order_modes(&mut self) {
+        self.preview = None;
+        self.cursor_mode = 0;
+        self.enter_mode = false;
+        self.targeting_mode = false;
     }
 
     /// Shows a hint above the map (`MessageManager_DrawMessage`), `MESSAGE_BOX_INFO`.
@@ -1807,8 +1821,8 @@ fn draw_unit_panel(buffer: &mut RgbaBuffer, layout: &HudLayout, view: &HudView<'
         _ => vec![
             "No unit selected".to_string(),
             "LMB  - select unit".to_string(),
-            "RMB  - move order".to_string(),
-            "LMB enemy - attack".to_string(),
+            "LMB  - move order".to_string(),
+            "RMB  - select/cancel".to_string(),
             "Esc  - cancel / leave".to_string(),
         ],
     };

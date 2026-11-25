@@ -1004,6 +1004,31 @@ pub(crate) fn get_active_unit_with_flags(state: &GameState, grid: Point, flags: 
     None
 }
 
+/// `Access_GetBridge` (`access.cpp:1533`) — the bridge standing on the cell.
+///
+/// `UnitsManager_ActivateUnit` uses it for a naval unit released onto a bridge
+/// cell: the bridge is raised (`ORDER_MOVE`/`ORDER_STATE_ELEVATE`) so the ship
+/// can pass underneath (`units_manager.cpp:3891-3897`).
+pub(crate) fn get_bridge(state: &GameState, grid: Point) -> Option<UnitId> {
+    if grid.x < 0
+        || grid.y < 0
+        || grid.x >= crate::geo::MAP_WIDTH
+        || grid.y >= crate::geo::MAP_HEIGHT
+    {
+        return None;
+    }
+
+    state
+        .units_at(grid)
+        .iter()
+        .copied()
+        .find(|id| {
+            state
+                .unit(*id)
+                .is_some_and(|unit| unit.unit_type == UnitType::Bridge)
+        })
+}
+
 /// `Access_GetEnemyMineOnSentry` (`access.cpp:2050`).
 pub(crate) fn get_enemy_mine_on_sentry(state: &GameState, team: TeamId, grid: Point) -> Option<UnitId> {
     for id in state.units_at(grid).iter().copied() {

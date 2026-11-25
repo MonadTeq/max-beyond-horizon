@@ -101,6 +101,42 @@ fn status_for(team: usize, state: WinLossState) -> WinLossStatus {
     status
 }
 
+/// `main.cpp:39-43`: `Movie_PlayIntro` runs before `PlayMusic(MAIN_MSC)`, so the
+/// menu track must not overlap the intro; it resumes when the menu returns.
+#[test]
+fn intro_scene_silences_the_menu_track_and_resumes_after_it() {
+    let (mut director, mut audio) = director_player(true);
+
+    director.sync(
+        MusicScene::Menu,
+        &[],
+        TeamId(0),
+        Planet::Snowcrab,
+        &mut audio,
+    );
+    assert_eq!(director.current(), Some(TRACK_MENU));
+
+    director.sync(
+        MusicScene::Intro,
+        &[],
+        TeamId(0),
+        Planet::Snowcrab,
+        &mut audio,
+    );
+    assert_eq!(director.current(), None);
+    assert!(!audio.music_playing(), "menu track stops for the movie");
+
+    director.sync(
+        MusicScene::Menu,
+        &[],
+        TeamId(0),
+        Planet::Snowcrab,
+        &mut audio,
+    );
+    assert_eq!(director.current(), Some(TRACK_MENU));
+    assert_eq!(director.plays(), 2);
+}
+
 #[test]
 fn menu_music_is_requested_once_per_scene() {
     let (mut director, mut audio) = director_player(true);

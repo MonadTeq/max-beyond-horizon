@@ -179,6 +179,84 @@ fn long_text_paginates() {
     assert_eq!(screen.page(), 1);
 }
 
+/// `Text_TypeWriter_CharacterTimeMs = 10` (`menu.cpp:795`): the page is revealed
+/// character by character, any input completes it (and is consumed), the next
+/// input closes the text window.
+#[test]
+fn the_story_text_is_typed_character_by_character() {
+    let mut screen = StoryScreen::from_block(
+        StoryKind::Intro,
+        &block("The Secret Council."),
+        DEFAULT_LANGUAGE,
+        0,
+        None,
+        Path::new("."),
+    );
+    let total: usize = screen
+        .visible_rows()
+        .iter()
+        .map(|row| row.chars().count())
+        .sum();
+
+    assert!(total > 5);
+    assert!(!screen.typing(), "a dt = 0 frame draws the complete page");
+    assert_eq!(screen.typed_chars(), 0);
+
+    // 3 characters at 10 ms each (the first positive dt starts the reveal).
+    assert!(!screen.advance(0.03));
+    assert!(screen.typing());
+    assert_eq!(screen.typed_chars(), 3);
+
+    // Any key while typing only completes the page and is consumed.
+    assert_eq!(
+        screen.input(crate::ui::InputEvent::Key(crate::ui::Key::Char('x'))),
+        StoryAction::None
+    );
+    assert_eq!(screen.typed_chars(), total);
+    assert!(!screen.typing());
+
+    // The following Enter closes the text (there is no video in this block).
+    assert_eq!(
+        screen.input(crate::ui::InputEvent::Key(crate::ui::Key::Enter)),
+        StoryAction::Finished
+    );
+}
+
+/// A page turn starts a new typewriter pass once the animation is running; a
+/// `dt = 0` freeze-frame keeps whole pages deterministic.
+#[test]
+fn a_page_turn_restarts_the_typewriter() {
+    let text = (0..60)
+        .map(|index| format!("row {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut screen = StoryScreen::from_block(
+        StoryKind::Victory,
+        &block(&text),
+        DEFAULT_LANGUAGE,
+        0,
+        None,
+        Path::new("."),
+    );
+
+    screen.advance(0.05);
+    assert!(screen.typing());
+
+    // The first PageDown only completes the current page (consumed input).
+    screen.input(crate::ui::InputEvent::Key(crate::ui::Key::PageDown));
+    assert_eq!(screen.page(), 0);
+    assert!(!screen.typing());
+
+    // The next one turns the page; the new page types from its start.
+    screen.input(crate::ui::InputEvent::Key(crate::ui::Key::PageDown));
+    assert_eq!(screen.page(), 2);
+    assert_eq!(screen.typed_chars(), 0, "the new page types from its start");
+    assert!(screen.typing());
+
+    screen.advance(0.02);
+    assert_eq!(screen.typed_chars(), 2);
+}
+
 /// The drawing is deterministic (`dt = 0` frames) even without `MAX.RES`/menu.
 #[test]
 fn drawing_without_assets_is_deterministic_and_visible() {

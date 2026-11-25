@@ -797,9 +797,15 @@ fn recorded_manual_session_round_trips_through_qa_run() {
         "клик должен выделить юнита"
     );
 
+    // Oracle `game_manager.cpp:6685-6745`: LMB is the order button.
     if let Some((move_x, move_y)) = visible_neighbor(&play.app, grid) {
-        play.send(InputEvent::RightClick(move_x, move_y));
+        play.send(InputEvent::MouseClick(move_x, move_y));
     }
+
+    // The right button is exercised too: on the selected unit it is the
+    // `UnitStats_Menu` context action (`game_manager.cpp:6747-6753`) and does not
+    // change the simulation, so the replay stays byte-identical.
+    play.send(InputEvent::RightClick(select_x, select_y));
 
     play.send(click_rect(max_render::layout::END_TURN_BUTTON));
     // AI turn: exactly the frames that the replay will run with the wait command.

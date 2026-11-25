@@ -66,15 +66,17 @@ println!("{} Гц, {} каналов, {} кадров", clip.sample_rate, clip.c
 ```
 
 Воспроизведение — `max_app::audio::AudioPlayer` за feature **`sound`**
-(rodio/cpal); без фичи используется тихий `NoopBackend`, поэтому базовые
-сборки, тесты и Docker не требуют ALSA/CPAL:
+(rodio/cpal); без фичи используется тихий `NoopBackend`. `sound` входит в
+default-сборку GUI: клики меню и эффекты юнитов — часть оригинальной
+презентации. Headless-сборки, тесты и Docker идут без ALSA/CPAL:
 
 ```sh
-# GUI — default: SDL3 3.4.20 собирается из исходников через CMake
+# GUI — default: SDL3 3.4.20 собирается из исходников через CMake, звук включён
+# (Linux: apt install pkg-config libasound2-dev)
 cargo run -p max_app
 
-# со звуком (Linux: apt install pkg-config libasound2-dev); sound — не default
-cargo run -p max_app --features sound
+# GUI без звука: та же SDL3-сборка, но без rodio/cpal
+cargo run -p max_app --no-default-features --features sdl-from-source
 
 # headless: SDL не тянется вовсе
 cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM --turns 5

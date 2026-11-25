@@ -94,7 +94,7 @@ Shot '06-game-start'
 Click-Client $hwnd 532 114
 Start-Sleep -Seconds 1
 Shot '07-selected'
-RightClick-Client $hwnd 540 350    # RMB: move
+Click-Client $hwnd 540 350    # LMB: move order (`game_manager.cpp:6685-6745`)
 Start-Sleep -Seconds 1
 Shot '08-move-order'
 # End Turn -> AI turn -> the player's turn again

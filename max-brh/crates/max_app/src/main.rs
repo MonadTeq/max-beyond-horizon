@@ -1223,15 +1223,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 "миссии: {} файл(ов) миссий не найдено — в списке помечены [missing]",
                 missing.len()
             );
-            ctx.media_status = Some(match ctx.media_status.take() {
-                Some(existing) => format!("{existing}; {note}"),
-                None => note.clone(),
-            });
-            if ctx.status.is_empty() {
-                ctx.status = note;
-            } else {
-                ctx.status.push_str(&format!("; {note}"));
-            }
+            // The mission list itself marks the rows `[missing]`; the note stays in
+            // the client log and is not drawn over the menu (the status line is meant
+            // for player-facing messages, not for launch diagnostics).
+            eprintln!("UI: {note}");
         }
 
         // Campaign progression (stage 3a): the victory wrap-up needs the size of
@@ -1265,13 +1260,22 @@ fn run_ui(cli: &Cli) -> Result<()> {
             eprintln!("UI: {note}");
         }
 
-        // The fallback is visible on the first frame too (the main menu status line),
-        // not only in the console log.
-        ctx.media_status = Some(media_notes.join("; "));
-        ctx.status = media_notes.join("; ");
+        // Launch diagnostics stay in the log: the GNW menu font has no Cyrillic and
+        // draws `?`, and the original main screen has no technical status line.
     }
     let mut reported_music_errors = 0usize;
-    let mut screen = Screen::MainMenu;
+    // `main.cpp:39-46`: the intro movie is the first screen when the data is present.
+    let mut screen = max_app::ui::startup_screen(
+        ctx.intro_mve_path.clone(),
+        ctx.intro_subtitles.clone(),
+    );
+
+    if let Screen::Introduction(intro) = &screen {
+        println!(
+            "UI: интро при старте — кадр {} (Esc — в меню)",
+            intro.frame_index()
+        );
+    }
     let mut buffer = RgbaBuffer::new(config.screen_width, config.screen_height);
     let mut mouse: Option<(i32, i32)> = None;
     let mut runtime: Option<tokio::runtime::Runtime> = None;
@@ -1315,7 +1319,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     println!(
         "UI: кадр {}x{}, окно {}x{} точек / {}x{} пикселей (DPI×{:.2}, масштаб {}, \
          дисплей {:.0} Гц, fullscreen={}); меню — мышь/стрелки, Enter; \
-         в игре — LMB выбор, RMB движение, клик по врагу — атака, End Turn; Esc — выход",
+         в игре — LMB выбор/движение/меню, RMB выбор/контекст, клик по врагу — атака, End Turn; Esc — выход",
         config.screen_width,
         config.screen_height,
         window.size().0,
@@ -1740,11 +1744,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
             let was_intro = matches!(screen, Screen::Introduction(_));
 
             screen = Screen::MainMenu;
-            ctx.status = if was_intro {
-                "Introduction ended".to_string()
+            // The original main menu has no status line; a technical line must not
+            // remain after the movie (and the GNW font would draw `?` for Cyrillic).
+            if was_intro {
+                ctx.status.clear();
             } else {
-                "Credits ended".to_string()
-            };
+                ctx.status = "Credits ended".to_string();
+            }
         }
 
         // C3: the audio track of the `Introduction` movie and of the story video.
@@ -1872,6 +1878,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // only sees `GameEvent`s — it can neither read nor mutate the simulation state.
         let scene = match &screen {
             Screen::InSession { .. } | Screen::GameOver => MusicScene::InGame,
+            // `Movie_PlayIntro` runs before `PlayMusic(MAIN_MSC)` (`main.cpp:39-43`):
+            // no scene track over the movie audio.
+            Screen::Introduction(_) => MusicScene::Intro,
             // The victory/defeat story belongs to the finished match; the intro one
             // still runs in the menu (the oracle keeps the menu track there).
             Screen::MissionStory(story) if story.kind() != StoryKind::Intro => MusicScene::InGame,
@@ -2103,9 +2112,10 @@ fn run_ui_session(
 /// [`max_app::net::FrameSink::poll_input`] and
 /// [`max_app::net::FrameSink::render`], run by `net::run_game_loop` around the one
 /// tick. Input is handled by [`handle_session_input`]: a click on an own unit —
-/// selection, RMB — a move order (packet 38), a click on an enemy — attack (08),
-/// the buttons End Turn/Menu. The session channel decides what happens to the
-/// orders (SDL/UI Stage C2): the network loop collects them itself
+/// selection (a repeated click opens its menu), LMB on a cell — a move order
+/// (packet 38), a click on an enemy — attack (08), RMB — select/inspect or cancel
+/// the order modes, the buttons End Turn/Menu. The session channel decides what
+/// happens to the orders (SDL/UI Stage C2): the network loop collects them itself
 /// (`net::flush_hud_orders`) — no `online` flag is passed.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
@@ -2175,7 +2185,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         // 2. Frame: map + HUD over it.
         self.status = format!(
-            "IN SESSION · {} · tick={} turn={} · LMB select · RMB move · Esc cancel",
+            "IN SESSION · {} · tick={} turn={} · LMB select/move · RMB select/cancel · Esc cancel",
             self.game_id,
             app.ticks(),
             app.state_ref().turn_counter()

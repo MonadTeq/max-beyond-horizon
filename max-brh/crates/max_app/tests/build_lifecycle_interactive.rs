@@ -158,17 +158,10 @@ fn has_slab(app: &App, team: max_core::TeamId) -> bool {
         })
 }
 
-/// How a player takes the builder away: LMB on the "cell with the symbol" (C++ `CURSOR_UNIT_GO`,
-/// `game_manager.cpp:5832/6879`) or RMB (the port convention).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ExitClick {
-    Left,
-    Right,
-}
-
-/// Full interactive cycle: order → construction → completion → markers →
-/// builder leaves → building appears. All steps — on frames with `dt = 1/60`.
-fn run_build_cycle(exit: ExitClick) {
+/// The player takes the builder away with LMB on the "cell with the symbol"
+/// (C++ `CURSOR_UNIT_GO`, `game_manager.cpp:5832/6879`; the left button is the
+/// order button, see `game_manager.cpp:6685-6745`).
+fn run_build_cycle() {
     let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai())
@@ -309,24 +302,19 @@ fn run_build_cycle(exit: ExitClick) {
         .expect("свободная клетка кольца маркеров");
     let (ring_x, ring_y) = cell_screen(&app, ring);
 
-    match exit {
-        ExitClick::Left => {
-            handle_session_input(&mut app, InputEvent::MouseClick(ring_x, ring_y));
-        }
-        ExitClick::Right => {
-            handle_session_input(&mut app, InputEvent::RightClick(ring_x, ring_y));
-        }
-    }
+    // `game_manager.cpp:6879-6890`: LMB on the ring = `CURSOR_UNIT_GO` →
+    // `ORDER_ACTIVATE`/`IN_TRANSITION`.
+    handle_session_input(&mut app, InputEvent::MouseClick(ring_x, ring_y));
 
     assert_eq!(
         app.state_ref().unit(builder).map(|unit| unit.orders),
         Some(UnitOrder::Activate),
-        "клик по кольцу маркеров отдаёт ORDER_ACTIVATE ({exit:?})"
+        "клик по кольцу маркеров отдаёт ORDER_ACTIVATE"
     );
     assert_eq!(
         app.state_ref().unit(builder).map(|unit| unit.state),
         Some(UnitOrderState::InTransition),
-        "и ORDER_STATE_IN_TRANSITION ({exit:?})"
+        "и ORDER_STATE_IN_TRANSITION"
     );
 
     let mut revealed = false;
@@ -346,7 +334,7 @@ fn run_build_cycle(exit: ExitClick) {
 
     assert!(
         revealed,
-        "UnitsManager_BuildingReady обязан раскрыть здание после ухода строителя ({exit:?})"
+        "UnitsManager_BuildingReady обязан раскрыть здание после ухода строителя"
     );
 
     let building_unit = app.state_ref().unit(building).expect("building").clone();
@@ -379,12 +367,13 @@ fn run_build_cycle(exit: ExitClick) {
 /// A click on another cell during construction does **not** give a move order.
 ///
 /// Oracle: `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5927-5931`) —
-/// for a builder in `BUILD_IN_PROGRESS` the cursor is `CURSOR_UNIT_NO_GO`; cancelling
-/// construction — only an explicit popup `stop` (`UnitsManager_Popup_OnClick_BuildStop`
+/// for a builder in `BUILD_IN_PROGRESS` the cursor is `CURSOR_UNIT_NO_GO`, so the
+/// LMB order button gives no move; cancelling construction — only an explicit popup
+/// `stop` (`UnitsManager_Popup_OnClick_BuildStop`
 /// → `ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`). The port does not
 /// cancel construction on an attempted move and does not waste the order.
 #[test]
-fn right_click_while_building_is_no_go_and_keeps_the_site() {
+fn left_click_while_building_is_no_go_and_keeps_the_site() {
     let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
 
     app.start_local_game(&setup_vs_one_ai())
@@ -479,7 +468,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
         "курсор над клеткой увода — CURSOR_UNIT_NO_GO"
     );
 
-    handle_session_input(&mut app, InputEvent::RightClick(click_x, click_y));
+    handle_session_input(&mut app, InputEvent::MouseClick(click_x, click_y));
 
     let unit = app.state_ref().unit(builder).expect("builder alive").clone();
     assert_eq!(
@@ -508,12 +497,7 @@ fn right_click_while_building_is_no_go_and_keeps_the_site() {
 
 #[test]
 fn interactive_build_cycle_with_real_dt_marks_and_reveals_on_left_click() {
-    run_build_cycle(ExitClick::Left);
-}
-
-#[test]
-fn interactive_build_cycle_with_real_dt_marks_and_reveals_on_right_click() {
-    run_build_cycle(ExitClick::Right);
+    run_build_cycle();
 }
 
 /// A click on a site cell (even if the cones/slab lie there) must give

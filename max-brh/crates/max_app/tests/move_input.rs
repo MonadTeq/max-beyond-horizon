@@ -416,7 +416,7 @@ fn move_order_moves_the_unit_on_following_ticks() {
 }
 
 #[test]
-fn click_selects_own_unit_and_rmb_shows_path_preview() {
+fn click_selects_own_unit_and_left_click_shows_path_preview() {
     with_big_stack(|| {
         let (mut app, surveyor) = phased_app().expect(concat!("test fixture is missing: ", stringify!(phased_app())));
 
@@ -457,9 +457,9 @@ fn click_selects_own_unit_and_rmb_shows_path_preview() {
         let destination = destination.expect("рядом есть проходимая клетка");
         let (rx, ry) = screen_point(&app, destination);
 
-        handle_session_input(&mut app, InputEvent::RightClick(rx, ry));
+        handle_session_input(&mut app, InputEvent::MouseClick(rx, ry));
 
-        let preview = app.hud().preview.as_ref().expect("RMB строит предпросмотр");
+        let preview = app.hud().preview.as_ref().expect("LMB строит предпросмотр");
         assert!(!preview.is_empty(), "маршрут не пуст");
         assert_eq!(preview.to, destination);
         assert!(
@@ -600,12 +600,12 @@ fn interactive_landing_keeps_the_generator_off_the_mining_station_cell() {
     );
 }
 
-/// The end-to-end interactive path after RMB: the order is applied, the frame passes
-/// the route (visible intermediate positions), the unit ends up in the target cell,
-/// and **End Turn** (the real panel button) does not lose the order and does not roll back
-/// the position.
+/// The end-to-end interactive path after an LMB move order: the order is applied,
+/// the frame passes the route (visible intermediate positions), the unit ends up in
+/// the target cell, and **End Turn** (the real panel button) does not lose the order
+/// and does not roll back the position.
 #[test]
-fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
+fn left_click_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
     with_big_stack(|| {
         let mut app = local_game_app().expect(concat!("test fixture is missing: ", stringify!(local_game_app())));
 
@@ -655,9 +655,9 @@ fn rmb_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() {
         let destination = destination.expect("рядом есть проходимая клетка");
 
         let (rx, ry) = screen_point(&app, destination);
-        handle_session_input(&mut app, InputEvent::RightClick(rx, ry));
+        handle_session_input(&mut app, InputEvent::MouseClick(rx, ry));
 
-        let preview = app.hud().preview.as_ref().expect("RMB строит предпросмотр");
+        let preview = app.hud().preview.as_ref().expect("LMB строит предпросмотр");
         assert_eq!(preview.to, destination);
         assert!(
             app.hud()

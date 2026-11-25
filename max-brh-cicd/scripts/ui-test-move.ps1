@@ -177,8 +177,9 @@ if ($portraitAfter -le ($portraitBefore + 40)) {
     exit 1
 }
 
-# RMB on the neighboring cell (24,21) -> (532,178): a green route.
-RightClick-Client $hwnd 532 178
+# LMB on the neighboring cell (24,21) -> (532,178): a green route
+# (`game_manager.cpp:6685-6745`: the left button is the order button).
+Click-Client $hwnd 532 178
 Start-Sleep -Milliseconds 500
 $preview = Shot '09-move-preview'
 $green = Count-Preview $preview

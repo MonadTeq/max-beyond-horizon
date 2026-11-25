@@ -44,7 +44,7 @@ cargo run -p max_app --no-default-features --example qa_golden_check -- qa-out/v
 | Команда | Что делает |
 |---|---|
 | `click X Y` | левая кнопка в пикселях кадра → `InputEvent::MouseClick` |
-| `rclick X Y` | правая кнопка (приказ движения/отмена) |
+| `rclick X Y` | правая кнопка (выбор/контекст; отмена режимов) |
 | `key ENTER\|ESC\|TAB\|BACKSPACE\|UP\|DOWN\|LEFT\|RIGHT\|<символ>` | клавиша |
 | `type "text"` | печатные символы по одному (поле имени, чат, лимит победы) |
 | `wait N` | до N кадров, пока игра не будет готова к вводу (ход игрока, окно перехода или конец партии) |

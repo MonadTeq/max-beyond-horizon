@@ -57,6 +57,10 @@ pub const GAME_PLAYLIST: [&str; 10] = [
 pub enum MusicScene {
     /// Main menu and the dialogs opened from it (`MAIN_MSC`).
     Menu,
+    /// The intro MVE (`Movie_PlayIntro`, `main.cpp:39-43`): the oracle starts
+    /// `MAIN_MSC` only after the movie, so the menu cue must not overlap the
+    /// movie audio.
+    Intro,
     /// A match is running (`game_manager.cpp:1967`).
     InGame,
 }
@@ -278,6 +282,11 @@ impl MusicDirector {
             if self.current != Some(track) {
                 self.start(track, audio);
             }
+        } else if self.current.is_some() {
+            // Silence cue (`Intro`): stop the menu/match track before the movie
+            // audio starts, and let the next scene restart its own track.
+            self.current = None;
+            audio.stop_music();
         }
     }
 
@@ -289,6 +298,7 @@ impl MusicDirector {
 
         match scene {
             MusicScene::Menu => Some(TRACK_MENU),
+            MusicScene::Intro => None,
             MusicScene::InGame => {
                 if !self.in_game {
                     // The scene says "match", the stream has not confirmed it yet: the

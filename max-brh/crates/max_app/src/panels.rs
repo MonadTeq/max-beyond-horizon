@@ -666,10 +666,11 @@ pub struct StatIcons {
 impl StatIcons {
     /// All row icons of the UI-level statistics panel (`resourcetable.hpp:658-687`:
     /// `SI_HITSB`…`EI_WORK`; `SI_x + 1 = EI_x`).
-    const NAMES: [&'static str; 22] = [
+    const NAMES: [&'static str; 28] = [
         "SI_HITSB", "EI_HITSB", "SI_HITSY", "EI_HITSY", "SI_HITSR", "EI_HITSR", "SI_AMMO",
-        "EI_AMMO", "SI_RAW", "EI_RAW", "SI_FUEL", "EI_FUEL", "SI_GOLD", "EI_GOLD", "SI_SPEED",
-        "EI_SPEED", "SI_SHOTS", "EI_SHOTS", "SI_POWER", "EI_POWER", "SI_WORK", "EI_WORK",
+        "EI_AMMO", "SI_RAW", "EI_RAW", "SI_FUEL", "EI_FUEL", "SI_GOLD", "EI_GOLD", "SI_LAND",
+        "EI_LAND", "SI_SEA", "EI_SEA", "SI_AIR", "EI_AIR", "SI_SPEED", "EI_SPEED", "SI_SHOTS",
+        "EI_SHOTS", "SI_POWER", "EI_POWER", "SI_WORK", "EI_WORK",
     ];
 
     /// Loads the icons from `MAX.RES`; missing ones are simply skipped.
@@ -744,6 +745,16 @@ pub fn end_turn_caption_color(team: TeamId) -> u8 {
     } else {
         team.0 + 1
     }
+}
+
+/// Coordinate display text — `sprintf(text, "%3.3i-%3.3i", x, y)`
+/// (`GameManager_DrawMouseCoordinates`, `game_manager.cpp:4116-4121`).
+///
+/// The oracle passes the **1-based** mouse position: both call sites add one
+/// (`game_manager.cpp:6570/6595`: `GameManager_MousePosition.x + 1`), so the
+/// top-left cell is `001-001`.
+pub fn coordinates_text(x: i32, y: i32) -> String {
+    format!("{:03}-{:03}", x.max(0) + 1, y.max(0) + 1)
 }
 
 /// Turn timer text — `sprintf(text, "%2.2i:%2.2i", t / 60, t % 60)`
@@ -1092,7 +1103,7 @@ impl Panels {
             frame,
             coordinate_rect,
             GnwFontId::Font5.font(),
-            &format!("{:03}-{:03}", grid.0.max(0), grid.1.max(0)),
+            &coordinates_text(i32::from(grid.0), i32::from(grid.1)),
             palette.rgba(TEXT),
         );
 
@@ -1520,6 +1531,12 @@ pub enum StatIcon {
     Fuel,
     /// `SI_GOLD`.
     Gold,
+    /// `SI_LAND` — land transport cargo (`CARGO_TYPE_LAND`).
+    Land,
+    /// `SI_SEA` — sea transport cargo (`CARGO_TYPE_SEA`).
+    Sea,
+    /// `SI_AIR` — air transport cargo (`CARGO_TYPE_AIR`).
+    Air,
     /// `SI_SPEED`.
     Speed,
     /// `SI_SHOTS`.
@@ -1540,6 +1557,9 @@ impl StatIcon {
             Self::Raw => ("SI_RAW", "EI_RAW"),
             Self::Fuel => ("SI_FUEL", "EI_FUEL"),
             Self::Gold => ("SI_GOLD", "EI_GOLD"),
+            Self::Land => ("SI_LAND", "EI_LAND"),
+            Self::Sea => ("SI_SEA", "EI_SEA"),
+            Self::Air => ("SI_AIR", "EI_AIR"),
             Self::Speed => ("SI_SPEED", "EI_SPEED"),
             Self::Shots => ("SI_SHOTS", "EI_SHOTS"),
             Self::Power => ("SI_POWER", "EI_POWER"),
@@ -2253,12 +2273,17 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
             scaling_factor = 0;
         }
 
-        rows[1] = make_row(
-            match cargo_type {
-                CargoType::Fuel => StatLabel::CargoFuel,
-                CargoType::Gold => StatLabel::CargoGold,
-                _ => StatLabel::Cargo,
-            },
+        // `ReportStats_CargoIcons[cargo_type * 2]`: a land transport (the Personnel
+        // Carrier) uses `SI_LAND`, not the raw-material pips (`game_manager.cpp:7722`).
+        let cargo_label = match cargo_type {
+            CargoType::Fuel => StatLabel::CargoFuel,
+            CargoType::Gold => StatLabel::CargoGold,
+            _ => StatLabel::Cargo,
+        };
+
+        rows[1] = make_row_icon(
+            cargo_stat_icon(cargo_type),
+            cargo_label,
             i32::from(unit.storage),
             storage_value,
             scaling_factor,
@@ -2337,7 +2362,10 @@ fn cargo_stat_icon(cargo_type: CargoType) -> StatIcon {
         CargoType::Raw => StatIcon::Raw,
         CargoType::Fuel => StatIcon::Fuel,
         CargoType::Gold => StatIcon::Gold,
-        _ => StatIcon::Work,
+        CargoType::Land => StatIcon::Land,
+        CargoType::Sea => StatIcon::Sea,
+        CargoType::Air => StatIcon::Air,
+        CargoType::None => StatIcon::Work,
     }
 }
 

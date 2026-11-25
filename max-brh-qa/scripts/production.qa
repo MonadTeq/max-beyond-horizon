@@ -270,7 +270,7 @@ assert unit-order=build
 assert builder=inside
 assert build-ready=yes
 
-# Приказ движения ИГРОКОМ (RMB по клетке рядом):
+# Приказ движения ИГРОКОМ (LMB по клетке рядом; `game_manager.cpp:6685-6745`):
 # `ORDER_ACTIVATE`/`ORDER_STATE_IN_TRANSITION` с `move_to` = клетка клика.
 move near
 assert unit-order=activate

@@ -106,6 +106,11 @@ fn submarine_dives_again_when_the_corvette_coverage_is_gone() {
         visible(&state, sub, TeamId::RED),
         "the corvette revealed it"
     );
+    assert_eq!(
+        state.snapshot().unit(sub).map(|unit| unit.image_base),
+        Some(8),
+        "`SpotByTeam` surfaces a spotted submarine (`image_base = 8`)"
+    );
 
     state.destroy_unit(corvette);
     // `UpdateProduction` of the next turn: `spotted_by_team[i] = false`.
@@ -124,6 +129,11 @@ fn submarine_dives_again_when_the_corvette_coverage_is_gone() {
     assert!(
         !visible(&state, sub, TeamId::RED),
         "without its stealth coverage the submarine is hidden again"
+    );
+    assert_eq!(
+        state.snapshot().unit(sub).map(|unit| unit.image_base),
+        Some(0),
+        "`UnitInfo::Draw(team)` makes a hidden submarine dive again (`image_base = 0`)"
     );
 }
 

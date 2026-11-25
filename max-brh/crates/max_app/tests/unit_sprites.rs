@@ -362,6 +362,35 @@ fn map_render_loop_covers_all_93_unit_types() {
     );
 }
 
+/// A surfaced submarine / personnel carrier (`SpotByTeam` / `SetSpriteFrameForTerrain`
+/// set `image_base = 8`) must be drawn from the **second** 8-frame block of the
+/// same 16-frame sprite. The renderer used to add another 8 and addressed frames
+/// 16..23, so the surfaced unit disappeared from the frame.
+#[test]
+fn surfaced_submarine_uses_the_second_sprite_block() {
+    let assets = game_assets().expect(concat!("test fixture is missing: ", stringify!(game_assets())));
+
+    for unit_type in [UnitType::Submarine, UnitType::ArmouredPersonnelCarrier] {
+        let mut unit = unit_of(unit_type, 0);
+        unit.image_base = 8;
+        unit.image_index = 8;
+        unit.angle = 0;
+
+        let mut frame = RgbaBuffer::new(256, 256);
+        let stats = draw_unit_sprites(
+            &assets,
+            &unit,
+            &presentation(),
+            &mut frame,
+            (128, 128),
+            64,
+        )
+        .unwrap_or_else(|| panic!("{unit_type:?}: surfaced sprite must exist"));
+
+        assert!(stats.unit > 0, "{unit_type:?}: the surfaced frame is empty");
+    }
+}
+
 /// The HUD portrait takes the same `UNIT_SPRITES` record and draws a non-empty frame for
 /// all 93 types (turrets, navy, aviation, engineers — including those that were not
 /// in the old table of 43): `panels::draw_portrait` calls the same

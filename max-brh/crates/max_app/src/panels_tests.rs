@@ -575,6 +575,17 @@ fn panels_load_and_paint_every_region() {
     }
 }
 
+/// `GameManager_DrawMouseCoordinates` (`game_manager.cpp:4116-4121`): the oracle
+/// formats `%3.3i-%3.3i` and adds one to the map position at both call sites
+/// (`:6570/6595`), so the first cell is `001-001`, not `000-000`.
+#[test]
+fn coordinate_display_is_one_based() {
+    assert_eq!(coordinates_text(0, 0), "001-001");
+    assert_eq!(coordinates_text(1, 2), "002-003");
+    assert_eq!(coordinates_text(22, 22), "023-023");
+    assert_eq!(coordinates_text(111, 111), "112-112");
+}
+
 // -----------------------------------------------------------------------
 // Statistics rows (`GameManager_UpdateInfoDisplay`)
 // -----------------------------------------------------------------------
@@ -670,6 +681,40 @@ fn complex_total_row_takes_the_cargo_icon_family() {
         rows[2].expect("Total").icon,
         StatIcon::Fuel,
             "_(d28b) топливного склада — SI_FUEL"
+    );
+}
+
+/// `ReportStats_CargoIcons` (`reportstats.cpp:56-59`) also carries the transport
+/// cargo families `SI_LAND`/`SI_SEA`/`SI_AIR`; all of them must be loaded from
+/// `MAX.RES` for the statistics rows.
+#[test]
+fn transport_cargo_icon_families_are_registered() {
+    assert_eq!(StatIcon::Land.names(), ("SI_LAND", "EI_LAND"));
+    assert_eq!(StatIcon::Sea.names(), ("SI_SEA", "EI_SEA"));
+    assert_eq!(StatIcon::Air.names(), ("SI_AIR", "EI_AIR"));
+
+    for name in ["SI_LAND", "EI_LAND", "SI_SEA", "EI_SEA", "SI_AIR", "EI_AIR"] {
+        assert!(
+            StatIcons::NAMES.contains(&name),
+            "{name} is missing from StatIcons::NAMES"
+        );
+    }
+}
+
+/// The Personnel Carrier (`CLNTRANS`) is a `CARGO_TYPE_LAND` transport: its cargo
+/// row uses `ReportStats_CargoIcons[LAND * 2] = SI_LAND`, not the raw-material pips
+/// (`game_manager.cpp:7722`, `reportstats.cpp:56-59`).
+#[test]
+fn personnel_carrier_cargo_row_uses_the_land_icon() {
+    let mut state = stats_state();
+    let apc = deployed(&mut state, UnitType::ArmouredPersonnelCarrier);
+    let rows = rows_for(StateRef::from(&state), &apc, TeamId::RED);
+
+    assert_eq!(rows[1].expect("Cargo").label, StatLabel::Cargo);
+    assert_eq!(
+        rows[1].expect("Cargo").icon,
+        StatIcon::Land,
+            "CLNTRANS — CARGO_TYPE_LAND → SI_LAND"
     );
 }
 

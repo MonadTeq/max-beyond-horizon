@@ -31,7 +31,7 @@
 //! | MainMenu | Up/Down/Tab, Enter, mouse; `c`/`j`/`i`/`r`/`q`; Esc — exit |
 //! | JoinList | Up/Down, Enter — join, `r` — refresh, Esc — back, mouse |
 //! | CreateForm | Tab/Up/Down — field, input, Left/Right — numbers, Enter — create, Esc — back |
-//! | InSession | LMB — select a unit, RMB — move order, LMB on an enemy — attack, Enter/T — chat (packet 18), End Turn/Menu, Esc — cancel (twice — exit) |
+//! | InSession | LMB — select a unit, a repeated LMB — its command menu, LMB on a cell — move (also onto a bridge/water platform/road and onto a landing pad), LMB on an enemy — attack; RMB — select/inspect or cancel the order modes; Enter/T — chat (packet 18), End Turn/Menu, Esc — cancel (twice — exit) |
 //!
 //! # Session input (M4.3)
 //!
@@ -46,6 +46,7 @@
 //! them in the queue for `net::flush_hud_orders` → `submit`.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use max_assets::MissionRegistry;
@@ -83,6 +84,7 @@ use crate::researchmenu::ResearchAction;
 use crate::setup::{self, GameSetupForm, SetupTransition};
 use crate::sfx::Sfx;
 use crate::story::{self, StoryAction};
+use crate::subtitles::SubtitleTrack;
 use crate::winloss;
 use crate::App;
 
@@ -166,7 +168,7 @@ pub enum InputEvent {
     Key(Key),
     /// Left click in window pixels.
     MouseClick(i32, i32),
-    /// Right click in window pixels (RMB — move order/cancel).
+    /// Right click in window pixels (RMB — select/inspect/cancel the order modes).
     RightClick(i32, i32),
     /// Mouse move in window pixels.
     MouseMove(i32, i32),
@@ -596,10 +598,6 @@ pub struct UiContext {
     pub intro_mve_path: Option<std::path::PathBuf>,
     /// Intro subtitles (`INTROSUB` → JSON next to `MAX.RES`); `None` — no captions.
     pub intro_subtitles: Option<crate::subtitles::SubtitleTrack>,
-    /// Presentation media diagnostics of the launch (video/audio/subtitles/music):
-    /// shown in the menu status line and printed by the client, so a missing layer is
-    /// visible instead of silent (owner condition).
-    pub media_status: Option<String>,
     /// Current user settings (for the `Setup` dialog).
     pub preferences: Preferences,
     /// Mission registry for the `GameSetupMenu` (`GameSetupMenu_Menu` reads
@@ -630,7 +628,6 @@ impl UiContext {
             audio: AudioPlayer::new(),
             intro_mve_path: None,
             intro_subtitles: None,
-            media_status: None,
             preferences: Preferences::default(),
             missions: None,
             campaign_clamp: None,
@@ -738,7 +735,36 @@ enum PreGameInput {
     LandingClick(i32, i32),
 }
 
+/// Startup screen for `main.rs` and the startup tests (see [`Screen::startup`]).
+pub fn startup_screen(intro: Option<PathBuf>, subtitles: Option<SubtitleTrack>) -> Screen {
+    Screen::startup(intro, subtitles)
+}
+
 impl Screen {
+    /// Startup screen: the intro movie when it is readable, otherwise the main menu.
+    ///
+    /// Oracle `main.cpp:39-46` — `Movie_PlayIntro()` runs before the main menu loop;
+    /// a missing/unreadable `INTROFLC` (`maxint.mve`) is skipped silently and the
+    /// client opens on the menu. The startup path never shows the `Introduction`
+    /// placeholder (`IntroScreen` with no data), so `Screen::MainMenu` is returned
+    /// for both `None` and a non-existent path.
+    pub fn startup(intro: Option<PathBuf>, subtitles: Option<SubtitleTrack>) -> Self {
+        let Some(path) = intro else {
+            return Self::MainMenu;
+        };
+
+        if !path.is_file() {
+            return Self::MainMenu;
+        }
+
+        let screen = intro::IntroScreen::with_media(Some(path), subtitles);
+        if screen.is_loaded() {
+            Self::Introduction(screen)
+        } else {
+            Self::MainMenu
+        }
+    }
+
     /// Handles input and advances the state machine.
     ///
     /// Returns [`Transition::StartSession`] when the game is created/selected:
@@ -1796,9 +1822,6 @@ impl Screen {
                 } else {
                     "Introduction: maxint.mve не найден — Esc returns".to_string()
                 };
-                if let Some(note) = ctx.media_status.clone() {
-                    ctx.status.push_str(&format!("; {note}"));
-                }
                 *self = Self::Introduction(screen);
                 Transition::None
             }
@@ -2167,11 +2190,15 @@ impl Screen {
 /// the camera. A pure function: no network, no SDL, no time — everything is tested
 /// headless.
 ///
-/// * **LMB on an own unit** — selection (`App::hud().selected`);
+/// * **LMB on an own unit** — selection; a repeated LMB opens the command menu;
 /// * **LMB on an enemy** — attack order (packet `08`, processor `P3`);
-/// * **RMB on a free cell** — the `Paths_RequestPath` route +
-///   the line preview + packet `38` (`Command::Move`);
-/// * **RMB on a unit / Esc** — cancel (a second Esc — exit the session);
+/// * **LMB on a free cell** — the `Paths_RequestPath` route +
+///   the line preview + packet `38` (`Command::Move`); the same on a
+///   bridge/water-platform/road cell and on a landing pad
+///   (`CURSOR_UNIT_GO`, `game_manager.cpp:6685-6745`);
+/// * **RMB on an own unit** — `GameManager_UnitSelect` / `UnitStats_Menu`;
+/// * **RMB on a free cell** — cancel the order modes (`CURSOR_HIDDEN`), the
+///   selection stays; **Esc** cancels (a second Esc — exit the session);
 /// * **End Turn** — the same path as the timer (`06` + `52`/`finish_turn`);
 /// * **Menu** — exit to the main menu.
 ///
@@ -2884,7 +2911,7 @@ where
             Some(Transition::None)
         }
         InputEvent::RightClick(x, y) => {
-            // RMB on the map cancels the selection; on a panel — the usual handling.
+            // RMB on the map cancels the build-site selection; on a panel — the usual handling.
             grid_at(app, x, y)?;
 
             if let Some(line) = app.cancel_build_site() {
@@ -3331,7 +3358,53 @@ fn debug_input() -> bool {
     std::env::var_os("MAX_DEBUG_INPUT").is_some()
 }
 
-/// Selection/attack by a **map camera** point (448×448 with chrome).
+/// Whether an LMB on an own unit must be routed to the map order instead of
+/// selecting that unit (`GameManager_GetUnitActionCursor`/`GetAirUnitCursor`,
+/// `game_manager.cpp:5972-6005/5937-5962`).
+///
+/// Ground cover (`ROAD`/`BRIDGE`/`WTRPLTFM`) never blocks
+/// `Access_IsAccessible`: C++ reports `CURSOR_UNIT_GO` and the click moves the
+/// selected unit onto the bridge/platform/road. An aircraft treats a `LANDPAD`
+/// the same way (the only own unit type excluded from `CURSOR_FRIEND`), which is
+/// how a plane gets a landing order.
+fn clicks_through_unit_to_move(
+    state: max_core::universe::StateRef<'_>,
+    selected: max_core::unit::UnitId,
+    clicked: max_core::unit::UnitId,
+    team: max_core::team::TeamId,
+) -> bool {
+    let (Some(selected_unit), Some(clicked_unit)) = (state.unit(selected), state.unit(clicked))
+    else {
+        return false;
+    };
+
+    if selected_unit.team != team || clicked_unit.team != team || selected_unit.hits == 0 {
+        return false;
+    }
+
+    let ground_cover = clicked_unit.flags & max_core::enums::unit_flags::GROUND_COVER != 0;
+    let is_landing_pad = clicked_unit.unit_type == max_core::enums::UnitType::LandingPad;
+
+    if selected_unit.is_air() {
+        return ground_cover || is_landing_pad;
+    }
+
+    if !ground_cover
+        || !(selected_unit.is_ground() || selected_unit.is_sea() || selected_unit.is_amphibious())
+    {
+        return false;
+    }
+
+    state.is_accessible(
+        selected_unit.unit_type,
+        team,
+        clicked_unit.grid,
+        max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+    ) != 0
+}
+
+/// LMB on the map: select/attack/command, order an air/naval/ground move or an
+/// activation (`CURSOR_UNIT_GO`/`CURSOR_FRIEND`/`CURSOR_ENEMY`/`CURSOR_ACTIVATE`).
 fn session_map_left_click<D: Dispatcher>(
     app: &mut App<D>,
     viewport: &Viewport,
@@ -3422,11 +3495,17 @@ where
             }
         }
 
-        if app.hud().selected.is_some() {
-            app.hud_mut().clear_interaction();
-            app.hud_mut().push_log("Deselected");
+        // Oracle `game_manager.cpp:6685-6745`: LMB on the map is the **order**
+        // button. With a unit selected the cursor is `CURSOR_UNIT_GO` over an
+        // accessible cell and `GameManager_SetUnitOrder` gives `ORDER_MOVE`
+        // (`:6894-6902`), `ORDER_ACTIVATE` for a ready unit in a container
+        // (`:6918-6926`). Without a selection C++ does nothing (there is no
+        // "deselect on empty click"; the selection is cleared by Esc/a turn change).
+        if app.hud().selected.is_none() {
+            return Transition::None;
         }
-        return Transition::None;
+
+        return session_map_order_click(app, viewport, x, y);
     };
 
     let (unit_team, label) = match app.state_ref().unit(id) {
@@ -3436,6 +3515,22 @@ where
 
     if unit_team == team {
         let selected = app.hud().selected;
+
+        // `GameManager_GetWindowCursor`/`GetUnitActionCursor`/`GetAirUnitCursor`
+        // (`game_manager.cpp:4436-4465/5937-5962`): with a mobile own unit
+        // selected, an own unit standing on the clicked cell does **not** win
+        // the click when the cell itself is enterable. `Access_IsAccessible`
+        // ignores ground cover (road/bridge/water platform), so C++ reports
+        // `CURSOR_UNIT_GO` and LMB is a move onto that cell; for aircraft the
+        // landing pad is the one own unit the cursor treats as a move target
+        // (`team_unit->GetUnitType() != LANDPAD`). Without this the click
+        // selected the bridge/road/pad and the unit could neither cross a
+        // bridge nor land on a pad.
+        if let Some(selected) = selected.filter(|selected| *selected != id) {
+            if clicks_through_unit_to_move(app.state_ref(), selected, id, team) {
+                return session_map_order_click(app, viewport, x, y);
+            }
+        }
 
         // Cursor mode of the selected unit (C++ `UnitInfo::cursor` 4/6, command
         // menu): a click on an own unit gives `ORDER_REPAIR`/`ORDER_RELOAD`
@@ -3762,8 +3857,91 @@ where
     session_map_right_click(app, &viewport, map_x, map_y)
 }
 
-/// Right click on the map: cancel on a unit, otherwise a move order to the cell.
+/// Right click on the map: select/inspect a unit, otherwise cancel the order modes.
+///
+/// Oracle `game_manager.cpp:6747-6778` (`MOUSE_RELEASE_RIGHT` on `WINDOW_MAIN_MAP`):
+///
+/// * the clicked unit is the selected one — `UnitStats_Menu` (statistics window;
+///   the port has no such modal, so the corner portrait/statistics stay the display
+///   and the log names it);
+/// * otherwise an own unit — `GameManager_UnitSelect` (select **without** opening
+///   the command menu; the repeated LMB opens it, `GameManager_ClickUnit`);
+/// * otherwise a visible enemy — `GameManager_UnitSelectOther` (inspection);
+/// * otherwise — `targeting_mode`/`enter_mode`/`cursor` reset (`CURSOR_HIDDEN`).
+///   The selection itself stays: C++ has no "right click deselects".
 fn session_map_right_click<D: Dispatcher>(
+    app: &mut App<D>,
+    viewport: &Viewport,
+    x: i32,
+    y: i32,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let team = app.player_team();
+    let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
+
+    if debug_input() {
+        let origin = viewport.origin();
+        eprintln!(
+            "[rclick] map=({x},{y}) grid=({grid_x},{grid_y}) viewport_origin=({},{}) selected={:?}",
+            origin.0,
+            origin.1,
+            app.hud().selected
+        );
+    }
+
+    if let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) {
+        let (unit_team, label, visible) = match app.state_ref().unit(id) {
+            Some(unit) => (unit.team, unit_label(unit), unit.is_visible_to_team(team)),
+            None => return Transition::None,
+        };
+
+        // `GameManager_UnitSelect` is reachable only for an own, non-idle unit;
+        // a foreign one goes through `Access_GetEnemyUnit` (visibility needed).
+        if unit_team == team {
+            app.hud_mut().preview = None;
+
+            if app.hud().selected == Some(id) {
+                // `UnitStats_Menu(&*GameManager_SelectedUnit)` (`:6751-6753`).
+                session_show_unit_status(app, id);
+                app.hud_mut().push_log(format!("Unit stats: {label}"));
+            } else {
+                // `GameManager_UnitSelect` — no popup (`GameManager_ClickUnit`
+                // opens it on the repeated LMB instead).
+                app.hud_mut().select(Some(id));
+                app.hud_mut().push_log(format!("Selected {label}"));
+                session_show_unit_status(app, id);
+            }
+
+            return Transition::None;
+        }
+
+        if visible {
+            // `GameManager_UnitSelectOther` → `GameManager_MenuUnitSelect`.
+            return session_select_enemy(app, id, &label);
+        }
+
+        app.hud_mut().push_log("Enemy unit — not visible");
+        return Transition::None;
+    }
+
+    // `GameManager_ManagePlayerAction` + `targeting_mode = 0`, `enter_mode = 0`,
+    // `cursor = CURSOR_HIDDEN` (`:6764-6770`).
+    app.hud_mut().cancel_order_modes();
+    app.hud_mut().push_log("Cancelled");
+
+    Transition::None
+}
+
+/// LMB order on the map (`CURSOR_UNIT_GO`/`CURSOR_ACTIVATE`): activate a ready
+/// unit from its container, an air move, or a ground/sea move to the cell.
+///
+/// Oracle `game_manager.cpp:6685-6745` — the **left** button is the order button:
+/// `case CURSOR_UNIT_GO/CURSOR_WAY` → `ORDER_MOVE` (or `ORDER_ACTIVATE` for an
+/// `ORDER_STATE_UNIT_READY` unit), `CURSOR_ACTIVATE` → `ORDER_ACTIVATE`,
+/// `CURSOR_ENEMY`/`CURSOR_FAR_TARGET` → `ORDER_MOVE_TO_ATTACK`.
+fn session_map_order_click<D: Dispatcher>(
     app: &mut App<D>,
     viewport: &Viewport,
     x: i32,
@@ -3776,38 +3954,7 @@ where
     let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
     let debug = debug_input();
 
-    if debug {
-        let origin = viewport.origin();
-        eprintln!(
-            "[rclick] map=({x},{y}) grid=({grid_x},{grid_y}) viewport_origin=({},{}) selected={:?}",
-            origin.0,
-            origin.1,
-            app.hud().selected
-        );
-    }
-
-    // «Cancel — Esc/right click on the unit».
-    if let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) {
-        let label = app
-            .state_ref()
-            .unit(id)
-            .map(unit_label)
-            .unwrap_or_else(|| "unit".to_string());
-
-        if debug {
-            eprintln!("[rclick] result=cancel unit={} ({label})", id.0);
-        }
-
-        app.hud_mut().clear_interaction();
-        app.hud_mut().push_log(format!("Cancelled ({label})"));
-        return Transition::None;
-    }
-
     let Some(selected) = app.hud().selected else {
-        if debug {
-            eprintln!("[rclick] result=no-selection");
-        }
-        app.hud_mut().push_log("No unit selected — LMB selects");
         return Transition::None;
     };
 
@@ -3825,7 +3972,7 @@ where
 
     if !selected_own {
         if debug {
-            eprintln!("[rclick] result=enemy-selected selected={}", selected.0);
+            eprintln!("[order] result=enemy-selected selected={}", selected.0);
         }
         app.hud_mut().push_log("Enemy unit — no orders");
         return Transition::None;
@@ -3839,7 +3986,7 @@ where
         || grid_y >= max_core::geo::MAP_HEIGHT
     {
         if debug {
-            eprintln!("[rclick] result=outside-map grid=({grid_x},{grid_y})");
+            eprintln!("[order] result=outside-map grid=({grid_x},{grid_y})");
         }
         app.hud_mut().push_log("Outside the map");
         return Transition::None;
@@ -3860,7 +4007,7 @@ where
 
         if debug {
             eprintln!(
-                "[rclick] result=activate selected={} to=({},{})",
+                "[order] result=activate selected={} to=({},{})",
                 selected.0, destination.x, destination.y
             );
         }
@@ -3904,7 +4051,7 @@ where
 
     if !can_move {
         if debug {
-            eprintln!("[rclick] result=cannot-move selected={}", selected.0);
+            eprintln!("[order] result=cannot-move selected={}", selected.0);
         }
         app.hud_mut().push_log("Unit cannot move (air/stationary)");
         return Transition::None;
@@ -3925,7 +4072,7 @@ where
 
         if debug {
             eprintln!(
-                "[rclick] result=leave-site selected={} to=({},{})",
+                "[order] result=leave-site selected={} to=({},{})",
                 selected.0, destination.x, destination.y
             );
         }
@@ -3954,7 +4101,7 @@ where
 
         if debug {
             eprintln!(
-                "[rclick] result=no-go-building selected={} site=({},{})",
+                "[order] result=no-go-building selected={} site=({},{})",
                 selected.0, site.x, site.y
             );
         }
@@ -3974,7 +4121,7 @@ where
 
             if debug {
                 eprintln!(
-                    "[rclick] result=move selected={} steps={steps} to=({},{})",
+                    "[order] result=move selected={} steps={steps} to=({},{})",
                     selected.0, destination.x, destination.y
                 );
             }
@@ -3984,7 +4131,7 @@ where
         None => {
             if debug {
                 eprintln!(
-                    "[rclick] result=no-path selected={} to=({},{})",
+                    "[order] result=no-path selected={} to=({},{})",
                     selected.0, destination.x, destination.y
                 );
             }

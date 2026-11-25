@@ -121,6 +121,84 @@ pub fn is_bridge_elevated(unit: &UnitInfo) -> bool {
     unit.unit_type == UnitType::Bridge && unit.image_index != unit.image_base
 }
 
+/// `UnitInfo::SetSpriteFrameForTerrain` (`unitinfo.cpp:5025`).
+///
+/// Amphibious units have two sprite blocks: the submerged/water pose and the
+/// surface pose. For `CLNTRANS` (the personnel carrier) water is the hidden pose
+/// (`image_base = 0`) and land the surfaced one (`8`); for every other amphibious
+/// type water is `8` and land `0`. `COMMANDO` always returns to `0` — it is the
+/// sprites' ambush pose, not terrain.
+pub(crate) fn set_sprite_frame_for_terrain(state: &GameState, unit: &mut UnitInfo, grid: Point) {
+    let amphibious =
+        unit.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT);
+
+    if amphibious {
+        let surface = access::modified_surface_type(state, grid, false);
+        let water = surface == access::SURFACE_TYPE_WATER;
+
+        unit.image_base = if unit.unit_type == UnitType::ArmouredPersonnelCarrier {
+            if water {
+                0
+            } else {
+                8
+            }
+        } else if water {
+            8
+        } else {
+            0
+        };
+
+        unit.image_index = unit.image_base.wrapping_add(i16::from(unit.angle));
+    } else if unit.unit_type == UnitType::Infiltrator {
+        unit.image_base = 0;
+        unit.image_index = i16::from(unit.angle);
+    }
+}
+
+/// `CLNTRANS` sprite block on the terrain (`GroundPath::Execute`,
+/// `groundpath.cpp:327-360`).
+///
+/// On water the carrier is drawn submerged (`0`) while no enemy's sea-stealth
+/// coverage reveals it; once a sea heat map has stealth coverage on the cell, or
+/// the unit is detected and the cell is covered (`GetComplete`), the surfaced
+/// block `8` is used. On land the surface block is `8` as well.
+pub(crate) fn terrain_image_base(state: &GameState, unit: &UnitInfo, grid: Point) -> i16 {
+    let surface = access::modified_surface_type(state, grid, false);
+    let water = surface == access::SURFACE_TYPE_WATER;
+
+    if unit.unit_type != UnitType::ArmouredPersonnelCarrier {
+        return if water { 8 } else { 0 };
+    }
+
+    if !water {
+        return 8;
+    }
+
+    let grid_x = i32::from(grid.x);
+    let grid_y = i32::from(grid.y);
+
+    for (index, team_info) in state.teams.iter().enumerate() {
+        if team_info.team_type == crate::team::TeamKind::None {
+            continue;
+        }
+
+        let team = crate::team::TeamId(index as u8);
+
+        if team == unit.team {
+            continue;
+        }
+
+        if state.ai_heat_map_stealth_sea(team, grid_x, grid_y) != 0
+            || (unit.is_detected_by_team(team)
+                && state.ai_heat_map_complete(team, grid_x, grid_y) != 0)
+        {
+            return 8;
+        }
+    }
+
+    0
+}
+
 /// `UnitInfo::RestoreOrders` (`unitinfo.cpp:3783`).
 pub fn restore_orders(unit: &mut UnitInfo) {
     if unit.prior_orders == unit.orders
@@ -1758,6 +1836,29 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     ctx.unit.moved = 0;
     ctx.unit.in_transit = false;
 
+    // `GroundPath::Execute` (`groundpath.cpp:327-360`): an amphibious unit
+    // switches its sprite block with the terrain it just entered — the carrier
+    // submerges on water and surfaces on land, `SUBMARNE` keeps its underwater
+    // block (the surfaced one is set by `SpotByTeam`).
+    if ctx.unit.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)
+    {
+        let base = terrain_image_base(ctx.world, &ctx.unit, target);
+
+        if ctx.unit.image_base != base {
+            ctx.unit.image_base = base;
+            ctx.unit.image_index = base.wrapping_add(i16::from(ctx.unit.angle));
+
+            if let Some(presentation) = ctx.world.presentation_mut(ctx.id) {
+                presentation.firing_image_base =
+                    if ctx.unit.unit_type == UnitType::ArmouredPersonnelCarrier {
+                        base
+                    } else {
+                        base.wrapping_add(16)
+                    };
+            }
+        }
+    }
+
     // Projectiles do not reach here: [`path_execute`] moves them pixel by pixel
     // ([`missile_path_execute`]) and the trail is placed from the pixel segment
     // (`Paths_DrawMissile`, `airpath.cpp:229-232`).
@@ -2479,13 +2580,15 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
 
     if is_air {
         // `client->SetParent(nullptr); client->move_to = unit->move_to;
-        //  SetOrder(ORDER_MOVE); SetOrderState(ORDER_STATE_INIT);`
+        //  SetOrder(ORDER_MOVE); SetOrderState(ORDER_STATE_INIT);
+        //  Access_UpdateMapStatus(client, true); ScaleUnit(EXPAND);`
         let mut client = client;
         client.parent_unit = None;
         client.target_grid = move_to;
         client.orders = UnitOrder::Move;
         client.state = UnitOrderState::Init;
         ctx.world.write_unit(client_id, client);
+        ctx.world.update_map_status(client_id, true);
 
         let mut data = ctx.world.order_data(client_id);
         data.move_to = move_to;
@@ -2507,12 +2610,33 @@ fn activate_unit(ctx: &mut OrderContext<'_>) {
         client.parent_unit = None;
         client.orders = UnitOrder::Await;
         client.state = UnitOrderState::ExecutingOrder;
+
+        // `SetSpriteFrameForTerrain` + `InitStealthStatus`
+        // (`units_manager.cpp:3884-3900`): the released amphibious unit takes the
+        // pose of the cell and its stealth visibility is initialized for the new
+        // position. A naval unit released onto a bridge raises it so that it can
+        // pass underneath.
+        set_sprite_frame_for_terrain(ctx.world, &mut client, move_to);
+        combat::init_stealth_status(&mut client, ctx.world.ai.all_visible);
+
+        let client_flags = client.flags;
+
         ctx.world.write_unit(client_id, client);
+
+        if client_flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == MOBILE_SEA_UNIT {
+            if let Some(bridge_id) = access::get_bridge(ctx.world, move_to) {
+                if let Some(mut bridge) = ctx.world.unit(bridge_id).cloned() {
+                    set_new_order_int(&mut bridge, UnitOrder::Move, UnitOrderState::Elevate);
+                    ctx.world.write_unit(bridge_id, bridge);
+                }
+            }
+        }
 
         let mut data = ctx.world.order_data(client_id);
         data.move_to = move_to;
         ctx.world.set_order_data(client_id, data);
 
+        ctx.world.update_map_status(client_id, true);
         ctx.world.scale_unit(client_id, UnitOrderState::Expand);
     }
 }
@@ -3058,16 +3182,43 @@ fn progress_unloading(ctx: &mut OrderContext<'_>) {
         return;
     };
 
-    // `Access_TriggerEnemyMine` (`units_manager.cpp:4035`): a mine under
-    // a landed unit explodes.
-    let landing_grid = client.grid;
+    // `UnitsManager_ProgressUnloading` (`units_manager.cpp:4035-4069`):
+    //   Access_TriggerEnemyMine(client->team, unit->grid_x, unit->grid_y);
+    //   UnitsManager_UpdateMapHash(client, unit->grid_x, unit->grid_y);
+    //   client->RestoreOrders(); client->SetSpriteFrameForTerrain(unit->grid);
+    //   Access_UpdateMapStatus(client, true); UnitsManager_ScaleUnit(EXPAND);
+    // The unloaded unit was removed from `Hash_MapHash` when it was stored, so
+    // the cell of the **transport** (not the stale loading cell) must be added
+    // again: otherwise the released unit is invisible and does not block paths.
+    let landing_grid = ctx.unit.grid;
     let landing_team = client.team;
     access::trigger_enemy_mine(ctx.world, landing_team, landing_grid);
 
-    restore_orders(&mut client);
-    ctx.world.write_unit(parent_id, client);
+    ctx.world
+        .map_hash_remove(parent_id, client.grid, client.flags);
 
-    // `Access_UpdateMapStatus` — P5 (visibility map); the cell is already in MapHash.
+    // `UnitsManager_UpdateMapHash(client, unit->grid)` moves the entry. When the
+    // unload cell equals the stale loading cell (`write_unit` then skips the
+    // hash), the unit still has to be added again — it was removed from the hash
+    // when it was stored; adding it twice when the cell did change would
+    // duplicate the id, because `MapHash::Add` does not deduplicate.
+    let cell_changed = client.grid != landing_grid;
+
+    client.grid = landing_grid;
+    client.target_grid = landing_grid;
+    client.x = (i32::from(landing_grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
+    client.y = (i32::from(landing_grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
+
+    if !cell_changed {
+        ctx.world
+            .map_hash_add(parent_id, landing_grid, client.flags);
+    }
+
+    restore_orders(&mut client);
+    set_sprite_frame_for_terrain(ctx.world, &mut client, landing_grid);
+
+    ctx.world.write_unit(parent_id, client);
+    ctx.world.update_map_status(parent_id, true);
 
     ctx.scale_other(parent_id, UnitOrderState::Expand);
 
@@ -3246,7 +3397,13 @@ fn progress_loading(ctx: &mut OrderContext<'_>) {
                     parent.state = UnitOrderState::ExecutingOrder;
                 }
 
+                // `Hash_MapHash.Remove(parent)` + `Access_UpdateMapStatus(parent, false)`
+                // (`units_manager.cpp:4148-4156`): the stored unit leaves the map,
+                // otherwise it kept blocking/drawing on the loading cell.
+                ctx.world
+                    .map_hash_remove(parent_id, parent.grid, parent.flags);
                 ctx.world.write_unit(parent_id, parent);
+                ctx.world.update_map_status(parent_id, false);
 
                 // `UnitsManager_SetNewOrderInt(&*parent, ORDER_IDLE,
                 // ORDER_STATE_PREPARE_STORE)`.

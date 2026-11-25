@@ -744,7 +744,7 @@ pub enum Command {
     /// `click enemy NAME` — a left click on a foreign unit with this name: with
     /// an own unit selected it is an attack order (`GameManager_ClickUnit`).
     ClickEnemy(String),
-    /// `rclick X Y` — the right button (move order/cancel).
+    /// `rclick X Y` — the right button (select/inspect; cancel of the order modes).
     RightClick(i32, i32),
     /// `key NAME` — a key (`ENTER`, `ESC`, `T`, …).
     Key(Key),

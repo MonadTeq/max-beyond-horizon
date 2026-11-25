@@ -227,6 +227,16 @@ fn bridge_and_platform_modify_surface() {
         modified_surface_type(&state, Point::new(10, 5), true),
         SURFACE_TYPE_WATER
     );
+
+    // `Access_GetBridge` (`access.cpp:1533`): the bridge on the cell; a naval
+    // unit released there raises it (`units_manager.cpp:3891-3897`).
+    let bridge = get_bridge(&state, Point::new(10, 5)).expect("bridge on the cell");
+    assert_eq!(
+        state.unit(bridge).map(|unit| unit.unit_type),
+        Some(UnitType::Bridge)
+    );
+    assert_eq!(get_bridge(&state, Point::new(5, 5)), None);
+    assert_eq!(get_bridge(&state, Point::new(-1, 0)), None);
 }
 
 #[test]

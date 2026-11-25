@@ -278,24 +278,75 @@ fn click_selects_own_unit_and_enemy_click_orders_attack() {
 }
 
 #[test]
-fn right_click_on_a_unit_cancels_the_selection() {
+fn right_click_selects_a_unit_and_shows_stats_without_a_menu() {
+    let (mut app, tank, _enemy) = test_app();
+    let (x, y) = screen_of(&app, Point::new(10, 10));
+
+    // Oracle `game_manager.cpp:6747-6760`: RMB on an own unit is
+    // `GameManager_UnitSelect` — selection only, the command menu stays closed
+    // (`GameManager_ClickUnit` opens it on the repeated LMB).
+    handle_session_input(&mut app, InputEvent::RightClick(x, y));
+
+    assert_eq!(app.hud().selected, Some(tank));
+    assert!(app.unit_menu().is_none(), "RMB must not open the command menu");
+    assert!(app
+        .hud()
+        .log
+        .lines()
+        .iter()
+        .any(|line| line.contains("Selected")));
+
+    // A repeated RMB on the selected unit — `UnitStats_Menu` (`:6751-6753`);
+    // the port has no modal, so the log names the statistics window.
+    handle_session_input(&mut app, InputEvent::RightClick(x, y));
+
+    assert_eq!(app.hud().selected, Some(tank));
+    assert!(app
+        .hud()
+        .log
+        .lines()
+        .iter()
+        .any(|line| line.contains("Unit stats")));
+}
+
+#[test]
+fn right_click_on_a_free_cell_cancels_the_modes_but_keeps_the_selection() {
     let (mut app, tank, _enemy) = test_app();
     let (x, y) = screen_of(&app, Point::new(10, 10));
 
     handle_session_input(&mut app, InputEvent::MouseClick(x, y));
+    app.hud_mut().targeting_mode = true;
+    app.hud_mut().enter_mode = true;
+    app.hud_mut().cursor_mode = crate::unitmenu::CURSOR_LOAD;
+
+    let (ex, ey) = screen_of(&app, Point::new(12, 10));
+    handle_session_input(&mut app, InputEvent::RightClick(ex, ey));
+
+    // `targeting_mode = 0`, `enter_mode = 0`, `cursor = CURSOR_HIDDEN`
+    // (`game_manager.cpp:6764-6770`); `GameManager_SelectedUnit` stays.
     assert_eq!(app.hud().selected, Some(tank));
-
-    // A right click on any unit — cancel (like Esc).
-    handle_session_input(&mut app, InputEvent::RightClick(x, y));
-
-    assert_eq!(app.hud().selected, None);
-    assert_eq!(app.hud().preview, None);
+    assert!(!app.hud().targeting_mode);
+    assert!(!app.hud().enter_mode);
+    assert_eq!(app.hud().cursor_mode, 0);
     assert!(app
         .hud()
         .log
         .lines()
         .iter()
         .any(|line| line.contains("Cancelled")));
+}
+
+#[test]
+fn left_click_on_a_free_cell_deselects_nothing_without_a_unit() {
+    let (mut app, _tank, _enemy) = test_app();
+    let (x, y) = screen_of(&app, Point::new(12, 10));
+
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
+
+    // C++ `CURSOR_UNIT_NO_GO` with no selection does nothing — there is no
+    // "deselect on empty click" (`game_manager.cpp:6930-6943`).
+    assert_eq!(app.hud().selected, None);
+    assert!(app.hud().pending.is_empty());
 }
 
 #[test]
@@ -394,14 +445,16 @@ fn attack_order_packet_08_matches_the_wire_layout() {
 }
 
 #[test]
-fn right_click_on_a_free_cell_queues_a_move_in_a_lockstep_session() {
+fn left_click_on_a_free_cell_queues_a_move_in_a_lockstep_session() {
     let (mut app, tank, _enemy) = network_test_app();
     let (x, y) = screen_of(&app, Point::new(10, 10));
 
     handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
     let (mx, my) = screen_of(&app, Point::new(11, 10));
-    handle_session_input(&mut app, InputEvent::RightClick(mx, my));
+    // Oracle `game_manager.cpp:6685-6745`/`:6894-6902`: LMB (`CURSOR_UNIT_GO`)
+    // is the move button.
+    handle_session_input(&mut app, InputEvent::MouseClick(mx, my));
 
     assert_eq!(
         app.hud().pending.len(),
@@ -434,7 +487,7 @@ fn demo_orders_apply_through_apply_command() {
     handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
     let (mx, my) = screen_of(&app, Point::new(13, 10));
-    handle_session_input(&mut app, InputEvent::RightClick(mx, my));
+    handle_session_input(&mut app, InputEvent::MouseClick(mx, my));
 
     let unit = app.state_ref().unit(tank).expect("tank");
 
@@ -452,6 +505,89 @@ fn demo_orders_apply_through_apply_command() {
         .lines()
         .iter()
         .any(|line| line.contains("Move")));
+}
+
+/// Oracle `game_manager.cpp:6685-6745` + `:6246-6263` (`GameManager_ClickUnit`):
+/// LMB on an own unit selects it, a repeated LMB opens the command menu. A click
+/// on a **ground cover** unit (road/bridge/water platform) is a move onto that
+/// cell (`CURSOR_UNIT_GO`, `GetUnitActionCursor`), not a selection of the cover.
+#[test]
+fn repeated_left_click_opens_the_menu_and_ground_cover_is_clicked_through() {
+    let (mut app, tank, _enemy) = test_app();
+
+    // A road on the target cell; a tank selected and an LMB on the road cell.
+    let road = app
+        .universe
+        .spawn_unit(UnitType::Road, TeamId::RED, Point::new(12, 10), 0)
+        .expect("road");
+
+    let (x, y) = screen_of(&app, Point::new(10, 10));
+    handle_session_input(&mut app, InputEvent::MouseClick(x, y));
+    assert_eq!(app.hud().selected, Some(tank));
+
+    let (rx, ry) = screen_of(&app, Point::new(12, 10));
+    handle_session_input(&mut app, InputEvent::MouseClick(rx, ry));
+
+    // The click moved the tank instead of selecting the road.
+    assert_eq!(app.hud().selected, Some(tank));
+    let unit = app.state_ref().unit(tank).expect("tank");
+    assert_eq!(unit.orders, UnitOrder::Move);
+    assert_eq!(unit.target_grid, Point::new(12, 10));
+    assert!(app.state_ref().unit(road).is_some());
+
+    // A repeated LMB on the selected unit opens its command menu.
+    let (ux, uy) = screen_of(&app, Point::new(10, 10));
+    handle_session_input(&mut app, InputEvent::MouseClick(ux, uy));
+
+    assert!(app.unit_menu().is_some(), "the repeated LMB opens the popup");
+}
+
+/// Oracle `GameManager_GetAirUnitCursor` (`game_manager.cpp:5943-5960`): with an
+/// aircraft selected, an own landing pad is the one own unit the cursor treats as
+/// `CURSOR_UNIT_GO` (`team_unit->GetUnitType() != LANDPAD`), so LMB orders a move
+/// to its cell — the aircraft lands on arrival (`UnitsManager_LoadUnit` →
+/// `ORDER_LAND`). Before the click-through the pad was merely selected and
+/// aircraft could not be parked.
+#[test]
+fn aircraft_left_click_on_a_landing_pad_orders_a_landing() {
+    let mut app = App::new(AppConfig::default().with_screen(512, 384));
+
+    {
+        let universe = &mut app.universe;
+        universe.set_player_team(TeamId::RED);
+
+        if let Some(info) = universe.team_mut(TeamId::RED) {
+            info.team_type = TeamKind::Player;
+        }
+        if let Some(units) = universe.team_units_mut(TeamId::RED) {
+            *units = TeamUnits::with_clan(TeamClan::Random);
+        }
+    }
+
+    let pad = app
+        .universe
+        .spawn_unit(UnitType::LandingPad, TeamId::RED, Point::new(10, 10), 0)
+        .expect("landing pad");
+    let plane = app
+        .universe
+        .spawn_unit(UnitType::Fighter, TeamId::RED, Point::new(10, 13), 0)
+        .expect("aircraft");
+
+    app.viewport_mut().center_on_grid(10, 11);
+
+    let (px, py) = screen_of(&app, Point::new(10, 13));
+    handle_session_input(&mut app, InputEvent::MouseClick(px, py));
+    assert_eq!(app.hud().selected, Some(plane));
+
+    let (lx, ly) = screen_of(&app, Point::new(10, 10));
+    handle_session_input(&mut app, InputEvent::MouseClick(lx, ly));
+
+    assert_eq!(app.hud().selected, Some(plane), "the pad must not be selected");
+
+    let unit = app.state_ref().unit(plane).expect("aircraft");
+    assert_eq!(unit.orders, UnitOrder::Move, "the click is an air move order");
+    assert_eq!(unit.target_grid, Point::new(10, 10), "destination is the pad");
+    assert!(app.state_ref().unit(pad).is_some());
 }
 
 /// SDL/UI Stage B, B1: the demo End Turn is the facade's local-machine

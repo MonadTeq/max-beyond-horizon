@@ -55,6 +55,22 @@ fn intro_asset_points_to_maxint_mve() {
     );
 }
 
+/// `main.cpp:39-46`: the client opens on the intro movie (`Movie_PlayIntro`) when the
+/// data next to `MAX.RES` is readable, not on the main menu.
+#[test]
+fn startup_screen_starts_with_the_intro_movie() {
+    let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));
+    let screen = max_app::ui::startup_screen(assets.intro_mve.clone(), None);
+
+    match screen {
+        Screen::Introduction(intro) => {
+            assert!(intro.is_loaded());
+            assert_eq!(intro.frame_index(), 1, "frame 0 is decoded on entry");
+        }
+        other => panic!("startup must open the intro, got {other:?}"),
+    }
+}
+
 #[test]
 fn intro_decodes_frame_zero_and_scales_to_letterbox() {
     let assets = assets().expect(concat!("test fixture is missing: ", stringify!(assets())));

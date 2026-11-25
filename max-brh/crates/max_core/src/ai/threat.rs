@@ -578,9 +578,12 @@ impl GameState {
     /// `UnitInfo::Draw(team)` (`unitinfo.cpp:2842`), the simulation part: a unit
     /// that has left the team's scan coverage loses its visibility.
     ///
-    /// The C++ sprite bookkeeping (`image_base` of surfaced submarines and
-    /// commandos) is presentation; the visibility flag is what the simulation
-    /// reads (`UnitInfo::IsVisibleToTeam`).
+    /// `UnitInfo::Draw(team)` (`unitinfo.cpp:2842-2872`) also does the sprite
+    /// bookkeeping of a stealth unit that leaves the scan: when the unit is under
+    /// water (`SUBMARNE`, `CLNTRANS` on water) and **no** enemy team sees it any
+    /// more, it dives again — `image_base = 0`. `SpotByTeam` had surfaced it with
+    /// `8`; without this reset a spotted submarine stayed surfaced forever and
+    /// "diving" did not exist in the port.
     fn hide_unit_from_team(world: &mut GameState, id: UnitId, team: TeamId) {
         let Some(unit) = world.unit(id).cloned() else {
             return;
@@ -592,6 +595,19 @@ impl GameState {
 
         let mut unit = unit;
         unit.set_visible_to_team(team, false);
+
+        if world.is_unit_under_water(&unit) {
+            let still_seen = (0..crate::game::PLAYER_TEAM_COUNT).any(|index| {
+                let other = TeamId(index as u8);
+                other != unit.team && unit.is_visible_to_team(other)
+            });
+
+            if !still_seen {
+                unit.image_base = 0;
+                unit.image_index = i16::from(unit.angle);
+            }
+        }
+
         world.write_unit(id, unit);
     }
 

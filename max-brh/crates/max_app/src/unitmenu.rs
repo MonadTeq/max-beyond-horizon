@@ -640,10 +640,26 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             } else {
                 "activate"
             };
-            items.push(
-                UnitMenuItem::new(ItemId::Activate, caption, '1', false)
-                    .disabled("RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141"),
-            );
+            // `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:910-921`):
+            // `activate` opens `RepairShopMenu`. For an `AIRTRANS` the menu's
+            // `Activate` unloads one stored passenger
+            // (`RepairShopMenu::Activate`, `repairshopmenu.cpp:661-678`:
+            // `repairshop->SetParent(target); ORDER_UNLOAD/INIT`), so the item is
+            // live while the hold is not empty. Other repair shops need the
+            // unported screen (`FindReachableSpot`/`FollowUnit`) and stay disabled.
+            let activate = UnitMenuItem::new(ItemId::Activate, caption, '1', false);
+
+            items.push(if unit.unit_type == UnitType::AirTransport {
+                if unit.storage > 0 {
+                    activate
+                } else {
+                    activate.disabled("пустой трюм: нечего выгружать")
+                }
+            } else {
+                activate.disabled(
+                    "RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141",
+                )
+            });
             // `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`):
             // mode 7 toggle; boarding — `GameManager_ProcessMouse`
             // (CURSOR_LOAD, `game_manager.cpp:6807-6842`).

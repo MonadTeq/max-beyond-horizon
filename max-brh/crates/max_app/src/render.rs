@@ -977,19 +977,12 @@ pub fn draw_unit_sprites_with_animation(
 ) -> Option<UnitSpriteStats> {
     let sprite = assets.sprite(unit.unit_type)?;
     // `UnitInfo::SpotByTeam` surfaces a spotted submarine / personnel carrier:
-    // `image_base = 8` (`unitinfo.cpp:2825-2829`), i.e. the second block of eight
-    // hull frames of the same `D_*`/`S_*` resource (the simulation field stays 0
-    // while the boat is submerged). The frame is still derived from the order
-    // state like every other hull; only the base moves to the surfaced block.
-    let image_base = if unit.image_base >= 8
-        && matches!(
-            unit.unit_type,
-            UnitType::Submarine | UnitType::ArmouredPersonnelCarrier
-        ) {
-        image_base.saturating_add(8)
-    } else {
-        image_base
-    };
+    // `image_base = 8` (`unitinfo.cpp:2825-2829`), i.e. the **second** block of
+    // eight hull frames of the same `D_*`/`S_*` resource; the simulation field is
+    // `0` while the boat is submerged. `SUBMARNE`/`CLNTRANS` sprites have exactly
+    // 16 frames, so the base is used verbatim — adding another 8 addressed frames
+    // 16..23 that do not exist and the surfaced unit vanished from the frame.
+    // The frame inside the block is still derived from the order state.
     // `FrameInfo` (`D_*`) defines the length of the animation frame block; for RADAR it is 16,
     // although the sprite has 20 frames (the last 4 are connectors).
     let sentry_frames = sprite
@@ -1406,7 +1399,7 @@ impl<D: Dispatcher> App<D> {
         // Construction site ghost — into the map area, like `GameManager_TempTape`
         // (`ORDER_STATE_SELECT_SITE`), before the cell is confirmed.
         self.draw_build_site_ghost(&mut map, &viewport, &mut stats);
-        // Route preview (the RMB green line) — over the units, like
+        // Route preview (the LMB move-order green line) — over the units, like
         // `GameManager_DrawMapView`: in windowed mode `render_hud` is not
         // called (the panels are drawn by `FRAMEPIC`), so without this line
         // the preview was visible only in the full-screen fallback.

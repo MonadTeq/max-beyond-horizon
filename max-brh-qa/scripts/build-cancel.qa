@@ -54,7 +54,7 @@ assert building=on
 assert unit-count Training Hall=0
 shot build-cancel-placed
 
-# --- Попытка увода: RMB по соседней клетке — UNIT_NO_GO, приказа нет -----------
+# --- Попытка увода: LMB по соседней клетке — UNIT_NO_GO, приказа нет -----------
 # Курсор C++ для `BUILD_IN_PROGRESS` — `CURSOR_UNIT_NO_GO`; приказ движения
 # не создаётся, площадка/очередь остаются нетронутыми.
 move near refused

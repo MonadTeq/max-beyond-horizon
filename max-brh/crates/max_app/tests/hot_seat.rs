@@ -503,8 +503,9 @@ fn only_the_active_human_controls_their_units() {
         "выделен юнит RED"
     );
 
-    // A right click on a free cell — a move order to the selected unit:
-    // in demo mode (`online = false`) it is applied immediately.
+    // A left click on a free cell — a move order to the selected unit
+    // (`game_manager.cpp:6685-6745`: LMB is the order button); in demo mode
+    // (`online = false`) it is applied immediately.
     let green_orders: Vec<_> = app
         .state_ref()
         .unit_ids_in_order()
@@ -516,7 +517,7 @@ fn only_the_active_human_controls_their_units() {
 
     if let Some(destination) = free_neighbour(&app, red_grid) {
         let (dx, dy) = chrome_screen_of(&app, destination);
-        handle_session_input(&mut app, InputEvent::RightClick(dx, dy));
+        handle_session_input(&mut app, InputEvent::MouseClick(dx, dy));
 
         let ordered = app
             .state_ref()

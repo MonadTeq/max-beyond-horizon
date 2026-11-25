@@ -2313,6 +2313,73 @@ impl<D: Dispatcher> App<D> {
                     "allocate: нужна включённая шахта с комплексом".to_string()
                 }
             }
+            unitmenu::ItemId::Activate => {
+                // C++ `UnitsManager_Popup_OnClick_Activate`
+                // (`units_manager.cpp:997-1006`) → `RepairShopMenu_Menu`; for an
+                // air transport the menu's `Activate` is the cargo release:
+                // `repairshop->SetParent(target_unit);
+                //  UnitsManager_SetNewOrder(repairshop, ORDER_UNLOAD, INIT)`
+                // (`repairshopmenu.cpp:661-678`). The port gives the order
+                // directly (the quantity/repair screen is not ported).
+                let Some(transport) = self.state_ref().unit(unit_id).cloned() else {
+                    return Some("activate: юнит исчез".to_string());
+                };
+
+                if transport.unit_type != max_core::enums::UnitType::AirTransport {
+                    return Some(unitmenu::disabled_line(&item));
+                }
+
+                if transport.storage <= 0 {
+                    return Some("activate: трюм пуст".to_string());
+                }
+
+                // The first stored passenger (`ORDER_IDLE`, parent = transport).
+                let cargo = self
+                    .state_ref()
+                    .unit_ids_in_order()
+                    .into_iter()
+                    .find(|id| {
+                        self.state_ref().unit(*id).is_some_and(|unit| {
+                            unit.orders == max_core::enums::UnitOrder::Idle
+                                && unit.parent_unit == Some(unit_id)
+                        })
+                    });
+
+                let Some(cargo) = cargo else {
+                    return Some("activate: груз не найден".to_string());
+                };
+
+                let Some(cargo_unit) = self.state_ref().unit(cargo).cloned() else {
+                    return Some("activate: груз не найден".to_string());
+                };
+
+                // `Access_IsAccessible(target->type,
+                //  target->team, repairshop->grid, SameClassBlocks)` — the carrier
+                // must be able to drop the unit on its own cell.
+                if self.state_ref().is_accessible(
+                    cargo_unit.unit_type,
+                    cargo_unit.team,
+                    transport.grid,
+                    max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+                ) == 0
+                {
+                    return Some("activate: место выгрузки недоступно".to_string());
+                }
+
+                match unitmenu::p2_order(
+                    self.state_ref(),
+                    unit_id,
+                    max_core::enums::UnitOrder::Unload,
+                    max_core::enums::UnitOrderState::Init,
+                    Some(cargo),
+                ) {
+                    Some(command) => {
+                        self.hud.pending.push(command);
+                        format!("{caption}: выгрузка — ORDER_UNLOAD", caption = item.caption)
+                    }
+                    None => "activate: юнит исчез".to_string(),
+                }
+            }
             unitmenu::ItemId::Transfer
             | unitmenu::ItemId::Reload
             | unitmenu::ItemId::Repair
@@ -3895,8 +3962,8 @@ impl<D: Dispatcher> App<D> {
     /// stationary unit. Earlier the camera stood on the first unit of the canonical
     /// traversal — which is `GROUND_COVER` (`SMLSLAB`/`LRGSLAB`), one cell
     /// down-left of the base. Because of the shift, clicks computed from the base hit
-    /// the neighboring cell with the stationary mine: it was selected, RMB answered
-    /// «Unit cannot move (air/stationary)», and the unit did not move.
+    /// the neighboring cell with the stationary mine: it was selected, the move
+    /// order answered «Unit cannot move (air/stationary)», and the unit did not move.
     pub fn focus_player(&mut self) {
         let team = self.state_ref().player_team();
         let mut grid = None;

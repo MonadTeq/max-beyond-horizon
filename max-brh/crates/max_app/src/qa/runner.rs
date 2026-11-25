@@ -2566,11 +2566,11 @@ impl QaRunner {
             let was_intro = matches!(self.screen, Screen::Introduction(_));
 
             self.screen = Screen::MainMenu;
-            self.ctx.status = if was_intro {
-                "Introduction ended".to_string()
+            if was_intro {
+                self.ctx.status.clear();
             } else {
-                "Credits ended".to_string()
-            };
+                self.ctx.status = "Credits ended".to_string();
+            }
         }
 
         if matches!(self.screen, Screen::InSession { .. }) && self.app.local_active() {
@@ -2946,6 +2946,31 @@ impl QaRunner {
     }
 
     fn select_point(&mut self, x: i32, y: i32) -> Result<Flow, String> {
+        // A repeated LMB on the already selected unit opens its command menu
+        // (`GameManager_ClickUnit`, `game_manager.cpp:6265-6288`). The helper
+        // means "select", so an open popup and a selection on the same unit are
+        // reset first; otherwise the click would toggle the menu and a later
+        // `Esc` would close the popup instead of the selection. The reset is a
+        // direct UI-state operation (no extra input frame), so the QA timing
+        // stays exactly on the script's `tick`/`wait` boundaries.
+        self.app.close_unit_menu();
+
+        if let Some(selected) = self.app.hud().selected {
+            let viewport = self.app.map_viewport();
+            let team = self.app.player_team();
+            let hit = hud::unit_at_screen(
+                self.app.state_ref(),
+                &viewport,
+                team,
+                x - layout::MAIN_MAP.ulx,
+                y - layout::MAIN_MAP.uly,
+            );
+
+            if hit == Some(selected) {
+                self.app.hud_mut().clear_interaction();
+            }
+        }
+
         self.send(InputEvent::MouseClick(x, y))?;
         self.require_selection(&format!("select {x} {y}"))
     }
@@ -3118,11 +3143,12 @@ impl QaRunner {
 
         let before = self.selected_orders();
 
-        self.send(InputEvent::RightClick(x, y))?;
+        // Oracle `game_manager.cpp:6685-6745`: LMB is the order button.
+        self.send(InputEvent::MouseClick(x, y))?;
 
         if matches!(self.screen, Screen::InSession { .. }) && self.app.hud().selected != Some(id) {
             return Err(format!(
-                "{what}: правый клик снял выделение вместо приказа ({})",
+                "{what}: левый клик снял выделение вместо приказа ({})",
                 self.last_log_line()
             ));
         }
@@ -3210,7 +3236,8 @@ impl QaRunner {
             let before = self.selected_orders();
             let (x, y) = hud::tile_center(&self.app.map_viewport(), target);
 
-            self.send(InputEvent::RightClick(
+            // Oracle `game_manager.cpp:6685-6745`: the order button is LMB.
+            self.send(InputEvent::MouseClick(
                 x + layout::MAIN_MAP.ulx,
                 y + layout::MAIN_MAP.uly,
             ))?;
@@ -3241,7 +3268,7 @@ impl QaRunner {
         ))
     }
 
-    /// `move near refused` — a right click on a free adjacent cell that
+    /// `move near refused` — a left click on a free adjacent cell that
     /// **must not** give an order: C++ `GameManager_GetBuilderUnitCursor`
     /// (`game_manager.cpp:5927-5931`) for a builder in `BUILD_IN_PROGRESS`
     /// returns `CURSOR_UNIT_NO_GO`, and the input creates no order.
@@ -3288,7 +3315,8 @@ impl QaRunner {
             let before = self.selected_orders();
             let (x, y) = hud::tile_center(&self.app.map_viewport(), target);
 
-            self.send(InputEvent::RightClick(
+            // Oracle `game_manager.cpp:6685-6745`: the order button is LMB.
+            self.send(InputEvent::MouseClick(
                 x + layout::MAIN_MAP.ulx,
                 y + layout::MAIN_MAP.uly,
             ))?;
@@ -3329,7 +3357,7 @@ impl QaRunner {
     /// `launch near` / `launch grid X Y` — bringing a ready unit out of a factory.
     ///
     /// Player: the ready unit is selected (`Popup_InitFactories` → `PlaceNewUnit`
-    /// selects it on a repeated click on the factory), then a right click on the cell
+    /// selects it on a repeated click on the factory), then a left click on the cell
     /// next to the factory — `CURSOR_ACTIVATE` → the `ORDER_ACTIVATE` order **to the factory**
     /// (`game_manager.cpp:6918-6926`). Check: the container received `Activate`
     /// (or the unit has already been launched).
@@ -3391,7 +3419,8 @@ impl QaRunner {
             ));
         }
 
-        self.send(InputEvent::RightClick(frame_x, frame_y))?;
+        // `CURSOR_ACTIVATE` is the LMB order (`game_manager.cpp:6918-6926`).
+        self.send(InputEvent::MouseClick(frame_x, frame_y))?;
 
         // The order is applied locally immediately (`apply_pending_orders`): the container
         // must be in `ORDER_ACTIVATE`/`EXECUTING_ORDER`.

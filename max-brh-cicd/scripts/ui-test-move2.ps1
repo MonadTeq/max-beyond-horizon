@@ -1,5 +1,5 @@
 # ui-test-move2.ps1 — LIVE run of the M.A.X. Rust client window:
-# LMB unit selection, RMB order (SendInput!), green path preview,
+# LMB unit selection and movement order (SendInput!), green path preview,
 # End Turn, and a check that the unit really moved to the target cell.
 #
 # Differences from the old version:
@@ -346,8 +346,8 @@ try {
     $selId = Tick-Selection (Read-Trace)
     if ($null -eq $selId) { Fail 'LMB не выделил юнита (в трассе нет sel=ID)' }
 
-    # --- RMB: order to a neighboring cell ------------------------------------
-    Step 'RMB: приказ движения (SendInput)'
+    # --- LMB: order to a neighboring cell ------------------------------------
+    Step 'LMB: приказ движения (SendInput)'
     # First a target 2 cells away: the route is longer than one cell, so the trace
     # shows several intermediate `vX.Y` (the visual walk of the route).
     $destinations = @(
@@ -357,6 +357,12 @@ try {
     )
     $moved = $false
     $destGX = 0; $destGY = 0
+
+    # `game_manager.cpp:6685-6745`: the order button is LMB. Select once; an LMB
+    # on an empty cell no longer clears the selection (C++ has no such rule).
+    Click-Client $sx $sy
+    Start-Sleep -Milliseconds 350
+
     foreach ($d in $destinations) {
         $gx = $surveyor.GX + $d[0]
         $gy = $surveyor.GY + $d[1]
@@ -365,17 +371,13 @@ try {
         if ($cx -lt 181 -or $cx -gt 626 -or $cy -lt 19 -or $cy -gt 465) { continue }
 
         for ($attempt = 0; $attempt -lt 2; $attempt++) {
-            # A repeated LMB: after an unsuccessful RMB (Cancel/No path) the selection
-            # may have been dropped, and without a selection RMB answers no-selection.
-            Click-Client $sx $sy
-            Start-Sleep -Milliseconds 350
-            $before = ([regex]::Matches((Read-Trace), '\[rclick\] result=')).Count
-            Click-Client $cx $cy $true
+            $before = ([regex]::Matches((Read-Trace), '\[order\] result=')).Count
+            Click-Client $cx $cy
             Start-Sleep -Milliseconds 500
 
-            $lines = @((Read-Trace) -split "`r?`n" | Where-Object { $_ -match '^\[rclick\] result=' })
+            $lines = @((Read-Trace) -split "`r?`n" | Where-Object { $_ -match '^\[order\] result=' })
             $result = if ($lines.Count -gt $before) { $lines[-1] } else { '' }
-            Write-Host "RMB ($gx,$gy) attempt $($attempt + 1): $result"
+            Write-Host "LMB ($gx,$gy) attempt $($attempt + 1): $result"
             if ($result -match 'result=move') {
                 $moved = $true
                 $destGX = $gx; $destGY = $gy
@@ -386,10 +388,10 @@ try {
 
         if ($moved) { break }
     }
-    if (-not $moved) { throw 'RMB не дал приказ движения ни на одну соседнюю клетку' }
+    if (-not $moved) { throw 'LMB не дал приказ движения ни на одну соседнюю клетку' }
 
-    if (-not (Find-Line (Read-Trace) '\[in\] screen=InSession event=RightClick')) {
-        Fail 'RightClick не дошёл до окна как InputEvent::RightClick'
+    if (-not (Find-Line (Read-Trace) '\[in\] screen=InSession event=MouseClick')) {
+        Fail 'MouseClick не дошёл до окна как InputEvent::MouseClick'
     }
     $previewLine = Find-Line (Read-Trace) '\[tick .* preview=[1-9]'
     if (-not $previewLine) { Fail 'предпросмотр пути не появился (preview=0)' }
@@ -399,8 +401,8 @@ try {
     Write-Host "B: green preview pixels in map area: $green"
     if ($green -lt 8) { Fail "зелёный предпросмотр не нарисован в chrome-кадре (пикселей: $green)" }
 
-    $rclickLine = Find-Line (Read-Trace) '^\[rclick\] result=move'
-    Write-Host "B: $rclickLine"
+    $orderLine = Find-Line (Read-Trace) '^\[order\] result=move'
+    Write-Host "B: $orderLine"
     Write-Host "B: $previewLine"
 
     # --- End Turn -------------------------------------------------------------
@@ -464,7 +466,7 @@ try {
     Write-Host '--- evidence ------------------------------------------------'
     Write-Host ("A: mining 40@({0},{1}) vs generator 2@({2},{3}); base cell units={4}" -f `
         $mine.GX, $mine.GY, $generator.GX, $generator.GY, ($atBase -join ','))
-    Write-Host "B: $rclickLine"
+    Write-Host "B: $orderLine"
     Write-Host "B: preview pixels=$green"
     Write-Host ("C: 57@({0},{1}) -> ({2},{3}); vis {4}" -f `
         $surveyor.GX, $surveyor.GY, $destGX, $destGY, ($visuals -join ' -> '))

@@ -615,6 +615,124 @@ fn air_transport_loads_passenger_on_arrival() {
             "passenger parent is the transport"
     );
     assert_eq!(passenger_unit.orders, UnitOrder::Idle);
+    assert!(
+        !state.units_at(Point::new(10, 10)).contains(&passenger),
+        "`Hash_MapHash.Remove(parent)` takes the stored unit off the map"
+    );
+
+    // And the other direction of the same mechanism: `RepairShopMenu::Activate`
+    // releases the passenger with `ORDER_UNLOAD/INIT`, which puts it back on the
+    // transport cell (defect "activate cargo of an air transport").
+    state.set_order_data(
+        transport,
+        OrderData {
+            move_to: Point::new(10, 10),
+            fire_on: Point::ZERO,
+        },
+    );
+    state.unit_mut(transport).expect("transport").parent_unit = Some(passenger);
+    state.set_order(transport, UnitOrder::Unload, UnitOrderState::Init);
+
+    let mut unloaded = false;
+    for _ in 0..240 {
+        state.tick();
+        unloaded |= state.unit(passenger).is_some_and(|unit| {
+            unit.orders == UnitOrder::Await
+                && state.units_at(Point::new(10, 10)).contains(&passenger)
+        });
+        if unloaded {
+            break;
+        }
+    }
+
+    assert!(unloaded, "the loaded passenger must be releasable");
+    assert_eq!(
+        state.unit(transport).expect("transport").storage,
+        0,
+        "the cargo bay is empty again"
+    );
+}
+
+/// `UnitsManager_ProgressUnloading` (`units_manager.cpp:4035-4069`): the released
+/// cargo goes back into `Hash_MapHash` on the **transport's** cell (the unit was
+/// removed from the hash when it was stored), takes the terrain pose and gets
+/// `AWAIT`. The transport gives one cargo bay back.
+///
+/// Before the fix the port reused the stale loading cell: the released unit
+/// stayed outside the hash at its old place, so it was invisible and did not
+/// block paths — the "activate cargo" mechanism was broken.
+#[test]
+fn unloading_puts_the_cargo_back_on_the_transport_cell() {
+    let (mut state, passenger, transport) = state_with_air_transport_and_passenger();
+
+    // Stored state as left by `ProcessLoading`: the cargo is `ORDER_IDLE`, its
+    // parent is the transport and it is out of the map hash; the transport holds
+    // it and has already flown to the cargo cell (10, 10).
+    let cargo_grid = state.unit(passenger).expect("passenger").grid;
+    let cargo_flags = state.unit(passenger).expect("passenger").flags;
+    state.map_hash_remove(passenger, cargo_grid, cargo_flags);
+
+    {
+        let cargo = state.unit_mut(passenger).expect("passenger");
+        cargo.orders = UnitOrder::Idle;
+        cargo.state = UnitOrderState::Store;
+        cargo.parent_unit = Some(transport);
+    }
+    {
+        let mut carrier = state.unit(transport).expect("transport").clone();
+        carrier.grid = cargo_grid;
+        carrier.target_grid = cargo_grid;
+        carrier.storage = 1;
+        carrier.parent_unit = None;
+        state.write_unit(transport, carrier);
+    }
+
+    // `RepairShopMenu::Activate` for `AIRTRANS`: the carrier gets
+    // `ORDER_UNLOAD/INIT` with the released unit as its parent
+    // (`repairshopmenu.cpp:661-678`).
+    state.set_order_data(
+        transport,
+        OrderData {
+            move_to: cargo_grid,
+            fire_on: Point::ZERO,
+        },
+    );
+    state.set_order(transport, UnitOrder::Unload, UnitOrderState::Init);
+    state.unit_mut(transport).expect("transport").parent_unit = Some(passenger);
+
+    let mut unloaded = false;
+    for _ in 0..240 {
+        state.tick();
+        unloaded |= state.unit(passenger).is_some_and(|unit| {
+            unit.orders == UnitOrder::Await && state.units_at(cargo_grid).contains(&passenger)
+        });
+        if unloaded {
+            break;
+        }
+    }
+
+    assert!(unloaded, "the passenger must leave the hold");
+
+    let passenger_unit = state.unit(passenger).expect("passenger").clone();
+    assert_eq!(passenger_unit.grid, cargo_grid, "released on the carrier cell");
+    assert!(
+        state.units_at(cargo_grid).contains(&passenger),
+        "the released unit is back in Hash_MapHash"
+    );
+    assert_eq!(
+        state
+            .units_at(cargo_grid)
+            .iter()
+            .filter(|id| **id == passenger)
+            .count(),
+        1,
+        "the released unit is in the hash exactly once"
+    );
+    assert_eq!(
+        state.unit(transport).expect("transport").storage,
+        0,
+        "one cargo bay was given back"
+    );
 }
 
 /// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`), the first branch of
@@ -1523,6 +1641,53 @@ fn land_and_take_boundaries_wrap() {
     unit.moved = 0x3F;
     assert!(!take(&mut unit));
     assert_eq!(unit.moved, 0);
+}
+
+/// `GroundPath::Execute` (`groundpath.cpp:327-360`): an amphibious unit changes
+/// its sprite block with the terrain — the carrier is submerged on water
+/// (`image_base = 0`) and surfaced on land (`8`); `SUBMARNE` keeps its own block.
+#[test]
+fn carrier_sprite_block_follows_the_terrain() {
+    let mut state = GameState::new();
+    state.teams[0].team_type = TeamKind::Player;
+    state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+    let water = Point::new(10, 10);
+    let land = Point::new(11, 10);
+    state
+        .map
+        .surface
+        .set(water.x, water.y, crate::enums::Surface::WATER);
+    state
+        .map
+        .surface
+        .set(land.x, land.y, crate::enums::Surface::LAND);
+
+    let carrier = state
+        .spawn_unit(
+            UnitType::ArmouredPersonnelCarrier,
+            TeamId::RED,
+            water,
+            MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | SELECTABLE,
+        )
+        .expect("carrier");
+
+    let carrier_unit = state.unit(carrier).expect("carrier").clone();
+    assert_eq!(
+        terrain_image_base(&state, &carrier_unit, water),
+        0,
+        "on water the carrier uses the submerged block"
+    );
+    assert_eq!(
+        terrain_image_base(&state, &carrier_unit, land),
+        8,
+        "on land the carrier uses the surface block"
+    );
+
+    let mut on_land = carrier_unit;
+    set_sprite_frame_for_terrain(&state, &mut on_land, land);
+    assert_eq!(on_land.image_base, 8);
+    assert_eq!(on_land.image_index, 8);
 }
 
 /// `is_bridge_elevated`: only the bridge type, only while its frame differs

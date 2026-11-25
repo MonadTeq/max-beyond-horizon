@@ -34,6 +34,12 @@
 //! `400 / (Text_GetHeight() + 1) = 23` rows (`Text_SplitText`). The campaign intro
 //! of `SC_C0001` is longer, so the port paginates with Up/Down/PageUp/PageDown and
 //! shows a page counter; the first page is laid out exactly like the oracle.
+//!
+//! The text is typed at the oracle's speed (`Text_TypeWriter_CharacterTimeMs = 10`,
+//! `menu.cpp:795`): every character of the current page is revealed over time, any
+//! input completes the page (the key is consumed, as in `Text_TypeWriter_TextBox`).
+//! A `dt = 0` frame draws the complete page — the port's freeze-frame convention
+//! keeps QA screenshots deterministic.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -53,6 +59,8 @@ pub const STORY_TEXT_RECT: PixelRect = PixelRect::new(20, 20, 600, 400);
 pub const STORY_TEXT_WIDTH: i32 = 600;
 /// Height of the story text box.
 pub const STORY_TEXT_HEIGHT: i32 = 400;
+/// Typewriter speed (`menu.cpp:795`: `Text_TypeWriter_CharacterTimeMs = 10`).
+pub const TYPEWRITER_CHARACTER_MS: f32 = 10.0;
 /// `ENDOK` button (`menu.cpp:821`: `Button(ENDOK_U, ENDOK_D, 293, 458)`).
 pub const STORY_OK: PixelRect = PixelRect::new(293, 458, 72, 19);
 /// Button caption (`_(ccca)` — "OK").
@@ -137,6 +145,13 @@ pub struct StoryScreen {
     text: String,
     rows: Vec<String>,
     page: usize,
+    /// Characters of the current page revealed by the typewriter.
+    typed: usize,
+    /// A positive `dt` has been applied: the typewriter is running. Until then the
+    /// page is drawn complete, so a `dt = 0` freeze-frame stays deterministic.
+    typing_started: bool,
+    /// Time accumulated since the last revealed character.
+    typing_elapsed: f32,
     /// Decoded background; `None` — the menu briefing fallback at draw time.
     background: Option<BigImage>,
     background_tag: Option<String>,
@@ -157,6 +172,8 @@ impl PartialEq for StoryScreen {
         self.kind == other.kind
             && self.text == other.text
             && self.page == other.page
+            && self.typed == other.typed
+            && self.typing_started == other.typing_started
             && self.background_tag == other.background_tag
             && self.background_index == other.background_index
             && self.videos == other.videos
@@ -214,6 +231,9 @@ impl StoryScreen {
             text,
             rows,
             page: 0,
+            typed: 0,
+            typing_started: false,
+            typing_elapsed: 0.0,
             background,
             background_tag,
             background_index,
@@ -294,6 +314,37 @@ impl StoryScreen {
         &self.rows[start..end]
     }
 
+    /// Characters of the current page revealed by the typewriter.
+    ///
+    /// Before the first positive `dt` the page is drawn complete (a deterministic
+    /// freeze-frame), so the value is only meaningful once [`Self::typing`] is true.
+    pub fn typed_chars(&self) -> usize {
+        self.typed
+    }
+
+    /// Whether the typewriter is running (`false` before the first positive `dt`
+    /// and after the page has been fully revealed).
+    pub fn typing(&self) -> bool {
+        self.typing_started && self.typed < self.page_chars()
+    }
+
+    /// Total characters of the current page (`Text_TypeWriter_TextBox` types every
+    /// character of every row; row breaks do not consume time).
+    fn page_chars(&self) -> usize {
+        self.visible_rows()
+            .iter()
+            .map(|row| row.chars().count())
+            .sum()
+    }
+
+    /// Moves to `page` and restarts the typewriter for it when the animation has
+    /// already begun. A `dt = 0` freeze-frame keeps drawing complete pages.
+    fn set_page(&mut self, page: usize) {
+        self.page = page;
+        self.typed = 0;
+        self.typing_elapsed = 0.0;
+    }
+
     /// Current phase.
     pub fn phase(&self) -> StoryPhase {
         self.phase
@@ -350,6 +401,17 @@ impl StoryScreen {
     pub fn input(&mut self, event: crate::ui::InputEvent) -> StoryAction {
         use crate::ui::{InputEvent, Key};
 
+        // `Text_TypeWriter_TextBox`: any input while the text is being typed only
+        // completes the current page (the key is consumed), exactly like the oracle.
+        if self.phase == StoryPhase::Text && self.typing() {
+            if !matches!(event, InputEvent::MouseMove(..)) {
+                self.typed = self.page_chars();
+                self.typing_elapsed = 0.0;
+
+                return StoryAction::None;
+            }
+        }
+
         match event {
             InputEvent::MouseMove(..) => StoryAction::None,
             InputEvent::MouseClick(x, y) => match self.phase {
@@ -369,21 +431,21 @@ impl StoryScreen {
             InputEvent::Key(key) => match (self.phase, key) {
                 (StoryPhase::Text, Key::Enter | Key::Escape) => self.close_text(),
                 (StoryPhase::Text, Key::Up) => {
-                    self.page = self.page.saturating_sub(1);
+                    self.set_page(self.page.saturating_sub(1));
                     StoryAction::None
                 }
                 (StoryPhase::Text, Key::Down) => {
                     if self.page + 1 < self.page_count() {
-                        self.page += 1;
+                        self.set_page(self.page + 1);
                     }
                     StoryAction::None
                 }
                 (StoryPhase::Text, Key::PageUp) => {
-                    self.page = 0;
+                    self.set_page(0);
                     StoryAction::None
                 }
                 (StoryPhase::Text, Key::PageDown) => {
-                    self.page = self.page_count() - 1;
+                    self.set_page(self.page_count() - 1);
                     StoryAction::None
                 }
                 // `mve_cb_ctl`: any key/click interrupts the movie; the oracle then
@@ -394,8 +456,41 @@ impl StoryScreen {
         }
     }
 
-    /// Advances the movie by `dt` seconds; `true` — the whole story is over.
+    /// Advances the current phase by `dt` seconds; `true` — the whole story is over.
+    ///
+    /// In the text phase this is the typewriter (`10 ms` per character,
+    /// `menu.cpp:795`); the first positive `dt` switches the complete freeze-frame to
+    /// the animated reveal. `dt = 0` never changes the frame.
     pub fn advance(&mut self, dt: f32) -> bool {
+        if self.phase == StoryPhase::Text {
+            if dt > 0.0 && !self.text.is_empty() {
+                self.typing_started = true;
+
+                let total = self.page_chars();
+
+                if self.typed < total {
+                    self.typing_elapsed += dt;
+
+                    let per_character = TYPEWRITER_CHARACTER_MS / 1000.0;
+                    let due = (self.typing_elapsed / per_character + 1e-4) as usize;
+
+                    if due > 0 {
+                        let reveal = due.min(total - self.typed);
+
+                        self.typed += reveal;
+                        self.typing_elapsed -= reveal as f32 * per_character;
+                    }
+
+                    if self.typed >= total {
+                        self.typed = total;
+                        self.typing_elapsed = 0.0;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         if self.phase != StoryPhase::Video {
             return false;
         }
@@ -526,8 +621,9 @@ impl StoryScreen {
         draw_big_image(frame, &menu.mainpic)
     }
 
-    /// `Text_TypeWriter_TextBoxMultiLineWrapText` (without the typewriter animation:
-    /// the port draws the whole page, which keeps `dt = 0` frames deterministic).
+    /// `Text_TypeWriter_TextBoxMultiLineWrapText`: every row is typed character by
+    /// character (10 ms per character, `menu.cpp:795/816`). A `dt = 0` frame draws
+    /// the complete page, so QA screenshots stay deterministic.
     fn draw_text(&self, frame: &mut RgbaBuffer, menu: Option<&MenuAssets>) -> u32 {
         let font = GnwFontId::Font1.font();
         let line_height = font.line_height();
@@ -543,19 +639,33 @@ impl StoryScreen {
             Some(menu) => menu.palette.rgba(SILVER.0),
             None => Rgba::rgb(SILVER.0, SILVER.1, SILVER.2),
         };
+        // Complete page until the first positive `dt` (deterministic freeze-frame).
+        let mut budget = if self.typing_started {
+            self.typed
+        } else {
+            usize::MAX
+        };
         let mut painted = 0u32;
 
         for (row, line) in rows.iter().enumerate() {
-            if line.is_empty() {
+            if line.is_empty() || budget == 0 {
                 continue;
             }
+
+            let shown: String = if budget >= line.chars().count() {
+                line.clone()
+            } else {
+                line.chars().take(budget).collect()
+            };
+
+            budget = budget.saturating_sub(line.chars().count());
 
             painted += draw_text_gnw(
                 frame,
                 STORY_TEXT_RECT.ulx,
                 top + row as i32 * line_height,
                 font,
-                line,
+                &shown,
                 color,
             )
             .max(0) as u32;

@@ -612,7 +612,7 @@ impl LocalGame {
         };
 
         format!(
-            "LOCAL · turn {} · {}{}{}{} · LMB select · RMB move · End Turn",
+            "LOCAL · turn {} · {}{}{}{} · LMB select/move · RMB select/cancel · End Turn",
             turn_counter,
             self.phase_caption(),
             timer,
