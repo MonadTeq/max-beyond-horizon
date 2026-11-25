@@ -26,12 +26,21 @@ const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 ///
 /// Fixed in the test so that any change of the simulation/save loading
 /// (a parity regression) fails explicitly instead of "quietly" changing the digest.
-const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xDBD0;
-const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0x408A;
-const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0x5561;
+///
+/// Re-pinned after the mission-AI load fix: the V70 loader now reproduces
+/// `Ai_FileLoad` (`ai.cpp:164`) — `need_init` stays set (task lists are not
+/// serialized) and the `Ai_Init` weight tables are filled
+/// (`aiplayer.cpp:2951-3305`).
+/// `SAVE1.CAM` is a simultaneous-moves save (`play_mode = 1`), so
+/// `Ai_CheckEndTurn` (`ai.cpp:249-259`) legitimately starts the computer's
+/// `BeginTurn` on the first demo tick; the task list it builds is part of the
+/// AI digest. Units/turn are unchanged; only the AI bookkeeping digest moved.
+const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xE9F8;
+const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0xAB5A;
+const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0x5ED7;
 const SAVE1_FIVE_TICK_UNITS: usize = 312;
 const SAVE1_FIVE_TICK_TURN: i32 = 1;
-const SAVE1_FIVE_TICK_SNAPSHOT_LEN: usize = 788_740;
+const SAVE1_FIVE_TICK_SNAPSHOT_LEN: usize = 790_012;
 
 fn fixture_save_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/save1_v70.cam")

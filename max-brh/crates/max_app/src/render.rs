@@ -405,8 +405,23 @@ pub fn unit_frame_index_for_angle(
 /// `UnitInfo::ProgressFire` (`:4824`) decrements the counter and at zero returns
 /// the normal frame. The counter is a state field, so the flash is deterministic and
 /// part of the snapshot/CRC.
+///
+/// Both functions are reached only from `UnitsManager_ProcessOrderFire`
+/// (`units_manager.cpp:2781-2812`), i.e. while the unit is in the fire sequence:
+/// `orders == ORDER_FIRE` and `state == ORDER_STATE_FIRE_IN_PROGRESS`. Outside it the
+/// C++ renderer draws the stored `image_index`/`turret_image_index` and never looks at
+/// the counter. The V70 save, however, carries a single `recoil_delay` byte that
+/// `UnitInfo::FileLoad` (`unitinfo.cpp:2461-2473`) restores straight into
+/// `firing_recoil_frames`; the scenario mission files hold arbitrary non-zero values
+/// there (1…255) for units outside the fire sequence. Deriving the frame from the
+/// counter alone — the port does not draw the saved `image_index` — painted the shot
+/// flash over those units from the first frame of a mission. The order/state gate is
+/// what keeps the flash inside the actual firing sequence, exactly as in C++.
 pub fn firing_frame_active(unit: &max_core::unit::UnitInfo) -> bool {
-    unit.firing_recoil_frames > 0 && unit.flags & unit_flags::HAS_FIRING_SPRITE != 0
+    unit.orders == UnitOrder::Fire
+        && unit.state == UnitOrderState::FireInProgress
+        && unit.firing_recoil_frames > 0
+        && unit.flags & unit_flags::HAS_FIRING_SPRITE != 0
 }
 
 /// The **body** frame during recoil (`UnitInfo::PrepareFire`).

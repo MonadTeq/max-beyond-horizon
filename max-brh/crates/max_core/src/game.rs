@@ -762,9 +762,19 @@ impl GameState {
             );
         }
 
-        // --- AI state: players from the save, task queues empty ---
+        // --- AI state: `Ai_FileLoad` (`ai.cpp:164`, `saveload.cpp:1046`) ---
+        //
+        // `AiPlayer::FileSave` (`aiplayer.cpp:4091`) writes no task lists and no
+        // `need_init`; C++ `Ai_FileLoad` therefore calls `Ai_Init` first, and the
+        // loaded team gets `need_init = true` (`AiPlayer::Init`, `aiplayer.cpp:2902`)
+        // so that its first `Ai_BeginTurn` rebuilds the tasks (`aiplayer.cpp:2242`).
+        // The port restores the `AiPlayer` fields here and leaves `need_init` set;
+        // the weight tables are rebuilt for the save's opponent here and may be
+        // re-targeted to the setup screen's value by `GameUniverse::ai_file_load`
+        // (`saveload.cpp:810-821` restores the pre-load settings for missions).
         self.ai.task_manager = crate::ai::TaskManager::new();
         self.ai.reaction_state = crate::ai::AiReactionState::Idle;
+        let opponent = save.ini_options.opponent as u8;
         for team in 0..PLAYER_TEAM_COUNT {
             let mut player = crate::ai::AiPlayer::new(TeamId(team as u8));
 
@@ -774,7 +784,6 @@ impl GameState {
                 player.greenhouse_ratio = saved.greenhouse_ratio;
                 player.minefield_density = saved.minefield_density;
                 player.target_location = saved.target_location;
-                player.need_init = false;
                 player.spotted_units = saved
                     .spotted_units
                     .iter()
@@ -796,6 +805,12 @@ impl GameState {
                     player.mine_map = map.to_vec();
                 }
             }
+
+            // `AiPlayer::Init` weight-table block — the opponent is the settings
+            // value the file load restores (`saveload.cpp:798`, `:810-821`).
+            player.init_weight_tables(opponent);
+            player.need_init = true;
+            player.tasks_pending = true;
 
             self.ai.players[team] = player;
         }

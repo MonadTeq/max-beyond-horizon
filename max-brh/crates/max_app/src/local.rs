@@ -1932,7 +1932,6 @@ impl App {
         universe.set_play_mode(play_mode);
         universe.set_victory_type(setup.victory_type);
         universe.set_victory_limit(setup.victory_limit);
-        universe.ai_mut().settings.opponent = setup.opponent;
         for (index, kind) in team_types.iter().enumerate() {
             if *kind == TeamKind::Computer {
                 if let Some(info) = universe.team_mut(TeamId(index as u8)) {
@@ -1941,12 +1940,22 @@ impl App {
             }
         }
 
-        universe.ai_init();
-        for index in 0..LOCAL_TEAM_COUNT {
-            if team_types[index] == TeamKind::Computer {
-                let _ = universe.ai_setup_strategy(TeamId(index as u8));
-            }
-        }
+        // `SaveLoad_Load` → `Ai_FileLoad` (`saveload.cpp:1046`, `ai.cpp:164`):
+        // the AI players keep the state the file restored (`GameState::load_state`
+        // — strategy, spotted units, info/mine maps, target), and only the
+        // `Ai_Init` part of the file load runs here: the task queue is emptied,
+        // `need_init` stays set so the first `Ai_BeginTurn` rebuilds the tasks of
+        // the mission's starting base (`aiplayer.cpp:2242`), and the weight tables
+        // follow the setup's opponent (`saveload.cpp:810-821` restores the
+        // pre-load settings for missions).
+        //
+        // `Ai_SetupStrategy` (`ai.cpp:116`) is deliberately **not** called: C++
+        // runs it only in `GameManager_InitGame` (`game_manager.cpp:3098`). On a
+        // loaded match it would re-roll the team clan and call
+        // `ResourceManager_InitClanUnitValues` (`aiplayer.cpp:1186`), which clears
+        // the loaded team complexes (`resource_manager.cpp:1291`) — the AI then
+        // has no building/resource managers and never builds.
+        universe.ai_file_load(setup.opponent);
 
         let mut loaded = setup.clone();
         loaded.team_types = team_types;

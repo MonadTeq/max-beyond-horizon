@@ -470,6 +470,38 @@ pub(crate) fn ai_init(world: &mut GameState) {
     }
 }
 
+/// `Ai_FileLoad` (`ai.cpp:164`) — the AI half of a V70 load.
+///
+/// The task lists are **not** serialized (`AiPlayer::FileSave`, `aiplayer.cpp:4091`),
+/// so the file load starts with `Ai_Init`: the queue is empty and `need_init` is
+/// set, which makes the first `Ai_BeginTurn` rebuild the tasks of the team
+/// (`aiplayer.cpp:2242`). The `AiPlayer` fields (strategy, maps, spotted units,
+/// target) come from [`crate::game::GameState::load_state`]; this function only
+/// re-applies the part of `Ai_Init` that depends on the *settings* opponent —
+/// the 18 weight tables (`aiplayer.cpp:2951-3305`).
+///
+/// C++ calls it at the end of `SaveLoad_Load` (`saveload.cpp:1046`), before the
+/// `GAME_STATE_10_LOAD_GAME` turn loop starts; `Ai_SetupStrategy` is **not**
+/// called on a load (`game_manager.cpp:3098` runs only in `GameManager_InitGame`).
+pub(crate) fn ai_file_load(world: &mut GameState, opponent: u8) {
+    world.with_task_manager(|task_manager, world| {
+        task_manager.clear(world);
+    });
+
+    world.ai.settings.opponent = opponent;
+
+    for team in 0..PLAYER_TEAM_COUNT {
+        let player = &mut world.ai.players[team];
+
+        // `AiPlayer::Init` (`aiplayer.cpp:2902`): the tables, `need_init` and the
+        // "has work" flag. The loaded strategy/maps/spotted units are kept — C++
+        // `AiPlayer::FileLoad` restores them right after `Ai_Init`.
+        player.init_weight_tables(opponent);
+        player.need_init = true;
+        player.tasks_pending = true;
+    }
+}
+
 /// `Ai_SetupStrategy` (`ai.cpp:116`) — strategy selection only, without
 /// regenerating the map.
 pub(crate) fn ai_setup_strategy(world: &mut GameState, team: TeamId) -> bool {

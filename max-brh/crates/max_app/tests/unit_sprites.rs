@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use max_app::assets::{UNIT_SPRITES, UNIT_TYPES_WITHOUT_SPRITE_DATA};
 use max_app::{draw_unit_sprites, draw_unit_sprites_with_angle, App, AppConfig, Assets};
 use max_core::access::unit_type_flags;
-use max_core::enums::{unit_flags, UnitType, UNIT_END};
+use max_core::enums::{unit_flags, UnitOrder, UnitOrderState, UnitType, UNIT_END};
 use max_core::geo::Point;
 use max_core::team::TeamId;
 use max_core::unit::{UnitId, UnitInfo, UnitPresentation};
@@ -55,6 +55,17 @@ fn unit_of(unit_type: UnitType, index: usize) -> UnitInfo {
     unit.visible_to_team = [true; 5];
     unit.angle = (index % 8) as u8;
     unit.turret_angle = ((index * 3 + 1) % 8) as u8;
+    unit
+}
+
+/// A unit inside the C++ fire sequence — `ORDER_FIRE`/`ORDER_STATE_FIRE_IN_PROGRESS`.
+///
+/// Only this sequence reaches `UnitInfo::PrepareFire`/`ProgressFire`
+/// (`units_manager.cpp:2781-2812`), so only here is the flash frame drawn.
+fn firing_unit_of(unit_type: UnitType, index: usize) -> UnitInfo {
+    let mut unit = unit_of(unit_type, index);
+    unit.orders = UnitOrder::Fire;
+    unit.state = UnitOrderState::FireInProgress;
     unit
 }
 
@@ -186,7 +197,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // Tank: the body does not change, the turret — `firing_image_base + turret_angle`.
     let sprite = assets.sprite(UnitType::Tank).expect("TANK");
     let info = sprite.frame_info.expect("D_TANK");
-    let mut tank = unit_of(UnitType::Tank, 0);
+    let mut tank = firing_unit_of(UnitType::Tank, 0);
     tank.turret_angle = 3;
     tank.firing_recoil_frames = 3;
 
@@ -201,7 +212,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // Artillery (no turret): the body frame `firing_image_base + angle`.
     let sprite = assets.sprite(UnitType::AssaultGun).expect("ARTILLRY");
     let info = sprite.frame_info.expect("D_ARTILLRY");
-    let mut artillery = unit_of(UnitType::AssaultGun, 0);
+    let mut artillery = firing_unit_of(UnitType::AssaultGun, 0);
     artillery.angle = 5;
     artillery.firing_recoil_frames = 3;
     assert_eq!(
@@ -212,7 +223,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // ANTIAIR: 15 recoil frames; the first tick — the firing frame, then ±8.
     let sprite = assets.sprite(UnitType::AntiAir).expect("ANTIAIR");
     let info = sprite.frame_info.expect("D_ANTIAI");
-    let mut aa = unit_of(UnitType::AntiAir, 0);
+    let mut aa = firing_unit_of(UnitType::AntiAir, 0);
     aa.turret_angle = 0;
     let base = usize::from(info.firing_image_base);
     for (recoil, shift) in [(15, 0), (14, 8), (13, 0), (12, 8)] {
@@ -227,7 +238,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // SP_FLAK: 6 frames; the first tick — firing, then alternating with the normal one.
     let sprite = assets.sprite(UnitType::MobileAntiAir).expect("SP_FLAK");
     let info = sprite.frame_info.expect("D_SP_FLAK");
-    let mut flak = unit_of(UnitType::MobileAntiAir, 0);
+    let mut flak = firing_unit_of(UnitType::MobileAntiAir, 0);
     flak.turret_angle = 0;
     let base = usize::from(info.firing_image_base);
     for (recoil, expected) in [(6, base), (5, base - 8), (4, base), (3, base - 8)] {
@@ -242,7 +253,7 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // Infantry: `104 + angle`, then +8 for each recoil tick.
     let sprite = assets.sprite(UnitType::Infantry).expect("INFANTRY");
     let info = sprite.frame_info.expect("D_INFANT");
-    let mut infantry = unit_of(UnitType::Infantry, 0);
+    let mut infantry = firing_unit_of(UnitType::Infantry, 0);
     for (recoil, expected) in [(8, 104), (7, 112), (1, 160)] {
         infantry.firing_recoil_frames = recoil;
         assert_eq!(
@@ -260,7 +271,8 @@ fn firing_frames_come_from_the_d_star_firing_block() {
     // Drawing: the firing frame differs from the normal one.
     let mut normal = unit_of(UnitType::AssaultGun, 0);
     normal.angle = 2;
-    let mut firing = normal.clone();
+    let mut firing = firing_unit_of(UnitType::AssaultGun, 0);
+    firing.angle = 2;
     firing.firing_recoil_frames = 3;
     let mut normal_frame = RgbaBuffer::new(256, 256);
     let mut firing_frame = RgbaBuffer::new(256, 256);

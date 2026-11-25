@@ -256,9 +256,16 @@ fn state_digest_of_reference_saves_is_pinned() {
 }
 
 /// `state_digest` of the SAVE1.CAM state — reference lock.
-const SAVE1_STATE_DIGEST: u16 = 0xFD67;
-/// `state_digest` of the SAVE2.CAM state — reference lock.
-const SAVE2_STATE_DIGEST: u16 = 0xD3F1;
+///
+/// Re-pinned after the mission-AI load fix: `state_digest` covers the AI block,
+/// and the V70 loader now reproduces `Ai_FileLoad` (`ai.cpp:164`) — `need_init`
+/// stays set and the `Ai_Init` weight tables are filled
+/// (`aiplayer.cpp:2951-3305`).
+/// The packet-45 checksum and the replay digest deliberately do not include the
+/// AI bookkeeping, so their locks above are unchanged.
+const SAVE1_STATE_DIGEST: u16 = 0x1381;
+/// `state_digest` of the SAVE2.CAM state — reference lock (see SAVE1 above).
+const SAVE2_STATE_DIGEST: u16 = 0xF9A6;
 
 // ---------------------------------------------------------------------------
 // Digest layout (the C++ generator `tools/sim_vectors/main.cpp` layout)

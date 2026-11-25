@@ -1724,9 +1724,18 @@ impl<D: Dispatcher> GameUniverse<D> {
         crate::unit_order::issue_builder_exit(&mut self.state, builder)
     }
 
-    /// `Ai_Init` (`ai/mod.rs:453`) — `GameManager_InitGame`/load entry.
+    /// `Ai_Init` (`ai.cpp:154`) — the `GameManager_InitGame` (new game) entry.
     pub fn ai_init(&mut self) {
         crate::ai::ai_init(&mut self.state);
+    }
+
+    /// `Ai_FileLoad` (`ai.cpp:164`) tail of a V70 load (`saveload.cpp:1046`).
+    ///
+    /// The loaded `AiPlayer` fields stay as the file has them; `Ai_Init` inside
+    /// the file load only empties the task queue, sets `need_init` (the task
+    /// lists are not serialized) and rebuilds the weight tables for `opponent`.
+    pub fn ai_file_load(&mut self, opponent: u8) {
+        crate::ai::ai_file_load(&mut self.state, opponent);
     }
 
     /// `Ai_SetupStrategy` (`ai/mod.rs:467`) — the computer-team strategy choice.
