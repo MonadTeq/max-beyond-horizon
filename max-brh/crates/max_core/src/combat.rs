@@ -2118,4 +2118,201 @@ mod tests {
             );
         }
     }
+
+    /// Invariant C1 (concrete scenario): reaction fire requires a shot budget
+    /// (`shots > 0`) and a target inside `ATTRIB_RANGE`; without either the
+    /// sentry stays in `ORDER_SENTRY`.
+    ///
+    /// Oracle: `max-cpp-port/src/units_manager.cpp:4709-4735`
+    /// (`UnitsManager_CheckReaction`).
+    #[test]
+    fn invariant_c1_reaction_needs_shots_and_range() {
+        let mut state = state();
+        state.play_mode = PlayMode::TurnBased;
+        // Visibility is an explicit input here; C2 covers the visibility gate.
+        state.ai.all_visible = true;
+
+        let red = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
+        let green = spawn_tank(&mut state, TeamId::GREEN, Point::new(7, 5));
+        {
+            let unit = state.unit_mut(red).unwrap();
+            unit.orders = UnitOrder::Sentry;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+        state.update_visibility_status(false);
+
+        assert!(
+            check_reaction(&mut state, red, green),
+            "C1: in-range target with shots must trigger a reaction"
+        );
+
+        // Reset the fire order and take the shot budget away.
+        {
+            let unit = state.unit_mut(red).unwrap();
+            unit.orders = UnitOrder::Sentry;
+            unit.state = UnitOrderState::ExecutingOrder;
+            unit.shots = 0;
+        }
+        assert!(
+            !check_reaction(&mut state, red, green),
+            "C1: a unit with shots == 0 must not react"
+        );
+
+        // Restore shots and move the target out of the 4-cell range.
+        let rounds = state
+            .unit(red)
+            .unwrap()
+            .base_values
+            .get_attribute(crate::unit_values::ATTRIB_ROUNDS);
+        {
+            let unit = state.unit_mut(red).unwrap();
+            unit.orders = UnitOrder::Sentry;
+            unit.state = UnitOrderState::ExecutingOrder;
+            unit.shots = rounds as u8;
+        }
+        let mut target = state.unit(green).unwrap().clone();
+        target.grid = Point::new(12, 5);
+        state.write_unit(green, target);
+
+        assert!(
+            !check_reaction(&mut state, red, green),
+            "C1: an out-of-range target must not trigger a reaction"
+        );
+    }
+
+    /// Invariant C2 (concrete scenario): `ShouldAttack` rejects a target that is
+    /// not visible to the attacker's team; after `SpotByTeam` the same geometry
+    /// reacts.
+    ///
+    /// Oracle: `max-cpp-port/src/units_manager.cpp:4623-4700`
+    /// (`UnitsManager_ShouldAttack`, the `IsVisibleToTeam` branch).
+    #[test]
+    fn invariant_c2_reaction_needs_target_visibility() {
+        let mut state = state();
+        state.play_mode = PlayMode::TurnBased;
+        // MISSILE CRAWLER: range 10, scan 4. Distance 6 is inside the attack
+        // range but outside the scan coverage, so the target starts unseen.
+        let red = state
+            .spawn_unit(
+                UnitType::MissileCrawler,
+                TeamId::RED,
+                Point::new(5, 5),
+                MOBILE_LAND_UNIT | SELECTABLE,
+            )
+            .unwrap();
+        let green = spawn_tank(&mut state, TeamId::GREEN, Point::new(11, 5));
+        {
+            let unit = state.unit_mut(red).unwrap();
+            unit.orders = UnitOrder::Sentry;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+        state.update_visibility_status(false);
+
+        assert!(
+            !state.unit(green).unwrap().is_visible_to_team(TeamId::RED),
+            "C2: the target must start outside RED's scan coverage"
+        );
+        assert!(
+            !check_reaction(&mut state, red, green),
+            "C2: an invisible target must not trigger reaction fire"
+        );
+
+        state.spot_by_team(green, TeamId::RED);
+        assert!(
+            state.unit(green).unwrap().is_visible_to_team(TeamId::RED),
+            "C2: SpotByTeam must reveal the target"
+        );
+        assert!(
+            check_reaction(&mut state, red, green),
+            "C2: a visible in-range target must trigger reaction fire"
+        );
+    }
+
+    /// Invariant C4: every shot spends one `ammo` and, outside the real-time
+    /// debug setting, one `shots`; in real-time `shots` is capped by the
+    /// remaining `ammo`.
+    ///
+    /// Oracle: `max-cpp-port/src/unitinfo.cpp:4805` (`--ammo`) and `:4813`
+    /// (`--shots` / the real-time `shots = ammo` branch).
+    #[test]
+    fn invariant_c4_prepare_fire_spends_ammo_and_shots() {
+        let mut state = state();
+        let red = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
+
+        for &(shots, ammo, real_time) in &[(2u8, 10u8, false), (1, 1, false), (2, 5, true), (1, 3, true)] {
+            {
+                let unit = state.unit_mut(red).unwrap();
+                unit.shots = shots;
+                unit.ammo = ammo;
+            }
+            state.real_time = real_time;
+
+            let mut unit = state.unit(red).unwrap().clone();
+            prepare_fire(&mut state, &mut unit);
+
+            assert_eq!(
+                unit.ammo,
+                ammo.wrapping_sub(1),
+                "C4: a shot must always spend one ammo (shots {shots}, ammo {ammo})"
+            );
+            let expected_shots = if real_time {
+                shots.min(ammo.wrapping_sub(1))
+            } else {
+                shots.wrapping_sub(1)
+            };
+            assert_eq!(
+                unit.shots, expected_shots,
+                "C4: shots after firing (turn-based decrement / real-time cap), \
+                 real_time={real_time}"
+            );
+            assert_eq!(
+                unit.state,
+                UnitOrderState::FireInProgress,
+                "C4: the shot must enter ORDER_STATE_FIRE_IN_PROGRESS"
+            );
+        }
+    }
+
+    /// Invariant C7: damage is clamped by the remaining `hits`; `hits` never goes
+    /// below zero and a unit that reaches zero enters `ORDER_EXPLODE`.
+    ///
+    /// Oracle: `max-cpp-port/src/unitinfo.cpp:1566-1570` (clamp and
+    /// `std::max(0, ...)`) and `:1614-1616` (`SetNewOrderInt(ORDER_EXPLODE)`).
+    #[test]
+    fn invariant_c7_hits_never_go_negative_and_zero_explodes() {
+        let mut state = state();
+        state.ai.all_visible = true;
+        let attacker = spawn_tank(&mut state, TeamId::RED, Point::new(5, 5));
+        let target = spawn_tank(&mut state, TeamId::GREEN, Point::new(8, 5));
+
+        // TANK attack 16 − TANK armor 10 = 6 damage.
+        for &(hits, expected_hits) in &[(24u16, 18u16), (5, 0), (1, 0)] {
+            {
+                let unit = state.unit_mut(target).unwrap();
+                unit.hits = hits;
+                unit.orders = UnitOrder::Await;
+                unit.state = UnitOrderState::ExecutingOrder;
+            }
+
+            attack_unit(&mut state, target, attacker, 0, 2);
+
+            let unit = state.unit(target).unwrap();
+            assert_eq!(
+                unit.hits, expected_hits,
+                "C7: {hits} hits minus 6 damage must clamp to {expected_hits}"
+            );
+            assert!(
+                unit.hits < u16::MAX,
+                "C7: hits must never wrap into the unsigned maximum"
+            );
+            if expected_hits == 0 {
+                assert_eq!(
+                    unit.orders,
+                    UnitOrder::Explode,
+                    "C7: a destroyed unit must enter ORDER_EXPLODE"
+                );
+                assert_eq!(unit.state, UnitOrderState::Init);
+            }
+        }
+    }
 }

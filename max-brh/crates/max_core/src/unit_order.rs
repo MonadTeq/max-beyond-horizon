@@ -5094,6 +5094,54 @@ mod tests {
         assert_eq!(real_time.group_speed, 5, "group speed kept");
     }
 
+    /// Invariant C5 (concrete scenario): an air unit spends one `speed` per path
+    /// step; the step is free only under the real-time debug setting.
+    ///
+    /// Oracle: `max-cpp-port/src/airpath.cpp:458-484` (`Paths_TakeStep`, the
+    /// `unit->speed -= cost` at `:463` and the `shots` recalculation).
+    #[test]
+    fn invariant_c5_air_step_spends_speed() {
+        fn aircraft() -> UnitInfo {
+            let mut unit = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(1));
+            unit.base_values.set_attribute(ATTRIB_SPEED, 8);
+            unit.base_values.set_attribute(ATTRIB_ROUNDS, 4);
+            unit.base_values.set_attribute(ATTRIB_MOVE_AND_FIRE, 0);
+            unit.speed = 8;
+            unit.shots = 4;
+            unit
+        }
+
+        for cost in 1..=8i32 {
+            let mut unit = aircraft();
+            paths_take_step(&mut unit, cost, false);
+
+            assert_eq!(
+                unit.speed,
+                (8 - cost) as u16,
+                "C5: an air step of {cost} must spend {cost} speed"
+            );
+
+            // `shots = rounds * speed / ATTRIB_SPEED`, only decreasing.
+            let expected_shots = ((4 * (8 - cost)) / 8).max(0) as u8;
+            assert_eq!(
+                unit.shots, expected_shots,
+                "C5: shots must follow the remaining speed (cost {cost})"
+            );
+        }
+
+        // The exact-speed boundary lands on zero without wrapping.
+        let mut exact = aircraft();
+        paths_take_step(&mut exact, 8, false);
+        assert_eq!(exact.speed, 0, "C5: spending the exact speed leaves 0");
+        assert_eq!(exact.shots, 0, "C5: no speed left means no shots");
+
+        // `GameManager_RealTime`: the step costs nothing.
+        let mut real_time = aircraft();
+        paths_take_step(&mut real_time, 5, true);
+        assert_eq!(real_time.speed, 8, "C5: real-time air movement is free");
+        assert_eq!(real_time.shots, 4, "C5: real-time movement keeps shots");
+    }
+
     /// `UnitInfo::Redraw` (`unitinfo.cpp:1452-1459`): only a hovering aircraft has
     /// a non-zero shadow shift, and it is exactly one cell (`GFX_MAP_TILE_SIZE`).
     #[test]

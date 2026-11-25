@@ -2603,4 +2603,37 @@ mod tests {
         // Off-map: `NONE`.
         assert_eq!(modified_surface_type(&state, Point::new(-1, -1), false), 0);
     }
+
+    /// Invariant C3 (concrete scenario): a `SUBMARNE` is classified as
+    /// `TARGET_CLASS_SEA_STEALTH` until a team actually sees it; only then does
+    /// it become an ordinary water target.
+    ///
+    /// Oracle: `max-cpp-port/src/access.cpp:724-760` (`Access_GetTargetClass`).
+    #[test]
+    fn invariant_c3_submarine_target_class_is_sea_stealth_until_spotted() {
+        use crate::enums::unit_flags::{MOBILE_SEA_UNIT, SELECTABLE};
+
+        let mut state = state();
+        let submarine = spawn(
+            &mut state,
+            UnitType::Submarine,
+            TeamId::GREEN,
+            Point::new(5, 5),
+            MOBILE_SEA_UNIT | SELECTABLE,
+        );
+
+        assert_eq!(
+            target_class(&state, state.unit(submarine).unwrap()),
+            TARGET_CLASS_SEA_STEALTH,
+            "C3: an unseen submarine must be classified as sea stealth"
+        );
+
+        crate::combat::spot_unit(&mut state, submarine, TeamId::RED);
+
+        assert_eq!(
+            target_class(&state, state.unit(submarine).unwrap()),
+            TARGET_CLASS_WATER,
+            "C3: a spotted submarine must become an ordinary water target"
+        );
+    }
 }

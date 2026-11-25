@@ -13,6 +13,7 @@
 
 #![allow(dead_code)]
 
+pub mod invariants;
 pub mod phase5;
 
 use max_core::enums::{GameStateType, PlayMode, TeamClan, UnitOrder, UnitOrderState, UnitType};

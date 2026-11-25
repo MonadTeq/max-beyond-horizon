@@ -475,3 +475,11 @@ bin\target-headless\release\max-brh.exe --demo build\headless-probe\det\same-s2.
 
 Временные диагностические скрипты разведки лежат в `build/headless-probe/` (вне
 отслеживаемого дерева); в коммит не входят.
+
+## Вывод (решение владельца 2026-11-25)
+
+Diff-корпус через headless «load save + N ticks + dump» НЕВОЗМОЖЕН: headless — сервер
+(--server), сейв не загружает, digest'а нет. Альтернатива и текущий релизный слой —
+**CRC-45 (state_checksum) в живых multi-client прогонах** (Horizon-smoke, 0 desync);
+локализация — desync-turn<N>.txt + RNG-чекпоинты. Расширение покрытия — через живые
+прогоны с экономикой/боем, НЕ через headless load+ticks.
