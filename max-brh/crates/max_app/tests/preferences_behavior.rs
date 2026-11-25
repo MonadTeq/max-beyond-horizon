@@ -23,6 +23,7 @@ use max_app::{App, AppConfig};
 use max_core::enums::{PlayMode, UnitOrder, UnitType, VictoryType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
+use rstest::rstest;
 
 fn repo_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -167,24 +168,26 @@ fn click_scroll_controls_whether_hover_scrolls() {
     assert_eq!(app.update_scroll(1.0 / 30.0), None);
 }
 
-#[test]
-fn quick_scroll_sets_the_camera_step() {
+#[rstest]
+#[case(16, 16)]
+#[case(40, 40)]
+#[case(64, 64)]
+#[case(128, 128)]
+fn quick_scroll_sets_the_camera_step(#[case] speed: i32, #[case] expected: i32) {
     let mut app = App::new(AppConfig::default());
 
-    for (speed, expected) in [(16, 16), (40, 40), (64, 64), (128, 128)] {
-        app.viewport_mut().center_on_grid(50, 50);
-        let mut prefs = app.preferences().clone();
-        prefs.click_scroll = false;
-        prefs.quick_scroll = speed;
-        app.set_preferences(prefs);
-        app.note_mouse_move(636, 200);
+    app.viewport_mut().center_on_grid(50, 50);
+    let mut prefs = app.preferences().clone();
+    prefs.click_scroll = false;
+    prefs.quick_scroll = speed;
+    app.set_preferences(prefs);
+    app.note_mouse_move(636, 200);
 
-        assert_eq!(
-            app.update_scroll(1.0 / 30.0),
-            Some((expected, 0)),
-            "Scroll Speed {speed} → шаг {expected} px/кадр (30 Гц)"
-        );
-    }
+    assert_eq!(
+        app.update_scroll(1.0 / 30.0),
+        Some((expected, 0)),
+        "Scroll Speed {speed} → шаг {expected} px/кадр (30 Гц)"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ use max_core::enums::{
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind, TeamUnits};
 use max_core::{TeamClan, UnitId};
+use rstest::rstest;
 
 fn app() -> App {
     let mut app = App::new(AppConfig::default());
@@ -66,22 +67,23 @@ fn ready(app: &mut App, id: UnitId) {
     app.universe_mut().write_unit(id, unit);
 }
 
-#[test]
-fn cursor_ids_match_the_cpp_enum() {
-    assert_eq!(CursorId::Transfer as u8, 13, "CURSOR_TRANSFER");
-    assert_eq!(CursorId::Repair as u8, 12, "CURSOR_REPAIR");
-    assert_eq!(CursorId::Load as u8, 16, "CURSOR_LOAD");
-    assert_eq!(CursorId::Reload as u8, 15, "CURSOR_RELOAD");
-    assert_eq!(CursorId::Friend as u8, 17, "CURSOR_FRIEND");
-    assert_eq!(CursorId::Enemy as u8, 18, "CURSOR_ENEMY");
-    assert_eq!(CursorId::FarTarget as u8, 19, "CURSOR_FAR_TARGET");
-    assert_eq!(CursorId::UnitGo as u8, 20, "CURSOR_UNIT_GO");
-    assert_eq!(CursorId::UnitNoGo as u8, 21, "CURSOR_UNIT_NO_GO");
-    assert_eq!(CursorId::Way as u8, 22, "CURSOR_WAY");
-    assert_eq!(CursorId::Activate as u8, 24, "CURSOR_ACTIVATE");
-    assert_eq!(CursorId::Map2 as u8, 25, "CURSOR_MAP2");
-    assert_eq!(CursorId::Steal as u8, 26, "CURSOR_STEAL");
-    assert_eq!(CursorId::Disable as u8, 27, "CURSOR_DISABLE");
+#[rstest]
+#[case(CursorId::Transfer, 13, "CURSOR_TRANSFER")]
+#[case(CursorId::Repair, 12, "CURSOR_REPAIR")]
+#[case(CursorId::Load, 16, "CURSOR_LOAD")]
+#[case(CursorId::Reload, 15, "CURSOR_RELOAD")]
+#[case(CursorId::Friend, 17, "CURSOR_FRIEND")]
+#[case(CursorId::Enemy, 18, "CURSOR_ENEMY")]
+#[case(CursorId::FarTarget, 19, "CURSOR_FAR_TARGET")]
+#[case(CursorId::UnitGo, 20, "CURSOR_UNIT_GO")]
+#[case(CursorId::UnitNoGo, 21, "CURSOR_UNIT_NO_GO")]
+#[case(CursorId::Way, 22, "CURSOR_WAY")]
+#[case(CursorId::Activate, 24, "CURSOR_ACTIVATE")]
+#[case(CursorId::Map2, 25, "CURSOR_MAP2")]
+#[case(CursorId::Steal, 26, "CURSOR_STEAL")]
+#[case(CursorId::Disable, 27, "CURSOR_DISABLE")]
+fn cursor_ids_match_the_cpp_enum(#[case] id: CursorId, #[case] value: u8, #[case] name: &str) {
+    assert_eq!(id as u8, value, "{name}");
 }
 
 #[test]

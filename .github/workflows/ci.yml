@@ -1,9 +1,10 @@
 name: CI
 
-# Builds only the game client (max-brh): cargo check/test in three configs
-# (default GUI/SDL-from-source, +sound, headless). The dedicated server
-# (max-brh-server), QA golden and soak stages live in ./max-brh-cicd/ci.sh
-# (run locally/Docker), not in this workflow.
+# Builds only the game client (max-brh): cargo check + cargo nextest in three
+# configs (default GUI/SDL-from-source, +sound, headless), `cargo test --doc` for
+# the doctests nextest does not run. The dedicated server (max-brh-server), QA
+# golden and soak stages live in ./max-brh-cicd/ci.sh (run locally/Docker), not
+# in this workflow.
 
 on:
   push:
@@ -48,24 +49,56 @@ jobs:
         working-directory: max-brh
         run: cargo check
 
-      - name: cargo test
+      # The standard runner is nextest (max-brh-docs/development/test-organization.md,
+      # Ar3/Q4/D3). Retries and the timing-sensitive P2P gate overrides live in
+      # max-brh/.config/nextest.toml; the `ci` profile also writes JUnit XML
+      # (target/nextest/ci/junit.xml), kept per configuration below.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: cargo nextest (default features)
         working-directory: max-brh
         # libSDL3.so.0 is copied from the CMake directory into target/debug; the test
         # binaries need it in LD_LIBRARY_PATH (in artifacts run.sh does this).
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
-        run: cargo test
+        run: |
+          cargo nextest run --profile ci
+          cp target/nextest/ci/junit.xml target/nextest/junit-default.xml
 
-      - name: cargo check + test (feature sound)
+      - name: cargo test --doc (nextest does not run doctests)
+        working-directory: max-brh
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
+        run: cargo test --doc
+
+      - name: cargo check + nextest (feature sound)
         working-directory: max-brh
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/max-brh/target/debug
         run: |
           cargo check --features sound
-          cargo test --features sound
+          cargo nextest run --profile ci --features sound
+          cp target/nextest/ci/junit.xml target/nextest/junit-sound.xml
+          cargo test --doc --features sound
 
-      - name: cargo test (headless, --no-default-features)
+      - name: cargo nextest (headless, --no-default-features)
         # Console build of the client (no SDL) — a separate cfg set: checks the
         # `main.rs` branches without the `sdl` feature (clear GUI error, --sdl).
         working-directory: max-brh
-        run: cargo test --no-default-features
+        run: |
+          cargo nextest run --profile ci --no-default-features
+          cp target/nextest/ci/junit.xml target/nextest/junit-headless.xml
+          cargo test --doc --no-default-features
+
+      - name: Upload JUnit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit
+          # Per-configuration copies plus the live report of the current (possibly
+          # failed) run, which nextest always writes to target/nextest/ci/.
+          path: |
+            max-brh/target/nextest/junit-*.xml
+            max-brh/target/nextest/ci/junit.xml
+          if-no-files-found: warn

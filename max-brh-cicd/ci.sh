@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M6.3: local CI (the same as .github/workflows/ci.yml) in Docker.
 #
-#   bash ci.sh                 # cargo check/test max-brh + cargo test --workspace Horizon
+#   bash ci.sh                 # cargo check + nextest max-brh + nextest --workspace Horizon
 #                              # + QA: qa_run (sp-full/…/soak-100/edge-cases) and golden
 #                              # + SOAK: soak_headless 120 turns
 #   bash ci.sh --smoke         # plus a real live-smoke (2 clients × N turns)
@@ -120,7 +120,12 @@ else
     echo "WARN: python not found — check_comments_language.py and check_render_readonly.py skipped"
 fi
 
-step "1/4 max-brh: cargo check + test (default = GUI/SDL from source; + sound; + headless)"
+step "1/4 max-brh: cargo check + nextest (default = GUI/SDL from source; + sound; + headless)"
+# Tests run through `cargo nextest` (max-brh-docs/development/test-organization.md,
+# Ar3/Q4/D3): `cargo test` stays only for the doctest pass, which nextest does not
+# run. Retries and the timing-sensitive P2P gate overrides live in
+# max-brh/.config/nextest.toml; the `ci` profile also writes a JUnit XML report
+# (target/nextest/ci/junit.xml), copied to build/ci-artifacts/ per configuration.
 # default max_app = ["sdl-from-source"]: SDL3 3.4.20 is built from source
 # via CMake (vendored sdl3-src) — no system SDL3/vcpkg needed. On Linux
 # CMake builds SDL3 with those drivers whose dev headers it can see, so we install
@@ -141,16 +146,27 @@ docker run --rm \
     "$RUST_IMAGE" bash -c \
     "apt-get update -qq && apt-get install -y -qq $SDL_DEPS >/dev/null && \
      export LD_LIBRARY_PATH=/src/max-brh/target/debug\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} && \
-     cargo check && cargo test && \
-     cargo check --features sound && cargo test --features sound && \
-     cargo test --no-default-features"
+     bash /src/max-brh-cicd/scripts/install-nextest.sh && \
+     mkdir -p /src/build/ci-artifacts && \
+     cargo check && cargo nextest run --profile ci && \
+     cp target/nextest/ci/junit.xml /src/build/ci-artifacts/junit-default.xml && \
+     cargo test --doc && \
+     cargo check --features sound && cargo nextest run --profile ci --features sound && \
+     cp target/nextest/ci/junit.xml /src/build/ci-artifacts/junit-sound.xml && \
+     cargo test --doc --features sound && \
+     cargo nextest run --profile ci --no-default-features && \
+     cp target/nextest/ci/junit.xml /src/build/ci-artifacts/junit-headless.xml && \
+     cargo test --doc --no-default-features"
 
-step "2/4 max-brh-server: cargo test --workspace"
+step "2/4 max-brh-server: cargo nextest run --workspace"
+# Same runner for the server workspace (no nextest config there: retries come from
+# the CLI). `cargo test --doc --workspace` covers doctests, which nextest skips.
 docker run --rm \
     -v "$ROOT/max-brh-server:/src/max-brh-server" \
+    -v "$ROOT/max-brh-cicd:/src/max-brh-cicd:ro" \
     -w /src/max-brh-server \
     "$RUST_IMAGE" bash -c \
-    'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && cargo test --workspace'
+    'apt-get update -qq && apt-get install -y -qq gcc g++ cmake pkg-config libssl-dev >/dev/null && bash /src/max-brh-cicd/scripts/install-nextest.sh && cargo nextest run --workspace --retries 2 && cargo test --doc --workspace'
 
 # QA layers 2–3 (max-brh-qa/plans/qa-plan.md): a scripted UI driver without SDL + golden frames.
 # The output directory is recreated so that stale frames do not mask a regression.

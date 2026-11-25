@@ -9,4 +9,7 @@
 # CRLF, и `bash ci.sh` / `release.sh` / `max-brh-cicd/scripts/*.sh` падают на `\r` в
 # шебанге и в конце строк.
 *.sh text eol=lf
+# insta snapshots — always LF: the snapshot body is compared as text, and a CI
+# checkout (Linux) must see the same bytes as a Windows working copy.
+*.snap text eol=lf
 

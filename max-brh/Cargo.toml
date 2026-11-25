@@ -28,3 +28,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+# Test tooling (max-brh-docs/development/test-organization.md): `rstest` for
+# table-driven tests/fixtures (Ar4/D4), `insta` for snapshots that have no
+# golden-frame infrastructure (Ar5/D5). Both are dev-dependencies only.
+rstest = "0.29"
+insta = "1"

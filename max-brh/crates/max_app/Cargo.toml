@@ -59,3 +59,6 @@ sdl-vcpkg = ["sdl", "max_render/sdl-vcpkg"]
 # `start_paused` for the time-controlled test of the first connection retry
 # (not part of a regular build: the feature is enabled only in the test profile).
 tokio = { workspace = true, features = ["test-util"] }
+# Table-driven cases (`#[case]`) in `tests/cursor_table.rs` and
+# `tests/preferences_behavior.rs`.
+rstest.workspace = true

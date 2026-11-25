@@ -1,0 +1,31 @@
+# cargo-nextest configuration for the `max-brh` workspace.
+#
+# CI and local runs use `cargo nextest run` (max-brh-docs/development/
+# test-organization.md, Ar3/Q4/D3); `cargo test` is only the doctest fallback.
+# nextest runs the test binaries of all crates concurrently, so the socket-based
+# P2P gates see a much higher load than under `cargo test` (which runs the
+# binaries one after another). Those gates are timing-sensitive and pass in
+# isolation, so they get extra retries while the rest of the suite keeps a
+# single retry for rare scheduler noise.
+
+[profile.default]
+# One retry for the whole suite: absorbs transient timing noise without hiding
+# a deterministic failure (a retried run is reported as FLAKY, not as pass).
+retries = 1
+# Report every failure of a run instead of stopping at the first one.
+fail-fast = false
+
+# Timing-sensitive P2P gates (max_app/src/net/p2p.rs). They drive real
+# sockets/threads and assert on reconnect/split-brain convergence, which is
+# sensitive to the scheduling pressure of a full-suite nextest run.
+[[profile.default.overrides]]
+filter = "test(gate_g_split_brain) | test(gate_v_killed_host) | test(gate_d_) | test(gate_h5_) | test(gate_smoke_)"
+retries = 3
+
+# CI profile: everything from `default` (including the gate overrides above),
+# two retries for the remaining suite and a JUnit XML report under
+# target/nextest/ci/junit.xml (test-organization.md, Q4).
+[profile.ci]
+retries = 2
+fail-fast = false
+junit = { path = "junit.xml" }

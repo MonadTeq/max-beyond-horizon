@@ -24,6 +24,7 @@ use max_core::hash::{
 use max_core::save::SaveFile;
 use max_core::team::TeamId;
 use max_core::UnitId;
+use rstest::rstest;
 
 /// `max-original/SAVE1.CAM` — `UnitHash`/`MapHash` with 512 buckets.
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
@@ -64,82 +65,100 @@ fn size_constants_match_cpp() {
     assert_eq!(max_core::save_write::SAVE_UNIT_HASH_SIZE, 512);
 }
 
-#[test]
-fn x_shift_matches_cpp_init() {
-    for size in [
-        1u16, 2, 64, 127, 128, 129, 130, 255, 256, 257, 511, 512, 513, 1024, 2047, 2048, 4096,
-        8192, 16384, 32768,
-    ] {
-        let hash = MapHash::<UnitId>::new(size);
-        assert_eq!(hash.size(), size);
-        assert_eq!(hash.x_shift(), cpp_x_shift(size), "x_shift for size {size}");
-        if size == 1 || size == 2 {
-            // A tiny table is legal for the API but never used by the game.
-            assert_eq!(hash.buckets().len(), size as usize);
-        }
+#[rstest]
+#[case(1)]
+#[case(2)]
+#[case(64)]
+#[case(127)]
+#[case(128)]
+#[case(129)]
+#[case(130)]
+#[case(255)]
+#[case(256)]
+#[case(257)]
+#[case(511)]
+#[case(512)]
+#[case(513)]
+#[case(1024)]
+#[case(2047)]
+#[case(2048)]
+#[case(4096)]
+#[case(8192)]
+#[case(16384)]
+#[case(32768)]
+fn x_shift_matches_cpp_init(#[case] size: u16) {
+    let hash = MapHash::<UnitId>::new(size);
+    assert_eq!(hash.size(), size);
+    assert_eq!(hash.x_shift(), cpp_x_shift(size), "x_shift for size {size}");
+    if size == 1 || size == 2 {
+        // A tiny table is legal for the API but never used by the game.
+        assert_eq!(hash.buckets().len(), size as usize);
     }
 }
 
-#[test]
-fn set_map_size_matches_cpp() {
-    for (width, height) in [
-        (-1i16, -1i16),
-        (0, 0),
-        (1, 1),
-        (8, 8),
-        (32, 32),
-        (63, 64),
-        (64, 64),
-        (65, 65),
-        (112, 112),
-        (128, 128),
-        (200, 200),
-        (500, 500),
-        (1000, 1000),
-        (i16::MAX, i16::MAX),
-    ] {
-        let hash = MapHash::<UnitId>::set_map_size(Point::new(width, height));
-        let expected = cpp_set_map_size(width, height);
-        assert_eq!(hash.size(), expected, "size for {width}x{height}");
-        assert_eq!(hash.x_shift(), cpp_x_shift(expected));
-        assert_eq!(hash.buckets().len(), expected as usize);
-    }
+#[rstest]
+#[case(-1, -1)]
+#[case(0, 0)]
+#[case(1, 1)]
+#[case(8, 8)]
+#[case(32, 32)]
+#[case(63, 64)]
+#[case(64, 64)]
+#[case(65, 65)]
+#[case(112, 112)]
+#[case(128, 128)]
+#[case(200, 200)]
+#[case(500, 500)]
+#[case(1000, 1000)]
+#[case(i16::MAX, i16::MAX)]
+fn set_map_size_matches_cpp(#[case] width: i16, #[case] height: i16) {
+    let hash = MapHash::<UnitId>::set_map_size(Point::new(width, height));
+    let expected = cpp_set_map_size(width, height);
+    assert_eq!(hash.size(), expected, "size for {width}x{height}");
+    assert_eq!(hash.x_shift(), cpp_x_shift(expected));
+    assert_eq!(hash.buckets().len(), expected as usize);
+}
 
+#[test]
+fn standard_map_hash_size_matches_cpp() {
     // The stock 112×112 map: 512*8 < 12544 -> 1024 -> 2048 (2048*8 = 16384).
     let standard = MapHash::<UnitId>::for_standard_map();
     assert_eq!(standard.size(), 2048);
     assert_eq!(standard.x_shift(), 4);
 }
 
-#[test]
-fn bucket_index_matches_cpp_formula() {
-    for size in [512u16, 1024, 2048, 4096, 32768] {
-        let hash = MapHash::<UnitId>::new(size);
-        let shift = cpp_x_shift(size);
-        for (x, y) in [
-            (0u16, 0u16),
-            (1, 0),
-            (0, 1),
-            (1, 1),
-            (3, 7),
-            (16, 5),
-            (111, 111),
-            (127, 128),
-            (128, 127),
-            (255, 255),
-            (1000, 2000),
-            (8191, 8191),
-            (65_535, 65_535),
-        ] {
-            let expected = (u32::from(y) ^ (u32::from(x) << shift)) % u32::from(size);
-            assert_eq!(
-                u32::from(hash.bucket_index(x, y)),
-                expected,
-                "size {size}, cell ({x},{y})"
-            );
-            // `bucket()` and `bucket_index()` must agree.
-            assert_eq!(hash.bucket(x, y).len(), 0);
-        }
+#[rstest]
+#[case(512)]
+#[case(1024)]
+#[case(2048)]
+#[case(4096)]
+#[case(32768)]
+fn bucket_index_matches_cpp_formula(#[case] size: u16) {
+    let hash = MapHash::<UnitId>::new(size);
+    let shift = cpp_x_shift(size);
+    for (x, y) in [
+        (0u16, 0u16),
+        (1, 0),
+        (0, 1),
+        (1, 1),
+        (3, 7),
+        (16, 5),
+        (111, 111),
+        (127, 128),
+        (128, 127),
+        (255, 255),
+        (1000, 2000),
+        (8191, 8191),
+        (65_535, 65_535),
+    ] {
+        let expected = (u32::from(y) ^ (u32::from(x) << shift)) % u32::from(size);
+        assert_eq!(
+            u32::from(hash.bucket_index(x, y)),
+            expected,
+            "size {size}, cell ({x},{y})"
+        );
+        // `bucket()` and `bucket_index()` must agree.
+        assert_eq!(hash.bucket(x, y).len(), 0);
     }
 }
 

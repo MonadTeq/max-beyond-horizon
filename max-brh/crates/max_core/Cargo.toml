@@ -11,3 +11,5 @@ serde.workspace = true
 [dev-dependencies]
 # Wire round-trip of the client order DSL (`order.rs` unit tests).
 serde_json.workspace = true
+# Table-driven cases (`#[case]`) of the hash parity tests (`tests/phase4_hash.rs`).
+rstest.workspace = true

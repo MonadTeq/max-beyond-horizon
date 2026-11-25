@@ -82,6 +82,10 @@ max-cpp-port-docs/
 # Rust workspace artifacts
 max-brh/target/
 
+# insta: pending/rejected snapshots are review artifacts; only *.snap is committed
+*.snap.new
+*.snap.pending
+
 # C++ font reference generator (собирается tools/font_vectors/run.sh)
 max-brh/tools/font_vectors/font_vectors
 
