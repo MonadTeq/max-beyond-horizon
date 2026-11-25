@@ -1168,6 +1168,8 @@ fn parse_key(rest: &str) -> Result<Key, String> {
         "alt_p" | "altp" => Key::Alt('p'),
         "alt_f" | "altf" => Key::Alt('f'),
         "alt_l" | "altl" => Key::Alt('l'),
+        // `Alt+S` — quick save into the last slot (`GNW_KB_KEY_LALT_S`).
+        "alt_s" | "alts" => Key::Alt('s'),
         _ => {
             let mut characters = name.chars();
 

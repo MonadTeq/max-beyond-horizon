@@ -2,6 +2,27 @@
 
 ### Добавлено
 
+- **S1 — parity save/load с оракулом (RNG-сид, `.bak`, быстрый save/load, split
+  каталога).** `SaveLoadMenu_Save` (`saveloadmenu.cpp:593-630`) и
+  `GameManager_SaveLoadGame` (`game_manager.cpp:4032`) сверены с оракулом:
+  **S1.1** — при записи пишется свежий сид `base + Σ байт имени файла` (C++ —
+  `time()`, порт — младшее слово состояния `Randomizer`: решение владельца о
+  детерминированном сиде для QA; расхождение зафиксировано в
+  `save-load.md`), сид байт-в-байт в заголовке V70, при загрузке сеет
+  `Randomizer` и через него входит в `snapshot_bytes`/CRC; **S1.2** — автосейв
+  (`backup = true`) перед перезаписью сохраняет предыдущий слот в один `.bak`
+  (без ротации `.ba*` — решение владельца), обычный save бэкапа не делает, как
+  в C++; **S1.3** — `Alt+S`/`Alt+L` пишут/грузят последний слот
+  (`SaveLoadMenu_SaveSlot`: 10 на старте, успешная запись в окне, загрузка
+  не-кампании) через `OKCancelMenu` («OK to save/load file?»); формат байт-в-байт
+  совпадает с оконным save; **S1.4** — `FilePathGamePref` для
+  custom/hot-seat/multi и `FilePathGameData` для кампании/тренировки/сценариев
+  (`SaveLoad_GetFilePath`, `saveload.cpp:72-78`) применяется к записи и
+  загрузке; по умолчанию оба корня — каталог `MAX.RES` (у порта нет SDL
+  pref-каталога). Тесты: `max_app/tests/save_load.rs` 13/13 (сид, `.bak`,
+  быстрый save/load, split); `qa_run save-load.qa` + `qa_golden_check` — PASS
+  (0 дрейфа). Подробности — `max-brh-docs/development/save-load.md` §«Реализация S1».
+
 - **C3/C4/D2 — MVE-аудио и субтитры, форматы 0x06/0x10, музыка (презентация).**
   Три независимых подшага, каждый с fallback и без влияния на `snapshot_bytes`/CRC.
   **C3:** `max_assets::mve` декодирует аудио-дорожку (`ALLOC_AUDIO_BUFFERS` 0x03,

@@ -154,8 +154,9 @@ pub use render::{
     unit_frame_index_for_angle, write_ppm, RenderStats, UnitSpriteStats,
 };
 pub use saveload::{
-    save_meta_for_local_game, save_meta_for_local_game_with, SaveLoadAction, SaveLoadAssets,
-    SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
+    save_meta_for_local_game, save_meta_for_local_game_with, save_seed, ConfirmChoice,
+    SaveConfirm, SaveConfirmAction, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode,
+    AUTOSAVE_SLOT, DEFAULT_SAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use subtitles::{SubtitleEntry, SubtitleError, SubtitleTrack};
@@ -245,9 +246,14 @@ pub struct AppConfig {
     pub mode: AppMode,
     /// How many ticks to run in demo mode.
     pub demo_turns: u32,
-    /// V70 save directory (`save1.cam`, autosave `save10.*`). `None` — next to
-    /// `MAX.RES` (like `FilePathGameData`/`FilePathGamePref` in C++).
+    /// `FilePathGamePref` — the V70 save directory of `Custom`/`HotSeat`/`Multi`
+    /// matches (`save1.dta`, autosave `save10.*`) and `preferences.ini`.
+    /// `None` — next to `MAX.RES`.
     pub save_dir: Option<PathBuf>,
+    /// `FilePathGameData` — the V70 save directory of the mission categories
+    /// (campaign, training, demo, scenario, multiplayer scenario), C++
+    /// `SaveLoad_GetFilePath` (`saveload.cpp:72-78`). `None` — next to `MAX.RES`.
+    pub save_data_dir: Option<PathBuf>,
     /// Autosave at the end of the turn (`SETUP.auto_save`, enabled by default).
     pub autosave: bool,
 }
@@ -272,6 +278,7 @@ impl Default for AppConfig {
             mode: AppMode::Demo,
             demo_turns: 5,
             save_dir: None,
+            save_data_dir: None,
             autosave: true,
         }
     }
@@ -370,9 +377,16 @@ impl AppConfig {
         self
     }
 
-    /// V70 save directory (save/load, autosave).
+    /// V70 save directory (`save/load`, autosave) — C++ `FilePathGamePref`.
     pub fn with_save_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.save_dir = Some(dir.into());
+        self
+    }
+
+    /// V70 save directory of the mission categories — C++ `FilePathGameData`
+    /// (`SaveLoad_GetFilePath`, `saveload.cpp:72-78`).
+    pub fn with_save_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.save_data_dir = Some(dir.into());
         self
     }
 
@@ -612,6 +626,14 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     pub(crate) build_site: Option<buildsite::BuildSiteSelect>,
     /// Open V70 save/load window (P3). Not part of the snapshot/CRC.
     pub(crate) save_load: Option<saveload::SaveLoadMenu>,
+    /// Last V70 slot written or loaded — C++ `SaveLoadMenu_SaveSlot`
+    /// (`game_manager.cpp:3053`, `saveloadmenu.cpp:440`). The target of the quick
+    /// save/load (`Alt+S`/`Alt+L`, `GameManager_SaveLoadGame`). Not part of the
+    /// snapshot/CRC.
+    pub(crate) last_save_slot: i32,
+    /// Open `OKCancelMenu` of the quick save/load (`okcancelmenu.cpp`). Modal;
+    /// not part of the snapshot/CRC.
+    pub(crate) save_confirm: Option<saveload::SaveConfirm>,
     /// Open purchasable upgrades screen (P6). Not part of the snapshot/CRC.
     upgrade_menu: Option<upgrademenu::UpgradeMenu>,
     /// Open research screen (P7, `ResearchMenu`). Not part of the snapshot/CRC.
@@ -949,6 +971,8 @@ impl<D: Dispatcher> App<D> {
             build_menu: None,
             build_site: None,
             save_load: None,
+            last_save_slot: saveload::DEFAULT_SAVE_SLOT,
+            save_confirm: None,
             upgrade_menu: None,
             research_menu: None,
             unit_menu: None,
@@ -1026,6 +1050,10 @@ impl<D: Dispatcher> App<D> {
         self.local = None;
         self.build_menu = None;
         self.save_load = None;
+        // `GameManager_InitGame` (`game_manager.cpp:3053`): a new match targets the
+        // autosave slot for the quick save until a slot is written or loaded.
+        self.last_save_slot = saveload::DEFAULT_SAVE_SLOT;
+        self.save_confirm = None;
         self.upgrade_menu = None;
         self.research_menu = None;
         self.unit_menu = None;

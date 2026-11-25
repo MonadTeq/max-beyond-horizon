@@ -13,13 +13,15 @@
 use std::path::{Path, PathBuf};
 
 use max_app::local::LocalSetup;
-use max_app::saveload::{SaveLoadAction, SaveLoadMenu, SaveLoadMode};
+use max_app::saveload::{save_seed, SaveConfirmAction, SaveLoadAction, SaveLoadMenu, SaveLoadMode};
 use max_app::ui::{InputEvent, Key};
 use max_app::{App, AppConfig};
 use max_core::enums::{PlayMode, VictoryType};
+use max_core::rng::Randomizer;
 use max_core::save::SaveFile;
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
+use max_core::universe::GameUniverse;
 use max_core::MissionCategory;
 
 fn repo_path(relative: &str) -> PathBuf {
@@ -44,17 +46,25 @@ fn temp_dir(tag: &str) -> PathBuf {
 
 /// Application with real assets (otherwise the map cannot be generated).
 fn local_app(save_dir: &Path) -> Option<App> {
+    local_app_split(save_dir, None)
+}
+
+/// The same, with an explicit `FilePathGameData` save directory (S1.4).
+fn local_app_split(pref_dir: &Path, data_save_dir: Option<&Path>) -> Option<App> {
     let data = repo_path("max-original");
 
     if !data.join("MAX.RES").is_file() {
         return None;
     }
 
-    let config = AppConfig::default()
+    let mut config = AppConfig::default()
         .with_data_dir(&data)
         .with_assets_dir(repo_path("assets"))
         .with_mode(max_app::AppMode::Ui)
-        .with_save_dir(save_dir);
+        .with_save_dir(pref_dir);
+    if let Some(data_save_dir) = data_save_dir {
+        config = config.with_save_data_dir(data_save_dir);
+    }
 
     let mut app = App::new(config);
     app.init_assets().ok()?;
@@ -419,4 +429,313 @@ fn snapshot(app: &App) -> Snapshot {
         gold: state.team_units()[TeamId::RED.0 as usize].gold,
         team_types: std::array::from_fn(|index| state.teams()[index].team_type),
     }
+}
+
+// ---------------------------------------------------------------------------
+// S1.1 — save-time RNG seed
+// ---------------------------------------------------------------------------
+
+/// The seed is written byte-exactly in the V70 header and re-seeds the generator
+/// on load; it reaches the snapshot/CRC through the `Randomizer` state.
+#[test]
+fn save_seed_is_byte_exact_and_reseeds_the_generator() {
+    let dir = temp_dir("seed");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+    for _ in 0..3 {
+        app.local_update(0.0);
+    }
+
+    // `SaveLoadMenu_Save` (`saveloadmenu.cpp:611-619`): seed = base + Σ file bytes;
+    // the port's deterministic base is the live RNG word (owner decision S1.1).
+    let rng_word = app.state_ref().rng().state()[0];
+    let path = dir.join("save3.dta");
+    app.save_v70_to(&path, "Seeded")
+        .expect("V70-запись удалась");
+
+    let bytes = std::fs::read(&path).expect("файл записан");
+    let parsed = SaveFile::parse(&bytes).expect("парсится");
+    let expected = save_seed("save3.dta", rng_word);
+    assert_eq!(
+        parsed.header.rng_seed, expected,
+        "seed = RNG base + Σ bytes(file name)"
+    );
+
+    // Byte-exact header round-trip: a parse → write cycle keeps the seed.
+    assert_eq!(
+        parsed.to_bytes().expect("перезапись"),
+        bytes,
+        "V70 round-trip is byte-identical"
+    );
+
+    // Loading re-seeds `Randomizer` from the header (`saveload.cpp:776`).
+    let loaded = GameUniverse::from_save(&parsed);
+    assert_eq!(
+        loaded.snapshot().rng().state(),
+        Randomizer::new(expected).state()
+    );
+
+    // The seed is simulation input: another header seed → another snapshot/CRC.
+    let mut changed = parsed.clone();
+    changed.header.rng_seed = expected.wrapping_add(1);
+    let other = GameUniverse::from_save(&changed);
+    assert_ne!(
+        loaded.snapshot().state_digest(),
+        other.snapshot().state_digest(),
+        "the seed must change the state CRC through the RNG state"
+    );
+    assert_ne!(
+        loaded.snapshot().snapshot_bytes(),
+        other.snapshot().snapshot_bytes()
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The same state saved twice writes the same seed (deterministic QA), while a
+/// different slot file name changes it (the C++ file-name addition).
+#[test]
+fn save_seed_is_deterministic_across_saves() {
+    let dir = temp_dir("seed_repeat");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+
+    let first = app.save_v70_bytes_for("Same", "save1.dta").expect("байты");
+    let second = app.save_v70_bytes_for("Same", "save1.dta").expect("байты");
+    assert_eq!(first, second, "same state + same slot → same bytes");
+
+    let other_slot = app.save_v70_bytes_for("Same", "save2.dta").expect("байты");
+    let a = SaveFile::parse(&first).expect("парсится");
+    let b = SaveFile::parse(&other_slot).expect("парсится");
+    assert_ne!(
+        a.header.rng_seed, b.header.rng_seed,
+        "the slot file name contributes to the seed like in C++"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// S1.2 — `.bak` backup
+// ---------------------------------------------------------------------------
+
+/// A rewritten autosave keeps the previous slot as `save10.bak`; there is no
+/// rotation to `.ba1` (owner decision S1.2).
+#[test]
+fn overwritten_autosave_keeps_the_previous_slot_as_bak() {
+    let dir = temp_dir("backup");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+
+    let first = app.autosave().expect("первый автосейв");
+    assert_eq!(first, dir.join("save10.dta"));
+    let first_bytes = std::fs::read(&first).expect("файл первого автосейва");
+    assert!(
+        !dir.join("save10.bak").exists(),
+        "у первого автосейва предыдущего слота нет"
+    );
+
+    // Advance the match: the second autosave has to overwrite the first.
+    let turn = app.state_ref().turn_counter();
+    app.universe_mut().set_turn_counter(turn + 1);
+    let second = app.autosave().expect("второй автосейв");
+    let second_bytes = std::fs::read(&second).expect("файл второго автосейва");
+    assert_ne!(first_bytes, second_bytes, "слот перезаписан");
+
+    let backup = dir.join("save10.bak");
+    assert!(backup.is_file(), "SaveLoadMenu_CreateBackup создал .bak");
+    assert_eq!(
+        std::fs::read(&backup).expect("файл .bak"),
+        first_bytes,
+        ".bak содержит предыдущий слот"
+    );
+    assert!(!dir.join("save10.ba1").exists(), "ротации .bak.1 нет");
+    assert!(!dir.join("save10.bak.1").exists(), "ротации .bak.1 нет");
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A regular (menu/quick) save passes `backup = false` in C++ and creates no
+/// `.bak` — only the autosave does.
+#[test]
+fn regular_save_does_not_create_a_backup() {
+    let dir = temp_dir("no_backup");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+
+    app.save_game_to_slot(2, "First").expect("сейв");
+    app.save_game_to_slot(2, "Second").expect("перезапись");
+
+    assert!(!dir.join("save2.bak").exists());
+    let save =
+        SaveFile::parse(&std::fs::read(dir.join("save2.dta")).expect("файл")).expect("парсится");
+    assert_eq!(save.header.save_name(), "Second");
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// S1.3 — quick save/load into the last slot
+// ---------------------------------------------------------------------------
+
+/// `Alt+S` with an existing last slot asks for confirmation (`OKCancelMenu`) and
+/// writes the very same bytes as the window save.
+#[test]
+fn quick_save_writes_the_last_slot_in_the_window_format() {
+    let dir = temp_dir("quick_save");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+
+    // The window save (what `Save` in the menu does).
+    app.save_game_to_slot(3, "Quick save").expect("сейв окна");
+    app.set_last_save_slot(3);
+    let window_bytes = std::fs::read(dir.join("save3.dta")).expect("файл");
+
+    // `Alt+S` → `OKCancelMenu` with the slot's existing name.
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Alt('s')));
+    let confirm = app.save_confirm().expect("окно подтверждения открыто");
+    assert_eq!(
+        confirm.action(),
+        &SaveConfirmAction::Save {
+            slot: 3,
+            name: "Quick save".to_string()
+        }
+    );
+
+    // `OK` (`Enter`) writes the slot again without the full window.
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Enter));
+    assert!(app.save_confirm().is_none(), "подтверждение закрыто");
+    assert!(app.save_load().is_none(), "полное окно не открывалось");
+    let quick_bytes = std::fs::read(dir.join("save3.dta")).expect("файл");
+    assert_eq!(
+        window_bytes, quick_bytes,
+        "quick save и обычный save дают одни и те же байты"
+    );
+    assert!(!dir.join("save3.bak").exists(), "quick save не делает .bak");
+
+    // `Esc` cancels the confirmation and does not touch the slot.
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Alt('s')));
+    assert!(app.save_confirm().is_some());
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Escape));
+    assert!(app.save_confirm().is_none());
+    assert_eq!(
+        std::fs::read(dir.join("save3.dta")).expect("файл"),
+        quick_bytes
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// With no file in the last slot the quick save falls back to the full window
+/// (C++ `GameManager_MenuClickFileButton`).
+#[test]
+fn quick_save_opens_the_window_for_an_empty_last_slot() {
+    let dir = temp_dir("quick_empty");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+    app.set_last_save_slot(7);
+
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Alt('s')));
+    assert!(app.save_confirm().is_none());
+    assert!(
+        app.save_load().is_some(),
+        "открылось полное окно сохранения"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// `Alt+L` quick loads the last slot after the confirmation.
+#[test]
+fn quick_load_loads_the_last_slot() {
+    let dir = temp_dir("quick_load");
+    let Some(mut app) = local_app(&dir) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+    app.save_game_to_slot(4, "Quick load").expect("сейв");
+    let saved_turn = app.state_ref().turn_counter();
+    app.set_last_save_slot(4);
+
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Alt('l')));
+    let confirm = app.save_confirm().expect("подтверждение загрузки");
+    assert_eq!(confirm.action(), &SaveConfirmAction::Load { slot: 4 });
+    max_app::ui::handle_session_input(&mut app, InputEvent::Key(Key::Enter));
+
+    assert!(app.save_confirm().is_none());
+    assert_eq!(app.state_ref().turn_counter(), saved_turn);
+    assert_eq!(
+        app.last_save_slot(),
+        4,
+        "загруженный слот становится целью quick save"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// S1.4 — `FilePathGamePref` vs `FilePathGameData`
+// ---------------------------------------------------------------------------
+
+/// Custom/hot-seat saves go to the preference directory, campaign saves go to the
+/// game data directory (`SaveLoad_GetFilePath`, `saveload.cpp:72-78`).
+#[test]
+fn save_directory_follows_the_mission_category() {
+    let pref = temp_dir("split_pref");
+    let data = temp_dir("split_data");
+    let Some(mut app) = local_app_split(&pref, Some(&data)) else {
+        eprintln!("нет max-original/MAX.RES — тест пропущен");
+        return;
+    };
+    app.start_local_game(&setup_vs_one_ai())
+        .expect("локальная партия стартует");
+
+    // Custom → `FilePathGamePref`.
+    let custom = app.save_game_to_slot(1, "Custom").expect("custom save");
+    assert_eq!(custom, pref.join("save1.dta"));
+    assert!(pref.join("save1.dta").is_file());
+    assert!(!data.join("save1.dta").exists());
+
+    // The load path of the same category looks in the preference directory.
+    app.load_game_slot(1).expect("custom load");
+
+    // Campaign → `FilePathGameData`.
+    app.universe_mut()
+        .set_mission_category(MissionCategory::Campaign);
+    let campaign = app.save_game_to_slot(1, "Campaign").expect("campaign save");
+    assert_eq!(campaign, data.join("save1.cam"));
+    assert!(data.join("save1.cam").is_file());
+    assert!(!pref.join("save1.cam").exists(), "не в pref-каталоге");
+
+    // The load path of a campaign looks in the game data directory.
+    app.load_game_slot(1).expect("campaign load");
+
+    std::fs::remove_dir_all(pref).ok();
+    std::fs::remove_dir_all(data).ok();
 }

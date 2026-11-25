@@ -211,7 +211,9 @@ impl QaRunner {
             .with_mode(AppMode::Ui)
             // P3: saves (including autosave) go to the QA output directory, not to
             // `max-original`: the run leaves no garbage in the game data.
-            .with_save_dir(&config.out_dir);
+            .with_save_dir(&config.out_dir)
+            // S1.4: mission-category saves (`FilePathGameData`) go there too.
+            .with_save_data_dir(&config.out_dir);
 
         let mut app = App::new(app_config);
         app.init_assets()

@@ -1204,6 +1204,8 @@ impl<D: Dispatcher> App<D> {
         self.draw_build_menu(&mut frame);
         // Save/load window (P3) — modal, like `AbstractMenu` in C++.
         self.draw_save_load(&mut frame);
+        // Quick save/load `OKCancelMenu` (S1.3) — over the game.
+        self.draw_save_confirm(&mut frame);
         // Upgrades screen (P6).
         self.draw_upgrade_menu(&mut frame);
         // Research screen (P7) and the help window over it.
@@ -1328,6 +1330,8 @@ impl<D: Dispatcher> App<D> {
         self.draw_build_menu(&mut frame);
         // Save/load window (P3).
         self.draw_save_load(&mut frame);
+        // Quick save/load `OKCancelMenu` (S1.3).
+        self.draw_save_confirm(&mut frame);
         // Upgrades screen (P6).
         self.draw_upgrade_menu(&mut frame);
         // Research screen (P7) and the help window over it.
@@ -1432,6 +1436,28 @@ impl<D: Dispatcher> App<D> {
         };
 
         menu.draw(frame, assets);
+    }
+
+    /// Draws the quick save/load `OKCancelMenu` (C++ `OKCancelMenu`, S1.3) over the
+    /// frame.
+    pub(crate) fn draw_save_confirm(&self, frame: &mut RgbaBuffer) {
+        let Some(confirm) = self.save_confirm() else {
+            return;
+        };
+        let fallback = self
+            .assets()
+            .and_then(|assets| UiPalette::from_assets(assets))
+            .or_else(|| {
+                self.assets()
+                    .and_then(|assets| assets.menu.as_ref().map(|menu| menu.palette))
+            });
+
+        confirm.draw(
+            frame,
+            self.assets().and_then(|assets| assets.help.as_ref()),
+            self.assets().and_then(|assets| assets.transfer.as_ref()),
+            fallback,
+        );
     }
 
     /// Draws the building self-destruct dialog (`UnitsManager_SelfDestructMenu`).

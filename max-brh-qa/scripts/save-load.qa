@@ -12,6 +12,9 @@
 #   ход, число юнитов и экран совпадают с сохранёнными (`assert turn`,
 #   `assert units`), партия продолжает играться (`end_turn` после загрузки);
 # * кадры `save-menu`/`after-load` — для визуальной проверки окна и партии.
+# * S1.2/S1.3: быстрый save/load в последний слот (`Alt+S`/`Alt+L`,
+#   `GameManager_SaveLoadGame`) с подтверждением OK/Cancel и `.bak` автосейва
+#   (проверяется отсутствием падения и сохранностью хода/юнитов).
 #
 # Триаж 2026-11-24 (pre-existing red): ожидание `units=14` устарело после `ai A.3`
 # (73b9d38, «port build orders + production»): ИИ теперь начинает стройку на своём
@@ -80,6 +83,18 @@ assert turn=3
 # (ai A.3, 73b9d38). Все 20 есть и в сейве, и после загрузки — потерь нет.
 assert units=20
 shot after-load
+
+# --- Quick save/load в последний слот (S1.3) -----------------------------
+# Last slot is the autosave (10): `Alt+S` opens OKCancelMenu, `Enter` writes it
+# without the full window; `Alt+L`/`Enter` loads it back.
+key alt_s
+key ENTER
+assert turn=3
+assert units=20
+key alt_l
+key ENTER
+assert screen=InGame
+assert units=20
 
 # --- Партия после загрузки продолжает играться ---------------------------
 end_turn

@@ -12,6 +12,11 @@
 //!   columns: `x = 402*(i/5)+16`, `y = 76*(i%5)+44`, up to 10 slots per page,
 //!   slot numbers from 1, the page shifts by 10 (`SaveLoadMenu_SaveSlotLimit`
 //!   = 991 — the first slot of the last page);
+//! * save-time policy of `SaveLoadMenu_Save` (`saveloadmenu.cpp:593-630`): the
+//!   header seed, the `.bak` backup (`backup = true` — autosave only) and the
+//!   quick save/load into the last slot (`GameManager_SaveLoadGame`,
+//!   `game_manager.cpp:4032`) — S1 parity deltas, see the notes on
+//!   [`save_seed`] and [`SaveConfirm`];
 //! * buttons in the bottom row y=438: `Cancel` (`MNUBTN6U`, 514), `Load`
 //!   (`MNUBTN4U`, 354), `Save` (`MNUBTN2U`, 132, only in save mode),
 //!   pages `MNUUAROU`/`MNUDAROU` (33/63), `Help` (`MNUBTN5U`, 465) and
@@ -48,7 +53,7 @@ use max_render::text::{draw_text_gnw, draw_text_gnw_centered, GnwFontId};
 
 use crate::assets::Assets;
 use crate::local::SessionChannel;
-use crate::menu::{draw_image_button, MenuButtonPair};
+use crate::menu::{draw_big_image_at, draw_image_button, wrap_gnw_text, MenuButtonPair};
 use crate::panels::UiPalette;
 use crate::ui::{InputEvent, Key};
 
@@ -67,6 +72,9 @@ pub const SLOT_LIMIT: i32 = 991;
 pub const LAST_SLOT: i32 = SLOT_LIMIT + SLOTS_PER_PAGE - 1;
 /// Autosave slot (`game_manager.cpp:2503`).
 pub const AUTOSAVE_SLOT: i32 = 10;
+/// Slot the quick save/load starts with — C++ `SaveLoadMenu_SaveSlot = 10`
+/// (`game_manager.cpp:3053`); afterwards the slot last written or loaded.
+pub const DEFAULT_SAVE_SLOT: i32 = AUTOSAVE_SLOT;
 
 /// Title rectangle (`Text_TextBox(…, 229, 5, 181, 21, …)`).
 pub const TITLE: PixelRect = PixelRect::new(229, 5, 181, 21);
@@ -230,6 +238,47 @@ impl SaveLoadMenu {
     /// Full path of the slot (lowercase first, like `SaveLoad_GetFilePath`).
     pub fn file_path(dir: &Path, category: MissionCategory, slot: i32) -> PathBuf {
         dir.join(Self::file_name(category, slot))
+    }
+
+    /// Backup next to the save: `save1.dta` → `save1.bak`
+    /// (C++ `std::filesystem::path::replace_extension(".bak")`,
+    /// `saveloadmenu.cpp:763`).
+    pub fn backup_path(path: &Path) -> PathBuf {
+        path.with_extension("bak")
+    }
+
+    /// `SaveLoadMenu_CreateBackup` (`saveloadmenu.cpp:734`) for one slot.
+    ///
+    /// The oracle rotates `.bak` → `.ba1` … `.ba4` → `.ba5` before the rename. The
+    /// owner decision for S1.2 keeps a **single** `.bak` (no rotation): an existing
+    /// `.bak` is replaced by the previous slot. Like C++, a failed backup is only
+    /// logged and never fails the save; the caller receives `None`.
+    pub fn create_backup(path: &Path) -> Option<PathBuf> {
+        if !path.exists() {
+            return None;
+        }
+        let backup = Self::backup_path(path);
+        // `std::filesystem::rename` over an existing file fails on Windows and
+        // replaces it on POSIX; the original saves run on both, so remove first.
+        match std::fs::remove_file(&backup) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!("save backup: cannot remove {}: {error}", backup.display());
+                return None;
+            }
+        }
+        match std::fs::rename(path, &backup) {
+            Ok(()) => Some(backup),
+            Err(error) => {
+                tracing::warn!(
+                    "save backup: cannot rename {} to {}: {error}",
+                    path.display(),
+                    backup.display()
+                );
+                None
+            }
+        }
     }
 
     /// Re-reads the page slots.
@@ -778,17 +827,268 @@ fn fit_label(text: &str, max_width: i32, font: &max_render::text::GnwFont) -> St
 }
 
 // ---------------------------------------------------------------------------
+// S1.1 — save-time RNG seed
+// ---------------------------------------------------------------------------
+
+/// V70 header seed of a save — C++ `SaveLoadMenu_Save`
+/// (`saveloadmenu.cpp:611-619`).
+///
+/// C++ computes `rng_seed = time(nullptr)` (or `Remote_RngSeed` in a network
+/// game) and adds the bytes of the slot's **file name**
+/// (`for (i …) rng_seed += file_name[i];`), then writes the value into the header
+/// (`saveload.cpp:495`). On load the value seeds the `Randomizer`
+/// (`saveload.cpp:776`), so the seed is simulation state, not a cosmetic field.
+///
+/// **Divergence from C++ (owner decision S1.1).** The wall clock makes a save
+/// irreproducible, so the port substitutes the low word of the live
+/// `Randomizer` state ([`crate::App::state_ref`] → `rng().state()[0]`) for
+/// `time(nullptr)`. The addition of the file-name bytes is unchanged, so two
+/// saves of the same state into the same slot write the same seed (QA), while a
+/// different game state or slot produces a different one, exactly like the
+/// oracle's fresh seed. The value enters the state digest only through the RNG:
+/// `SaveMeta::rng_seed` itself is not part of `snapshot_bytes`
+/// (`state-model.md` §3.12), the loaded `Randomizer` state is.
+pub fn save_seed(file_name: &str, base: u32) -> u32 {
+    let mut seed = base;
+    for byte in file_name.bytes() {
+        seed = seed.wrapping_add(u32::from(byte));
+    }
+    seed
+}
+
+// ---------------------------------------------------------------------------
+// S1.3 — quick save/load confirmation (`OKCancelMenu`)
+// ---------------------------------------------------------------------------
+
+/// `OKCancelMenu` caption for a quick save — `_(e285)`.
+pub const CONFIRM_SAVE_CAPTION: &str = "OK to save file?";
+/// `OKCancelMenu` caption for a quick load — `_(470e)`.
+pub const CONFIRM_LOAD_CAPTION: &str = "OK to load file?";
+/// `OK` (`HELPOK_U/D`, 65×24) at local (155, 193) — `okcancelmenu.cpp:30`.
+pub const CONFIRM_OK: PixelRect = PixelRect::new(155, 193, 65, 24);
+/// `Cancel` (`XFRCAN_U/D`, 64×24) at local (85, 193) — `okcancelmenu.cpp:31`.
+pub const CONFIRM_CANCEL: PixelRect = PixelRect::new(85, 193, 64, 24);
+/// Caption area of `HELPFRAM` (`PopupMenu_CaptionUlx/Uly`, 265×175).
+pub const CONFIRM_TEXT: PixelRect = PixelRect::new(20, 14, 265, 175);
+
+/// What the quick save/load confirmation will do after `OK`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveConfirmAction {
+    /// Write the current match into the slot under the existing save name
+    /// (`GameManager_SaveLoadGame(true)`, `game_manager.cpp:4056`).
+    Save {
+        /// Slot number (from 1).
+        slot: i32,
+        /// The name already stored in the slot (`save_file_info.save_name`).
+        name: String,
+    },
+    /// Load the slot (`GameManager_SaveLoadGame(false)`, `game_manager.cpp:4067`).
+    Load {
+        /// Slot number (from 1).
+        slot: i32,
+    },
+}
+
+/// Choice made in the `OKCancelMenu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmChoice {
+    /// The window stays open.
+    None,
+    /// `OK`/`Enter`.
+    Ok,
+    /// `Cancel`/`Esc`.
+    Cancel,
+}
+
+/// Modal `OKCancelMenu` of the quick save/load (`okcancelmenu.cpp`).
+///
+/// C++ `GameManager_SaveLoadGame` reads the last slot
+/// (`SaveLoadMenu_SaveSlot`), takes the save name from the slot's file and asks
+/// `OKCancelMenu_Menu("OK to save file?\n<file>\n\"<name>\"")`; `OK` writes into
+/// the same slot, `Cancel` does nothing. The window is a `HELPFRAM` popup with
+/// the caption area (20, 14, 265, 175), `Cancel` (85, 193) and `OK` (155, 193).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveConfirm {
+    action: SaveConfirmAction,
+    lines: Vec<String>,
+}
+
+impl SaveConfirm {
+    /// Confirmation of `action` with the C++ caption `caption` (the lines are
+    /// wrapped by [`CONFIRM_TEXT`] width, `\n` is a hard break).
+    pub fn new(action: SaveConfirmAction, caption: &str) -> Self {
+        Self {
+            action,
+            lines: wrap_gnw_text(caption, CONFIRM_TEXT.width),
+        }
+    }
+
+    /// The action `OK` performs.
+    pub const fn action(&self) -> &SaveConfirmAction {
+        &self.action
+    }
+
+    /// Caption lines.
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    /// Window rectangle — `Window(HELPFRAM, GameManager_GetDialogWindowCenterMode())`.
+    pub fn window_rect(&self) -> PixelRect {
+        crate::helpmenu::HelpPlacement::Game.rect()
+    }
+
+    /// `OK` in the frame.
+    pub fn ok_rect(&self) -> PixelRect {
+        offset_rect(CONFIRM_OK, self.window_rect())
+    }
+
+    /// `Cancel` in the frame.
+    pub fn cancel_rect(&self) -> PixelRect {
+        offset_rect(CONFIRM_CANCEL, self.window_rect())
+    }
+
+    /// Keys/clicks: `Enter` — `OK`, `Esc` — `Cancel` (`okcancelmenu.cpp:53-57`).
+    pub fn input(&self, event: InputEvent) -> ConfirmChoice {
+        match event {
+            InputEvent::Key(Key::Enter) => ConfirmChoice::Ok,
+            InputEvent::Key(Key::Escape) => ConfirmChoice::Cancel,
+            InputEvent::MouseClick(x, y) => {
+                if self.ok_rect().contains(x, y) {
+                    ConfirmChoice::Ok
+                } else if self.cancel_rect().contains(x, y) {
+                    ConfirmChoice::Cancel
+                } else {
+                    ConfirmChoice::None
+                }
+            }
+            _ => ConfirmChoice::None,
+        }
+    }
+
+    /// Draws the popup: `HELPFRAM`, the centered caption, `Cancel` and `OK`.
+    pub fn draw(
+        &self,
+        frame: &mut RgbaBuffer,
+        help: Option<&crate::helpmenu::HelpMenuAssets>,
+        transfer: Option<&crate::transfermenu::TransferMenuAssets>,
+        fallback: Option<UiPalette>,
+    ) -> u32 {
+        let window = self.window_rect();
+        let background = help.and_then(|assets| assets.background.as_ref());
+        let Some(palette) = background.map(UiPalette::from_big_image).or(fallback) else {
+            return 0;
+        };
+        let font = GnwFontId::Font5.font();
+        let mut painted = 0;
+
+        if let Some(background) = background {
+            painted += draw_big_image_at(
+                frame,
+                background,
+                &palette,
+                (window.ulx, window.uly),
+                window,
+            );
+        } else {
+            frame.fill_rect(window, palette.rgba(0x22));
+            painted += 1;
+        }
+
+        // `Text_TextBox(..., 265, 175, GNW_TEXT_OUTLINE | 0xFF, center)`: the block
+        // is centered vertically while it is below a page and each line is centered.
+        let block = font.height() * self.lines.len() as i32;
+        let mut y = window.uly + CONFIRM_TEXT.uly;
+        if block < CONFIRM_TEXT.height {
+            y += (CONFIRM_TEXT.height - block) / 2;
+        }
+        for line in &self.lines {
+            let width = font.text_width(line).min(CONFIRM_TEXT.width);
+            let x = window.ulx + CONFIRM_TEXT.ulx + (CONFIRM_TEXT.width - width) / 2;
+            painted += draw_text_gnw(frame, x, y, font, line, palette.rgba(0xFF)).max(0) as u32;
+            y += font.height();
+        }
+
+        let cancel = self.cancel_rect();
+        match transfer.and_then(|assets| assets.cancel.as_ref()) {
+            Some(pair) => {
+                painted += draw_image_button(
+                    frame,
+                    &palette,
+                    pair.image(false),
+                    pair.image(true),
+                    cancel,
+                    CONFIRM_CANCEL_LABEL,
+                    false,
+                );
+            }
+            None => {
+                frame.fill_rect(cancel, palette.rgba(0x17));
+                painted += 1;
+            }
+        }
+
+        let ok = self.ok_rect();
+        match help.and_then(|assets| assets.done.as_ref()) {
+            Some(pair) => {
+                painted += draw_image_button(
+                    frame,
+                    &palette,
+                    pair.image(false),
+                    pair.image(true),
+                    ok,
+                    CONFIRM_OK_LABEL,
+                    false,
+                );
+            }
+            None => {
+                frame.fill_rect(ok, palette.rgba(0x17));
+                painted += 1;
+            }
+        }
+
+        painted
+    }
+}
+
+/// `OK` label of `OKCancelMenu` (`_(755f)`).
+pub const CONFIRM_OK_LABEL: &str = "OK";
+/// `Cancel` label of `OKCancelMenu` (`_(2879)`).
+pub const CONFIRM_CANCEL_LABEL: &str = "Cancel";
+
+/// Local popup rectangle → frame coordinates.
+fn offset_rect(rect: PixelRect, window: PixelRect) -> PixelRect {
+    PixelRect::new(
+        window.ulx + rect.ulx,
+        window.uly + rect.uly,
+        rect.width,
+        rect.height,
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Integration with the application
 // ---------------------------------------------------------------------------
 
 // The save directory belongs to the `AppConfig`, not to the match: it is needed by
 // every application type (the network application writes `preferences.ini` too).
 impl<D: max_core::universe::Dispatcher> crate::App<D> {
-    /// Save directory: `--save-dir`, otherwise the `MAX.RES` directory (`max-original`),
-    /// like `FilePathGameData` for campaigns and `FilePathGamePref` for custom.
+    /// `FilePathGamePref`: `--save-dir`, otherwise the `MAX.RES` directory.
+    ///
+    /// C++ keeps the user preference path (`SDL_GetPrefPath`) separate from the game
+    /// data path; the port has no SDL preference directory, so both default to the
+    /// game data directory (documented simplification of S1.4).
     pub fn save_dir(&self) -> PathBuf {
         self.config()
             .save_dir
+            .clone()
+            .unwrap_or_else(|| self.save_data_dir())
+    }
+
+    /// `FilePathGameData`: `--save-data-dir`, otherwise the `MAX.RES` directory.
+    pub fn save_data_dir(&self) -> PathBuf {
+        self.config()
+            .save_data_dir
             .clone()
             .or_else(|| {
                 self.config()
@@ -797,6 +1097,17 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
                     .map(std::path::Path::to_path_buf)
             })
             .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// Root directory of a category's V70 saves — C++ `SaveLoad_GetFilePath`
+    /// (`saveload.cpp:72-78`): `FilePathGamePref` for
+    /// [`MissionCategory::uses_pref_dir`] categories, `FilePathGameData` otherwise.
+    pub fn save_root(&self, category: MissionCategory) -> PathBuf {
+        if category.uses_pref_dir() {
+            self.save_dir()
+        } else {
+            self.save_data_dir()
+        }
     }
 }
 
@@ -842,7 +1153,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             return false;
         }
         let category = self.save_category();
-        let dir = self.save_dir();
+        let dir = self.save_root(category);
         let default = self
             .local()
             .map(|local| local.setup.player_name.clone())
@@ -872,44 +1183,87 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             return false;
         }
         let category = self.save_category();
-        let dir = self.save_dir();
+        let dir = self.save_root(category);
         self.save_load = Some(SaveLoadMenu::new(SaveLoadMode::Load, category, dir));
         true
     }
 
     /// Saves the match into a slot (`save<slot>.<ext>`).
+    ///
+    /// The directory follows the category ([`Self::save_root`], S1.4); the write
+    /// goes through [`Self::save_v70_to`], so the quick save (S1.3) and the window
+    /// share one format.
     pub fn save_game_to_slot(&mut self, slot: i32, save_name: &str) -> Result<PathBuf, String> {
         let category = self.save_category();
-        let path = SaveLoadMenu::file_path(&self.save_dir(), category, slot);
+        let path = SaveLoadMenu::file_path(&self.save_root(category), category, slot);
         self.save_v70_to(&path, save_name)?;
         Ok(path)
     }
 
-    /// Writes the V70 save of the current match to the path.
+    /// Writes the V70 save of the current match to the path (no backup — C++
+    /// `SaveLoadMenu_Save(..., backup = false)`).
     pub fn save_v70_to(
         &mut self,
         path: impl AsRef<Path>,
         save_name: &str,
     ) -> Result<usize, String> {
-        let bytes = self.save_v70_bytes(save_name)?;
-        let path = path.as_ref();
+        self.save_v70_to_backup(path.as_ref(), save_name, false)
+    }
+
+    /// Writes the V70 save and, when `backup`, moves the previous file to `.bak`
+    /// first (C++ `SaveLoadMenu_Save(..., backup)`, `saveloadmenu.cpp:593-603`).
+    ///
+    /// `backup = true` is used by the autosave only (`game_manager.cpp:2507`);
+    /// the menu and the quick save pass `false` exactly like the oracle.
+    pub fn save_v70_to_backup(
+        &mut self,
+        path: &Path,
+        save_name: &str,
+        backup: bool,
+    ) -> Result<usize, String> {
+        // C++: `CreateBackup` runs before `SaveLoad_Save`, so the previous file is
+        // already the `.bak` when the new one is written.
+        if backup {
+            SaveLoadMenu::create_backup(path);
+        }
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let bytes = self.save_v70_bytes_for(save_name, &file_name)?;
         std::fs::write(path, &bytes)
             .map_err(|error| format!("не удалось записать {}: {error}", path.display()))?;
         Ok(bytes.len())
     }
 
     /// V70 save bytes of the current match (with [`SaveMeta`] updated).
+    ///
+    /// No slot file name is known here, so the seed addition of
+    /// [`save_seed`] gets an empty name; a real write path uses
+    /// [`Self::save_v70_bytes_for`].
     pub fn save_v70_bytes(&mut self, save_name: &str) -> Result<Vec<u8>, String> {
-        self.sync_save_meta(save_name);
+        self.save_v70_bytes_for(save_name, "")
+    }
+
+    /// V70 save bytes with the slot's file name for the seed
+    /// (C++ `SaveLoadMenu_Save` adds every byte of `file_name`).
+    pub fn save_v70_bytes_for(
+        &mut self,
+        save_name: &str,
+        file_name: &str,
+    ) -> Result<Vec<u8>, String> {
+        self.sync_save_meta(save_name, file_name);
         self.state_ref()
             .to_save_bytes()
             .map_err(|error| format!("V70-запись: {error}"))
     }
 
-    /// Updates the "external" fields of the save before writing: name, turn timer,
-    /// the player's UI fields and the team message log.
-    fn sync_save_meta(&mut self, save_name: &str) {
+    /// Updates the "external" fields of the save before writing: name, RNG seed,
+    /// turn timer, the player's UI fields and the team message log.
+    fn sync_save_meta(&mut self, save_name: &str, file_name: &str) {
         let team = usize::from(self.state_ref().player_team().0).min(3);
+        let rng_word = self.state_ref().rng().state()[0];
+        let seed = save_seed(file_name, rng_word);
         let timer_left = self
             .local()
             .map(|local| local.timer_left.ceil().max(0.0) as u16)
@@ -951,6 +1305,8 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
         // it, and it is written only while assembling a save file.
         let meta = self.universe.save_meta_mut();
         SaveMeta::set_name(&mut meta.save_name, save_name);
+        // S1.1: the fresh save-time seed (deterministic replacement of C++ `time()`).
+        meta.rng_seed = seed;
         meta.turn_timer = timer_left;
         meta.turn_timer_time = turn_timer.clamp(0, i32::from(u16::MAX)) as u16;
         meta.endturn_time = endturn.clamp(0, i32::from(u16::MAX)) as u16;
@@ -983,24 +1339,142 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
     /// End-of-turn autosave (C++ `SETUP.auto_save`, slot 10).
     ///
     /// C++ writes it on entering `GameManager_UpdateGui` of the round's first team
-    /// (`game_manager.cpp:2500`) — see `local::local_finish_round`.
+    /// (`game_manager.cpp:2500`) — see `local::local_finish_round`. The call passes
+    /// `backup = true` (`game_manager.cpp:2507`), so an overwritten autosave keeps
+    /// the previous file as `save10.bak` (S1.2).
     pub fn autosave(&mut self) -> Option<PathBuf> {
         if !self.config().autosave || !self.preferences().auto_save || !self.local_active() {
             return None;
         }
         let name = format!("(Turn {})", self.state_ref().turn_counter());
-        let path = match self.save_game_to_slot(AUTOSAVE_SLOT, &name) {
-            Ok(path) => path,
-            Err(error) => {
-                self.hud.push_log(format!("Autosave failed: {error}"));
-                return None;
-            }
-        };
+        let category = self.save_category();
+        let path = SaveLoadMenu::file_path(&self.save_root(category), category, AUTOSAVE_SLOT);
+        if let Err(error) = self.save_v70_to_backup(&path, &name, true) {
+            self.hud.push_log(format!("Autosave failed: {error}"));
+            return None;
+        }
         self.hud
             .push_log(format!("Autosave: {}", path.display()));
         Some(path)
     }
 
+    // -----------------------------------------------------------------------
+    // S1.3 — quick save/load into the last slot (`GameManager_SaveLoadGame`)
+    // -----------------------------------------------------------------------
+
+    /// The slot written or loaded last — C++ `SaveLoadMenu_SaveSlot`.
+    pub const fn last_save_slot(&self) -> i32 {
+        self.last_save_slot
+    }
+
+    /// Sets the quick save/load target (the window save handler does this after a
+    /// successful write, `saveloadmenu.cpp:440`).
+    pub fn set_last_save_slot(&mut self, slot: i32) {
+        self.last_save_slot = slot;
+    }
+
+    /// Open `OKCancelMenu` of the quick save/load, if any.
+    pub fn save_confirm(&self) -> Option<&SaveConfirm> {
+        self.save_confirm.as_ref()
+    }
+
+    /// Forwards an input event to the open confirmation.
+    pub fn save_confirm_input(&mut self, event: InputEvent) -> ConfirmChoice {
+        self.save_confirm
+            .as_ref()
+            .map(|confirm| confirm.input(event))
+            .unwrap_or(ConfirmChoice::None)
+    }
+
+    /// Closes the confirmation without an action (cancel/escape).
+    pub fn close_save_confirm(&mut self) {
+        self.save_confirm = None;
+    }
+
+    /// Takes the action of the confirmation and closes it.
+    pub fn take_save_confirm_action(&mut self) -> Option<SaveConfirmAction> {
+        self.save_confirm
+            .take()
+            .map(|confirm| confirm.action().clone())
+    }
+
+    /// `Alt+S` — C++ `GameManager_SaveLoadGame(true)` (`game_manager.cpp:4032`).
+    ///
+    /// If the last slot holds a valid save, opens the `OKCancelMenu` with the
+    /// slot's existing name (`save_file_info.save_name`); otherwise falls back to
+    /// the full save window (`GameManager_MenuClickFileButton`). In a network game
+    /// the original broadcasts packet 16, which is not ported — same refusal as
+    /// [`Self::open_save_menu`].
+    pub fn quick_save(&mut self, channel: SessionChannel) -> bool {
+        if channel.is_lockstep() {
+            self.hud
+                .push_log("Save is not available in a network game (packet 16 is not ported)");
+            return false;
+        }
+        if !self.local_active() {
+            self.hud
+                .push_log("Save requires a local game (Single Player or Hot Seat)");
+            return false;
+        }
+        let category = self.save_category();
+        let slot = self.last_save_slot;
+        let file_name = SaveLoadMenu::file_name(category, slot);
+        let path = SaveLoadMenu::file_path(&self.save_root(category), category, slot);
+        let Some(save_name) = slot_save_name(&path) else {
+            // `SaveLoad_GetSaveFileInfo` failed: C++ opens the full window.
+            return self.open_save_menu(channel);
+        };
+        let caption = confirm_caption(CONFIRM_SAVE_CAPTION, &file_name, &save_name);
+        self.save_confirm = Some(SaveConfirm::new(
+            SaveConfirmAction::Save {
+                slot,
+                name: save_name,
+            },
+            &caption,
+        ));
+        true
+    }
+
+    /// `Alt+L` — C++ `GameManager_SaveLoadGame(false)` (`game_manager.cpp:4032`).
+    ///
+    /// The network refusal mirrors `saveloadmenu.cpp:461` («Save/Load is not
+    /// available in a network game»); the fallback to the full window matches C++.
+    pub fn quick_load(&mut self, channel: SessionChannel) -> bool {
+        if channel.is_lockstep() {
+            self.hud.push_log("Load is not available in a network game");
+            return false;
+        }
+        if !self.local_active() {
+            self.hud
+                .push_log("Load requires a local game (Single Player or Hot Seat)");
+            return false;
+        }
+        let category = self.save_category();
+        let slot = self.last_save_slot;
+        let file_name = SaveLoadMenu::file_name(category, slot);
+        let path = SaveLoadMenu::file_path(&self.save_root(category), category, slot);
+        let Some(save_name) = slot_save_name(&path) else {
+            return self.open_load_menu(channel);
+        };
+        self.save_confirm = Some(SaveConfirm::new(
+            SaveConfirmAction::Load { slot },
+            &confirm_caption(CONFIRM_LOAD_CAPTION, &file_name, &save_name),
+        ));
+        true
+    }
+}
+
+/// `SaveLoad_GetSaveFileInfo` (`saveload.cpp:141`): the slot file exists, parses,
+/// and its header `save_name` is reused by the quick save and shown by the caption.
+fn slot_save_name(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let save = SaveFile::parse(&bytes).ok()?;
+    Some(save.header.save_name())
+}
+
+/// C++ caption `_(e285)`/`_(470e)`: `"OK to save file?\n%s\n\"%s\""`.
+fn confirm_caption(prefix: &str, file_name: &str, save_name: &str) -> String {
+    format!("{prefix}\n{file_name}\n\"{save_name}\"")
 }
 
 // Loading a V70 save starts a **local** match (`start_local_game_from_save`), so the
@@ -1009,10 +1483,16 @@ impl crate::App {
     /// Loads a V70 save into the current session: a local match restarts from
     /// the saved turn (C++ `GameManager_LoadGame`), otherwise the state is simply
     /// replaced.
+    ///
+    /// C++ `GameManager_LoadGame` remembers the loaded slot as the quick save target
+    /// for every category except campaigns (`game_manager.cpp:3359-3361`).
     pub fn load_game_slot(&mut self, slot: i32) -> Result<PathBuf, String> {
         let category = self.save_category();
-        let path = SaveLoadMenu::file_path(&self.save_dir(), category, slot);
+        let path = SaveLoadMenu::file_path(&self.save_root(category), category, slot);
         self.load_v70_path(&path)?;
+        if category != MissionCategory::Campaign {
+            self.last_save_slot = slot;
+        }
         Ok(path)
     }
 

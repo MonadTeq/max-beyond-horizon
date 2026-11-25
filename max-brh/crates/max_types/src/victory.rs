@@ -30,6 +30,16 @@ pub enum MissionCategory {
 }
 
 impl MissionCategory {
+    /// Whether the category keeps its V70 saves in `FilePathGamePref`
+    /// (C++ `SaveLoad_GetFilePath`, `saveload.cpp:72-78`).
+    ///
+    /// `Custom`/`HotSeat`/`Multi`: the user preference directory. All mission
+    /// categories (campaign, training, demo, scenario, multiplayer scenario) keep
+    /// their saves in `FilePathGameData` — the game data directory.
+    pub const fn uses_pref_dir(self) -> bool {
+        matches!(self, Self::Custom | Self::HotSeat | Self::Multiplayer)
+    }
+
     /// Mapping of the save header `FileType` to the mission category
     /// (`saveload.cpp` passes the category to `SaveLoad_LoadFormatV70`).
     pub fn from_file_type(file_type: FileType) -> Self {

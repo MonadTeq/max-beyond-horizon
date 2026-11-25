@@ -1859,6 +1859,12 @@ where
         return session_pause_input(app, event);
     }
 
+    // Quick save/load `OKCancelMenu` (`okcancelmenu.cpp`, C++ `GameManager_SaveLoadGame`):
+    // modal over the game; `Enter` — confirm, `Esc` — cancel.
+    if app.save_confirm().is_some() {
+        return session_save_confirm_input(app, event);
+    }
+
     // M-HS: the turn-transition window is modal — like `DialogMenu::Run()` in C++, it
     // accepts only confirmation (a click on `OK`, Enter, Esc). The mouse moves
     // (button highlight), everything else is ignored, including chat and orders.
@@ -2105,6 +2111,16 @@ where
             app.open_load_menu(app.session_channel());
             Transition::None
         }
+        // `Alt+S`/`Alt+L` — quick save/load into the last slot: the `OKCancelMenu`
+        // confirmation of `GameManager_SaveLoadGame` (`game_manager.cpp:5546-5550`).
+        InputEvent::Key(Key::Alt('s' | 'S')) if !blocked => {
+            app.quick_save(app.session_channel());
+            Transition::None
+        }
+        InputEvent::Key(Key::Alt('l' | 'L')) if !blocked => {
+            app.quick_load(app.session_channel());
+            Transition::None
+        }
         InputEvent::Key(_) => Transition::None,
     }
 }
@@ -2306,6 +2322,9 @@ where
         crate::SaveLoadAction::Save { slot, name } => {
             match app.save_game_to_slot(slot, &name) {
                 Ok(path) => {
+                    // C++ `saveloadmenu.cpp:440`: a successful write becomes the
+                    // quick save/load target.
+                    app.set_last_save_slot(slot);
                     app.close_save_load();
                     app.hud_mut().push_log(format!("Saved {}", path.display()));
                 }
@@ -2326,6 +2345,57 @@ where
                 Err(error) => {
                     if let Some(menu) = app.save_load_mut() {
                         menu.status = format!("Load failed: {error}");
+                    }
+                }
+            }
+            Transition::None
+        }
+    }
+}
+
+/// Input in the quick save/load `OKCancelMenu` (`okcancelmenu.cpp`).
+///
+/// `OK` (`Enter`/the `OK` button) performs the action captured by
+/// [`crate::App::quick_save`]/[`crate::App::quick_load`]: write the last slot with
+/// the name already stored in it (`GameManager_SaveLoadGame(true)`) or load it
+/// (`...false`). `Cancel` (`Esc`/the `Cancel` button) closes the window and changes
+/// nothing. The written format is the same as the window's save
+/// (both go through [`crate::App::save_game_to_slot`]).
+fn session_save_confirm_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    match app.save_confirm_input(event) {
+        crate::saveload::ConfirmChoice::None => Transition::None,
+        crate::saveload::ConfirmChoice::Cancel => {
+            app.close_save_confirm();
+            app.hud_mut().push_log("Save/Load cancelled");
+            Transition::None
+        }
+        crate::saveload::ConfirmChoice::Ok => {
+            let Some(action) = app.take_save_confirm_action() else {
+                return Transition::None;
+            };
+            match action {
+                crate::saveload::SaveConfirmAction::Save { slot, name } => {
+                    match app.save_game_to_slot(slot, &name) {
+                        Ok(_) => {
+                            // C++ `MessageManager_DrawMessage(_(f640), …)`.
+                            app.hud_mut().push_log("Game saved.");
+                        }
+                        Err(error) => {
+                            app.hud_mut().push_log(format!("Save failed: {error}"));
+                        }
+                    }
+                }
+                crate::saveload::SaveConfirmAction::Load { slot } => {
+                    match app.load_game_slot(slot) {
+                        Ok(path) => {
+                            app.hud_mut().push_log(format!("Loaded {}", path.display()));
+                        }
+                        Err(error) => {
+                            app.hud_mut().push_log(format!("Load failed: {error}"));
+                        }
                     }
                 }
             }
