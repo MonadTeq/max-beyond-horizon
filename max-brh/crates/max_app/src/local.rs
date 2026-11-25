@@ -10,10 +10,19 @@
 //! 2. at the start of a team's turn `GameManager_ManageEconomy(team)` is called
 //!    ([`max_core::GameState::manage_economy`]) and `GameManager_ProgressBuildState`
 //!    (in max_core only the economy exists so far — production is P3/TODO);
-//! 3. a computer team: `Ai_BeginTurn(team)` and the turn "spins" with ticks until
-//!    `AiPlayer::CheckEndTurn` reaches `end_turn_retry_counter > 120` — in
-//!    C++ it is at this threshold that `GameManager_RefreshOrders` sets
-//!    `finished_turn` and `GAME_STATE_9_END_TURN`;
+//! 3. a computer team: `Ai_BeginTurn(team)` and the turn runs for the
+//!    `settings["endturn"]` window — **the main trigger is the timer**, 1:1 with
+//!    `GameManager_HandleTurnTimer` (`game_manager.cpp:893-916`): the value comes
+//!    from the same source as the oracle (`Settings::GetNumericValue("endturn")`
+//!    → `Preferences`, default 45 at `settings.cpp:118`), at least 15 s in real
+//!    time and at least 45 s in Turn Based (`GameManager_UpdateGui`,
+//!    `game_manager.cpp:2470-2474`). In a non-turn-based game the AI does not
+//!    close its own turn: `AiPlayer::CheckEndTurn` calls `GameManager_RefreshOrders`
+//!    only for `PLAY_MODE_TURN_BASED`/`GAME_STATE_9_END_TURN`/demo
+//!    (`aiplayer.cpp:2843-2848`), so the expiry of the timer ends the turn.
+//!    **Fallback:** when there is no setting (`End Turn: None`, `endturn <= 0`)
+//!    the oracle `end_turn_retry_counter > 120` trigger is used instead — it is
+//!    also the trigger in Turn Based, where the AI does close its own turn;
 //! 4. a human team: wait for input; **End Turn** sends packet `06` and
 //!    closes the turn;
 //! 5. after the last team of the round — `GameState::finish_turn()`
@@ -50,18 +59,37 @@ use max_core::universe::GameEvent;
 use max_core::victory::{MissionCategory, WinLossStatus};
 
 use crate::hotseat::TurnNotice;
+use crate::presentation::SIMULATION_HZ;
 use crate::{App, NewGameConfig};
 
 /// How many game teams are in a match (`PLAYER_TEAM_COUNT`).
 pub const LOCAL_TEAM_COUNT: usize = 4;
 
+/// Lower bound of the AI turn window in real time, seconds.
+///
+/// `GameManager_HandleTurnTimer` (`game_manager.cpp:897-905`): below 15 the
+/// value is raised to 15 while a computer team has not finished its turn.
+/// Reads as the "min 15 s" of `settings["endturn"]`; the default of the
+/// setting is 45 (`settings.cpp:118`).
+pub const ENDTURN_MIN_SECONDS: u32 = 15;
+
+/// Lower bound of the AI turn window in Turn Based, seconds.
+///
+/// `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER` (`game_manager.cpp:2470-2474`):
+/// `settings["endturn"]`, raised to 45. There the timer is shown in the panel
+/// (`00:45` in QA) and the AI closes the turn itself before it expires.
+pub const ENDTURN_TURN_BASED_MIN_SECONDS: u32 = 45;
+
 /// Tick limit of one AI turn — a guard against a "hung" AI.
 ///
-/// C++ ends the turn on `end_turn_retry_counter > 120` **only when the AI has no
-/// unfinished work** (`tasks_pending`/`has_pending_work`), so in a
-/// match with live tasks the turn may last long. The limit is like
-/// `while (Access_AreTaskEventsPending())` + the emergency `force ENDTURN` from
-/// `Ai_CheckEndTurn` (concurrent branch): after it the turn is closed forcibly.
+/// The **main** end-of-turn trigger is the `settings["endturn"]` timer
+/// ([`ENDTURN_MIN_SECONDS`]); `end_turn_retry_counter > 120`
+/// (`AiPlayer::CheckEndTurn`) is the oracle trigger in Turn Based and the
+/// **fallback** when the setting is absent (`End Turn: None`, `endturn <= 0`).
+/// A match with live tasks can keep the counter from ever reaching 120
+/// (`tasks_pending`), so the emergency `force ENDTURN` from the concurrent
+/// `Ai_CheckEndTurn` branch stays as the last-resort guard: after this many
+/// ticks the turn is closed forcibly.
 pub const LOCAL_AI_TICK_LIMIT: u32 = 12_000;
 
 /// Starting positions of the teams: the four quarters of the 112×112 map.
@@ -435,6 +463,14 @@ pub struct LocalGame {
     pub paused: bool,
     /// Ticks in the current AI turn.
     pub ai_ticks: u32,
+    /// Length of the current AI turn window, simulation ticks; `0` — no window.
+    ///
+    /// `settings["endturn"]` read at the AI turn start (the oracle reads it in
+    /// `GameManager_HandleTurnTimer`/`GameManager_UpdateGui`, i.e. at the turn
+    /// change) and converted at the fixed 60 Hz step. The window is the **main**
+    /// end-of-turn trigger in real time; `0` means the setting is absent and the
+    /// `end_turn_retry_counter` fallback closes the turn.
+    pub ai_window_ticks: u32,
     /// Match result.
     pub outcome: Option<LocalOutcome>,
     /// M-HS: human teams in slot order (`GameManager_UpdateHumanPlayerCount`).
@@ -464,6 +500,7 @@ impl LocalGame {
             active_team: human,
             paused: false,
             ai_ticks: 0,
+            ai_window_ticks: 0,
             outcome: None,
             human_teams,
             notice: None,
@@ -1124,6 +1161,7 @@ impl App {
             local.active_team = team;
             local.timer_left = timer_left;
             local.ai_ticks = 0;
+            local.ai_window_ticks = 0;
             local.notice = notice;
             self.local = Some(local);
         }
@@ -1160,20 +1198,65 @@ impl App {
         self.report_turn_start_events(team, announce);
     }
 
+    /// The AI turn window in seconds — `settings["endturn"]`, read live from the
+    /// same source as the oracle.
+    ///
+    /// The oracle reads `ResourceManager_GetSettings()->GetNumericValue("endturn")`
+    /// (`game_manager.cpp:894`, `:2470`); that object is the settings file the
+    /// `Preferences`/`Options` dialogs edit, so here it is [`Preferences`]
+    /// (default 45, `settings.cpp:118`). Two oracle floors apply:
+    ///
+    /// * real time (`Simultaneous Moves`/`Unknown`) — `GameManager_HandleTurnTimer`
+    ///   (`game_manager.cpp:897-905`): at least 15 s while a computer team has not
+    ///   finished its turn;
+    /// * `Turn Based` — `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER`
+    ///   (`game_manager.cpp:2470-2474`): at least 45 s.
+    ///
+    /// `None` — the setting is absent (`End Turn: None`, `endturn <= 0`): the
+    /// caller must not invent a timer and keeps the oracle
+    /// `end_turn_retry_counter` trigger instead (the documented fallback).
+    ///
+    /// [`Preferences`]: crate::preferences::Preferences
+    fn local_endturn_seconds(&self) -> Option<u32> {
+        let setting = self.preferences.endturn;
+
+        if setting <= 0 {
+            return None;
+        }
+
+        let floor = if self.state_ref().play_mode() == PlayMode::TurnBased {
+            ENDTURN_TURN_BASED_MIN_SECONDS
+        } else {
+            ENDTURN_MIN_SECONDS
+        };
+
+        Some((setting as u32).max(floor))
+    }
+
     /// Computer team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_COMPUTER`):
     /// the core already ran `Ai_BeginTurn(team)`, the application starts the AI
     /// timer and the [`LocalPhase::AiTurn`].
     fn local_start_ai_turn(&mut self, team: TeamId) {
+        // `settings["endturn"]` from the live Preferences (not the frozen
+        // `LocalSetup` copy): `GameManager_UpdateGui`/`GameManager_HandleTurnTimer`
+        // read the settings object on every turn change.
+        let endturn = self.local_endturn_seconds();
         let mut local = self.local.take().expect("local game");
         local.phase = LocalPhase::AiTurn(team);
         local.active_team = team;
         local.ai_ticks = 0;
         // `GameManager_UpdateGui` for `TEAM_TYPE_COMPUTER`:
-        // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` —
-        // the AI turn timer starts from this value (the panel shows it
-        // with the same `GameManager_DrawTurnTimer`), so it is visible also during the
-        // computer turn (in QA — 00:45).
-        local.timer_left = local.setup.endturn.max(45) as f32;
+        // `ini_timer_setting = settings["endturn"]; if (< 45) = 45;` — the AI turn
+        // timer starts from this value (the panel shows it with the same
+        // `GameManager_DrawTurnTimer`), so it is visible also during the
+        // computer turn (in QA — 00:45). In real time the window is the
+        // `GameManager_HandleTurnTimer` value (min 15 s) and it is the one that
+        // closes the turn; `None` (no setting) leaves the window at 0 and the
+        // counter fallback closes the turn.
+        local.ai_window_ticks = endturn
+            .map(|seconds| seconds.saturating_mul(SIMULATION_HZ))
+            .unwrap_or(0);
+        local.timer_left = endturn.unwrap_or(0) as f32;
         self.local = Some(local);
         self.hud.push_log(format!(
             "Turn {}: {} (computer)",
@@ -1427,10 +1510,38 @@ impl App {
                     local.ai_ticks + 1 >= LOCAL_AI_TICK_LIMIT
                 };
 
-                // `AiPlayer::CheckEndTurn` ticks itself (`GameState::tick` →
-                // `ai_check_end_turn`); here we read its retry counter:
-                // C++ `GameManager_RefreshOrders` closes the turn at `> 120`.
-                let finished = self
+                // The end-of-turn rule, 1:1 with the oracle:
+                //
+                // * Turn Based — the AI closes its own turn:
+                //   `AiPlayer::CheckEndTurn` ticks `end_turn_retry_counter`
+                //   (`GameState::tick` → `ai_check_end_turn`) and at `> 120`
+                //   `GameManager_RefreshOrders` sets `finished_turn`
+                //   (`aiplayer.cpp:2838-2848`). The timer (`max(endturn, 45)`) is
+                //   displayed but never expires first: 121 ticks ≈ 2 s at the
+                //   60 Hz step, far below 45 s.
+                // * real time (`Simultaneous Moves`/`Unknown`) — the same
+                //   `CheckEndTurn` does **not** close the turn: `RefreshOrders`
+                //   runs only for `PLAY_MODE_TURN_BASED`, `GAME_STATE_9_END_TURN`
+                //   or the demo (`aiplayer.cpp:2843-2848`), so the AI acts until
+                //   the `settings["endturn"]` timer expires
+                //   (`GameManager_HandleTurnTimer`, `game_manager.cpp:893-916`;
+                //   min 15 s, default 45 s).
+                // * no setting (`End Turn: None`, `endturn <= 0`) — the counter
+                //   stays the **fallback** trigger in both modes.
+                let play_mode = self.state_ref().play_mode();
+                // The window was frozen at the turn start (`ai_window_ticks`), the
+                // moment the oracle reads `settings["endturn"]`; `0` — no setting.
+                let (ticks_done, window_ticks) = {
+                    let local = self.local.as_ref().expect("local game");
+                    (local.ai_ticks, local.ai_window_ticks)
+                };
+                let timer_armed = window_ticks > 0;
+                // One `local_update` call is one simulation step (`dt = 1/60` in
+                // the window, one step per QA frame): the window is measured in
+                // ticks so that both clocks agree — `seconds × 60` ticks.
+                let timer_expired = timer_armed && ticks_done + 1 >= window_ticks;
+
+                let counter_finished = self
                     .state_ref()
                     .ai()
                     .players
@@ -1439,14 +1550,34 @@ impl App {
                     .unwrap_or(true)
                     || self.state_ref().teams()[team.0 as usize].finished_turn;
 
+                let finished = if play_mode == PlayMode::TurnBased || !timer_armed {
+                    // Turn Based: the oracle trigger; no setting: the fallback.
+                    counter_finished
+                } else {
+                    // Real time with the setting: the timer is the only trigger.
+                    timer_expired
+                };
+
                 if let Some(local) = self.local.as_mut() {
                     local.ai_ticks += 1;
-                    // `GameManager_SyncTurnTimer` ticks during the AI turn too —
-                    // `GameManager_TurnTimerValue` decreases by seconds
-                    // (`game_manager.cpp:5033-5063`). Timer expiry does not close the AI turn:
-                    // it is closed by `AiPlayer::CheckEndTurn`
-                    // (`GameManager_RefreshOrders`).
-                    local.timer_left = (local.timer_left - dt.max(0.0)).max(0.0);
+                    // `GameManager_SyncTurnTimer` (`game_manager.cpp:5033-5063`):
+                    // `GameManager_TurnTimerValue` decreases by whole seconds. The
+                    // panel value is derived from the frozen tick budget, so the
+                    // QA driver (one tick per frame, `dt = 0`) and the fixed-step
+                    // window show the same clock.
+                    local.timer_left = if timer_armed {
+                        window_ticks.saturating_sub(local.ai_ticks) as f32 / SIMULATION_HZ as f32
+                    } else {
+                        0.0
+                    };
+                }
+
+                if finished && timer_armed && play_mode != PlayMode::TurnBased {
+                    tracing::debug!(
+                        "AI turn closed by the endturn timer: team={team:?} ticks={} window={}",
+                        ticks_done + 1,
+                        window_ticks,
+                    );
                 }
 
                 if timed_out {

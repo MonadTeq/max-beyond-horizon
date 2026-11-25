@@ -1,6 +1,6 @@
 # ai-turn.qa — конец хода человека, ход компьютера и возврат управления (A3).
 #
-# Путь игрока: главное меню → Options (No Limit + Turn Based) → Planet →
+# Путь игрока: главное меню → Options (No Limit + Simultaneous Moves) → Planet →
 # Players (RED — человек, GREEN — компьютер) → мобилизация без покупок →
 # высадка → **клик по End Turn** → кадры хода компьютера → возврат хода.
 #
@@ -16,20 +16,34 @@
 #   `R_ENDT_D + team` (`R_ENDT_D/G_ENDT_D/B_ENDT_D/W_ENDT_D`) с подписью
 #   «End Turn» цветом активной команды (`FontColor(team + 1, team + 1, 0x3F)`,
 #   `game_manager.cpp:7860-7883`);
-# * таймер хода на ходе компьютера стартует с `settings["endturn"]`, но не
-#   меньше 45 с (`game_manager.cpp:2471-2475`) — в кадре «00:45», на ходе
-#   человека при No Limit — «00:00» цветом `COLOR_RED` (`turn_time <= 20`);
-# * после ходов оппонента кнопка снова отжата, ход возвращается человеку.
+# * таймер хода компьютера стартует с `settings["endturn"]` (по умолчанию 45 с,
+#   `settings.cpp:118`; в кадре «00:45»), на ходе человека при No Limit — «00:00»
+#   цветом `COLOR_RED` (`turn_time <= 20`);
+# * **ход компьютера закрывает таймер `endturn`, а не счётчик**
+#   (`AiPlayer::CheckEndTurn` в не-turn-based режиме не зовёт `RefreshOrders`,
+#   `aiplayer.cpp:2843-2848`; таймер — `GameManager_HandleTurnTimer`,
+#   `game_manager.cpp:893-916`, мин 15 с, дефолт 45 с): после 200 кадров
+#   (~3.3 с) ход ИИ ещё идёт, а счётчик `end_turn_retry_counter > 120` его бы уже
+#   закрыл;
+# * после 45 с (2700 кадров) кнопка снова отжата, ход возвращается человеку.
+#
+# Решение владельца 2026-11-25: ход ИИ в реальном времени закрывается по таймеру
+# `endturn` (1:1 оракул), а не по `end_turn_retry_counter > 120`; счётчик остаётся
+# fallback при отсутствии настройки (`End Turn: None`). Поэтому golden-кадры
+# `ai-turn` пересняты: ход ИИ длится 45 с (2700 кадров) и успевает изменить карту,
+# а не 2 с (121 кадр), как раньше.
 
 # --- Главное меню ---------------------------------------------------------
 assert screen=MainMenu
 menu new_game
 
 # --- Options --------------------------------------------------------------
-# No Limit (таймер хода человека выключен) + Turn Based.
+# No Limit (таймер хода человека выключен) + Simultaneous Moves (реальный
+# режим: ход ИИ закрывается таймером `endturn`).
 assert screen=Options
 click 240 110
-click 500 100
+# Play Mode: строка «Simultaneous Moves» (480,115)-(580,145), центр (530,130).
+click 530 130
 setup done
 assert screen=Planet
 
@@ -68,17 +82,31 @@ assert team=GREEN
 assert endturn=pressed
 shot ai-turn-ai-pressed
 
-# Ход компьютера идёт несколько сотен кадров (`AiPlayer::CheckEndTurn`);
-# `wait` крутит кадры до возврата управления человеку.
-wait 2000
+# Таймер, а не счётчик: к 200-му кадру `end_turn_retry_counter` уже перешёл бы
+# порог 120, но в реальном времени ход ИИ продолжается до конца окна `endturn`.
+tick 200
+assert phase=ai
+assert team=GREEN
+assert endturn=pressed
+
+# 900 тиков = 15 с из 45 с: панель показывает остаток «00:30» (кадр
+# `ai-turn-ai-timer`), ход ИИ всё ещё идёт — окно задаёт таймер `endturn`.
+tick 700
+assert phase=ai
+shot ai-turn-ai-timer
+
+# `wait` крутит кадры до возврата управления человеку: окно 45 с = 2700 тиков.
+wait 4000
+assert phase=player
 assert endturn=normal
 assert team=RED
+assert turn>=2
+
 # `GameManager_UpdateGui` → `GameManager_ProgressBuildState` →
 # `GameManager_ReportNewUnitsMessage` (`game_manager.cpp:8103`): начало хода
 # человека открывает окно «Begin turn N.» над картой (в этот ход построек нет).
 assert hint=Begin turn
 shot ai-turn-human-again
 
-# Партия продолжается, ход счётчик вырос.
-assert turn>=2
+# Партия продолжается, счётчик ходов вырос.
 assert screen=InGame

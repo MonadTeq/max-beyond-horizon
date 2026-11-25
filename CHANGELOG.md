@@ -239,6 +239,33 @@
 
 ### Исправлено
 
+- **Ход ИИ в реальном времени закрывается по таймеру `endturn`, а не по счётчику
+  (1:1 оракул).** Оракул: `GameManager_HandleTurnTimer` (`game_manager.cpp:893-916` —
+  `settings["endturn"]`, не меньше 15 с для незакрытого хода компьютера),
+  `AiPlayer::CheckEndTurn` (`aiplayer.cpp:2828-2848` — `RefreshOrders` при
+  `end_turn_retry_counter > 120` только в `PLAY_MODE_TURN_BASED`/
+  `GAME_STATE_9_END_TURN`/демо, в реальном времени ИИ ход сам не закрывает),
+  `GameManager_UpdateGui` (`:2470-2474` — на ходе компьютера в Turn Based
+  `max(endturn, 45)`), `settings.cpp:118` (`endturn=45` по умолчанию). Порт
+  закрывал ход ИИ счётчиком во всех режимах (~121 тик ≈ 2 с вместо 45 с),
+  поэтому ИИ не успевал отработать свой интервал и тратил меньше
+  выстрелов/перезарядок, чем оракул. Исправление: `local::App::local_endturn_seconds`
+  читает `settings["endturn"]` из того же источника, что оракул (`Preferences`,
+  дефолт 45; мин 15 в реальном времени, 45 в Turn Based), окно фиксируется на
+  старте хода ИИ (`LocalGame::ai_window_ticks` = `endturn × 60` тиков при
+  фиксированном шаге 60 Гц) и ход закрывает **таймер**; `end_turn_retry_counter
+  > 120` остаётся fallback при отсутствии настройки (`End Turn: None`) и
+  основным триггером Turn Based, как в оракуле. Гейт shots/ammo:
+  `max_app/tests/ai_turn_timer.rs` (6) — окна 15/45 с = 900/2700 тиков, за
+  одинаковый интервал одинаковые выстрелы/аммо (2 выстрела, 2 патрона,
+  0 перезарядок — бюджет `TANK` `rounds=2`), ИИ действует и после 121-го тика.
+  QA `ai-turn.qa` переведён в Simultaneous Moves, добавлен кадр
+  `ai-turn-ai-timer` (00:30, 15 с из 45 с); golden `ai-turn` переснят
+  (4 эталона) — кадры обновлены, т.к. ИИ закрывает ход по таймеру endturn
+  (1:1 оракул), а не по счётчику; решение владельца 2026-11-25. `combat-tb.qa`
+  (Turn Based) — без изменений, 0 дрейфа. Подробности —
+  `max-brh-docs/analysis/visual-1to1-status.md` §48.
+
 - **Выключенный/паузный завод больше не списывает RAW и не продвигает стройку
   (экономика).** Оракул: `cargo.cpp:88-95` (`Cargo_GetNetProduction`: списание только
   при `ORDER_BUILD` и `ORDER_STATE != UNIT_READY`), `unitinfo.cpp:2905`
