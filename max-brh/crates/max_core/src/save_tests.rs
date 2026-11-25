@@ -5,77 +5,13 @@ use crate::unit_values::{base_unit_values, ATTRIB_ATTACK};
 /// A real V70 save from `max-original/SAVE1.CAM` (a copy is in `tests/data/`).
 const SAVE_FIXTURE: &[u8] = include_bytes!("../tests/data/save1_v70.cam");
 
+/// The parser resolves the object indices of the real V70 save: the first unit
+/// of the ground-cover list is a GREEN `WTRPLTFM` awaiting an order and carries
+/// a base-values object. The fixture contract itself (header values, all
+/// sections, round-trip) is pinned in `tests/v70_save.rs`.
 #[test]
-fn parses_real_v70_save_completely() {
+fn parses_real_v70_save_unit_objects() {
     let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
-    // Header values of the real file (max-original/SAVE1.CAM):
-    //   version = 70, category = 2 (Campaign), world = 16, mission = 1,
-    //   name = "Islands in the Sun", seed = 0x32A61291, opponent = 3,
-    //   play_mode = 1 (simultaneous), teams: human (clan 3) + computer (clan 7).
-    assert_eq!(save.header.version, 70);
-    assert_eq!(save.header.save_game_type, FileType::Campaign);
-    assert_eq!(save.header.save_name(), "Islands in the Sun");
-    assert_eq!(save.header.world, Planet::Islandia);
-    assert_eq!(save.header.mission_index, 1);
-    assert_eq!(save.header.rng_seed, 0x32A6_1291);
-    assert_eq!(save.header.opponent, Opponent::Expert);
-    assert_eq!(save.header.play_mode, PlayMode::SimultaneousMoves);
-    assert_eq!(save.header.team_name(0), "Player 1");
-    assert_eq!(save.header.team_name(1), "Green Team");
-    assert_eq!(save.header.team_type[0], TeamKind::Player);
-    assert_eq!(save.header.team_type[1], TeamKind::Computer);
-    assert_eq!(save.header.team_clan[0], TeamClan::VonGriffin);
-    assert_eq!(save.header.team_clan[1], TeamClan::SevenKnights);
-    assert_eq!(save.header.team_clan[3], TeamClan::AxisInc);
-
-    // IniOptions / IniPreferences of the real file.
-    assert_eq!(save.ini_options.world, 16);
-    assert_eq!(save.ini_options.start_gold, 200);
-    assert_eq!(save.ini_options.victory_limit, 30);
-    assert_eq!(save.ini_options.raw_resource, 1);
-    assert_eq!(save.ini_preferences.effects, 1);
-    assert_eq!(save.ini_preferences.quick_scroll, 40);
-
-    // Teams: 87 and 288 created objects, the red team has 2 complexes.
-    assert_eq!(save.teams[0].number_of_objects_created, 87);
-    assert_eq!(save.teams[1].number_of_objects_created, 288);
-    assert_eq!(save.teams[0].team_points, 0);
-    assert_eq!(save.teams[1].team_points, 4);
-    assert_eq!(save.teams[0].team_clan, TeamClan::VonGriffin);
-    assert_eq!(save.teams[0].unit_counters[0], 2);
-    assert_eq!(save.team_units[0].gold, 52);
-    assert_eq!(save.team_units[0].complexes.len(), 2);
-    assert_eq!(save.team_units[1].complexes.len(), 3);
-
-    // Game state.
-    assert_eq!(save.game.active_turn_team, TeamId::RED);
-    assert_eq!(save.game.player_team, TeamId::RED);
-    assert_eq!(save.game.turn_counter, 1);
-    assert_eq!(save.game.game_state, GameStateType::InGame);
-
-    // All five unit lists are read to the end: 312 units.
-    let total: usize = save.unit_lists.iter().map(Vec::len).sum();
-    assert_eq!(total, 312);
-    assert_eq!(save.unit_lists[0].len(), 102);
-    assert_eq!(save.unit_lists[1].len(), 60);
-    assert_eq!(save.unit_lists[2].len(), 132);
-    assert_eq!(save.unit_lists[3].len(), 18);
-    assert_eq!(save.unit_lists[4].len(), 0);
-    assert_eq!(save.units.len(), 312);
-    assert_eq!(save.unit_hash.size(), 512);
-    assert_eq!(save.map_hash.size(), 512);
-    assert_eq!(save.map_hash.x_shift(), 2);
-    // Heat maps exist only for two playing teams.
-    assert!(save.heat_maps[0].is_some());
-    assert!(save.heat_maps[1].is_some());
-    assert!(save.heat_maps[2].is_none());
-    assert!(save.heat_maps[3].is_none());
-    // The logs are empty, the computer team has AI state.
-    assert!(save.message_logs.iter().all(|logs| logs.is_empty()));
-    let ai = save.ai_players[1].as_deref().expect("AI state of team 1");
-    assert_eq!(ai.player_team, 1);
-    assert_eq!(ai.target_location, Point::new(1, 1));
-    assert!(save.ai_players[0].is_none());
 
     // The first unit of the ground cover list: type WTRPLTFM (33), team GREEN,
     // order state `AWAIT/EXECUTING_ORDER`.
@@ -87,25 +23,6 @@ fn parses_real_v70_save_completely() {
     // The unit has a base_values object (a reference into the shared object table).
     assert_ne!(first.base_values_object_index, 0);
     assert_ne!(first.info.hits, 0);
-}
-
-#[test]
-fn round_trip_is_byte_identical() {
-    let save = SaveFile::parse(SAVE_FIXTURE).expect("V70 save parses");
-    let bytes = save.to_bytes().expect("V70 save serializes");
-    assert_eq!(bytes.len(), SAVE_FIXTURE.len());
-    if bytes != SAVE_FIXTURE {
-        let position = bytes
-            .iter()
-            .zip(SAVE_FIXTURE.iter())
-            .position(|(left, right)| left != right)
-            .unwrap_or(bytes.len());
-        panic!(
-                "byte mismatch at offset {position}: got {:02x?}, expected {:02x?}",
-            &bytes[position.saturating_sub(8)..(position + 8).min(bytes.len())],
-            &SAVE_FIXTURE[position.saturating_sub(8)..(position + 8).min(SAVE_FIXTURE.len())]
-        );
-    }
 }
 
 #[test]

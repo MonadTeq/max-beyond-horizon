@@ -111,43 +111,6 @@ fn char(screen: &mut Screen, ctx: &mut UiContext, c: char) -> Transition {
 }
 
 #[test]
-fn main_menu_opens_the_local_setup_and_escape_goes_back() {
-    let (mut ctx, _log) = context(Vec::new(), None);
-    let mut screen = Screen::MainMenu;
-
-    // M-SP: «New Game» opens the `New Game` submenu (`menu.cpp:2171`).
-    assert_eq!(key(&mut screen, &mut ctx, Key::Enter), Transition::None);
-    assert_eq!(screen, Screen::NewGameMenu { tips: None });
-
-    // `Custom Game` (`_(3d29)`) opens the local match setup (Options).
-    let custom = newgame::new_game_rect(NewGameAction::Custom).expect("Custom Game");
-    screen.handle_input(
-        &mut ctx,
-        InputEvent::MouseClick(
-            custom.ulx + custom.width / 2,
-            custom.uly + custom.height / 2,
-        ),
-    );
-    assert!(matches!(screen, Screen::LocalSetup(_)));
-    if let Screen::LocalSetup(form) = &screen {
-        assert_eq!(form.screen, crate::setup::SetupScreen::Options);
-    }
-
-    // Enter leads to the next screen (Planet).
-    key(&mut screen, &mut ctx, Key::Enter);
-    if let Screen::LocalSetup(form) = &screen {
-        assert_eq!(form.screen, crate::setup::SetupScreen::Planet);
-    }
-
-    // Escape returns to the `New Game` submenu (`menu_custom_game_menu` cancel
-    // continues the `menu_new_game_menu_loop`), the second Escape to the main menu.
-    key(&mut screen, &mut ctx, Key::Escape);
-    assert_eq!(screen, Screen::NewGameMenu { tips: None });
-    key(&mut screen, &mut ctx, Key::Escape);
-    assert_eq!(screen, Screen::MainMenu);
-}
-
-#[test]
 fn multiplayer_menu_opens_the_hot_seat_setup() {
     let (mut ctx, _log) = context(Vec::new(), None);
     let mut screen = Screen::MainMenu;

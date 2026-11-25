@@ -52,11 +52,6 @@ fn state_ref_is_the_canonical_state_of_the_app() {
         app.snapshot(),
         "the facade snapshot must carry the canonical state bytes"
     );
-    assert_eq!(app.state_ref().turn_counter(), app.state_ref().turn_counter());
-    assert_eq!(
-        app.state_ref().active_turn_team(),
-        app.state_ref().active_turn_team()
-    );
 
     // `Q22`: the presentation fields are part of the facade snapshot.
     let id = app
@@ -71,15 +66,6 @@ fn state_ref_is_the_canonical_state_of_the_app() {
     assert!(
         app.state_ref().presentation(id).is_some(),
         "UnitPresentation must be readable through StateRef"
-    );
-    assert_eq!(
-        app.state_ref()
-            .presentation(id)
-            .map(|presentation| presentation.clone()),
-        app.state_ref()
-            .presentation(id)
-            .map(|presentation| presentation.clone()),
-        "StateRef::presentation is the same field as GameState::presentation"
     );
 }
 

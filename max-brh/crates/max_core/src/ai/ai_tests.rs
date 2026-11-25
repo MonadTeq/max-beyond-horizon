@@ -54,11 +54,3 @@ fn mine_map_entry_roundtrip() {
     world.ai.players[0].mine_map[10 * 112 + 10] = 7;
     assert_eq!(world.ai.players[0].get_mine_map_entry(site), 7);
 }
-
-#[test]
-fn select_starting_position_is_within_map() {
-    let mut world = GameState::new();
-    ai_select_starting_position(&mut world, TeamId::RED);
-    // Without `TeamMissionSupplies` the position is not saved, but RNG is consumed.
-    let _ = world.rng.state();
-}

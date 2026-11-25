@@ -393,6 +393,12 @@ fn map_view_fills_the_whole_screen_with_visible_tiles() {
     assert_eq!(painted, range.count() as u32);
     // Cell (52,53) is drawn at (0,0): there is land there (resources only in (1..=3,1)).
     assert_eq!(screen.get(0, 0), Some(style.land));
+    // The right half of that cell is the odd pattern cell, so it is darkened.
+    assert_eq!(
+        screen.get(63, 0),
+        Some(style.land.darken(style.pattern_level)),
+        "the odd pattern cell of the first tile must be darkened"
+    );
     // The screen corners are also covered by the map — the "unknown" background is not visible.
     for corner in [(0, 0), (511, 0), (0, 383), (511, 383)] {
         assert_ne!(

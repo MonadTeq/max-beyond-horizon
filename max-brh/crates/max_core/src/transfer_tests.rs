@@ -128,42 +128,6 @@ fn transfer_cargo_kind_distributes_overflow_across_members() {
 }
 
 #[test]
-fn complex_transfer_negative_drains_members_in_order() {
-    let mut state = test_state();
-    let complex = new_complex(&mut state);
-    let first = spawn_member(
-        &mut state,
-        UnitType::MaterialStorage,
-        Point::new(20, 20),
-        Some(complex),
-    );
-    let second = spawn_member(
-        &mut state,
-        UnitType::MaterialStorage,
-        Point::new(22, 24),
-        Some(complex),
-    );
-
-    state.unit_mut(first).expect("first").storage = 10;
-    state.unit_mut(second).expect("second").storage = 10;
-    if let Some(target) = state.complex_mut(TeamId::RED, complex.0 as u16) {
-        target.raw = 20;
-    }
-
-    complex_transfer(&mut state, TeamId::RED, complex, -15, 0, 0);
-
-    assert_eq!(state.unit(first).expect("first").storage, 0);
-    assert_eq!(state.unit(second).expect("second").storage, 5);
-    assert_eq!(
-        state
-            .complex(TeamId::RED, complex.0 as u16)
-            .expect("complex")
-            .raw,
-        5
-    );
-}
-
-#[test]
 fn process_transfer_unit_to_complex_and_back() {
     let mut state = test_state();
     let complex = new_complex(&mut state);

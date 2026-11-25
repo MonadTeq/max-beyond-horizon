@@ -279,24 +279,3 @@ fn out_of_map_tiles_are_not_drawn() {
         0
     );
 }
-
-#[test]
-fn render_map_into_paints_exactly_the_visible_tiles() {
-    let style = style();
-    let map = uniform_map(Surface::WATER);
-    let viewport = Viewport::new(512, 384);
-    let mut buffer = RgbaBuffer::filled(512, 384, style.unknown);
-    let range = viewport.visible_tiles().unwrap();
-
-    let painted = render_map_into(&mut buffer, &map, &viewport, &style);
-
-    assert_eq!(painted, range.count() as u32);
-    // Cell (52,53) starts at (0,0) of the screen.
-    assert_eq!(buffer.get(0, 0), Some(style.water));
-    assert_eq!(
-        buffer.get(63, 0),
-        Some(style.water.darken(style.pattern_level))
-    );
-    // The bottom-right corner of the screen is also covered by the map.
-    assert_ne!(buffer.get(511, 383), Some(style.unknown));
-}

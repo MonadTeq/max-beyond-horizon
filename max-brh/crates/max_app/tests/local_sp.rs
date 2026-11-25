@@ -365,6 +365,17 @@ fn screen_routes_setup_to_start_local_and_back() {
         InputEvent::MouseClick(custom.ulx + 2, custom.uly + 2),
     );
     assert!(matches!(screen, Screen::LocalSetup(_)));
+    match &screen {
+        Screen::LocalSetup(form) => assert_eq!(form.screen, SetupScreen::Options),
+        other => panic!("ожидалась настройка локальной партии, получено {other:?}"),
+    }
+
+    // Enter leads from Options to the next setup screen (Planet).
+    screen.handle_input(&mut ctx, InputEvent::Key(Key::Enter));
+    match &screen {
+        Screen::LocalSetup(form) => assert_eq!(form.screen, SetupScreen::Planet),
+        other => panic!("ожидалась настройка локальной партии, получено {other:?}"),
+    }
 
     // Esc from the first screen — back to the submenu, the second Esc — to the menu.
     assert_eq!(

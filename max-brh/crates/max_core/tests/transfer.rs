@@ -648,6 +648,15 @@ fn complex_transfer_negative_uses_buildings_in_stationary_order() {
 
     assert_eq!(storage(&state, first), 0, "первое в списке отдаёт первым");
     assert_eq!(storage(&state, second), 5);
+    assert_eq!(
+        state
+            .snapshot()
+            .complex(TeamId::RED, complex.0 as u16)
+            .expect("complex")
+            .raw,
+        5,
+        "the complex cache drops by the transferred amount"
+    );
 }
 
 #[test]

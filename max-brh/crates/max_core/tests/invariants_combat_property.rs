@@ -247,6 +247,15 @@ fn c3_corvette_sea_stealth_reveals_the_submarine() {
             .is_visible_to_team(TeamId::RED),
         "C3: sea-stealth coverage must reveal the submarine"
     );
+    assert_eq!(
+        state
+            .snapshot()
+            .unit(submarine)
+            .expect("submarine")
+            .image_base,
+        8,
+        "C3: a spotted submarine is surfaced (`image_base = 8`, unitinfo.cpp:2825)"
+    );
 }
 
 /// Invariant C6: `damage = max(1, attack - armor)` (with the oracle's area and

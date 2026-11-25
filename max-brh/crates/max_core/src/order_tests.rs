@@ -37,7 +37,8 @@ fn sample_orders() -> Vec<Order> {
     ]
 }
 
-/// `Order` is a value type: cloning keeps the unit, the route and the target.
+/// `Order` keeps the proposed unit, route and target; an empty route is a
+/// distinct proposal.
 #[test]
 fn order_values_preserve_unit_and_boundaries() {
     let unit = UnitId::new(TeamId::BLUE, 0x1FFF);
@@ -47,7 +48,6 @@ fn order_values_preserve_unit_and_boundaries() {
         path: route.clone(),
     };
 
-    assert_eq!(order, order.clone());
     match &order {
         Order::Move {
             unit: moved_unit,
@@ -67,36 +67,13 @@ fn order_values_preserve_unit_and_boundaries() {
             path: Vec::new()
         }
     );
-
-    // Raw byte arguments are kept as proposed (0 and MAX are both legal on the wire).
-    assert_eq!(
-        Order::Build {
-            unit,
-            building: 0,
-            x: 0,
-            y: 0
-        },
-        Order::Build {
-            unit,
-            building: 0,
-            x: 0,
-            y: 0
-        }
-    );
-    assert_eq!(Order::Mode { unit, mode: 0 }, Order::Mode { unit, mode: 0 });
-    assert_eq!(Order::EndTurn, Order::EndTurn);
 }
 
 /// `Target::Unit` and `Target::Cell` are distinct even for the same numbers;
-/// `NO_ID` is representable and stays `NO_ID`.
+/// the `NO_ID` unit is representable in an order and in its target.
 #[test]
 fn attack_targets_distinguish_unit_from_cell() {
     assert_ne!(Target::Unit(UnitId(0)), Target::Cell(0, 0));
-    assert_eq!(Target::Unit(UnitId::NO_ID), Target::Unit(UnitId::NO_ID));
-    assert_eq!(
-        Target::Cell(i16::MIN, i16::MAX),
-        Target::Cell(i16::MIN, i16::MAX)
-    );
 
     let order = Order::Attack {
         unit: UnitId::NO_ID,

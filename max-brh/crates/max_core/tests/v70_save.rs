@@ -106,6 +106,9 @@ fn save1_all_sections_are_present() {
     // TeamInfo: 87 and 288 created objects, 52 gold for red, 2 complexes.
     assert_eq!(save.teams[0].number_of_objects_created, 87);
     assert_eq!(save.teams[1].number_of_objects_created, 288);
+    assert_eq!(save.teams[0].team_points, 0);
+    assert_eq!(save.teams[1].team_points, 4);
+    assert_eq!(save.teams[0].team_clan, TeamClan::VonGriffin);
     assert_eq!(save.team_units[0].gold, 52);
     assert_eq!(save.team_units[0].complexes.len(), 2);
     assert_eq!(save.team_units[1].complexes.len(), 3);

@@ -173,19 +173,17 @@ fn missing_sound_is_reported_but_does_not_panic() {
     assert_eq!(player.backend_name(), "noop");
 }
 
+/// Without the `sound` feature the default backend is the silent no-op one.
+/// The property does not hold under `--features sound` (a real device or the
+/// no-device fallback is valid there), so the whole test is compiled only in
+/// the feature-off configuration instead of leaving a vacuous branch.
+#[cfg(not(feature = "sound"))]
 #[test]
 fn default_backend_without_sound_feature_is_silent() {
     let player = AudioPlayer::with_default_backend();
 
-    #[cfg(not(feature = "sound"))]
-    {
-        assert_eq!(player.backend_name(), "noop");
-        assert!(!player.is_audible());
-    }
-
-    // With the sound feature the backend can be either noop (no device in CI) or
-    // rodio; both variants are valid, no panic must occur.
-    let _ = player.is_audible();
+    assert_eq!(player.backend_name(), "noop");
+    assert!(!player.is_audible());
 }
 
 /// Real `MAX.RES` + game directory: references and file case agree.

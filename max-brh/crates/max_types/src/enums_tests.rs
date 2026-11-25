@@ -165,32 +165,6 @@ fn all_enums_roundtrip_u16() {
 }
 
 #[test]
-fn enum_roundtrip_is_exhaustive() {
-    // Every raw u8/u16 value either decodes or yields an error.
-    for raw in 0..=u8::MAX {
-        let _ = TeamKind::try_from(raw);
-        let _ = TeamIndex::try_from(raw);
-        let _ = TeamClan::try_from(raw);
-        let _ = Opponent::try_from(raw);
-        let _ = PlayMode::try_from(raw);
-        let _ = VictoryType::try_from(raw);
-        let _ = FileType::try_from(raw);
-        let _ = Planet::try_from(raw);
-        let _ = ResearchTopic::try_from(raw);
-        let _ = GameStateType::try_from(raw);
-        let _ = WinLossState::try_from(raw);
-        let _ = AiStrategy::try_from(raw);
-        let _ = CautionLevel::try_from(raw);
-        let _ = UnitOrder::try_from(raw);
-        let _ = UnitOrderState::try_from(raw);
-        let _ = Surface::try_from(raw);
-    }
-    for raw in 0..=u16::MAX {
-        let _ = UnitType::try_from(raw);
-    }
-}
-
-#[test]
 fn invalid_values_are_rejected() {
     assert!(UnitType::try_from(93u16).is_err());
     assert!(UnitType::try_from(0x5Eu16).is_err());
