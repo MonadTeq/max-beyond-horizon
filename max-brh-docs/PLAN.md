@@ -234,3 +234,12 @@
   state), max_app/src/net.rs + net/{p2p,dispatcher,audit}.rs (сеть, GameUniverse+Dispatcher),
   max_net/src/{host,session,wire}.rs (транспорт), max_app/src/lib.rs (app-level),
   UI-меню (allocmenu/buildmenu/panels/… — GameUniverse::default() для рендера, пограничный).
+
+- **Ремастер (будущий трек):** целевой формат ресурсов — **KTX2 + Basis Universal**
+  (стандарт Khronos; UASTC для героев/UI, ETC1S для фона). Пайплайн: исходники
+  художников (lossless) -> asisu -> .ktx2 (build-time) -> run-time транскодер
+  (asisu crate, чистый Rust) -> GPU-формат (BC7/ASTC/ETC2). Оракул MAX.RES/
+  PATCHES.RES НЕТРОНУТ — ремастер подменяет пути текстур в своём манифесте.
+  Детали и фазы хранения/загрузки ресурсов — development/asset-storage.md.
+  **Условие старта:** после стабилизации текущего (чистый ручной прогон кампании).
+  Статус: подтверждён как цель, отложен (2026-11-25).
