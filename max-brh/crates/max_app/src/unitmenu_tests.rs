@@ -46,6 +46,37 @@ fn tank_menu_matches_cpp_order_and_contents() {
 }
 
 #[test]
+fn scout_menu_is_military_and_scanner_is_commons() {
+    let mut state = test_state();
+
+    // `SCOUT` → `UnitsManager_PopupCallbacks[3]` (`InitMilitary`): the manual-run
+    // defect was that the Scout fell through to `InitCommons`, so a player could
+    // not enter the targeting mode from its popup — the attack item was absent.
+    let scout = spawn(&mut state, UnitType::Scout);
+    let scout_unit = state.snapshot().unit(scout).expect("scout").clone();
+    let items = items_for(StateRef::from(&state), &scout_unit);
+
+    let attack = items
+        .iter()
+        .find(|item| item.id == ItemId::Attack)
+        .expect("Scout must have the attack item (oracle InitMilitary)");
+    assert!(attack.enabled, "attack must be a live targeting toggle");
+
+    // `SCANNER` → callbacks `[1]` (`InitCommons`), not military: no attack item.
+    let scanner = spawn(&mut state, UnitType::Scanner);
+    let scanner_unit = state.snapshot().unit(scanner).expect("scanner").clone();
+    let scanner_items = items_for(StateRef::from(&state), &scanner_unit);
+    assert!(
+        !scanner_items.iter().any(|item| item.id == ItemId::Attack),
+        "Scanner is InitCommons in the oracle, not InitMilitary: {:?}",
+        scanner_items
+            .iter()
+            .map(|item| item.id.name())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn constructor_menu_has_build_first() {
     let mut state = test_state();
     let id = spawn(&mut state, UnitType::Constructor);

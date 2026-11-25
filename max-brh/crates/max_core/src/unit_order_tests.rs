@@ -1690,6 +1690,102 @@ fn carrier_sprite_block_follows_the_terrain() {
     assert_eq!(on_land.image_index, 8);
 }
 
+/// A ship raises the bridge over its route (`Access_SetUnitDestination` →
+/// `ORDER_STATE_ELEVATE`) and the bridge lowers again after the ship has left
+/// (`ProcessOrderAwait` → `ORDER_STATE_LOWER`) — `access.cpp:91-100`,
+/// `units_manager.cpp:2732-2763`.
+#[test]
+fn ship_raises_the_bridge_and_it_lowers_after_it_passes() {
+    let mut state = GameState::new();
+    state.teams[0].team_type = TeamKind::Player;
+    state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+    // A water lane 8..=12 on row 10 with a bridge in the middle.
+    for x in 8..=12 {
+        state
+            .map
+            .surface
+            .set(x, 10, crate::enums::Surface::WATER);
+    }
+    let bridge_grid = Point::new(10, 10);
+    let bridge = state
+        .spawn_unit(
+            UnitType::Bridge,
+            TeamId::RED,
+            bridge_grid,
+            STATIONARY | GROUND_COVER,
+        )
+        .expect("bridge");
+    // A bridge is placed in ORDER_AWAIT (`UnitsManager_DeployUnit`).
+    state.set_order(bridge, UnitOrder::Await, UnitOrderState::ExecutingOrder);
+    let bridge_max = state.unit(bridge).expect("bridge").image_index_max;
+
+    let ship = state
+        .spawn_unit(
+            UnitType::Corvette,
+            TeamId::RED,
+            Point::new(8, 10),
+            MOBILE_SEA_UNIT | SELECTABLE,
+        )
+        .expect("ship");
+    order_move_to(&mut state, ship, Point::new(12, 10));
+
+    // The ship's path crosses the bridge cell; the lowered bridge is land for a
+    // naval unit with `MovesUnderBridge`, so the step is blocked and the bridge
+    // starts raising.
+    let mut raised_at = None;
+    for tick in 0..200 {
+        state.tick();
+        let bridge_unit = state.unit(bridge).expect("bridge");
+        if is_bridge_elevated(bridge_unit) {
+            raised_at = Some(tick);
+            break;
+        }
+    }
+    assert!(
+        raised_at.is_some(),
+        "the bridge must raise for the ship (image_index={}, max={bridge_max})",
+        state.unit(bridge).expect("bridge").image_index
+    );
+
+    // It finishes raising (`ORDER_AWAIT`/`EXECUTING_ORDER`) and then lowers once
+    // no sea unit stands on the cell.
+    let mut fully_raised = false;
+    let mut lowered = false;
+    for _ in 0..400 {
+        state.tick();
+        let bridge_unit = state.unit(bridge).expect("bridge");
+        let ship_unit = state.unit(ship).expect("ship");
+
+        if bridge_unit.image_index == bridge_max {
+            fully_raised = true;
+        }
+        if fully_raised
+            && ship_unit.grid != bridge_grid
+            && !is_bridge_elevated(bridge_unit)
+            && bridge_unit.orders == UnitOrder::Await
+        {
+            lowered = true;
+        }
+        if lowered {
+            break;
+        }
+    }
+
+    assert!(fully_raised, "the bridge must reach its top frame");
+    assert!(
+        lowered,
+        "the bridge must lower after the ship leaves (image_index={}, ship={:?})",
+        state.unit(bridge).expect("bridge").image_index,
+        state.unit(ship).expect("ship").grid
+    );
+    assert_eq!(
+        state.unit(ship).expect("ship").grid,
+        Point::new(12, 10),
+        "the ship passes under the bridge and reaches the far cell"
+    );
+}
+
 /// `is_bridge_elevated`: only the bridge type, only while its frame differs
 /// from the base frame (`UnitInfo::IsBridgeElevated`).
 #[test]

@@ -42,6 +42,7 @@ fn help_shows_one_entry_per_click_not_the_whole_section() {
         HelpSection::Upgrades,
         HelpSection::Allocate,
         HelpSection::Transfer,
+        HelpSection::Stats,
         HelpSection::Preferences,
         HelpSection::Setup,
         HelpSection::Clan,
@@ -132,6 +133,7 @@ fn entries_show_their_own_text_and_scroll_only_when_longer_than_a_page() {
         HelpSection::Preferences,
         HelpSection::Allocate,
         HelpSection::Transfer,
+        HelpSection::Stats,
         HelpSection::Clan,
         HelpSection::HotSeat,
     ] {

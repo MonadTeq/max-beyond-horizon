@@ -100,6 +100,40 @@ fn frame_index_uses_the_given_body_angle_and_power_on_offset() {
 }
 
 #[test]
+fn elevated_bridge_draws_its_stored_elevation_frame() {
+    use max_core::enums::UnitType;
+    use max_core::team::TeamId;
+    use max_core::unit::{UnitId, UnitInfo};
+
+    // `UnitInfo::IsBridgeElevated` (`unitinfo.cpp:3030`): the `BRIDGE` sprite's
+    // frames 0..4 are elevation states; `ORDER_STATE_ELEVATE`/`LOWER` change
+    // `image_index`, and C++ renders exactly that index
+    // (`UnitInfo::Render`, `unitinfo.cpp:3141`). Without this the bridge looked
+    // lowered while a ship passed under it.
+    let mut bridge = UnitInfo::new(UnitType::Bridge, TeamId::RED, UnitId(1));
+    bridge.image_base = 0;
+    bridge.image_index = 0;
+    assert_eq!(unit_frame_index_for_angle(&bridge, 0, 5, 0), 0);
+
+    for elevation in 1..=3 {
+        bridge.image_index = elevation;
+        for angle in 0..8u8 {
+            assert_eq!(
+                unit_frame_index_for_angle(&bridge, 0, 5, angle),
+                elevation as usize,
+                "the raised bridge draws frame {elevation}, not base + angle"
+            );
+        }
+    }
+
+    // A non-bridge unit keeps the base + angle frame even if `image_index` differs
+    // (e.g. a stale save field).
+    let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+    tank.image_index = 3;
+    assert_eq!(unit_frame_index_for_angle(&tank, 8, 16, 2), 10);
+}
+
+#[test]
 fn builder_work_cycle_matches_the_cpp_plus_eight_minus_sixteen_loop() {
     use max_core::enums::UnitType;
     use max_core::team::TeamId;

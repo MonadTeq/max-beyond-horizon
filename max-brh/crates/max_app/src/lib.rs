@@ -86,6 +86,7 @@ pub mod transfermenu;
 pub mod ui;
 pub mod unit_names;
 pub mod unitmenu;
+pub mod unitstats;
 pub mod upgrademenu;
 pub mod vision;
 pub mod winloss;
@@ -178,6 +179,7 @@ pub use unitmenu::{
     MenuEvent, UnitMenu, UnitMenuAssets, UnitMenuItem, CURSOR_LOAD, CURSOR_RELOAD, CURSOR_REPAIR,
     CURSOR_TRANSFER,
 };
+pub use unitstats::{UnitStatsAction, UnitStatsAssets, UnitStatsMenu};
 pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
 
 /// Application mode (affects only the CLI and diagnostics, not the simulation).
@@ -648,6 +650,10 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// Open selected unit command menu (C++ `GameManager_PopupButtons`).
     /// Not part of the snapshot/CRC — this is UI.
     unit_menu: Option<unitmenu::UnitMenu>,
+    /// Open unit statistics window (`UnitStats_Menu`, `STATS`), opened by
+    /// an RMB on the selected unit (`game_manager.cpp:6747-6753`).
+    /// Not part of the snapshot/CRC.
+    unit_stats: Option<unitstats::UnitStatsMenu>,
     /// Open building self-destruct dialog (`UnitsManager_SelfDestructMenu`,
     /// windows `SELFDSTR`/`SLFDOPN`/`SLFDOK`). Not part of the snapshot/CRC.
     self_destruct: Option<selfdestruct::SelfDestructMenu>,
@@ -689,6 +695,13 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// Each point stores the movement direction toward it (`VisualStep.angle`),
     /// so that the sprite turns at the turn cell, not earlier.
     visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
+    /// Simulation speed of a unit at the previous frame (`UnitInfo::speed`).
+    ///
+    /// The difference against the current value is the movement points the
+    /// simulation spent since the last frame; it is attached to the visual steps
+    /// it paid for, so the panel's `Speed` row reaches 0 when the sprite arrives,
+    /// not when the fast simulation does. Frame-only, not part of the snapshot/CRC.
+    visual_speeds: std::collections::HashMap<UnitId, u16>,
     /// Frame-side vision of the local player's team — the live scan coverage
     /// computed from the **visual** anchors, so the radar (the minimap fog and the
     /// unit dots) moves on arrival, not earlier
@@ -952,6 +965,13 @@ struct VisualStep {
     y: f32,
     /// Movement direction toward this point: `Paths_GetAngle(dx, dy)`.
     angle: u8,
+    /// Movement points the simulation spent to enter this cell
+    /// (`Paths_CalculateStep`: `normalized_cost`). It is subtracted from the
+    /// displayed speed when the sprite finishes the step, so the corner panel's
+    /// `Speed` row falls exactly as the unit visually walks (in C++ the number
+    /// and the sprite move together; the port's simulation runs ahead of the
+    /// frame).
+    speed: u16,
 }
 
 /// Selected unit order at the tick start — for auto-selection
@@ -1019,6 +1039,7 @@ impl<D: Dispatcher> App<D> {
             upgrade_menu: None,
             research_menu: None,
             unit_menu: None,
+            unit_stats: None,
             self_destruct: None,
             sounds: Vec::new(),
             unit_sounds: Vec::new(),
@@ -1031,6 +1052,7 @@ impl<D: Dispatcher> App<D> {
             visual_units: std::collections::HashMap::new(),
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
+            visual_speeds: std::collections::HashMap::new(),
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             hover_anims: std::collections::HashMap::new(),
@@ -1740,6 +1762,42 @@ impl<D: Dispatcher> App<D> {
         };
         self.unit_menu = Some(menu);
         Some(outcome)
+    }
+
+    // -----------------------------------------------------------------------
+    // Unit statistics window (C++ `UnitStats_Menu`)
+    // -----------------------------------------------------------------------
+
+    /// Open unit statistics window; `None` — closed.
+    pub fn unit_stats(&self) -> Option<&unitstats::UnitStatsMenu> {
+        self.unit_stats.as_ref()
+    }
+
+    /// Opens `UnitStats_Menu` for the unit (`game_manager.cpp:6747-6753`).
+    ///
+    /// It is a full-screen modal (`STATS`); the command menu is closed first
+    /// (`GameManager_ManagePlayerAction`). `false` — no such unit.
+    pub fn open_unit_stats(&mut self, id: max_core::unit::UnitId) -> bool {
+        let Some(menu) = unitstats::open_for(self.state_ref(), id, self.assets.as_ref()) else {
+            return false;
+        };
+
+        self.unit_menu = None;
+        self.unit_stats = Some(menu);
+
+        true
+    }
+
+    /// Closes the statistics window (`UnitStatsMenu::~UnitStatsMenu`).
+    pub fn close_unit_stats(&mut self) {
+        self.unit_stats = None;
+    }
+
+    /// Input in the open statistics window ([`unitstats::UnitStatsMenu::input`]).
+    pub fn unit_stats_input(&mut self, event: InputEvent) -> Option<unitstats::UnitStatsAction> {
+        let menu = self.unit_stats.as_ref()?;
+
+        Some(menu.input(event))
     }
 
     // -----------------------------------------------------------------------
@@ -3397,6 +3455,7 @@ impl<D: Dispatcher> App<D> {
         self.visual_units.clear();
         self.visual_goals.clear();
         self.visual_paths.clear();
+        self.visual_speeds.clear();
         self.hover_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
@@ -3464,6 +3523,33 @@ impl<D: Dispatcher> App<D> {
                 None => unit.angle,
             },
         )
+    }
+
+    /// Movement points shown in the corner panel's `Speed` row — synchronized with
+    /// the **visual** movement.
+    ///
+    /// C++ decrements `UnitInfo::speed` in `Paths_CalculateStep` as the sprite walks
+    /// a cell, so the number in `GameManager_UpdateInfoDisplay` falls together with
+    /// the sprite. The port simulation advances a whole cell per tick, ahead of the
+    /// frame, so reading `unit.speed` directly made the value drop before the unit
+    /// visibly moved. This returns `unit.speed` **plus** the points still attached
+    /// to the cells the sprite has not walked yet ([`VisualStep::speed`]): the row
+    /// reaches 0 exactly when the sprite arrives. Frame-only, not part of the CRC.
+    pub fn displayed_speed(&self, id: UnitId) -> Option<u16> {
+        let unit = self.state_ref().unit(id)?;
+        let pending: u32 = self
+            .visual_paths
+            .get(&id)
+            .map(|queue| queue.iter().map(|step| u32::from(step.speed)).sum())
+            .unwrap_or(0);
+        let shown = u32::from(unit.speed) + pending;
+        let max = u32::from(unit.speed).max(u32::from(
+            unit.base_values
+                .get_attribute(max_core::unit_values::ATTRIB_SPEED)
+                .clamp(0, u16::MAX as i32) as u16,
+        ));
+
+        Some(shown.min(max) as u16)
     }
 
     /// Builder working cycle frame number for drawing (`0..3`).
@@ -3824,6 +3910,7 @@ impl<D: Dispatcher> App<D> {
         let visual = &mut self.visual_units;
         let goals = &mut self.visual_goals;
         let paths = &mut self.visual_paths;
+        let speeds = &mut self.visual_speeds;
         // Visual anchors of this frame (the cell the sprite stands in) — the input
         // of the frame-side vision (`App::vision`).
         let mut anchors: std::collections::BTreeMap<UnitId, (i16, i16)> =
@@ -3832,6 +3919,7 @@ impl<D: Dispatcher> App<D> {
         visual.retain(|id, _| state.unit(*id).is_some());
         goals.retain(|id, _| state.unit(*id).is_some());
         paths.retain(|id, _| state.unit(*id).is_some());
+        speeds.retain(|id, _| state.unit(*id).is_some());
 
         // `dt = 0` (headless/QA): the snapshot — the frame reads exactly the simulation
         // cell. The route queue is reset, so the goldens do not drift.
@@ -3844,6 +3932,7 @@ impl<D: Dispatcher> App<D> {
                 visual.insert(id, target);
                 goals.insert(id, (unit.grid.x, unit.grid.y));
                 paths.remove(&id);
+                speeds.insert(id, unit.speed);
             }
             // No frame time: the vision is the simulation one (the radar, the fog
             // and the golden frames read exactly the scan of the tick).
@@ -3862,6 +3951,7 @@ impl<D: Dispatcher> App<D> {
             let current = visual.entry(id).or_insert(target);
             let goal = goals.entry(id).or_insert(grid);
             let queue = paths.entry(id).or_default();
+            let last_speed = speeds.entry(id).or_insert(unit.speed);
 
             // The simulation moved the unit (usually one cell per tick).
             // We append the actual route cells so that the frame walks them,
@@ -3870,12 +3960,19 @@ impl<D: Dispatcher> App<D> {
                 let dx = i32::from(grid.0) - i32::from(goal.0);
                 let dy = i32::from(grid.1) - i32::from(goal.1);
                 let distance = dx.abs().max(dy.abs());
+                // Movement points the simulation spent on these cells since the
+                // previous frame (`Paths_CalculateStep` decrements `speed`), split
+                // evenly between the visual steps: the panel's `Speed` value drops
+                // when the sprite enters the cell, exactly like the C++ pixel walk.
+                let spent = last_speed.saturating_sub(unit.speed);
 
                 if distance > VISUAL_TELEPORT_CELLS {
                     queue.clear();
                     *current = target;
                 } else {
                     let divisor = distance.max(1);
+                    let per_step = spent / divisor as u16;
+                    let remainder = spent % divisor as u16;
                     let mut previous = *goal;
 
                     for step in 1..=divisor {
@@ -3897,6 +3994,7 @@ impl<D: Dispatcher> App<D> {
                             x: f32::from(x),
                             y: f32::from(y),
                             angle,
+                            speed: per_step + if step == divisor { remainder } else { 0 },
                         });
                         previous = (x, y);
                     }
@@ -3904,6 +4002,10 @@ impl<D: Dispatcher> App<D> {
 
                 *goal = grid;
             }
+
+            // Speed may also change without a cell move (a blocked step, the turn
+            // refill) — keep the reference in sync so the next delta is correct.
+            *last_speed = unit.speed;
 
             // We pass no more than `budget` cells per frame; the remaining budget
             // is carried over to the next route points — the speed is constant.

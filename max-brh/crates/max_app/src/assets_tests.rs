@@ -24,6 +24,62 @@ fn real_assets() -> Option<Assets> {
 }
 
 #[test]
+fn system_palette_world_slots_use_the_same_index() {
+    // `World::ApplyPaletteAndTints` (`world.cpp:329-331`): slot 64..159 of the
+    // window palette takes the **same** `.WRL` slot. The off-by-64 copy made the
+    // submerged submarine silhouette (sprite indices 123..127) use unrelated
+    // colors — the manual-run "mask does not match the original" defect.
+    let mut bytes = vec![0u8; max_render::palette::PALETTE_BYTES];
+    let mut world = vec![0u8; max_render::palette::PALETTE_BYTES];
+    for index in 0..256 {
+        world[index * 3] = index as u8;
+        world[index * 3 + 1] = (index as u8).wrapping_add(1);
+        world[index * 3 + 2] = (index as u8).wrapping_add(2);
+    }
+
+    system_palette_bytes(&mut bytes, &world);
+
+    for index in 64..160 {
+        assert_eq!(
+            &bytes[index * 3..index * 3 + 3],
+            &world[index * 3..index * 3 + 3],
+            "slot {index} must keep its own index"
+        );
+    }
+    assert_eq!(&bytes[63 * 3..63 * 3 + 3], &[0, 0, 0], "slot 63 is untouched");
+    assert_eq!(
+        &bytes[160 * 3..160 * 3 + 3],
+        &[0, 0, 0],
+        "slot 160 is untouched"
+    );
+
+    // Real data: the system palette's water slots must match `SNOW_1.WRL`, and
+    // the submerged `SUBMARNE` mask (123..127) must be water-blue, not the shifted
+    // earthy tones.
+    if let Some(assets) = real_assets() {
+        let world_palette = assets.world.palette();
+        for index in [123u8, 124, 125, 126, 127] {
+            let source = usize::from(index) * 3;
+            let expected = [
+                world_palette[source] & 0xFC,
+                world_palette[source + 1] & 0xFC,
+                world_palette[source + 2] & 0xFC,
+            ];
+            assert_eq!(
+                assets.system_palette.rgb(index),
+                expected,
+                "system palette slot {index} must be the .WRL slot {index}"
+            );
+        }
+        let water = assets.system_palette.rgb(124);
+        assert!(
+            water[2] > water[0],
+            "the submerged submarine mask must use the water palette: {water:?}"
+        );
+    }
+}
+
+#[test]
 fn alien_derelict_sprites_are_loaded() {
     use max_core::enums::UnitType;
 

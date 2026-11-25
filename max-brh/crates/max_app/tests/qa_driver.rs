@@ -802,10 +802,20 @@ fn recorded_manual_session_round_trips_through_qa_run() {
         play.send(InputEvent::MouseClick(move_x, move_y));
     }
 
-    // The right button is exercised too: on the selected unit it is the
-    // `UnitStats_Menu` context action (`game_manager.cpp:6747-6753`) and does not
-    // change the simulation, so the replay stays byte-identical.
+    // The right button is exercised too: on the selected unit it opens the
+    // `UnitStats_Menu` context window (`game_manager.cpp:6747-6753`). The window
+    // is UI-only and does not change the simulation, so the replay stays
+    // byte-identical; `Esc` closes it like a player would before End Turn.
     play.send(InputEvent::RightClick(select_x, select_y));
+    assert!(
+        play.app.unit_stats().is_some(),
+        "RMB on the selected unit opens the statistics window"
+    );
+    play.send(InputEvent::Key(max_app::ui::Key::Escape));
+    assert!(
+        play.app.unit_stats().is_none(),
+        "Esc closes the statistics window"
+    );
 
     play.send(click_rect(max_render::layout::END_TURN_BUTTON));
     // AI turn: exactly the frames that the replay will run with the wait command.

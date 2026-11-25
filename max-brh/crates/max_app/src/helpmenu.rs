@@ -103,6 +103,8 @@ pub enum HelpSection {
     Allocate,
     /// `TRANSFER_SETUP` (`TransferMenu::ProcessKey`, `Shift-/`).
     Transfer,
+    /// `STATS_SETUP` (`UnitStatsMenu::Run`, the `?`/`Help` button).
+    Stats,
     /// `PREFS_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, the `PREFSPIC` variant).
     Preferences,
     /// `SETUP_MENU_SETUP` (`OptionsMenu::ProcessKeyPress`, the `SETUPPIC` variant).
@@ -132,6 +134,7 @@ impl HelpSection {
             Self::GameScreen => "GAME_SCREEN_SETUP",
             Self::Allocate => "ALLOCATE_SETUP",
             Self::Transfer => "TRANSFER_SETUP",
+            Self::Stats => "STATS_SETUP",
             Self::Preferences => "PREFS_MENU_SETUP",
             Self::Setup => "SETUP_MENU_SETUP",
             Self::TrainingMenu => "TRAINING_MENU_SETUP",
@@ -155,6 +158,7 @@ impl HelpSection {
             "game" | "game_screen" | "game_screen_setup" => Some(Self::GameScreen),
             "allocate" | "allocate_setup" => Some(Self::Allocate),
             "transfer" | "transfer_setup" | "xfer" => Some(Self::Transfer),
+            "stats" | "stats_setup" | "unit_stats" => Some(Self::Stats),
             "preferences" | "prefs" | "prefs_menu_setup" => Some(Self::Preferences),
             "setup_menu" | "setup_menu_setup" | "setuphelp" => Some(Self::Setup),
             "training" | "training_menu" | "training_menu_setup" => Some(Self::TrainingMenu),

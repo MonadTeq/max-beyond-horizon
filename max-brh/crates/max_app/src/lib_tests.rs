@@ -59,6 +59,105 @@ fn temp_dir(tag: &str) -> PathBuf {
 }
 
 #[test]
+fn displayed_speed_follows_the_visual_route_not_the_tick() {
+    // The panel's `Speed` row must fall with the sprite, not with the fast
+    // simulation (`Paths_CalculateStep` decrements the value as C++ walks a cell).
+    let mut app = App::new(AppConfig::default());
+    let mut setup = LocalSetup::default();
+    setup.world = 0;
+    setup.timer = 0;
+    setup.team_types = [
+        max_core::team::TeamKind::Player,
+        max_core::team::TeamKind::Computer,
+        max_core::team::TeamKind::None,
+        max_core::team::TeamKind::None,
+    ];
+    if app.start_local_game(&setup).is_err() {
+        eprintln!("displayed_speed: no map data");
+        return;
+    }
+
+    let team = app.player_team();
+    let surveyor = app
+        .state_ref()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            app.state_ref().unit(*id).is_some_and(|unit| {
+                unit.team == team && unit.unit_type == max_core::enums::UnitType::Surveyor
+            })
+        })
+        .expect("surveyor");
+    let start = app.state_ref().unit(surveyor).expect("surveyor").grid;
+
+    let mut target = None;
+    'search: for dy in -3..=3 {
+        for dx in -3..=3 {
+            let point = max_core::geo::Point::new(start.x + dx, start.y + dy);
+            if point == start || !app.state_ref().units_at(point).is_empty() {
+                continue;
+            }
+            if crate::hud::build_move_order(app.state_ref(), surveyor, point).is_some() {
+                target = Some(point);
+                break 'search;
+            }
+        }
+    }
+    let target = target.expect("reachable cell");
+    let order = crate::hud::build_move_order(app.state_ref(), surveyor, target).expect("order");
+
+    app.hud_mut().select(Some(surveyor));
+    app.hud_mut().pending.push(order.command);
+    app.flush_orders();
+    app.update_visual_units(0.0);
+
+    let speed0 = app.state_ref().unit(surveyor).expect("surveyor").speed;
+    assert!(speed0 > 1, "the surveyor starts with movement points: {speed0}");
+
+    // One simulation step (the unit moves a whole cell in a tick) — the frame
+    // has not walked it yet.
+    let mut ticks = 0;
+    while app.state_ref().unit(surveyor).map(|unit| unit.grid) == Some(start) && ticks < 20 {
+        app.tick();
+        ticks += 1;
+    }
+    assert_ne!(
+        app.state_ref().unit(surveyor).map(|unit| unit.grid),
+        Some(start),
+        "the order must move the unit in the simulation"
+    );
+    app.update_visual_units(1.0 / 60.0);
+
+    let sim_speed = app.state_ref().unit(surveyor).expect("surveyor").speed;
+    assert!(sim_speed < speed0, "the tick spends movement points");
+    assert_eq!(
+        app.displayed_speed(surveyor),
+        Some(speed0),
+        "the panel still shows the points of the cells the sprite has not walked"
+    );
+
+    // Walk the frame: the displayed value decreases and ends exactly at the
+    // simulation value when the sprite arrives.
+    let mut last = app.displayed_speed(surveyor).expect("speed");
+    let mut frames = 0;
+    loop {
+        app.update_visual_units(1.0 / 60.0);
+        let shown = app.displayed_speed(surveyor).expect("speed");
+        assert!(
+            shown <= last,
+            "the displayed speed must not grow while walking: {last} -> {shown}"
+        );
+        last = shown;
+        frames += 1;
+
+        if shown == app.state_ref().unit(surveyor).expect("surveyor").speed {
+            break;
+        }
+        assert!(frames < 1200, "the sprite did not finish the route: {shown}");
+    }
+}
+
+#[test]
 fn handshake_patches_default_to_the_assets_path() {
     let config = AppConfig::default();
 

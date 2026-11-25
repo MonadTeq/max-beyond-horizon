@@ -5,7 +5,7 @@ use max_core::input::Packet18Chat;
 use max_core::team::{TeamKind, TeamUnits};
 use max_net::Packet;
 
-use crate::ui::{handle_session_input, InputEvent};
+use crate::ui::{handle_session_input, InputEvent, Key};
 use crate::{App, AppConfig, Transition};
 
 /// Application with a RED tank (10,10), a BLUE tank (14,10) and team gold.
@@ -296,17 +296,26 @@ fn right_click_selects_a_unit_and_shows_stats_without_a_menu() {
         .iter()
         .any(|line| line.contains("Selected")));
 
-    // A repeated RMB on the selected unit — `UnitStats_Menu` (`:6751-6753`);
-    // the port has no modal, so the log names the statistics window.
+    // A repeated RMB on the selected unit — `UnitStats_Menu` (`:6751-6753`):
+    // the full-screen `STATS` window opens.
     handle_session_input(&mut app, InputEvent::RightClick(x, y));
 
     assert_eq!(app.hud().selected, Some(tank));
+    assert!(
+        app.unit_stats().is_some(),
+        "RMB on the selected unit opens the statistics window"
+    );
     assert!(app
         .hud()
         .log
         .lines()
         .iter()
         .any(|line| line.contains("Unit stats")));
+
+    // `Esc` closes the window (`UnitStatsMenu::Run`) and returns to the game.
+    handle_session_input(&mut app, InputEvent::Key(Key::Escape));
+    assert!(app.unit_stats().is_none(), "Esc closes the statistics window");
+    assert_eq!(app.hud().selected, Some(tank));
 }
 
 #[test]

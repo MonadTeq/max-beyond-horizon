@@ -374,10 +374,18 @@ fn init_kind(unit_type: UnitType) -> InitKind {
         ResearchCentre => InitKind::Research,
         EcoSphere => InitKind::EcoSphere,
         RecreationCenter => InitKind::RecreationCenter,
-        GunTurret | AntiAir | Artillery | MissileLauncher | Scanner | Tank | AssaultGun
+        // `UnitsManager_PopupCallbacks[3]` (`InitMilitary`): the complete oracle
+        // list — `GUNTURRT`…`ALNPLANE`, including `SCOUT` (`unitinfo.cpp:499-522`).
+        // Without `Scout` here it fell through to `InitCommons` and its popup had
+        // no `attack` item at all (manual-run defect: the Scout could not attack).
+        // `SCANNER` is *not* military: the oracle maps it to callbacks `[1]`
+        // (`InitCommons` with the `IsReady` test, `unitinfo.cpp:546-549`).
+        GunTurret | AntiAir | Artillery | MissileLauncher | Scout | Tank | AssaultGun
         | RocketLauncher | MissileCrawler | MobileAntiAir | Infantry | Escort | Corvette
         | Gunboat | Submarine | MissileCruiser | Fighter | Bomber | Juggernaut | AlienTank
         | AlienAssaultGun | AlienPlane => InitKind::Military,
+        // `SCANNER`/`GOLDTRCK` → `UnitsManager_PopupCallbacks[1]` — common items.
+        Scanner | GoldTruck => InitKind::Commons,
         MiningStation => InitKind::MiningStation,
         MasterBuilder => InitKind::Master,
         Constructor | Engineer => InitKind::Builders,

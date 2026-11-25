@@ -4067,6 +4067,15 @@ impl QaRunner {
                     format!("unit-menu={}", if actual { "open" } else { "closed" }),
                 )
             }
+            Assertion::UnitStatsOpen(expected) => {
+                let actual = self.app.unit_stats().is_some();
+
+                self.expect(
+                    actual == expected,
+                    format!("unit-stats={}", if expected { "open" } else { "closed" }),
+                    format!("unit-stats={}", if actual { "open" } else { "closed" }),
+                )
+            }
             Assertion::UnitMenuItem(name) => {
                 let actual = self
                     .app

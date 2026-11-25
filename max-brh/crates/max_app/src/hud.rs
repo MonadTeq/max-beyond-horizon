@@ -1818,13 +1818,11 @@ fn draw_unit_panel(buffer: &mut RgbaBuffer, layout: &HudLayout, view: &HudView<'
 
             lines
         }
-        _ => vec![
-            "No unit selected".to_string(),
-            "LMB  - select unit".to_string(),
-            "LMB  - move order".to_string(),
-            "RMB  - select/cancel".to_string(),
-            "Esc  - cancel / leave".to_string(),
-        ],
+        // No control hints: the original game window has no instruction text
+        // (the map area shows only the units and the message box), so this
+        // fallback panel keeps a single neutral line (manual-run defect: debug
+        // labels left over in the UI).
+        _ => vec!["No unit selected".to_string()],
     };
 
     let max_lines = ((panel.height - 8).max(0) / GLYPH_HEIGHT).max(1) as usize;

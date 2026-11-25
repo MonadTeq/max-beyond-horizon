@@ -1074,7 +1074,14 @@ impl Panels {
 
         // Portrait and statistics.
         painted += self.draw_portrait(frame, app, assets, palette);
-        painted += draw_stats(frame, state, app.selected_unit(), palette, &self.stat_icons);
+        painted += draw_stats(
+            frame,
+            state,
+            app.selected_unit(),
+            palette,
+            &self.stat_icons,
+            app.hud().selected.and_then(|id| app.displayed_speed(id)),
+        );
 
         // Bottom row: coordinates and the unit description.
         painted += self.blit(
@@ -2230,6 +2237,21 @@ fn complex_cargo(state: StateRef<'_>, unit: &UnitInfo, cargo_type: CargoType) ->
 /// A row with a zero base or zero factor remains empty — exactly like
 /// `GameManager_DrawInfoDisplayRow` (`if (base_value && factor)`).
 pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [Option<StatRow>; 4] {
+    rows_for_with_speed(state, unit, player_team, None)
+}
+
+/// [`rows_for`] with the frame-synchronized `Speed` value ([`crate::App::displayed_speed`]).
+///
+/// C++ draws `unit->speed`, which its pixel walk decrements as the sprite moves;
+/// the port simulation runs a cell per tick ahead of the sprite, so the panel
+/// passes the visual value here. The `base` (and therefore the pips) stays the
+/// unit's `ATTRIB_SPEED`.
+pub fn rows_for_with_speed(
+    state: StateRef<'_>,
+    unit: &UnitInfo,
+    player_team: TeamId,
+    display_speed: Option<u16>,
+) -> [Option<StatRow>; 4] {
     let values = &unit.base_values;
     let own = unit.team == player_team;
     let mut rows: [Option<StatRow>; 4] = [None; 4];
@@ -2349,6 +2371,14 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
                 scaling_factor,
             ),
         );
+    }
+
+    // Row 3 is `Speed`; the visual value replaces the simulation one so the
+    // number and the sprite reach zero together (`App::displayed_speed`).
+    if let (Some(speed), Some(row)) = (display_speed, rows[2].as_mut()) {
+        if row.label == StatLabel::Speed {
+            row.current = i32::from(speed).min(row.base);
+        }
     }
 
     rows
@@ -2538,6 +2568,7 @@ fn draw_stats(
     selected: Option<&UnitInfo>,
     palette: &UiPalette,
     icons: &StatIcons,
+    display_speed: Option<u16>,
 ) -> u32 {
     let Some(unit) = selected else {
         return 0;
@@ -2547,7 +2578,7 @@ fn draw_stats(
         return 0;
     }
 
-    let rows = rows_for(state, unit, state.player_team());
+    let rows = rows_for_with_speed(state, unit, state.player_team(), display_speed);
     let rects = [
         layout::STAT_ROW_1,
         layout::STAT_ROW_2,

@@ -288,6 +288,9 @@ pub enum Assertion {
     /// `assert unit-menu=open|closed`: whether the unit command menu is open (C++
     /// `GameManager_PopupButtons`).
     UnitMenuOpen(bool),
+    /// `assert unit-stats=open|closed`: whether the unit statistics window
+    /// (`UnitStats_Menu`, `STATS`) is open.
+    UnitStatsOpen(bool),
     /// `assert unit-menu-item=NAME`: the item is in the menu and enabled.
     UnitMenuItem(String),
     /// `assert unit-menu-disabled=NAME`: the item exists but is disabled (the mechanics are
@@ -1529,6 +1532,13 @@ fn parse_assertion(rest: &str) -> Result<Assertion, String> {
             "closed" | "none" => Ok(Assertion::UnitMenuOpen(false)),
             other => Err(format!(
                 "assert unit-menu: ожидалось open|closed, получено «{other}»"
+            )),
+        },
+        "unit-stats" | "unit_stats" => match value.to_ascii_lowercase().as_str() {
+            "open" | "opened" => Ok(Assertion::UnitStatsOpen(true)),
+            "closed" | "none" => Ok(Assertion::UnitStatsOpen(false)),
+            other => Err(format!(
+                "assert unit-stats: ожидалось open|closed, получено «{other}»"
             )),
         },
         "unit-menu-item" => Ok(Assertion::UnitMenuItem(value.to_string())),

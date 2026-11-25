@@ -635,6 +635,29 @@ impl AssetsReport {
     }
 }
 
+/// Copies slots 64..159 of the world (`.WRL`) palette over the window palette —
+/// `World::ApplyPaletteAndTints` (`world.cpp:329-331`).
+///
+/// C++ iterates the **byte** range `i = 64 * PALETTE_STRIDE .. 160 * PALETTE_STRIDE`
+/// and assigns `WindowManager_ColorPalette[i] = palette[i] / 4`: the slot index is
+/// the same on both sides. Using `(index - 64) * 3` here shifted the whole range by
+/// 64 entries, so every sprite pixel with a palette index in 64..159 got the color
+/// of a different slot — most visibly the submerged `SUBMARNE`/`CLNTRANS` silhouette
+/// (its "underwater mask" is drawn with indices 123..127) which came out in
+/// unrelated earthy tones instead of the map's water colors.
+///
+/// `bytes` — the 768-byte RGB palette of the window (8 bits per channel), `world` —
+/// the 768-byte palette section of the `.WRL` file.
+pub(crate) fn system_palette_bytes(bytes: &mut [u8], world: &[u8]) {
+    for index in 64..160 {
+        let source = index * 3;
+
+        if source + 3 <= world.len() && index * 3 + 3 <= bytes.len() {
+            bytes[index * 3..index * 3 + 3].copy_from_slice(&world[source..source + 3]);
+        }
+    }
+}
+
 /// All game data the application needs.
 #[derive(Debug, Clone)]
 pub struct Assets {
@@ -683,6 +706,8 @@ pub struct Assets {
     /// Unit command menu (`UNTBTN_U`/`UNTBTN_D`, 42×21) — the
     /// `GameManager_PopupButtons`.
     pub unit_menu: Option<crate::unitmenu::UnitMenuAssets>,
+    /// Unit statistics window (`STATS` + `BLDONE`/`BLDHLP`) — C++ `UnitStats_Menu`.
+    pub unit_stats: Option<crate::unitstats::UnitStatsAssets>,
     /// Building self-destruct dialog (`SELFDSTR`/`SLFDAR`/`SLFDCN`/
     /// `SLFDOPN1..6`/`SLFDOK`), C++ `UnitsManager_SelfDestructMenu`.
     pub self_destruct: Option<crate::selfdestruct::SelfDestructAssets>,
@@ -841,11 +866,12 @@ impl Assets {
         // Game system palette: slots 0..63 and 160..255 — the window palette
         // (`FRAMEPIC`; C++ `WindowManager_LoadBigImage(..., palette_from_image=true)`),
         // slots 64..159 — the world palette (`World::ApplyPaletteAndTints`,
-        // `world.cpp:329`: the `.WRL` components are divided by 4, i.e. remain
-        // 6-bit). It is these slots that the palette cycles rotate
-        // (`World::InitColorCycles`), so sprites are drawn with the system
-        // palette, while `COLOR.PAL` remains the source of the brightness tables.
-        // Without `FRAMEPIC` (e.g. synthetic tests) `COLOR.PAL` is taken.
+        // `world.cpp:329`: `WindowManager_ColorPalette[i] = palette[i] / 4`,
+        // i.e. **the same slot index** i from 64*3 to 160*3). It is these slots
+        // that the palette cycles rotate (`World::InitColorCycles`), so sprites are
+        // drawn with the system palette, while `COLOR.PAL` remains the source of the
+        // brightness tables. Without `FRAMEPIC` (e.g. synthetic tests) `COLOR.PAL`
+        // is taken.
         let system_palette = {
             let ui_palette = chrome
                 .as_ref()
@@ -862,15 +888,9 @@ impl Assets {
                 .map(|entries| entries.to_vec())
                 .filter(|entries| entries.len() >= max_render::palette::PALETTE_BYTES)
                 .unwrap_or(fallback);
-
             let world_palette = world.palette();
 
-            for index in 64..160 {
-                let source = (index - 64) * 3;
-
-                bytes[index * 3..index * 3 + 3]
-                    .copy_from_slice(&world_palette[source..source + 3]);
-            }
+            system_palette_bytes(&mut bytes, world_palette.as_slice());
 
             Palette::from_rgb8(&bytes).unwrap_or_else(|_| palette.clone())
         };
@@ -890,6 +910,14 @@ impl Assets {
         let preferences = crate::preferences::PreferencesAssets::load(&max_res);
         // Unit command menu (`UNTBTN_U`/`UNTBTN_D`, 42×21).
         let unit_menu = crate::unitmenu::UnitMenuAssets::load(&max_res);
+        // Unit statistics window (`STATS` + `BLDONE`/`BLDHLP`), `UnitStats_Menu`.
+        let unit_stats = crate::unitstats::UnitStatsAssets::load(&max_res);
+
+        if !unit_stats.is_ready() {
+            warnings.push(
+                "UnitStats: STATS не загрузился — окно статистики на рамке-заглушке".to_string(),
+            );
+        }
         // Self-destruct dialog (`SELFDSTR` + `SLFDAR`/`SLFDCN`/`SLFDOPN`/`SLFDOK`).
         let self_destruct = crate::selfdestruct::SelfDestructAssets::load(&max_res);
         // Mine extraction allocation dialog (`ALLOCFRM` + `BAR*` + `LFARO/RTARO`).
@@ -1106,6 +1134,7 @@ impl Assets {
             help: Some(help),
             preferences: Some(preferences),
             unit_menu: Some(unit_menu),
+            unit_stats: Some(unit_stats),
             self_destruct: Some(self_destruct),
             alloc: Some(alloc),
             transfer: Some(transfer),

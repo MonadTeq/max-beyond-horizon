@@ -5472,16 +5472,23 @@ unit-тест `render::tests::spinning_turret_walks_through_its_d_resource_frame
 (§17.2: `Hits`, пустая `Ammo`, `Speed`, `Shots`) — теперь они достижимы
 выделением.
 
-**Осознанные ограничения.** Модальное окно `UnitStats_Menu`
-(`unitstats.cpp`) не портировано ни для своих, ни для чужих юнитов: правый
-клик по выделенному юниту по-прежнему снимает выделение, а характеристики
-показывают портрет `WINDOW_CORNER_FLIC` и четыре строки
-`WINDOW_STAT_WINDOW`.
+**Модальное окно `UnitStats_Menu` (2026-11-26).** `unitstats.cpp` портирован:
+RMB по **выделенному** юниту (своему или видимому чужому) открывает окно `STATS`
+640×480 — портрет `P_*` 300×240 в (11,13), имя (`Text_TextBox` 336,60),
+описание `GetDescription()` (345,90,270,117), заголовок `Unit Status Screen`
+(`_(94b7)`, зелёный, 327,7), таблица `UnitStats_DrawStats` (11,293) с pips
+`I_*` и `I_RAW`/`I_RAWE` у `Cost`, кнопки `Done` (484,452) и `Help` (457,452).
+`Esc`/`Enter`/`Done` закрывают окно, `?`/`Help` открывают `STATS_SETUP` поверх
+(как `HelpMenu_Menu` из `UnitStatsMenu::Run`). RMB по другому своему юниту —
+только выделение (`GameManager_UnitSelect`), по пустой клетке — сброс режимов.
+Реализация — `max_app/src/unitstats.rs`, `App::open_unit_stats`/`unit_stats`.
 
 **Тесты.** `max_app/tests/enemy_unit_panel.rs` (3, на реальных данных):
 клик по видимому врагу выделяет его (без приказа атаки) и заполняет
 строки/портрет; невидимый враг не выделяется и панель пуста; атакуемый
-враг по-прежнему получает `ORDER_MOVE_TO_ATTACK`.
+враг по-прежнему получает `ORDER_MOVE_TO_ATTACK`. Окно — `unitstats::tests`
+(4), `tests/mouse_input_regressions.rs` (5), QA `move-input.qa`
+(`unit-stats=open/closed`, golden `move-input/unit-stats.png`).
 
 ### 47.3 Валидация
 
@@ -5610,6 +5617,129 @@ release-сборке гейтит тяжёлый тик `TickTimer_HaveTimeToThi
 * `rustfmt --check` для изменённых файлов — чисто; оракулы `max-cpp-port/` и
   `max-original/` не изменялись (артефакты `save10.*`, которые пишут тесты,
   восстановлены).
+
+## 49. Ручной прогон 2026-11-26: мышь (LMB/RMB/миникарта), маска подлодки, мост, отладочный текст — **сделано**
+
+Семь дефектов ручного прогона; три первых — регрессии маппинга мыши из коммита
+`7f50d20` (LMB = выбор/приказ, RMB = осмотр/статистика).
+
+### 49.1 Scout не мог атаковать — `InitMilitary`
+
+**Оракул:** `unitinfo.cpp:499-522` — `SCOUT` в `UnitsManager_PopupCallbacks[3]`
+(`InitMilitary`), `SCANNER`/`GOLDTRCK` — в `[1]` (`InitCommons`, `:546-549`).
+**Корень:** `unitmenu::init_kind` не перечислял `Scout` (и `Battleship`), а
+`Scanner` ошибочно числился военным: у Scout попап собирался как `InitCommons`
+без пункта `attack` — режим наведения было не включить.
+**Исправление:** `Scout` добавлен в `InitMilitary`, `Scanner`/`GoldTruck` — в
+`InitCommons` (`unitmenu.rs:374-390`).
+**Тесты:** `unitmenu::tests::scout_menu_is_military_and_scanner_is_commons`,
+`tests/mouse_input_regressions.rs::scout_popup_has_attack_and_toggles_targeting`,
+`scout_left_click_attacks_a_visible_enemy` (LMB по видимому врагу → 08/P3).
+
+### 49.2 RMB по выбранному юниту не открывал полные характеристики — `UnitStats_Menu`
+
+**Оракул:** `game_manager.cpp:6747-6753` — `UnitStats_Menu(&*GameManager_SelectedUnit)`
+при `SelectedUnit == unit || == unit2`; окно `STATS` 640×480 (`unitstats.cpp:460-590`):
+портрет `P_*` (11,13) 300×240, имя (336,60), описание (345,90,270,117),
+заголовок «Unit Status Screen» (327,7), таблица `UnitStats_DrawStats` (11,293),
+`Done` (484,452) и `Help` (457,452).
+**Корень:** модального окна в порте не было: RMB писал строку в журнал.
+**Исправление:** `max_app/src/unitstats.rs` (состояние, ввод, отрисовка, `Arc`-портрет),
+`App::open_unit_stats`/`unit_stats`, `Assets::unit_stats` (`STATS`/`BLDONE`/`BLDHLP`),
+`HelpSection::Stats` → `STATS_SETUP`; модальный ввод и обе ветки отрисовки
+(с `FRAMEPIC` и без). Открывается и для своего, и для осматриваемого видимого
+чужого юнита; RMB по другому своему юниту — только выделение.
+**Тесты:** `unitstats::tests` (4), `hud::tests::right_click_selects_a_unit_and_shows_stats_without_a_menu`,
+`tests/mouse_input_regressions.rs` (3: свой, чужой, «другой юнит»), QA
+`move-input.qa` (`assert unit-stats=open/closed`, golden `move-input/unit-stats.png`).
+
+### 49.3 Миникарта не давала приказ движения
+
+**Оракул:** `game_manager.cpp:6681-6703` — LMB по миникарте центрует камеру;
+`MOUSE_RELEASE_RIGHT` берёт клетку `GameManager_GetMinimapPosition`, при
+`CURSOR_UNIT_GO`/`CURSOR_WAY` и `state != ORDER_STATE_UNIT_READY` отдаёт
+`ORDER_MOVE` (`ORDER_STATE_INIT`/`MOVE_INIT`).
+**Корень:** `session_chrome_right_click` возвращал `None` для всей области
+миникарты (ранняя заглушка), приказ не строился.
+**Исправление:** `session_minimap_right_click` — клетка через
+`panels::minimap_grid_at` (учитывает `2x`), курсор `CURSOR_UNIT_GO` по
+`Access_IsAccessible` (самолёт — ветка `GetAirUnitCursor`, `ORDER_IDLE` — no-go),
+далее тот же приказ, что и LMB по карте (общий `session_map_order_at`).
+**Тесты:** `tests/mouse_input_regressions.rs::minimap_right_click_orders_the_selected_unit_to_move`,
+QA `move-input.qa` (`rclick 38 377` → `assert preview`/`assert log=Move:`, после
+`end_turn` юнит в клетке приказа).
+
+### 49.4 Расход speed не синхронен с движением спрайта
+
+**Оракул:** `Paths_CalculateStep` (`paths.cpp:328-345`) уменьшает `unit->speed` на
+`normalized_cost` при проходе клетки; `GameManager_UpdateInfoDisplay` рисует
+`unit->speed` — число падает вместе со спрайтом.
+**Корень:** симуляция порта идёт клеткой за тик впереди кадра; панель читала
+`unit.speed` напрямую и число обнулялось до того, как спрайт доходил.
+**Исправление:** `VisualStep.speed` + `App::visual_speeds`; при появлении шага
+маршрута к нему прикрепляется `last_speed - unit.speed` (остаток дельты — на
+последний шаг), `App::displayed_speed` = `unit.speed +` сумма ещё не пройденных
+шагов (с ограничением базой), `panels::rows_for_with_speed` подставляет его в
+строку `Speed`. Кадровое состояние, в CRC не входит.
+**Тест:** `tests::displayed_speed_follows_the_visual_route_not_the_tick`.
+
+### 49.5 Маска подводного юнита под водой не совпадала с оригиналом
+
+**Оракул:** `World::ApplyPaletteAndTints` (`world.cpp:329-331`):
+`WindowManager_ColorPalette[i] = palette[i] / 4` для `i` из `64*3..160*3` —
+**тот же индекс слота**. Подводная маска `SUBMARNE` нарисована индексами
+123–127 (`CLNTRANS` — 123–126), т.е. слотами палитры мира (вода).
+**Корень:** `Assets::load` копировал палитру `.WRL` со сдвигом
+`(index - 64) * 3`, т.е. слот 123 получал цвет слота 59 — маска подлодки
+(и кильватер `CORVETTE`, и несколько пикселей `SCOUT`/`SHIELDGN`) выходила
+землисто-коричневой вместо водной.
+**Исправление:** `system_palette_bytes` копирует по тому же индексу.
+**Тест:** `assets::tests::system_palette_world_slots_use_the_same_index`
+(синтетика + реальные `SNOW_1.WRL`: слоты 123–127 синие).
+**Golden:** `unit-menu` переснят — `CLNTRANS` в кадре показан подводной маской
+(водные цвета); остальные наборы — в пределах 1 %.
+
+### 49.6 Мост не приподнимался над кораблём
+
+**Оракул:** `UnitInfo::IsBridgeElevated` (`unitinfo.cpp:3030`) и
+`ORDER_STATE_ELEVATE`/`LOWER` (`units_manager.cpp:2732-2763`) двигают
+`image_index` по кадрам моста; `UnitInfo::Render` (`unitinfo.cpp:3141`) рисует
+именно `image_index`.
+**Корень:** симуляция мост поднимала (проверено тестом), но
+`render::unit_frame_index_for_angle` всегда считал `image_base + angle` —
+кадр не менялся, мост выглядел опущенным.
+**Исправление:** для `BRIDGE` при `IsBridgeElevated` рисуется сохранённый
+`image_index` (clamp по числу кадров).
+**Тесты:** `unit_order::tests::ship_raises_the_bridge_and_it_lowers_after_it_passes`
+(корабль поднимает мост, проходит, мост опускается),
+`render::tests::elevated_bridge_draws_its_stored_elevation_frame`.
+
+### 49.7 Отладочные надписи в UI
+
+**Корень:** в кадре 640×480 поверх карты рисовалась служебная строка
+`LOCAL · turn N · … · LMB select/move · RMB select/cancel · End Turn`
+(в сети — `IN SESSION · … · tick=… turn=…`); в fallback-панели — подсказки
+`LMB/RMB/Esc`.
+**Исправление:** `render_session` больше не рисует статус-строку над картой
+(оригинал её не имеет; диагностика остаётся в журнале/консоли); из fallback-панели
+убраны управляющие подсказки. Строки статуса меню (`MAIN_STATUS` и т.п.) —
+оригинальные, оставлены.
+**Golden:** `move-input` (6 кадров) и `visual-screens` (5 кадров с картой)
+пересняты: разница ровно 1442–1543 пикселя — удалённая строка.
+
+### 49.8 Валидация (2026-11-26)
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_core -p max_app --no-default-features` — 1858/1858;
+* `qa_run move-input.qa` — PASS (7 PNG), `qa_golden_check` 7/7 — 0 пикселей;
+  `qa_run visual-screens.qa` — PASS (20 PNG), golden 20/20 — 0 пикселей;
+  `unit-menu`/`panels`/`sp-full`/`edge-cases` — PASS, golden в допуске (переснят
+  `unit-menu` из-за маски `CLNTRANS`);
+* поведение меняется легально: снята отладочная надпись, исправлена палитра
+  спрайтов — **CRC/снапшот не меняются** (всё перечисленное — UI/рендер;
+  состояние моста и `image_index` и раньше были в CRC);
+* оракулы `max-cpp-port/` и `max-original/` не изменялись (`save10.*`
+  восстановлены после QA-прогонов).
 
 
 

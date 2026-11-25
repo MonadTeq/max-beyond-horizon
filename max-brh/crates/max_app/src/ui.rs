@@ -2325,6 +2325,13 @@ where
         return session_saveload_input(app, event);
     }
 
+    // Unit statistics window (`UnitStats_Menu`, `STATS`) — a full-screen modal
+    // above the command menu; `Esc`/`Enter`/`Done` close it, `?`/`Help` opens
+    // `STATS_SETUP` over it (`HelpMenu_Menu` from `UnitStatsMenu::Run`).
+    if app.unit_stats().is_some() {
+        return session_unit_stats_input(app, event);
+    }
+
     // Selected unit command menu (C++ `GameManager_PopupButtons`) — modal:
     // while it is open, the map/panels/chat receive no orders, and a click outside the menu
     // or Esc closes it (like `GameManager_DeinitPopupButtons`).
@@ -2602,6 +2609,36 @@ where
 
                 apply_session_orders(app);
             }
+        }
+    }
+
+    Transition::None
+}
+
+/// Input in the open unit statistics window (C++ `UnitStatsMenu::Run`).
+///
+/// The window is a full-screen modal (`STATS`, `GameManager_DisableMainMenu`):
+/// the map/panels receive no input. `Esc`/`Enter`/`Done` close it
+/// (`GNW_KB_KEY_ESCAPE`/`GNW_KB_KEY_KP_ENTER`/`BLDONE`), `?`/`Help` open
+/// `HelpMenu_Menu("STATS_SETUP", WINDOW_MAIN_WINDOW)` **over** it — in C++
+/// the help window returns to `UnitStatsMenu::Run`, so the stats window is
+/// not closed.
+fn session_unit_stats_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let Some(action) = app.unit_stats_input(event) else {
+        return Transition::None;
+    };
+
+    match action {
+        crate::unitstats::UnitStatsAction::None => {}
+        crate::unitstats::UnitStatsAction::Help => {
+            app.open_help(HelpSection::Stats);
+            app.hud_mut().push_log("Unit status help");
+        }
+        crate::unitstats::UnitStatsAction::Close => {
+            app.close_unit_stats();
         }
     }
 
@@ -3846,9 +3883,17 @@ fn session_chrome_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -
 where
     App<D>: SessionLocal,
 {
-    if panels::panel_button_at(x, y).is_some() || max_render::layout::MINIMAP.contains(x, y) {
+    if panels::panel_button_at(x, y).is_some() {
         return Transition::None;
     }
+
+    // `WINDOW_MINIMAP` / `MOUSE_RELEASE_RIGHT` (`game_manager.cpp:6681-6703`):
+    // the cell under the cursor comes from `GameManager_GetMinimapPosition`, and
+    // a `CURSOR_UNIT_GO` gives `ORDER_MOVE` to the selected unit.
+    if max_render::layout::MINIMAP.contains(x, y) {
+        return session_minimap_right_click(app, x, y);
+    }
+
     let Some((map_x, map_y)) = panels::screen_to_map(x, y) else {
         return Transition::None;
     };
@@ -3857,13 +3902,115 @@ where
     session_map_right_click(app, &viewport, map_x, map_y)
 }
 
-/// Right click on the map: select/inspect a unit, otherwise cancel the order modes.
+/// Right click on the minimap — a move order (`game_manager.cpp:6688-6699`):
+///
+/// ```text
+/// } else if (GameManager_MouseButtons & MOUSE_RELEASE_RIGHT) {
+///     cursor = GameManager_GetWindowCursor(minimap_position.x, minimap_position.y);
+///     if (cursor == CURSOR_UNIT_GO || cursor == CURSOR_WAY) {
+///         if (GameManager_SelectedUnit->GetOrderState() != ORDER_STATE_UNIT_READY) {
+///             GameManager_SetUnitOrder(ORDER_MOVE, ...);
+/// ```
+///
+/// `GetWindowCursor` over the minimap has no unit under the cursor, so
+/// `CURSOR_UNIT_GO` is returned for an own mobile unit when the cell is
+/// enterable (`Access_IsAccessible` for a ground/sea unit,
+/// `GetAirUnitCursor`/the air branch for an aircraft — an `ORDER_IDLE` aircraft
+/// is `CURSOR_UNIT_NO_GO`). A foreign selected unit is `CURSOR_UNIT_NO_GO` too.
+/// The left button on the minimap only centers the camera (the caller).
+fn session_minimap_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let state = app.state_ref();
+    let map_width = i32::from(state.map().size.width);
+    let map_height = i32::from(state.map().size.height);
+    let two_x = app.hud().panels.minimap_2x;
+
+    let Some((grid_x, grid_y)) =
+        panels::minimap_grid_at(x, y, map_width, map_height, app.viewport(), two_x)
+    else {
+        return Transition::None;
+    };
+
+    let Some(selected) = app.hud().selected else {
+        return Transition::None;
+    };
+    let Some(unit) = app.state_ref().unit(selected).cloned() else {
+        return Transition::None;
+    };
+
+    if unit.team != app.player_team() || unit.state == max_core::enums::UnitOrderState::UnitReady {
+        return Transition::None;
+    }
+
+    // The cursor C++ would report over the minimap cell: with no unit under it
+    // only the accessibility of the cell matters (and `ORDER_IDLE` aircraft,
+    // whose `GetAirUnitCursor` finds no parent).
+    let destination = GridPoint::new(grid_x, grid_y);
+    let cursor_go = if unit.is_air() {
+        unit.orders != max_core::enums::UnitOrder::Idle
+    } else {
+        app.state_ref().is_accessible(
+            unit.unit_type,
+            unit.team,
+            destination,
+            max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+        ) != 0
+    };
+
+    if !cursor_go {
+        return Transition::None;
+    }
+
+    if unit.is_air() {
+        match hud::build_air_move_order(app.state_ref(), selected, destination) {
+            Some(command) => {
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!(
+                    "Move (air): ({}, {})",
+                    destination.x, destination.y
+                ));
+                apply_session_orders(app);
+            }
+            None => {
+                app.hud_mut().push_log("Air move refused");
+            }
+        }
+
+        return Transition::None;
+    }
+
+    match hud::build_move_order(app.state_ref(), selected, destination) {
+        Some(order) => {
+            let steps = order.preview.len();
+            app.hud_mut().preview = Some(order.preview);
+            app.hud_mut().pending.push(order.command);
+            app.hud_mut().push_log(format!(
+                "Move: {steps} steps to ({}, {})",
+                destination.x, destination.y
+            ));
+            apply_session_orders(app);
+        }
+        None => {
+            app.hud_mut().preview = None;
+            app.hud_mut()
+                .push_log(format!("No path to ({}, {})", destination.x, destination.y));
+        }
+    }
+
+    Transition::None
+}
+
+/// Right click on the map: statistics of the selected unit, select/inspect a
+/// unit, otherwise cancel the order modes.
 ///
 /// Oracle `game_manager.cpp:6747-6778` (`MOUSE_RELEASE_RIGHT` on `WINDOW_MAIN_MAP`):
 ///
-/// * the clicked unit is the selected one — `UnitStats_Menu` (statistics window;
-///   the port has no such modal, so the corner portrait/statistics stay the display
-///   and the log names it);
+/// * `GameManager_SelectedUnit == unit || == unit2` — `UnitStats_Menu`
+///   (`STATS`, [`crate::unitstats::UnitStatsMenu`]) — the full statistics window
+///   of the **selected** unit (own or the inspected enemy);
 /// * otherwise an own unit — `GameManager_UnitSelect` (select **without** opening
 ///   the command menu; the repeated LMB opens it, `GameManager_ClickUnit`);
 /// * otherwise a visible enemy — `GameManager_UnitSelectOther` (inspection);
@@ -3897,27 +4044,49 @@ where
             None => return Transition::None,
         };
 
-        // `GameManager_UnitSelect` is reachable only for an own, non-idle unit;
-        // a foreign one goes through `Access_GetEnemyUnit` (visibility needed).
-        if unit_team == team {
+        // `GameManager_SelectedUnit == unit || GameManager_SelectedUnit == unit2`:
+        // the clicked cell holds the selected unit — `UnitStats_Menu` of it.
+        if app.hud().selected == Some(id) {
             app.hud_mut().preview = None;
+            session_show_unit_status(app, id);
 
-            if app.hud().selected == Some(id) {
-                // `UnitStats_Menu(&*GameManager_SelectedUnit)` (`:6751-6753`).
-                session_show_unit_status(app, id);
+            if app.open_unit_stats(id) {
                 app.hud_mut().push_log(format!("Unit stats: {label}"));
             } else {
-                // `GameManager_UnitSelect` — no popup (`GameManager_ClickUnit`
-                // opens it on the repeated LMB instead).
-                app.hud_mut().select(Some(id));
-                app.hud_mut().push_log(format!("Selected {label}"));
-                session_show_unit_status(app, id);
+                app.hud_mut().push_log("Unit stats: no data");
             }
 
             return Transition::None;
         }
 
+        // `GameManager_UnitSelect` is reachable only for an own, non-idle unit;
+        // a foreign one goes through `Access_GetEnemyUnit` (visibility needed).
+        if unit_team == team {
+            app.hud_mut().preview = None;
+            // `GameManager_UnitSelect` — no popup (`GameManager_ClickUnit`
+            // opens it on the repeated LMB instead).
+            app.hud_mut().select(Some(id));
+            app.hud_mut().push_log(format!("Selected {label}"));
+            session_show_unit_status(app, id);
+
+            return Transition::None;
+        }
+
         if visible {
+            // The selected enemy is `unit2` in C++: its statistics window opens
+            // on the same right click (`GameManager_SelectedUnit == unit2`).
+            if app.hud().selected == Some(id) {
+                app.hud_mut().preview = None;
+
+                if app.open_unit_stats(id) {
+                    app.hud_mut().push_log(format!("Unit stats: {label}"));
+                } else {
+                    app.hud_mut().push_log("Unit stats: no data");
+                }
+
+                return Transition::None;
+            }
+
             // `GameManager_UnitSelectOther` → `GameManager_MenuUnitSelect`.
             return session_select_enemy(app, id, &label);
         }
@@ -3950,8 +4119,23 @@ fn session_map_order_click<D: Dispatcher>(
 where
     App<D>: SessionLocal,
 {
-    let team = app.player_team();
     let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
+
+    session_map_order_at(app, grid_x, grid_y)
+}
+
+/// The order itself ([`session_map_order_click`] on an already known cell) —
+/// shared with the minimap right click, where the cell comes from
+/// `GameManager_GetMinimapPosition` instead of the camera.
+fn session_map_order_at<D: Dispatcher>(
+    app: &mut App<D>,
+    grid_x: i16,
+    grid_y: i16,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let team = app.player_team();
     let debug = debug_input();
 
     let Some(selected) = app.hud().selected else {
@@ -3961,10 +4145,8 @@ where
     // A selected **enemy** unit is an inspection target, not an order source:
     // `GameManager_GetWindowCursor` returns `CURSOR_UNIT_NO_GO` for a foreign
     // selected unit (`game_manager.cpp:4305-4338`, `SelectedUnit->team !=
-    // GameManager_PlayerTeam`), so the minimap/map right click gives no
-    // `ORDER_MOVE`/`ORDER_ACTIVATE`. C++ opens `UnitStats_Menu` on a right click
-    // on the selected unit itself; that modal is not ported — the corner
-    // portrait and statistics panel already show the inspected enemy.
+    // GameManager_PlayerTeam`), so the map order gives no
+    // `ORDER_MOVE`/`ORDER_ACTIVATE`.
     let selected_own = app
         .state_ref()
         .unit(selected)
@@ -4202,8 +4384,8 @@ fn unit_label(unit: &UnitInfo) -> String {
 /// Session frame: the map from [`App::render_frame`] + the HUD (M4.2) over it.
 ///
 /// If the 1:1 window chrome (`FRAMEPIC`) is loaded and the frame is 640×480, the original HUD is already
-/// drawn in the picture itself — the procedural HUD is not drawn, only the status line is output
-/// over the map area. Without chrome — the former look.
+/// drawn in the picture itself — the procedural HUD is not drawn and no extra text is
+/// put over the map area. Without chrome — the former look.
 ///
 /// Without `App` (headless rendering before the network) the former background with the status line remains.
 fn render_session<D: Dispatcher>(buffer: &mut RgbaBuffer, view: ScreenView<'_, D>)
@@ -4217,33 +4399,10 @@ where
         let chrome_active = app.chrome_active();
 
         if chrome_active {
-            // The map area already contains tiles, units and panels; we write only
-            // the message line in the top-left corner of the map — in the GNW font, like
-            // `MessageManager_DrawMessage`.
-            let area = max_render::layout::MAIN_MAP;
-            let status: String = view.status.chars().take(70).collect();
-
-            // Open `BuildMenu` — a modal screen over the frame: the match status
-            // line does not cover it (like `GameManager_DisableMainMenu`).
-            // The save/load window (P3) — the same modal.
-            // The extraction allocation dialog (`AllocMenu`) occupies the whole 640×480
-            // frame (`ALLOCFRM`), so the status line is not drawn over
-            // it — like a modal C++ window.
-            if app.build_menu().is_none() && app.save_load().is_none() && app.alloc_menu().is_none()
-            {
-                if let Some(assets) = app.assets() {
-                    max_render::text::draw_text_gnw_shadowed(
-                        buffer,
-                        area.ulx + 4,
-                        area.uly + 4,
-                        max_render::text::GnwFontId::Font5.font(),
-                        &status,
-                        assets.palette.rgba(0xA0),
-                        assets.palette.rgba(0xE6),
-                        assets.palette.rgba(0x3F),
-                    );
-                }
-            }
+            // No in-game status/help line over the map: the original window has
+            // none (the map area shows only the `MessageManager` box and the
+            // units), so the port's launch/diagnostic text stays in the log
+            // instead of being drawn here (manual-run defect: debug labels in UI).
 
             // M-HS: the turn-transition window over the frame — modal, like `DialogMenu`.
             draw_local_notice(buffer, app, view.mouse);

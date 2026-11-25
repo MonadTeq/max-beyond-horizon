@@ -410,6 +410,14 @@ pub fn unit_frame_index(
 /// (`App::visual_angle`), not only by the simulation one: the visual route
 /// lags behind the simulation, and otherwise the frame would turn before the turn cell.
 ///
+/// The bridge is the exception: its frames are the **elevation states**
+/// (`UnitInfo::IsBridgeElevated` — `image_index != image_base`,
+/// `unitinfo.cpp:3030`; `ORDER_STATE_ELEVATE`/`LOWER` walk `image_index` one
+/// frame at a time through the `BRIDGE` sprite). C++ renders the stored
+/// `image_index` (`UnitInfo::Render`, `unitinfo.cpp:3141`), so the raised bridge
+/// must be drawn with it — otherwise the animation never shows and the bridge
+/// looks lowered while a ship passes under.
+///
 /// During construction C++ draws the builder working pose:
 /// `DrawSpriteFrame(image_index + 16)` (`unitinfo.cpp:2789` for the engineer and
 /// `4451` for the constructor), and `UnitsManager_ProcessOrderBuild` for the constructor
@@ -425,6 +433,14 @@ pub fn unit_frame_index_for_angle(
     angle: u8,
 ) -> usize {
     let last = image_count.saturating_sub(1);
+
+    // `UnitInfo::IsBridgeElevated` — the stored elevation frame.
+    if max_core::unit_order::is_bridge_elevated(unit) {
+        return usize::try_from(unit.image_index.max(0))
+            .unwrap_or(0)
+            .min(last);
+    }
+
     let base = usize::try_from(image_base.max(0)).unwrap_or(0);
     let mut index = base.saturating_add(usize::from(angle % 8));
 
@@ -1309,6 +1325,8 @@ impl<D: Dispatcher> App<D> {
         self.draw_transfer_menu(&mut frame);
         // Selected unit command menu (`GameManager_PopupButtons`).
         self.draw_unit_menu(&mut frame);
+        // Unit statistics window (`UnitStats_Menu`) — the full-screen `STATS`.
+        self.draw_unit_stats(&mut frame);
         // `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
@@ -1435,6 +1453,8 @@ impl<D: Dispatcher> App<D> {
         self.draw_transfer_menu(&mut frame);
         // Selected unit command menu — over the map and panels.
         self.draw_unit_menu(&mut frame);
+        // Unit statistics window (`UnitStats_Menu`) — the full-screen `STATS`.
+        self.draw_unit_stats(&mut frame);
         // `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`).
         self.draw_preferences(&mut frame);
         self.draw_help(&mut frame);
@@ -1461,6 +1481,26 @@ impl<D: Dispatcher> App<D> {
         if let Some(palette) = palette {
             menu.draw(frame, assets, &palette);
         }
+    }
+
+    /// Draws the open unit statistics window (`UnitStats_Menu`, `STATS`).
+    ///
+    /// The window covers the whole 640×480 frame, so it is drawn after the map
+    /// and the panels; the help window (`?`/`Help`) is drawn after it, exactly
+    /// like `HelpMenu_Menu("STATS_SETUP")` from `UnitStatsMenu::Run`.
+    pub(crate) fn draw_unit_stats(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.unit_stats(), self.assets()) else {
+            return;
+        };
+        let fallback = UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+
+        menu.draw(
+            frame,
+            assets.unit_stats.as_ref(),
+            assets.cargo.as_ref(),
+            fallback,
+        );
     }
 
     /// Draws the open upgrades screen over the frame (P6).

@@ -91,10 +91,53 @@ assert unit-pos=24,21
 assert angle=2
 shot game-after
 
-# --- TC-0604: RMB по выбранному юниту — контекст/статистика, не приказ ----
+# --- TC-0604: RMB по выбранному юниту — полные характеристики ---------------
 # Оригинал `game_manager.cpp:6747-6753`: на выбранном юните правая кнопка
-# открывает `UnitStats_Menu` (в порте — строка статистики в журнале), приказ
-# не отдаётся, выделение сохраняется.
+# открывает `UnitStats_Menu` (`STATS`, `unitstats.cpp`) — модальное окно
+# с портретом, описанием и полной таблицей характеристик; приказ не отдаётся,
+# выделение сохраняется. `Esc`/`Done`/`Enter` закрывают окно.
 rclick 532 178
 assert log=Unit stats
+assert unit-stats=open
 assert selected
+shot unit-stats
+# `?`/`Help` — `HelpMenu_Menu("STATS_SETUP")` поверх окна (режим помощи:
+# клик по элементу открывает запись). После закрытия помощи окно статистики
+# остаётся (`UnitStatsMenu::Run`).
+key ?
+assert help-section=stats
+help click 100 100
+assert help=open
+assert help-entry=UNIT_PICTURE
+help done
+assert unit-stats=open
+help close
+assert unit-stats=open
+key ESC
+assert unit-stats=closed
+assert selected
+
+# --- TC-0605: миникарта, RMB — приказ движения -----------------------------
+# Оригинал `game_manager.cpp:6688-6699`: правая кнопка на миникарте берёт клетку
+# `GameManager_GetMinimapPosition` и при `CURSOR_UNIT_GO` отдаёт `ORDER_MOVE`
+# выбранному юниту (левая кнопка только центрует камеру). Миникарта 112×112
+# в (15,356) — для карты 112×112 пиксель = (15+gx, 356+gy).
+# Возврат в (23,21), где Surveyor уже стоял (клетка гарантированно проходима).
+rclick 38 377
+assert preview
+assert log=Move:
+tick 8
+end_turn
+assert turn>=3
+click 468 178
+assert selected
+assert unit-pos=23,21
+
+# Возврат в (24,21) — итоговая позиция сценария остаётся прежней (сквозная
+# проверка «приказ → движение» для живой мыши).
+click 532 178
+assert preview
+tick 8
+click 532 178
+assert selected
+assert unit-pos=24,21
