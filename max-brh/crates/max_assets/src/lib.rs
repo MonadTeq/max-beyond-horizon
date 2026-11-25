@@ -87,13 +87,5 @@ pub fn parse_res(data: &[u8]) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn assets_smoke() {
-        assert!(parse_res(b"").is_err());
-        assert!(WrlMap::parse(b"").is_err());
-        assert!(decode_sprite(b"").is_err());
-    }
-}
+#[path = "lib_tests.rs"]
+mod tests;
