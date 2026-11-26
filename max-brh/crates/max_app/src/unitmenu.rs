@@ -20,9 +20,11 @@
 //! The menu opens on a **repeated click on an already selected own unit**:
 //! `GameManager_ClickUnit` gets `unit1 == unit2` (a click on the same unit) and
 //! calls `GameManager_InitPopupButtons`; if the menu is already open — closes it
-//! (`DeinitPopupButtons`). The left button on another own unit only
-//! re-selects. The right button does **not** open the menu: on the selected unit it
-//! opens statistics (`UnitStats_Menu`), on another — selects it.
+//! (`DeinitPopupButtons`) and the same click walks the cell stack
+//! (`Access_GetSelectableUnit`: the focus moves to the next unit of the stack,
+//! cyclically — see `ui::session_click_selected_unit`). The left button on another
+//! own unit only re-selects. The right button does **not** open the menu: on the
+//! selected unit it opens statistics (`UnitStats_Menu`), on another — selects it.
 //!
 //! `GameManager_InitPopupButtons` requires:
 //!
@@ -52,7 +54,9 @@
 //!   (`GameManager_ProcessPopupMenuInput`); arrows/Enter in C++ **do not**
 //!   work — neither here;
 //! * `Esc` — close (C++ `game_manager.cpp:5469`);
-//! * a second click on the unit — close (C++ `GameManager_ClickUnit`);
+//! * a second click on the unit — close, and the focus moves one step down the
+//!   stack (`GameManager_ClickUnit` → `Access_GetSelectableUnit`; a cell with a
+//!   single unit keeps the focus);
 //! * a click outside the menu — close (the menu is modal: the map receives no order).
 //!
 //! # Item composition
@@ -85,6 +89,10 @@
 //!    (`GameManager_UnitSelect` → `InitPopupButtons`). Here selection does not
 //!    change the frame (golden `mine-selected` and others), so the menu opens only
 //!    on a repeated click — like `GameManager_ClickUnit`, see the trigger above.
+//!    Consequence for stacked cells: in C++ the click that walks the stack to a
+//!    stationary unit already has its popup open, so the next click closes it and
+//!    keeps walking; here after the walk one click is spent opening that popup
+//!    (`ui::session_click_selected_unit`).
 //! 2. `Done` (`UnitsManager_PerformAction`) — orders in our stack are
 //!    executed immediately when issued, there is no separate "confirm" step: the item
 //!    closes the menu and clears the selection (plus switches `Await` +

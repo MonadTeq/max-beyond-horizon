@@ -2984,12 +2984,17 @@ impl QaRunner {
         if let Some(selected) = self.app.hud().selected {
             let viewport = self.app.map_viewport();
             let team = self.app.player_team();
-            let hit = hud::unit_at_screen(
+            // The rotation cache of `Access_GetSelectableUnit`: the selected unit of
+            // the clicked cell is the one under the cursor (see
+            // [`hud::unit_at_screen_preferring_selected`]), so the repeated click
+            // would open its menu and `select` must clear the focus first.
+            let hit = hud::unit_at_screen_preferring_selected(
                 self.app.state_ref(),
                 &viewport,
                 team,
                 x - layout::MAIN_MAP.ulx,
                 y - layout::MAIN_MAP.uly,
+                self.app.hud().selected,
             );
 
             if hit == Some(selected) {

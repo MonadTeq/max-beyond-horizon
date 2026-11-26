@@ -1257,6 +1257,127 @@ pub fn unit_at_screen(
     Some(found)
 }
 
+/// Cell under a camera point (`None` outside the map).
+fn screen_cell(viewport: &Viewport, x: i32, y: i32) -> Option<Point> {
+    let (grid_x, grid_y) = viewport.screen_to_grid(x, y);
+
+    if grid_x < 0 || grid_y < 0 || grid_x >= MAP_WIDTH || grid_y >= MAP_HEIGHT {
+        return None;
+    }
+
+    Some(Point::new(grid_x, grid_y))
+}
+
+/// [`unit_at_screen`] with the `Hash_MapHash` rotation cache of the oracle.
+///
+/// While a unit is selected at a cell, C++ keeps it at the **front** of the cell
+/// list: `Access_GetSelectableUnit` (`access.cpp:1131-1151`) calls
+/// `Hash_MapHash.Remove(unit)` + `Hash_MapHash.Add(unit, true)` (the `mode = true`
+/// branch is `PushBack`, `hash.cpp:170-174`) before scanning, so the focused unit
+/// ends up last and the next click on the same cell resolves to it again
+/// (`GameManager_ClickUnit`, `unit1 == unit2`, `game_manager.cpp:6265-6290`).
+///
+/// The port does not reorder the simulation's `MapHash` — a selection must not
+/// touch the snapshot/CRC — so [`unit_at_screen`] would return the newest unit of
+/// the stack instead. Here the selected **own** unit wins when the click lands on
+/// its cell, which is what the rotation guarantees in the oracle. Everything else
+/// (enemy clicks, empty cells, the tape → parent rule) is [`unit_at_screen`].
+pub fn unit_at_screen_preferring_selected(
+    state: StateRef<'_>,
+    viewport: &Viewport,
+    team: TeamId,
+    x: i32,
+    y: i32,
+    selected: Option<UnitId>,
+) -> Option<UnitId> {
+    let picked = unit_at_screen(state, viewport, team, x, y)?;
+
+    let Some(selected) = selected else {
+        return Some(picked);
+    };
+
+    let Some(unit) = state.unit(selected) else {
+        return Some(picked);
+    };
+
+    // `GameManager_ClickUnit` is reached only for an own unit under
+    // `CURSOR_FRIEND`; an inspected enemy does not take part in the rotation.
+    if unit.team != team || picked == selected {
+        return Some(picked);
+    }
+
+    match screen_cell(viewport, x, y) {
+        Some(cell) if state.units_at(cell).contains(&selected) => Some(selected),
+        _ => Some(picked),
+    }
+}
+
+/// The next selectable unit of the clicked cell's stack — the port of
+/// `GameManager_ClickUnit` → `Access_GetSelectableUnit` (`game_manager.cpp:6283`,
+/// `access.cpp:1131-1151`) with `Access_GetActiveUnitWithFlags`
+/// (`access.cpp:1492-1531`).
+///
+/// C++ first rotates the selected unit to the **back** of the cell's
+/// `Hash_MapHash` list (`Hash_MapHash.Remove(unit)` + `Add(unit, true)`), then
+/// scans the list from the front, rotating to the back (`Remove` + `Add(..., true)`)
+/// every unit that is not `SELECTABLE`, is `GROUND_COVER`, or is in `ORDER_IDLE`
+/// (`access.cpp:1504`). The first acceptable unit becomes the new focus, so the
+/// stack is walked cyclically downwards and the cell list stays rotated with the
+/// focused unit in front. `GameManager_ClickUnit` switches only to a unit visible to
+/// `unit1->team` (`game_manager.cpp:6285`); when the scan comes back to the selected
+/// unit, `Access_GetSelectableUnit` restores the original order and the focus stays
+/// (`access.cpp:1144-1147`).
+///
+/// The port keeps the `MapHash` order (the focus must not change the
+/// snapshot/CRC), so instead of rotating the list the ring is walked from the unit
+/// **after** `selected` and wraps around once — the same sequence the C++ rotation
+/// produces, without the mutation. `None` — the cell has no other selectable unit,
+/// or `selected` is not in the cell's list (the C++ scan does not reach it either in
+/// that case: the tape/decal scan finds no other unit).
+pub fn next_stacked_unit(state: StateRef<'_>, selected: UnitId, cell: Point) -> Option<UnitId> {
+    let ids = state.units_at(cell);
+    let count = ids.len();
+
+    if count < 2 {
+        return None;
+    }
+
+    // `Hash_MapHash.Remove(selected)` + `Add(..., true)`: the scan starts at the
+    // unit that followed the selected one in the (unrotated) cell list.
+    let start = ids.iter().position(|id| *id == selected)?;
+    let owner_team = state.unit(selected)?.team;
+
+    for step in 1..count {
+        let id = ids[(start + step) % count];
+
+        if id == selected {
+            continue;
+        }
+
+        let Some(unit) = state.unit(id) else {
+            continue;
+        };
+
+        // `((*it).flags & flags) && !((*it).flags & GROUND_COVER) &&
+        // (*it).GetOrder() != ORDER_IDLE` (`access.cpp:1504`).
+        if unit.flags & unit_flags::SELECTABLE == 0
+            || unit.flags & unit_flags::GROUND_COVER != 0
+            || unit.orders == UnitOrder::Idle
+        {
+            continue;
+        }
+
+        // `unit2->IsVisibleToTeam(unit1->team)` (`game_manager.cpp:6285`).
+        if !unit.is_visible_to_team(owner_team) {
+            continue;
+        }
+
+        return Some(id);
+    }
+
+    None
+}
+
 /// Whether the unit can receive a move order from the HUD.
 ///
 /// Ground and sea — yes (`find_ground_path` route). Air ones need

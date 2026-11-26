@@ -31,7 +31,7 @@
 //! | MainMenu | Up/Down/Tab, Enter, mouse; `c`/`j`/`i`/`r`/`q`; Esc — exit |
 //! | JoinList | Up/Down, Enter — join, `r` — refresh, Esc — back, mouse |
 //! | CreateForm | Tab/Up/Down — field, input, Left/Right — numbers, Enter — create, Esc — back |
-//! | InSession | LMB — select a unit, a repeated LMB — its command menu, LMB on a cell — move (also onto a bridge/water platform/road and onto a landing pad), LMB on an enemy — attack; RMB — select/inspect or cancel the order modes; Enter/T — chat (packet 18), End Turn/Menu, Esc — cancel (twice — exit) |
+//! | InSession | LMB — select a unit, a repeated LMB — its command menu (with the menu open — the next unit of the cell stack), LMB on a cell — move (also onto a bridge/water platform/road and onto a landing pad), LMB on an enemy — attack; RMB — select/inspect or cancel the order modes; Enter/T — chat (packet 18), End Turn/Menu, Esc — cancel (twice — exit) |
 //!
 //! # Session input (M4.3)
 //!
@@ -2213,7 +2213,9 @@ impl Screen {
 /// the camera. A pure function: no network, no SDL, no time — everything is tested
 /// headless.
 ///
-/// * **LMB on an own unit** — selection; a repeated LMB opens the command menu;
+/// * **LMB on an own unit** — selection; a repeated LMB opens the command menu,
+///   and with the menu already open the focus moves one step down the unit stack of
+///   the cell (cyclically, `GameManager_ClickUnit` → `Access_GetSelectableUnit`);
 /// * **LMB on an enemy** — attack order (packet `08`, processor `P3`);
 /// * **LMB on a free cell** — the `Paths_RequestPath` route +
 ///   the line preview + packet `38` (`Command::Move`); the same on a
@@ -2630,8 +2632,35 @@ where
     match outcome {
         crate::unitmenu::MenuEvent::None | crate::unitmenu::MenuEvent::Hover(_) => {}
         crate::unitmenu::MenuEvent::Close => {
+            // `GameManager_ClickUnit` (`game_manager.cpp:6274-6288`): with the popup
+            // open the click closes it first (`GameManager_DeinitPopupButtons(false)`)
+            // and the same click then walks the cell stack
+            // (`Access_GetSelectableUnit`). A click on the selected unit's own cell is
+            // that branch; any other click only closes the menu (the port keeps the
+            // popup modal for the map, see [`session_unit_menu_input`]).
+            let cycle = match event {
+                InputEvent::MouseClick(x, y) => popup_click_cell(app, x, y).filter(|cell| {
+                    app.hud().selected.is_some_and(|selected| {
+                        app.state_ref().units_at(*cell).contains(&selected)
+                    })
+                }),
+                _ => None,
+            };
+
             app.close_unit_menu();
             app.hud_mut().push_log("Unit menu closed");
+
+            if let Some(cell) = cycle {
+                if let Some(selected) = app.hud().selected {
+                    let label = app
+                        .state_ref()
+                        .unit(selected)
+                        .map(unit_label)
+                        .unwrap_or_else(|| format!("unit {selected:?}"));
+
+                    return session_click_selected_unit(app, selected, &label, cell, true);
+                }
+            }
         }
         crate::unitmenu::MenuEvent::Item(index) => {
             // `GameManager_ProcessPopupMenuInput` (`game_manager.cpp:2689`):
@@ -3589,6 +3618,101 @@ fn clicks_through_unit_to_move(
     ) != 0
 }
 
+/// A click on the already selected unit — C++ `GameManager_ClickUnit`
+/// (`game_manager.cpp:6265-6290`), the `unit1 == unit2` branch.
+///
+/// The command menu takes the click first: when no popup is open and
+/// `GameManager_InitPopupButtons` collects at least one item, C++ returns without
+/// touching the focus (`:6277-6281`). Only with the popup **already open**
+/// (`popup_was_open`) does the click reach `Access_GetSelectableUnit(unit1, grid_x,
+/// grid_y)` and move the focus to the next selectable unit of the cell stack,
+/// cyclically (`:6283-6288`, [`hud::next_stacked_unit`]). The port's menu opens by
+/// the same repeated click instead of `GameManager_UnitSelect` (a deliberate
+/// divergence, `max-brh-docs/analysis/visual-1to1-status.md` §18.1), so for a unit
+/// with a popup the first repeated click opens the menu exactly like C++, and the
+/// next one closes it (`GameManager_DeinitPopupButtons(false)`, `:6274-6276`) and
+/// cycles the stack; a unit without popup items cycles immediately (the `:6279`
+/// fall-through).
+///
+/// `cell` — the clicked cell: C++ looks the stack up by the mouse cell
+/// (`grid_x`/`grid_y`), not by the unit's own cell, which matters for the 2×2
+/// footprint of a building.
+fn session_click_selected_unit<D: Dispatcher>(
+    app: &mut App<D>,
+    id: max_core::unit::UnitId,
+    label: &str,
+    cell: GridPoint,
+    popup_was_open: bool,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    // `unit1->ClearUnitList(); GameManager_DrawUnitStatusMessage(unit1);` (`:6271-6272`).
+    app.hud_mut().preview = None;
+    session_show_unit_status(app, id);
+
+    if !popup_was_open && app.open_unit_menu() {
+        let line = match app.unit_menu() {
+            Some(menu) => format!("Unit menu: {label} ({})", menu.items.len()),
+            // `Popup_InitFactories`: for a factory with a ready unit the menu does not
+            // open — `PlaceNewUnit` selected the ready unit.
+            None => format!("Launch {label}: click a cell next to it"),
+        };
+        app.hud_mut().push_log(line);
+
+        return Transition::None;
+    }
+
+    // `unit2 = Access_GetSelectableUnit(unit1, grid_x, grid_y)` (`:6283`):
+    // the next selectable unit of the clicked cell, walked cyclically. The cell
+    // list order is the `MapHash` order — the top of the stack first
+    // (`MapHash::AddEx` pushes a new unit to the front, `hash.cpp:170-174`).
+    if let Some(next) = hud::next_stacked_unit(app.state_ref(), id, cell) {
+        app.hud_mut().select(Some(next));
+        app.hud_mut().preview = None;
+
+        let next_label = app
+            .state_ref()
+            .unit(next)
+            .map(unit_label)
+            .unwrap_or_else(|| format!("unit {next:?}"));
+        app.hud_mut().push_log(format!("Selected {next_label}"));
+        // `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage`.
+        session_show_unit_status(app, next);
+
+        return Transition::None;
+    }
+
+    // No other selectable unit at the cell: C++ keeps the focus and only closes an
+    // open popup (`Access_GetSelectableUnit` returns the unit itself or `nullptr`,
+    // `access.cpp:1144-1147`). With the popup just closed the caller has already
+    // logged that; otherwise the unit registered no popup items at all
+    // (`popup_count == 0`), which is the "no commands" case.
+    if !popup_was_open {
+        app.hud_mut()
+            .push_log(format!("Unit menu: no commands for {label}"));
+    }
+
+    Transition::None
+}
+
+/// The map cell under a frame point of a popup click.
+///
+/// The command menu input receives raw frame coordinates, while
+/// [`session_map_left_click`] gets map-area coordinates; with the 1:1 chrome the
+/// frame is offset by [`panels::screen_to_map`] (`MAIN_MAP` at 180/18 px).
+fn popup_click_cell<D: Dispatcher>(app: &App<D>, x: i32, y: i32) -> Option<GridPoint> {
+    let (x, y) = if app.chrome_active() {
+        crate::panels::screen_to_map(x, y)?
+    } else {
+        (x, y)
+    };
+    let (grid_x, grid_y) = app.map_viewport().screen_to_grid(x, y);
+
+    (grid_x >= 0 && grid_y >= 0 && grid_x < MAP_WIDTH && grid_y < MAP_HEIGHT)
+        .then(|| GridPoint::new(grid_x, grid_y))
+}
+
 /// LMB on the map: select/attack/command, order an air/naval/ground move or an
 /// activation (`CURSOR_UNIT_GO`/`CURSOR_FRIEND`/`CURSOR_ENEMY`/`CURSOR_ACTIVATE`).
 fn session_map_left_click<D: Dispatcher>(
@@ -3617,7 +3741,19 @@ where
             grid.0, grid.1, origin.0, origin.1
         );
     }
-    let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) else {
+    // `Access_GetTeamUnit`/`Access_GetEnemyUnit` with the `Hash_MapHash` rotation
+    // cache of `Access_GetSelectableUnit`: while the own unit of this cell is
+    // selected, C++ keeps it at the front of the cell list, so the click resolves to
+    // it again (`GameManager_ClickUnit`, `unit1 == unit2`) — see
+    // [`hud::unit_at_screen_preferring_selected`].
+    let Some(id) = hud::unit_at_screen_preferring_selected(
+        app.state_ref(),
+        viewport,
+        team,
+        x,
+        y,
+        app.hud().selected,
+    ) else {
         // `GameManager_GetBuilderUnitCursor` (`game_manager.cpp:5832-5843`):
         // the selected builder in `ORDER_STATE_UNIT_READY` + a cell next to the
         // completed building (the `BLDMRK*` ring) — cursor `CURSOR_UNIT_GO`, and
@@ -3832,25 +3968,17 @@ where
             app.hud_mut().enter_mode = false;
         }
 
-        // A repeated click on the already selected unit opens the command menu —
-        // C++ `GameManager_ClickUnit` (`unit1 == unit2` → `InitPopupButtons`).
+        // A repeated click on the already selected unit: the command menu, and with
+        // the menu already open — the next unit of the cell stack
+        // (`GameManager_ClickUnit`, [`session_click_selected_unit`]).
         if selected == Some(id) {
-            app.hud_mut().preview = None;
-            session_show_unit_status(app, id);
-
-            let line = if app.open_unit_menu() {
-                match app.unit_menu() {
-                    Some(menu) => format!("Unit menu: {label} ({})", menu.items.len()),
-                    // `Popup_InitFactories`: for a factory with a ready unit the menu does not
-                    // open — `PlaceNewUnit` selected the ready unit.
-                    None => format!("Launch {label}: click a cell next to it"),
-                }
-            } else {
-                format!("Unit menu: no commands for {label}")
-            };
-            app.hud_mut().push_log(line);
-
-            return Transition::None;
+            return session_click_selected_unit(
+                app,
+                id,
+                &label,
+                GridPoint::new(grid.0, grid.1),
+                false,
+            );
         }
 
         app.hud_mut().select(Some(id));
@@ -4202,7 +4330,18 @@ where
         );
     }
 
-    if let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) {
+    // `Access_GetTeamUnit`/`Access_GetEnemyUnit` with the `Hash_MapHash` rotation
+    // cache: the selected own unit of this cell stays the one under the right
+    // button (`GameManager_SelectedUnit == unit2` → `UnitStats_Menu`), exactly like
+    // the left button ([`hud::unit_at_screen_preferring_selected`]).
+    if let Some(id) = hud::unit_at_screen_preferring_selected(
+        app.state_ref(),
+        viewport,
+        team,
+        x,
+        y,
+        app.hud().selected,
+    ) {
         let (unit_team, label, visible) = match app.state_ref().unit(id) {
             Some(unit) => (unit.team, unit_label(unit), unit.is_visible_to_team(team)),
             None => return Transition::None,
