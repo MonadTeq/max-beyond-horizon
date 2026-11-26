@@ -239,6 +239,38 @@
 
 ### Исправлено
 
+- **Боевой самолёт атакует врага по умолчанию; Manual над врагом — зависание
+  (уточнение §52.1/§52.3).** Оракул «боевой/небоевой» — `ATTRIB_ATTACK`
+  (`object-classifier.md`), C++ переносит его в `UnitInfo::weapon = 2`
+  (`unitinfo.cpp:304-308`); атака — `CURSOR_ENEMY` в радиусе и
+  `ORDER_MOVE_TO_ATTACK`/`CURSOR_FAR_TARGET` вне (`game_manager.cpp:4366-4382`,
+  `:6150-6227`, `:6854-6868`). «Manual» — пункт `_(b0b9)`
+  только в `PLAY_MODE_SIMULTANEOUS_MOVES` (`units_manager.cpp:544-548`),
+  переключающий `disabled_reaction_fire` (`:532-541`, статус `_(c35e)`
+  «Reaction Fire Off», `game_manager.cpp:7634-7636`). Корень: порт не учитывал
+  `disabled_reaction_fire`, а над невалидной по типу целью (FIGHTER по TANK)
+  уходил в `CURSOR_UNIT_GO` — зависание. Исправление: `hud::
+  air_attacks_foreign_unit` (боевой `weapon == 2`, Manual выключен, видимая
+  чужая цель; `CNCT_4W`/`GROUND_COVER` кроме мин остаются hover-клетками),
+  `hud::air_move_over_foreign_unit` (небоевой или Manual), общая готовность
+  `hud::air_ready_for_orders` (C++ ветка `:4305-4338`); в
+  `session_map_left_click` — guard «не готов к приказам» (враг только
+  осматривается, `:6903-6930`), ветка атаки (`ORDER_MOVE_TO_ATTACK`) и прежняя
+  ветка зависания; `cursor::window_cursor` отдаёт `CURSOR_ENEMY`/
+  `CURSOR_FAR_TARGET`. Осознанное расширение сырой C++-ветки `:4441-4464`
+  (владелец: атака по факту боевого юнита, Manual — hover). Свои юниты/здания
+  — прежний hover. Только ввод/курсор, `snapshot_bytes`/CRC не меняются.
+  Тесты: `max_app/src/hud_tests.rs::
+  aircraft_attacks_a_foreign_unit_by_default_and_hovers_in_manual_or_non_combat`,
+  `max_app/tests/cursor_table.rs::
+  air_cursor_over_a_foreign_enemy_is_an_attack_for_an_armed_aircraft`,
+  `max_app/tests/mouse_input_regressions.rs::
+  combat_aircraft_left_click_attacks_a_foreign_unit`/`..._manual_aircraft_left_click_hovers_over_a_foreign_unit`/
+  `..._manual_menu_item_turns_reaction_fire_off_and_allows_the_hover_click`;
+  прежний `..._aircraft_left_click_hovers_over_a_foreign_ground_unit` переведён
+  на небоевой `AIRTRANS`. QA `move-input.qa` + golden — PASS (7/7, максимум
+  0.184 %). Подробности — `max-brh-docs/analysis/visual-1to1-status.md` §52.5.
+
 - **Самолёт в фокусе зависает и над СВОИМИ юнитами/зданиями (клик по своему
   наземному/водному юниту или своему зданию → `ORDER_MOVE`).** Оракул:
   `GameManager_GetWindowCursor` (`game_manager.cpp:4456-4457`) возвращает

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use max_app::ui::{handle_session_input, InputEvent, Key};
 use max_app::{App, AppConfig, LocalSetup};
-use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
+use max_core::enums::{PlayMode, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
 use max_core::team::{TeamId, TeamKind};
 
@@ -46,10 +46,18 @@ fn app_with_assets() -> Option<App> {
 }
 
 fn local_game() -> Option<App> {
+    local_game_with_play_mode(PlayMode::TurnBased)
+}
+
+/// The same local match in a chosen play mode. `SimultaneousMoves` is the only
+/// mode where the `Manual` item is registered
+/// (`UnitsManager_Popup_InitCommons`, `units_manager.cpp:544-548`).
+fn local_game_with_play_mode(play_mode: PlayMode) -> Option<App> {
     let mut app = app_with_assets()?;
     let mut setup = LocalSetup::default();
     setup.world = 0;
     setup.timer = 0;
+    setup.play_mode = play_mode;
     setup.team_types = [
         TeamKind::Player,
         TeamKind::Computer,
@@ -381,8 +389,9 @@ fn right_click_on_selected_enemy_opens_its_stats() {
     });
 }
 
-/// #4: with an aircraft in focus, LMB on a cell holding a **foreign** ground
-/// unit is a move — the aircraft hovers above the unit (an air/ground stack).
+/// #4: with a **non-combat** aircraft in focus (`ATTRIB_ATTACK == 0`,
+/// `UnitInfo::weapon == 0`), LMB on a cell holding a **foreign** ground unit is
+/// a move — the aircraft hovers above the unit (an air/ground stack).
 ///
 /// Oracle `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): with no
 /// own `SELECTABLE` unit in the cell (`team_unit == nullptr`) the
@@ -390,9 +399,9 @@ fn right_click_on_selected_enemy_opens_its_stats() {
 /// `ORDER_MOVE`/`ORDER_STATE_INIT` (`:6892-6898`). `Access_IsAccessible` blocks
 /// an aircraft only with another **air** unit (`access.cpp:131-137`: the
 /// `SameClassBlocks` check compares air vs air), so a ground/sea unit never
-/// blocks the destination cell. Before the fix the enemy branch of the click
-/// treated the foreign unit as an inspection target: the focus jumped to it and
-/// no order was given.
+/// blocks the destination cell. An **armed** aircraft attacks instead (the
+/// owner rule, see `combat_aircraft_left_click_attacks_a_foreign_unit`);
+/// `Manual` (`disabled_reaction_fire`) restores this hover move.
 #[test]
 fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
     with_big_stack(|| {
@@ -418,15 +427,18 @@ fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
         let aircraft = app
             .universe_mut()
             .spawn_unit(
-                UnitType::Fighter,
+                UnitType::AirTransport,
                 team,
                 aircraft_grid,
-                max_core::access::unit_type_flags(UnitType::Fighter),
+                max_core::access::unit_type_flags(UnitType::AirTransport),
             )
-            .expect("fighter");
+            .expect("air transport");
         {
             // A flying aircraft — the reported symptom is a plane above units.
-            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            let unit = app
+                .universe_mut()
+                .unit_mut(aircraft)
+                .expect("air transport");
             unit.flags |= max_core::enums::unit_flags::HOVERING;
         }
 
@@ -475,7 +487,7 @@ fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
             app.hud().log.lines()
         );
 
-        let unit = app.state_ref().unit(aircraft).expect("fighter");
+        let unit = app.state_ref().unit(aircraft).expect("air transport");
         assert_eq!(unit.orders, UnitOrder::Move, "ORDER_MOVE was given");
         assert_eq!(
             app.state_ref().order_data(aircraft).move_to,
@@ -500,6 +512,313 @@ fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
         assert!(
             cell.contains(&aircraft) && cell.contains(&ground),
             "the cell must hold both the aircraft and the ground unit, got {cell:?}"
+        );
+    });
+}
+
+/// Owner rule: an **armed** aircraft (`ATTRIB_ATTACK > 0` → `UnitInfo::weapon == 2`,
+/// `unitinfo.cpp:304-308`) attacks a visible foreign unit by default. Even a
+/// target outside the weapon's valid set is an attack here (the Fighter cannot
+/// damage a Tank, but the click must be `ORDER_MOVE_TO_ATTACK`, not a hover
+/// move). The raw C++ air arm (`game_manager.cpp:4441-4464`) would yield
+/// `CURSOR_UNIT_GO` when no valid attack target exists; this divergence is the
+/// owner's decision (the Manual toggle below is the hover escape).
+#[test]
+fn combat_aircraft_left_click_attacks_a_foreign_unit() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        {
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+        }
+
+        let enemy_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
+        let enemy = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Tank,
+                TeamId(1),
+                enemy_grid,
+                max_core::access::unit_type_flags(UnitType::Tank),
+            )
+            .expect("enemy tank");
+        {
+            let unit = app.universe_mut().unit_mut(enemy).expect("tank");
+            unit.set_visible_to_team(team, true);
+            unit.orders = UnitOrder::Await;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        let (ex, ey) = screen_point(&app, enemy_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ex, ey));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(aircraft),
+            "the click must not move the focus to the foreign unit"
+        );
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Attack:")),
+            "LMB on a foreign unit with an armed aircraft must be an attack, log: {:?}",
+            app.hud().log.lines()
+        );
+
+        let unit = app.state_ref().unit(aircraft).expect("fighter");
+        assert_eq!(
+            unit.orders,
+            UnitOrder::MoveToAttack,
+            "ORDER_MOVE_TO_ATTACK was given"
+        );
+        assert_eq!(
+            app.state_ref().unit(aircraft).expect("fighter").enemy_unit,
+            Some(enemy),
+            "the attack order carries the enemy"
+        );
+        assert_eq!(
+            app.state_ref().order_data(aircraft).move_to,
+            enemy_grid,
+            "the attack order targets the enemy's cell"
+        );
+    });
+}
+
+/// Owner rule: `Manual` — the `disabled_reaction_fire` toggle of
+/// `UnitsManager_Popup_OnClick_Manual` (`units_manager.cpp:532-541`; status
+/// `_(c35e)` "Reaction Fire Off", `game_manager.cpp:7634-7636`) — turns the
+/// armed aircraft's click on a visible enemy back into the hover move. A valid
+/// attack target (air for the Fighter) is used to show that the toggle, not the
+/// target type, decides.
+#[test]
+fn manual_aircraft_left_click_hovers_over_a_foreign_unit() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        {
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+            // The Manual toggle (`UnitsManager_Popup_OnClick_Manual`).
+            unit.disabled_reaction_fire = true;
+        }
+
+        let enemy_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
+        let enemy = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                TeamId(1),
+                enemy_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("enemy fighter");
+        {
+            let unit = app.universe_mut().unit_mut(enemy).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+            unit.set_visible_to_team(team, true);
+            unit.orders = UnitOrder::Await;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        let (ex, ey) = screen_point(&app, enemy_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ex, ey));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(aircraft),
+            "the click must not move the focus to the foreign unit"
+        );
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Move (air)")),
+            "Manual must turn the enemy cell into a hover move, log: {:?}",
+            app.hud().log.lines()
+        );
+        assert_eq!(
+            app.state_ref().unit(aircraft).expect("fighter").orders,
+            UnitOrder::Move,
+            "ORDER_MOVE was given"
+        );
+        assert_eq!(
+            app.state_ref().order_data(aircraft).move_to,
+            enemy_grid,
+            "move_to is the enemy's cell"
+        );
+    });
+}
+
+/// The real `Manual` path: in `SimultaneousMoves` the unit menu registers the
+/// `Manual` item (`UnitsManager_Popup_InitCommons`, `units_manager.cpp:544-548`,
+/// caption `_(b0b9)`), and activating it toggles `disabled_reaction_fire`
+/// (`UnitsManager_Popup_OnClick_Manual`, `:532-541`) through the P1 order. After
+/// the toggle an armed aircraft's click on a visible enemy is the hover move,
+/// not the attack.
+#[test]
+fn manual_menu_item_turns_reaction_fire_off_and_allows_the_hover_click() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game_with_play_mode(PlayMode::SimultaneousMoves) else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        {
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+        }
+
+        let enemy_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
+        let enemy = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                TeamId(1),
+                enemy_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("enemy fighter");
+        {
+            let unit = app.universe_mut().unit_mut(enemy).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+            unit.set_visible_to_team(team, true);
+            unit.orders = UnitOrder::Await;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+
+        let toggle = |app: &mut App| {
+            app.hud_mut().select(Some(aircraft));
+            assert!(app.open_unit_menu(), "the unit menu opens");
+            let index = app
+                .unit_menu()
+                .and_then(|menu| menu.index_of(max_app::unitmenu::ItemId::Manual))
+                .expect("the Manual item is registered in SimMoves");
+            assert!(app.unit_menu().expect("menu").items[index].enabled);
+            app.activate_unit_menu_item(index);
+            app.flush_orders();
+            app.state_ref()
+                .unit(aircraft)
+                .expect("fighter")
+                .disabled_reaction_fire
+        };
+
+        assert!(toggle(&mut app), "Manual turns reaction fire off");
+        assert!(!toggle(&mut app), "the second Manual turns it back on");
+        assert!(toggle(&mut app), "Manual turns reaction fire off again");
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+        app.hud_mut().select(Some(aircraft));
+
+        let (ex, ey) = screen_point(&app, enemy_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ex, ey));
+
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Move (air)")),
+            "Manual must keep the enemy cell a hover move, log: {:?}",
+            app.hud().log.lines()
+        );
+        assert_eq!(
+            app.state_ref().unit(aircraft).expect("fighter").orders,
+            UnitOrder::Move,
+            "ORDER_MOVE was given"
         );
     });
 }

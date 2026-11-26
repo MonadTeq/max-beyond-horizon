@@ -1125,6 +1125,94 @@ pub fn build_air_move_order(
     }))
 }
 
+/// C++ branch "the unit is not ready for orders" (`game_manager.cpp:4305-4338`):
+/// a moving (`ORDER_MOVE`/`MOVE_TO_UNIT`/`MOVE_TO_ATTACK` outside
+/// `EXECUTING_ORDER`), firing, exploding, disabled, loading or scaling aircraft
+/// is served by `CURSOR_FRIEND`/`CURSOR_UNIT_NO_GO` and must not receive a new
+/// air order.
+pub(crate) fn air_ready_for_orders(aircraft: &UnitInfo) -> bool {
+    !matches!(
+        aircraft.orders,
+        UnitOrder::Fire
+            | UnitOrder::Explode
+            | UnitOrder::Disable
+            | UnitOrder::AwaitDisableUnit
+            | UnitOrder::AwaitStealUnit
+            | UnitOrder::Load
+            | UnitOrder::AwaitScaling
+    ) && aircraft.state != UnitOrderState::Destroy
+        && !(matches!(
+            aircraft.orders,
+            UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
+        ) && aircraft.state != UnitOrderState::ExecutingOrder)
+}
+
+/// Common body of [`air_attacks_foreign_unit`] and
+/// [`air_move_over_foreign_unit`]: the aircraft is ready for a click order and
+/// the clicked unit is a visible foreign unit.
+fn air_foreign_click_target<'a>(
+    state: StateRef<'a>,
+    selected: UnitId,
+    clicked: UnitId,
+) -> Option<(&'a UnitInfo, &'a UnitInfo)> {
+    let aircraft = state.unit(selected)?;
+    let other = state.unit(clicked)?;
+
+    if !aircraft.is_air()
+        || aircraft.team == other.team
+        || aircraft.hits == 0
+        || other.hits == 0
+        || aircraft.orders == UnitOrder::Idle
+        || !air_ready_for_orders(aircraft)
+        || !other.is_visible_to_team(aircraft.team)
+    {
+        return None;
+    }
+
+    Some((aircraft, other))
+}
+
+/// A foreign cell object that an aircraft can attack by type. `CNCT_4W`
+/// (`Connector`) and the `GROUND_COVER` terrain objects (`ROAD`/`BRIDGE`/
+/// `WTRPLTFM`) stay hover cells, exactly as the C++ cursor excludes them from
+/// the military branch (`game_manager.cpp:4371-4372`); mines are units.
+fn air_attack_candidate(other: &UnitInfo) -> bool {
+    other.unit_type != UnitType::Connector
+        && (other.flags & unit_flags::GROUND_COVER == 0
+            || matches!(other.unit_type, UnitType::LandMine | UnitType::SeaMine))
+}
+
+/// Whether an LMB on the **foreign** unit `clicked` is an **attack** with the
+/// aircraft `selected` — the owner rule for armed aircraft.
+///
+/// "Combat vs non-combat" is the `ATTRIB_ATTACK` attribute (the canonical
+/// `object-classifier.md` criterion): C++ copies it into `UnitInfo::weapon`
+/// (`weapon = 2` when `GetAttribute(ATTRIB_ATTACK) != 0`, `unitinfo.cpp:304-308`).
+/// An armed aircraft (`weapon == 2`) over a visible foreign unit is an attack by
+/// default: `CURSOR_ENEMY` when the target is within `ATTRIB_RANGE`,
+/// `ORDER_MOVE_TO_ATTACK`/`CURSOR_FAR_TARGET` otherwise
+/// (`GameManager_GetWindowCursor`, `game_manager.cpp:4366-4382`; `GameManager_
+/// GetMilitaryCursor`, `:6150-6227`).
+///
+/// `Manual` — the `disabled_reaction_fire` toggle of
+/// `UnitsManager_Popup_OnClick_Manual` (`units_manager.cpp:532-541`; item
+/// `_(b0b9)` "Manual", status `_(c35e)` "Reaction Fire Off", `game_manager.cpp:
+/// 7634-7636`) — is the hover escape: with reaction fire off the click stays a
+/// move and the aircraft parks above the enemy. This is a deliberate divergence
+/// from the raw C++ air arm (`:4441-4464`), which yields `CURSOR_UNIT_GO`
+/// whenever no **valid** attack target is present; the owner's rule uses the
+/// combat flag instead. Non-combat aircraft (`weapon == 0`) never attack.
+///
+/// Only the input routing changes — the simulation, the snapshot and the CRC are
+/// untouched.
+pub fn air_attacks_foreign_unit(state: StateRef<'_>, selected: UnitId, clicked: UnitId) -> bool {
+    let Some((aircraft, other)) = air_foreign_click_target(state, selected, clicked) else {
+        return false;
+    };
+
+    aircraft.weapon == 2 && !aircraft.disabled_reaction_fire && air_attack_candidate(other)
+}
+
 /// Whether an LMB on the **foreign** unit `clicked` moves the aircraft
 /// `selected` onto that unit's cell — the aircraft hovers above it.
 ///
@@ -1140,6 +1228,11 @@ pub fn build_air_move_order(
 /// is a straight segment without obstacle avoidance (`paths.cpp:97`) — so the
 /// air/ground stack of a hovering aircraft above a unit is legal.
 ///
+/// The owner rule narrows this to **non-combat** aircraft (`weapon == 0`), to a
+/// `Manual` armed aircraft (`disabled_reaction_fire`, see
+/// [`air_attacks_foreign_unit`]) and to terrain objects (`Connector`,
+/// `GROUND_COVER`). An armed aircraft in the default mode attacks instead.
+///
 /// `ORDER_IDLE` — the aircraft sits in a container and
 /// `GameManager_GetAirUnitCursor` (`:4362`, `:5937-5962`) handles the click
 /// (`CURSOR_ACTIVATE`/`CURSOR_FRIEND`, never a move). A fogged foreign unit
@@ -1147,27 +1240,8 @@ pub fn build_air_move_order(
 /// does not see it, while [`unit_at_screen`] does — the caller's attack branch
 /// stays in charge there.
 pub fn air_move_over_foreign_unit(state: StateRef<'_>, selected: UnitId, clicked: UnitId) -> bool {
-    let (Some(aircraft), Some(other)) = (state.unit(selected), state.unit(clicked)) else {
-        return false;
-    };
-
-    if !aircraft.is_air()
-        || aircraft.team == other.team
-        || aircraft.hits == 0
-        || other.hits == 0
-        || aircraft.orders == UnitOrder::Idle
-    {
-        return false;
-    }
-
-    if !other.is_visible_to_team(aircraft.team) {
-        return false;
-    }
-
-    // `Access_IsValidAttackTarget(SelectedUnit, enemy)` (`access.cpp:1968-1993`):
-    // a hovering aircraft can only target what its `SC_ATTRI` weapon covers (air
-    // for FIGHTER/SP_FLAK/ANTIAIR, …), and a landed one targets nothing at all.
-    !state.is_valid_attack_target(aircraft, other)
+    air_foreign_click_target(state, selected, clicked).is_some()
+        && !air_attacks_foreign_unit(state, selected, clicked)
 }
 
 /// Whether the aircraft `aircraft` may hover over the **own** unit `other` (the
@@ -1201,22 +1275,7 @@ pub(crate) fn air_hovers_over_own(aircraft: &UnitInfo, other: &UnitInfo) -> bool
     // runs before the class branch: a mid-move/firing/disabled/loading aircraft
     // gets `CURSOR_FRIEND`/`CURSOR_UNIT_NO_GO`, so the click must not give a new
     // order (the cursor already follows that branch).
-    let not_ready = matches!(
-        aircraft.orders,
-        UnitOrder::Fire
-            | UnitOrder::Explode
-            | UnitOrder::Disable
-            | UnitOrder::AwaitDisableUnit
-            | UnitOrder::AwaitStealUnit
-            | UnitOrder::Load
-            | UnitOrder::AwaitScaling
-    ) || aircraft.state == UnitOrderState::Destroy
-        || (matches!(
-            aircraft.orders,
-            UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
-        ) && aircraft.state != UnitOrderState::ExecutingOrder);
-
-    if not_ready
+    if !air_ready_for_orders(aircraft)
         || !aircraft.is_air()
         || aircraft.hits == 0
         || aircraft.team != other.team

@@ -927,16 +927,21 @@ fn escape_cancels_chat_without_leaving_the_session() {
     );
 }
 
-/// [`air_move_over_foreign_unit`] — the `MOBILE_AIR_UNIT` branch of
-/// `GameManager_GetWindowCursor` (`game_manager.cpp:4456-4464`): an aircraft in
-/// focus moves over a foreign ground/sea unit (the plane hovers above it), while
-/// a unit the aircraft can attack (`CURSOR_ENEMY`) and a fogged unit
-/// (`Access_GetEnemyUnit` needs `IsVisibleToTeam`) are not move targets. Own
-/// units are the separate rule of [`air_move_over_own_unit`]. An `ORDER_IDLE`
-/// aircraft sits in a container: `GameManager_GetAirUnitCursor`
-/// (`:5937-5962`) handles that click instead.
+/// [`air_attacks_foreign_unit`]/[`air_move_over_foreign_unit`] — the owner rule
+/// for an aircraft in focus over a **foreign** unit.
+///
+/// The combat criterion is `ATTRIB_ATTACK` (`UnitInfo::weapon == 2`,
+/// `unitinfo.cpp:304-308`; `object-classifier.md`). An armed aircraft attacks a
+/// visible foreign unit by default (`CURSOR_ENEMY`/`ORDER_MOVE_TO_ATTACK`,
+/// `game_manager.cpp:4366-4382`); `Manual` — the `disabled_reaction_fire` toggle
+/// of `UnitsManager_Popup_OnClick_Manual` (`units_manager.cpp:532-541`) — turns
+/// the click back into the hover move, and a non-combat aircraft (`weapon == 0`)
+/// always hovers. A fogged unit (`Access_GetEnemyUnit` needs `IsVisibleToTeam`),
+/// an `ORDER_IDLE` aircraft (`GameManager_GetAirUnitCursor`, `:5937-5962`) and
+/// the aircraft's own side are neither attack nor hover targets. Own units are
+/// the separate rule of [`air_move_over_own_unit`].
 #[test]
-fn aircraft_moves_over_a_foreign_ground_unit_only() {
+fn aircraft_attacks_a_foreign_unit_by_default_and_hovers_in_manual_or_non_combat() {
     let mut app = App::new(AppConfig::default().with_screen(512, 384));
     let universe = &mut app.universe;
     universe.set_player_team(TeamId::RED);
@@ -978,6 +983,15 @@ fn aircraft_moves_over_a_foreign_ground_unit_only() {
             unit_flags::HOVERING,
         )
         .expect("stored fighter");
+    // A non-combat aircraft: `ATTRIB_ATTACK == 0`, so `weapon == 0`.
+    let transport = universe
+        .spawn_unit(
+            UnitType::AirTransport,
+            TeamId::RED,
+            Point::new(16, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("air transport");
 
     for id in [ground, enemy_air] {
         universe
@@ -991,32 +1005,79 @@ fn aircraft_moves_over_a_foreign_ground_unit_only() {
         unit.state = UnitOrderState::Store;
     }
 
-    let state = app.state_ref();
+    {
+        let state = app.state_ref();
 
-    assert!(
-        air_move_over_foreign_unit(state, fighter, ground),
-        "an aircraft in focus moves over a foreign ground unit"
-    );
-    assert!(
-        !air_move_over_foreign_unit(state, fighter, own),
-        "an own unit is decided by air_move_over_own_unit, not by this predicate"
-    );
-    assert!(
-        !air_move_over_foreign_unit(state, fighter, enemy_air),
-        "a valid attack target is CURSOR_ENEMY, not a move"
-    );
-    assert!(
-        !air_move_over_foreign_unit(state, fighter, fogged),
-        "a fogged unit is invisible to the C++ cursor"
-    );
-    assert!(
-        !air_move_over_foreign_unit(state, fighter, stored),
-        "an ORDER_IDLE aircraft goes through GameManager_GetAirUnitCursor"
-    );
-    assert!(
-        !air_move_over_foreign_unit(state, own, ground),
-        "a ground unit has no air move cursor"
-    );
+        // Armed aircraft, default mode: an attack, even when the target type is
+        // outside the weapon's valid set (Fighter vs Tank) — the owner's rule.
+        assert!(
+            air_attacks_foreign_unit(state, fighter, ground),
+            "an armed aircraft attacks a visible foreign unit by default"
+        );
+        assert!(
+            !air_move_over_foreign_unit(state, fighter, ground),
+            "an armed aircraft does not hover over the enemy by default"
+        );
+        // A valid attack target (air for the Fighter) is an attack as well.
+        assert!(
+            air_attacks_foreign_unit(state, fighter, enemy_air),
+            "a valid air target is an attack"
+        );
+        assert!(
+            !air_move_over_foreign_unit(state, fighter, enemy_air),
+            "a valid air target is not a hover cell"
+        );
+        // Non-combat aircraft: the foreign unit is a hover cell.
+        assert!(
+            !air_attacks_foreign_unit(state, transport, ground),
+            "a non-combat aircraft has no attack"
+        );
+        assert!(
+            air_move_over_foreign_unit(state, transport, ground),
+            "a non-combat aircraft hovers over any foreign unit"
+        );
+        // Neutral exclusions.
+        assert!(
+            !air_attacks_foreign_unit(state, fighter, own)
+                && !air_move_over_foreign_unit(state, fighter, own),
+            "an own unit is decided by air_move_over_own_unit"
+        );
+        assert!(
+            !air_attacks_foreign_unit(state, fighter, fogged)
+                && !air_move_over_foreign_unit(state, fighter, fogged),
+            "a fogged unit is invisible to the C++ cursor"
+        );
+        assert!(
+            !air_attacks_foreign_unit(state, fighter, stored)
+                && !air_move_over_foreign_unit(state, fighter, stored),
+            "an ORDER_IDLE aircraft goes through GameManager_GetAirUnitCursor"
+        );
+        assert!(
+            !air_attacks_foreign_unit(state, own, ground)
+                && !air_move_over_foreign_unit(state, own, ground),
+            "a ground unit has no air attack/hover cursor"
+        );
+    }
+
+    // `Manual` (`disabled_reaction_fire`) is the hover escape: even a valid
+    // attack target becomes a move.
+    {
+        let unit = app.universe_mut().unit_mut(fighter).expect("fighter");
+        unit.disabled_reaction_fire = true;
+    }
+
+    {
+        let state = app.state_ref();
+
+        assert!(
+            !air_attacks_foreign_unit(state, fighter, enemy_air),
+            "Manual disables the attack on a foreign unit"
+        );
+        assert!(
+            air_move_over_foreign_unit(state, fighter, enemy_air),
+            "Manual lets the armed aircraft hover over a valid enemy"
+        );
+    }
 }
 
 /// [`air_move_over_own_unit`] — the own-unit counterpart of the foreign rule:

@@ -4086,6 +4086,45 @@ where
         }
     }
 
+    // C++ branch 3 (`game_manager.cpp:4305-4338`): an aircraft that is moving /
+    // firing / disabled / loading — or a foreign (inspected) one
+    // (`team != GameManager_PlayerTeam`) — is served by
+    // `CURSOR_FRIEND`/`CURSOR_UNIT_NO_GO` and gets no attack order; a visible
+    // enemy is only inspected (`CURSOR_UNIT_NO_GO` arm, `:6903-6930`).
+    if app.state_ref().unit(selected).is_some_and(|unit| {
+        unit.is_air() && (unit.team != team || !hud::air_ready_for_orders(unit))
+    }) {
+        return if enemy_visible {
+            session_select_enemy(app, id, &label)
+        } else {
+            Transition::None
+        };
+    }
+
+    // Owner rule: an **armed** aircraft (`weapon == 2`, i.e. `ATTRIB_ATTACK > 0`,
+    // `unitinfo.cpp:304-308`) over a visible foreign unit attacks by default —
+    // `ORDER_MOVE_TO_ATTACK` (C++ `CURSOR_ENEMY`/`CURSOR_FAR_TARGET`,
+    // `game_manager.cpp:4366-4382`/`:6854-6868`). `Manual`
+    // (`disabled_reaction_fire`, `units_manager.cpp:532-541`) is the hover
+    // escape; non-combat aircraft never attack (see
+    // [`hud::air_attacks_foreign_unit`]).
+    if !app.hud().targeting_mode
+        && !app.hud().enter_mode
+        && hud::air_attacks_foreign_unit(app.state_ref(), selected, id)
+    {
+        match hud::build_attack_order(app.state_ref(), selected, id) {
+            Some(command) => {
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!("Attack: {label}"));
+                apply_session_orders(app);
+            }
+            None => app.hud_mut().push_log("Cannot attack this unit"),
+        }
+
+        return Transition::None;
+    }
+
     // An aircraft in focus over a **foreign** unit: C++ `GameManager_GetWindowCursor`
     // has no own `SELECTABLE` unit in the cell (`team_unit == nullptr`, otherwise
     // the own-unit branch above took the click), so its `MOBILE_AIR_UNIT` branch
@@ -4094,7 +4133,7 @@ where
     // `Access_IsAccessible` blocks an aircraft only with another **air** unit
     // (`access.cpp:131-137`), and the air path never avoids units (`paths.cpp:97`).
     // The `targeting_mode`/`enter_mode` branches (`:4384`/`:4416`) keep priority;
-    // a valid attack target stays an attack (the block below).
+    // a valid attack target stays an attack (the block above).
     if !app.hud().targeting_mode
         && !app.hud().enter_mode
         && hud::air_move_over_foreign_unit(app.state_ref(), selected, id)

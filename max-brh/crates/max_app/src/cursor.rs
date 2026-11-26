@@ -968,6 +968,28 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             };
         }
 
+        // Owner rule: an **armed** aircraft over a visible enemy offers the
+        // attack (`CURSOR_ENEMY` in range, `CURSOR_FAR_TARGET` otherwise) instead
+        // of the hover move; `Manual` (`disabled_reaction_fire`) and non-combat
+        // aircraft keep `CURSOR_UNIT_GO`. The owner's rule uses the combat flag
+        // (`UnitInfo::weapon == 2`, `unitinfo.cpp:304-308`) where the raw C++
+        // air arm (`game_manager.cpp:4441-4464`) would fall back to a move.
+        if team_unit.is_none()
+            && get_enemy_unit(state, player_team, grid, unit_flags::SELECTABLE).is_some_and(
+                |enemy| crate::hud::air_attacks_foreign_unit(state, selected.id, enemy),
+            )
+        {
+            let range = selected
+                .base_values
+                .get_attribute(max_core::unit_values::ATTRIB_RANGE);
+
+            return if state.is_within_attack_range(selected, grid, range) {
+                CursorId::Enemy
+            } else {
+                CursorId::FarTarget
+            };
+        }
+
         return if team_unit.is_some() {
             CursorId::Friend
         } else if app.shift_pressed() {

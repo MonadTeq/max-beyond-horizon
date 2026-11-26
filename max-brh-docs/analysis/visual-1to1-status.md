@@ -6103,3 +6103,72 @@ aircraft_left_click_hovers_over_an_own_ground_unit`/`..._over_an_own_building`
 * `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %;
 * оракулы `max-cpp-port/` и `max-original/` не изменялись.
 
+### 52.5 Уточнение (2026-11-26): боевой самолёт атакует врага, Manual — зависание
+
+**Оракул. «Боевой/небоевой».** Критерий — атрибут `ATTRIB_ATTACK`
+(`object-classifier.md`: `attack > 0` — боевой, `attack = 0` — небоевой).
+C++ переносит его в поле `UnitInfo::weapon`: `weapon = 2`, если
+`GetAttribute(ATTRIB_ATTACK) != 0`, иначе `0` (`max-cpp-port/src/unitinfo.cpp:304-308`).
+Курсор атаки: `GameManager_GetWindowCursor` вызывает
+`GameManager_GetMilitaryCursor` (`game_manager.cpp:4366-4382`, `:6150-6227`)
+только при `Access_IsValidAttackTarget` (`access.cpp:1968-1993`); в радиусе это
+`CURSOR_ENEMY` (`:6854-6862`), вне радиуса — `CURSOR_FAR_TARGET`/
+`ORDER_MOVE_TO_ATTACK` (`:6864-6868`). Сырая воздушная ветка
+`case MOBILE_AIR_UNIT` (`:4441-4464`) без валидной цели отдаёт
+`CURSOR_UNIT_GO` — приказ движения (зависание).
+
+**Оракул. `Manual`.** Пункт меню `_(b0b9)` «Manual» регистрируется только в
+`PLAY_MODE_SIMULTANEOUS_MOVES` при `ammo > 0` и не для диверсанта
+(`UnitsManager_Popup_InitCommons`, `units_manager.cpp:544-548`); обработчик
+`UnitsManager_Popup_OnClick_Manual` (`:532-541`) переключает
+`disabled_reaction_fire`, статус — `_(c35e)` «Reaction Fire Off»
+(`game_manager.cpp:7634-7636`). Это и есть «manual» в приказах: отключённый
+ответный огонь. В порте флаг уже ходит в P1 (`max_app/src/lib.rs:2436-2459`) и
+доступен через меню в SimMoves (`unitmenu::init_commons`).
+
+**Расхождение.** Порт игнорировал `disabled_reaction_fire` при клике: боевой
+самолёт над видимым врагом всегда шёл в атаку, а над невалидной по типу целью
+(например, FIGHTER по TANK) — в зависание (`CURSOR_UNIT_GO`). По решению
+владельца правило иное: **боевой** самолёт (`weapon == 2`) по умолчанию
+предлагает атаку на любого видимого врага (в радиусе — `CURSOR_ENEMY`, вне —
+`CURSOR_FAR_TARGET`/`ORDER_MOVE_TO_ATTACK`), а зависает над врагом только в
+`Manual`; **небоевой** самолёт (`weapon == 0`) зависает над любым юнитом,
+своим или чужим. Это осознанное расширение сырой C++-ветки `:4441-4464`
+(она даёт `CURSOR_UNIT_GO` при отсутствии валидной цели) — как и зависание над
+своими в §52.3.
+
+**Исправление.** `hud::air_attacks_foreign_unit` — боевой самолёт, `Manual`
+выключен, видимая чужая цель (не `CNCT_4W` и не `GROUND_COVER`, кроме мин:
+`game_manager.cpp:4371-4372`); `hud::air_move_over_foreign_unit` — то же
+условие готовности, но без атаки (небоевой или `Manual`, либо terrain-объект);
+общая готовность вынесена в `hud::air_ready_for_orders` (C++ ветка
+`:4305-4338`, теперь общая с §52.3). В `session_map_left_click` (ветка
+чужого юнита) добавлены: (1) guard «самолёт не готов к приказам» — видимый
+враг только осматривается (`CURSOR_UNIT_NO_GO`, `:6903-6930`); (2) ветка
+атаки боевого самолёта (`build_attack_order` → `ORDER_MOVE_TO_ATTACK`);
+(3) прежняя ветка зависания. `cursor::window_cursor` в той же ситуации отдаёт
+`CURSOR_ENEMY`/`CURSOR_FAR_TARGET` вместо `CURSOR_UNIT_GO`. Только ввод и
+курсор: `snapshot_bytes`/CRC не меняются.
+
+**Тесты.**
+`max_app/src/hud_tests.rs::aircraft_attacks_a_foreign_unit_by_default_and_hovers_in_manual_or_non_combat`
+(предикаты: боевой → атака, Manual → hover, небоевой → hover, туман/idle/свой
+— ни то ни другое); `max_app/tests/cursor_table.rs::
+air_cursor_over_a_foreign_enemy_is_an_attack_for_an_armed_aircraft` (курсор
+`ENMY_PTR`/`PTR_FTRG`, Manual и небоевой — `UNIT_GO`);
+`max_app/tests/mouse_input_regressions.rs::
+combat_aircraft_left_click_attacks_a_foreign_unit` (мышь: `Attack:`, заказ
+`MOVE_TO_ATTACK` с `enemy_unit`), `..._manual_aircraft_left_click_hovers_over_a_foreign_unit`
+(`ORDER_MOVE` в клетку врага), `..._manual_menu_item_turns_reaction_fire_off_and_allows_the_hover_click`
+(реальный путь меню SimMoves: Manual → флаг → клик → hover; три переключения),
+`..._aircraft_left_click_hovers_over_a_foreign_ground_unit` (переведён на
+небоевой `AIRTRANS`, чтобы не конфликтовать с новым правилом). Прежние
+тесты своих юнитов/зданий не менялись.
+
+**Валидация (2026-11-26).**
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_app --no-default-features` — 969/969;
+* `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %
+  (`game-turn2`);
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.

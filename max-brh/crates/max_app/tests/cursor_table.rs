@@ -377,6 +377,63 @@ fn air_cursor_over_own_ground_unit_and_building_is_unit_go() {
     );
 }
 
+/// The owner rule for an armed aircraft over a visible foreign unit: the cursor
+/// is the attack (`CURSOR_ENEMY` in range, `CURSOR_FAR_TARGET` otherwise), not
+/// the hover move. Combat is `ATTRIB_ATTACK` (`UnitInfo::weapon == 2`,
+/// `unitinfo.cpp:304-308`); `Manual` (`disabled_reaction_fire`,
+/// `units_manager.cpp:532-541`) and a non-combat aircraft keep `CURSOR_UNIT_GO`.
+#[test]
+fn air_cursor_over_a_foreign_enemy_is_an_attack_for_an_armed_aircraft() {
+    let mut app = app();
+    let plane = spawn(&mut app, UnitType::Fighter, TeamId::RED, Point::new(40, 40)).expect("plane");
+    let enemy = spawn(&mut app, UnitType::Tank, TeamId::BLUE, Point::new(44, 40)).expect("enemy");
+    let far = spawn(&mut app, UnitType::Tank, TeamId::BLUE, Point::new(60, 40)).expect("far enemy");
+    for id in [plane, enemy, far] {
+        ready(&mut app, id);
+    }
+    app.universe_mut().update_visibility_status(true);
+    app.hud_mut().select(Some(plane));
+
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 40)),
+        CursorId::Enemy,
+        "armed aircraft over an enemy in range → ENMY_PTR (owner rule)"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(60, 40)),
+        CursorId::FarTarget,
+        "armed aircraft over a far enemy → PTR_FTRG/MOVE_TO_ATTACK"
+    );
+
+    // `Manual` is the hover escape.
+    {
+        let mut unit = app.state_ref().unit(plane).expect("plane").clone();
+        unit.disabled_reaction_fire = true;
+        app.universe_mut().write_unit(plane, unit);
+    }
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 40)),
+        CursorId::UnitGo,
+        "Manual turns the enemy cell back into a hover move"
+    );
+
+    // A non-combat aircraft never attacks.
+    let transport = spawn(
+        &mut app,
+        UnitType::AirTransport,
+        TeamId::RED,
+        Point::new(40, 44),
+    )
+    .expect("transport");
+    ready(&mut app, transport);
+    app.hud_mut().select(Some(transport));
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 40)),
+        CursorId::UnitGo,
+        "a non-combat aircraft hovers over the foreign unit"
+    );
+}
+
 #[test]
 fn builder_in_build_progress_is_unit_no_go() {
     let mut app = app();
