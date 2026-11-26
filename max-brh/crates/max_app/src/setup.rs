@@ -741,6 +741,7 @@ impl GameSetupForm {
         match event {
             crate::ui::InputEvent::MouseMove(..) => SetupTransition::None,
             crate::ui::InputEvent::RightClick(..) => SetupTransition::None,
+            crate::ui::InputEvent::MouseRelease(..) => SetupTransition::None,
             crate::ui::InputEvent::MouseClick(x, y) => self.click(x, y),
             crate::ui::InputEvent::Key(key) => self.key(key),
         }

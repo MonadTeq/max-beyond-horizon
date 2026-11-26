@@ -168,6 +168,9 @@ pub enum InputEvent {
     Key(Key),
     /// Left click in window pixels.
     MouseClick(i32, i32),
+    /// Left button release in window pixels — ends the visual press feedback
+    /// (`GNW` `MOUSE_RELEASE`, `button.c`).
+    MouseRelease(i32, i32),
     /// Right click in window pixels (RMB — select/inspect/cancel the order modes).
     RightClick(i32, i32),
     /// Mouse move in window pixels.
@@ -783,7 +786,7 @@ impl Screen {
 
             if let Self::Help { help, mode, .. } = self {
                 match event {
-                    InputEvent::MouseMove(..) => {}
+                    InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => {}
                     InputEvent::MouseClick(x, y) => {
                         if let Some(window) = help.as_mut() {
                             if window.input(InputEvent::MouseClick(x, y)) == HelpAction::Close {
@@ -1010,12 +1013,16 @@ impl Screen {
         // The action is computed from the current screen, applied already without borrow.
         let action = match &mut flow.stage {
             PreGameStage::Mobilize(_) => match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {
+                    PreGameInput::None
+                }
                 InputEvent::MouseClick(x, y) => PreGameInput::MobilizeClick(x, y),
                 InputEvent::Key(key) => PreGameInput::MobilizeKey(key),
             },
             PreGameStage::Landing(_) => match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreGameInput::None,
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {
+                    PreGameInput::None
+                }
                 InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
                 InputEvent::Key(Key::Enter) => PreGameInput::LandingConfirm,
                 InputEvent::Key(Key::Left) => PreGameInput::LandingStep(-1, 0),
@@ -1211,7 +1218,7 @@ impl Screen {
 
         if let Self::NewGameMenu { tips } = self {
             match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => {}
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {}
                 InputEvent::MouseClick(x, y) => {
                     if tips.is_some() {
                         scroll = newgame::tips_scroll_at(x, y);
@@ -1351,7 +1358,7 @@ impl Screen {
             let registry = ctx.missions.as_deref();
 
             match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) => {}
+                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {}
                 InputEvent::MouseClick(x, y) if native_frame => {
                     action = gamesetupmenu::mission_select_at(x, y);
 
@@ -1436,6 +1443,16 @@ impl Screen {
     where
         App<D>: SessionLocal,
     {
+        self.render_inner(buffer, view);
+        // One drawn frame of the press feedback (manual-run defect 4): the release
+        // pulse shrinks; a held button stays pressed until `MouseRelease`.
+        crate::press::advance();
+    }
+
+    fn render_inner<D: Dispatcher>(&self, buffer: &mut RgbaBuffer, view: ScreenView<'_, D>)
+    where
+        App<D>: SessionLocal,
+    {
         // The menu on the original resources (item E) — only in a 640×480 frame:
         // all coordinates and pictures are taken from the C++ port for the original window.
         let menu_assets = view
@@ -1449,7 +1466,7 @@ impl Screen {
         match self {
             Self::Help { screen, help, .. } => {
                 // The help window is modal: first the screen under it, then `HELPFRAM`.
-                screen.render(buffer, view);
+                screen.render_inner(buffer, view);
 
                 let assets = view.app.and_then(|app| app.assets());
                 let fallback = assets.and_then(|assets| {
@@ -1716,6 +1733,7 @@ impl Screen {
 
         match event {
             InputEvent::MouseMove(..) => {}
+            InputEvent::MouseRelease(..) => {}
             InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
                 let point = Point::new(x, y);
@@ -2047,6 +2065,7 @@ impl Screen {
 
         match event {
             InputEvent::MouseMove(..) => {}
+            InputEvent::MouseRelease(..) => {}
             InputEvent::RightClick(..) => {}
             InputEvent::MouseClick(x, y) => {
                 // Planet grid: a click on the picture/name selects the planet. This is
@@ -2228,7 +2247,12 @@ where
     // `GameManager_ProcessInput` remembers the position and buttons between frames.
     match event {
         InputEvent::MouseMove(x, y) => app.note_mouse_move(x, y),
-        InputEvent::MouseClick(x, y) => app.note_mouse_click(x, y),
+        InputEvent::MouseClick(x, y) => {
+            app.note_mouse_click(x, y);
+            // Visual press of the clicked button (manual-run defect 4).
+            app.note_button_press(x, y);
+        }
+        InputEvent::MouseRelease(..) => app.release_button_press(),
         _ => {}
     }
 
@@ -2397,26 +2421,25 @@ where
 
             Transition::None
         }
+        InputEvent::MouseRelease(..) => Transition::None,
         InputEvent::MouseClick(x, y) => {
             if chrome {
-                // Panels/minimap — view only when it is not our turn; the map
-                // (selection/attack) is blocked.
-                if blocked && panels::panel_button_at(x, y).is_none() {
-                    return Transition::None;
-                }
-                session_chrome_left_click(app, x, y)
+                // Panels/minimap are view controls; during a foreign turn the map
+                // gives no orders but still supports inspection (manual-run defect 2).
+                session_chrome_left_click(app, x, y, blocked)
             } else if blocked {
-                Transition::None
+                session_left_click(app, width, height, x, y, true)
             } else {
-                session_left_click(app, width, height, x, y)
+                session_left_click(app, width, height, x, y, false)
             }
         }
         InputEvent::RightClick(x, y) => {
-            if blocked {
-                return Transition::None;
-            }
+            // A right click selects/inspects (and opens `UnitStats_Menu`) or cancels
+            // a mode — the oracle has no active-team gate on it
+            // (`game_manager.cpp:6747-6776`). The minimap right click is an order and
+            // stays blocked during a foreign turn.
             if chrome {
-                session_chrome_right_click(app, x, y)
+                session_chrome_right_click(app, x, y, blocked)
             } else {
                 session_right_click(app, x, y)
             }
@@ -3259,12 +3282,16 @@ where
 }
 
 /// Left button without chrome: procedural HUD buttons → minimap → map.
+///
+/// `inspect_only` — a foreign team is moving: HUD buttons and the minimap camera work,
+/// the map only selects/inspects ([`session_inspect_click`]).
 fn session_left_click<D: Dispatcher>(
     app: &mut App<D>,
     width: u32,
     height: u32,
     x: i32,
     y: i32,
+    inspect_only: bool,
 ) -> Transition
 where
     App<D>: SessionLocal,
@@ -3292,6 +3319,10 @@ where
 
     let viewport = *app.viewport();
 
+    if inspect_only {
+        return session_inspect_click(app, &viewport, x, y);
+    }
+
     session_map_left_click(app, &viewport, x, y)
 }
 
@@ -3300,7 +3331,16 @@ where
 /// The window screen coordinates are converted into map area coordinates
 /// ([`panels::screen_to_map`]) before `screen_to_grid` — otherwise the click drifts by
 /// (180,18) (risk 4 in `max-brh-docs/visual-1to1-status.md`).
-fn session_chrome_left_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
+///
+/// `inspect_only` — a foreign team is moving: the panels and the minimap camera stay
+/// available (`GameManager_ProcessInput` has no active-team check for them), the map
+/// only selects/inspects.
+fn session_chrome_left_click<D: Dispatcher>(
+    app: &mut App<D>,
+    x: i32,
+    y: i32,
+    inspect_only: bool,
+) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -3336,7 +3376,65 @@ where
     };
     let viewport = app.map_viewport();
 
+    if inspect_only {
+        return session_inspect_click(app, &viewport, map_x, map_y);
+    }
+
     session_map_left_click(app, &viewport, map_x, map_y)
+}
+
+/// Inspection click on the map during a foreign team's turn (manual-run defect 2).
+///
+/// Oracle: `GameManager_UpdateSelection` (`game_manager.cpp:6292-6348`) resolves a
+/// foreign unit through `GameManager_UnitSelectOther` (`:6295-6298`) **before** the
+/// `TEAM_TYPE_PLAYER` gate (`:6300-6302`), and an own unit still goes through
+/// `GameManager_UnitSelect` (`:6339-6342`) — which opens no command menu when the
+/// active team is not the player (`:6253-6258`). The right button has no active-team
+/// gate at all (`:6747-6776`). Orders are never given here: unlike
+/// [`session_map_left_click`] this path does not reach [`session_map_order_click`].
+fn session_inspect_click<D: Dispatcher>(
+    app: &mut App<D>,
+    viewport: &Viewport,
+    x: i32,
+    y: i32,
+) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let team = app.player_team();
+
+    let Some(id) = hud::unit_at_screen(app.state_ref(), viewport, team, x, y) else {
+        // An empty cell only closes the `MESSAGE_BOX_INFO` window
+        // (`MessageManager_ClearMessageBox`, `game_manager.cpp:6714-6716`); the
+        // selection is not dropped by a left click.
+        app.hud_mut().clear_hint();
+        return Transition::None;
+    };
+
+    let (unit_team, label, visible) = match app.state_ref().unit(id) {
+        Some(unit) => (unit.team, unit_label(unit), unit.is_visible_to_team(team)),
+        None => return Transition::None,
+    };
+
+    if unit_team == team {
+        // `GameManager_UnitSelect` for an own unit: the selection and the status
+        // window, no popup (the active team is the computer).
+        app.close_unit_menu();
+        app.hud_mut().preview = None;
+        app.hud_mut().select(Some(id));
+        app.hud_mut().push_log(format!("Selected {label}"));
+        session_show_unit_status(app, id);
+        return Transition::None;
+    }
+
+    if visible {
+        // `GameManager_UnitSelectOther` → `GameManager_MenuUnitSelect`: the enemy
+        // statistics (the port shows them from the selection).
+        return session_select_enemy(app, id, &label);
+    }
+
+    app.hud_mut().push_log("Enemy unit — not visible");
+    Transition::None
 }
 
 /// 1:1 panel button: End Turn, toggles, zoom, minimap, menu.
@@ -3930,7 +4028,15 @@ where
 }
 
 /// Right button with chrome: first the panels (they give no order), then the map.
-fn session_chrome_right_click<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32) -> Transition
+///
+/// `inspect_only` — a foreign team is moving: the minimap right click is an order and
+/// stays blocked, the map right click only selects/inspects.
+fn session_chrome_right_click<D: Dispatcher>(
+    app: &mut App<D>,
+    x: i32,
+    y: i32,
+    inspect_only: bool,
+) -> Transition
 where
     App<D>: SessionLocal,
 {
@@ -3942,6 +4048,10 @@ where
     // the cell under the cursor comes from `GameManager_GetMinimapPosition`, and
     // a `CURSOR_UNIT_GO` gives `ORDER_MOVE` to the selected unit.
     if max_render::layout::MINIMAP.contains(x, y) {
+        if inspect_only {
+            return Transition::None;
+        }
+
         return session_minimap_right_click(app, x, y);
     }
 

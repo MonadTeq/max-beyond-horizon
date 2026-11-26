@@ -10,7 +10,8 @@
 //!    `GameManager_PlayerTeam = PLAYER_TEAM_ALIEN`), while the turn timer is stopped;
 //! 3. control: the `player_team` switches to the active human,
 //!    the selection is cleared, a click on a foreign unit does not select it, an order
-//!    to a foreign unit does not go; during the AI turn input is blocked;
+//!    to a foreign unit does not go; during the AI turn orders are blocked but
+//!    inspection (selecting a unit and its statistics) stays available;
 //! 4. turns: 2 humans alternate RED → GREEN; 4 humans — RED → GREEN →
 //!    BLUE → GRAY; the AI between humans moves itself;
 //! 5. frame: the transition window is drawn over the match (`HELPFRAM` background, the
@@ -593,21 +594,34 @@ fn input_is_ignored_during_the_ai_turn() {
         .unit_ids_in_order()
         .into_iter()
         .find(|id| {
-            app.state_ref()
-                .unit(*id)
-                .is_some_and(|unit| unit.team == TeamId::RED)
+            app.state_ref().unit(*id).is_some_and(|unit| {
+                unit.team == TeamId::RED && unit.unit_type == max_core::UnitType::Surveyor
+            })
         })
-        .expect("юнит RED");
+        .expect("Surveyor RED");
     let grid = app.state_ref().unit(red_unit).expect("юнит").grid;
+    let orders = app.state_ref().unit(red_unit).expect("юнит").orders;
 
     app.viewport_mut().center_on_grid(grid.x, grid.y);
     let (x, y) = chrome_screen_of(&app, grid);
     handle_session_input(&mut app, InputEvent::MouseClick(x, y));
 
+    // Oracle (`game_manager.cpp:6292-6348`, `:6747-6776`): the active team gates
+    // **orders**, not inspection — a click on an own unit still selects it and shows
+    // its status (manual-run defect 2).
     assert_eq!(
         app.hud().selected,
-        None,
-        "во время хода ИИ выделение недоступно"
+        Some(red_unit),
+        "inspection is available during the AI turn"
+    );
+    assert!(
+        app.hud().pending.is_empty(),
+        "but no order is issued during the AI turn"
+    );
+    assert_eq!(
+        app.state_ref().unit(red_unit).expect("юнит").orders,
+        orders,
+        "the unit order is unchanged"
     );
     assert!(app.local_input_blocked());
 }

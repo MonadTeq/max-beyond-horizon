@@ -2374,8 +2374,23 @@ impl QaRunner {
         }
     }
 
-    /// Sends an event to the current screen and executes the transition.
+    /// Sends one input event.
+    ///
+    /// A `MouseClick` is a **complete** click for the driver: the press feedback is
+    /// released right after it, so the next `shot` captures the release pulse and the
+    /// following frames show the button at rest (manual-run defect 4).
     fn send(&mut self, event: InputEvent) -> Result<Flow, String> {
+        let result = self.send_inner(event);
+
+        if matches!(event, InputEvent::MouseClick(..)) {
+            self.app.release_button_press();
+        }
+
+        result
+    }
+
+    /// Sends an event to the current screen and executes the transition.
+    fn send_inner(&mut self, event: InputEvent) -> Result<Flow, String> {
         if matches!(self.screen, Screen::InSession { .. }) {
             return match handle_session_input(&mut self.app, event) {
                 Transition::None => Ok(Flow::Continue),
@@ -2409,7 +2424,18 @@ impl QaRunner {
             };
         }
 
+        // A menu/start-phase click: arm the same press feedback the live client arms
+        // (`main.rs`); the release pulse is ended by `Command::Click`.
+        if let InputEvent::MouseClick(x, y) = event {
+            self.app.note_button_press(x, y);
+        }
+
+        let screen_before = std::mem::discriminant(&self.screen);
         let transition = self.screen.handle_input(&mut self.ctx, event);
+
+        if std::mem::discriminant(&self.screen) != screen_before {
+            self.app.clear_button_press();
+        }
 
         // Campaign stage 3a: the campaign list reports the `GameSetupMenu_Menu` clamp
         // of `last_campaign` (`menu.cpp:1972-1977`); the driver writes it back.

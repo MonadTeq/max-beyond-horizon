@@ -205,7 +205,7 @@ impl Recorder {
     /// shift the pause countdown.
     pub fn record(&mut self, event: InputEvent, context: RecordContext) {
         match event {
-            InputEvent::MouseMove(..) => {}
+            InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => {}
             // While the chat is open, the UI itself ignores the mouse — so we do not write it either.
             InputEvent::MouseClick(..) | InputEvent::RightClick(..) if context.text_open => {}
             InputEvent::MouseClick(x, y) => self.record_click("click", x, y),

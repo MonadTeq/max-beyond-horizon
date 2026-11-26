@@ -17,10 +17,12 @@ use max_app::local::LocalSetup;
 use max_app::pregame::{PreGameFlow, PreGameStage};
 use max_app::unitmenu::{self, ItemId};
 use max_app::{handle_session_input, App, AppConfig, InputEvent};
+use max_assets::image::BigImage;
 use max_core::enums::{UnitOrder, UnitType};
 use max_core::geo::{Point, DIRECTION_OFFSETS};
 use max_core::team::{TeamId, TeamKind};
 use max_core::unit::UnitId;
+use max_render::buffer::Rgba;
 use max_render::layout::MAIN_MAP;
 
 fn repo_path(relative: &str) -> PathBuf {
@@ -398,4 +400,64 @@ fn hangar_lists_its_stored_aircraft_in_four_slots() {
         Some(bomber),
         "выбран самолёт из нажатого слота"
     );
+}
+
+/// Manual-run defect 3: the slots showed only the unit name instead of its picture.
+///
+/// `RepairShopSlot::Draw` (`repairshopmenu.cpp:243-245`) fills the slot picture
+/// area with the armory portrait `A_*` (`Unit::GetArmoryPortrait`). The port draws
+/// big images with their own palette (`DEPOTFRM`/`HANGRFRM` do the same), so the
+/// pixels below the name text must be exactly the decoded `A_*` picture.
+#[test]
+fn slots_draw_the_armory_portrait_of_the_stored_unit() {
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
+
+    let (carrier_grid, _drop) = free_land_pair(&app);
+    let carrier = spawn_at(&mut app, UnitType::ArmouredPersonnelCarrier, carrier_grid);
+    let passenger = spawn_at(
+        &mut app,
+        UnitType::Infantry,
+        Point::new(carrier_grid.x + 3, carrier_grid.y + 2),
+    );
+    store_passenger(&mut app, carrier, passenger);
+
+    app.viewport_mut()
+        .center_on_grid(carrier_grid.x, carrier_grid.y);
+    open_slot_list(&mut app, carrier);
+
+    let rect = app
+        .repair_shop()
+        .expect("список слотов")
+        .slot_image_rect(0);
+
+    let frame = app.render_frame();
+    let assets = app.assets().expect("assets games");
+    let bytes = assets
+        .max_res
+        .read("A_INFANT")
+        .expect("A_INFANT в MAX.RES");
+    let portrait = BigImage::decode(bytes).expect("A_INFANT декодируется");
+    assert_eq!((portrait.width, portrait.height), (128, 128));
+
+    // Below the name label (`Text_TextBox(..., 10, 3, w-20, ...)`), the slot's
+    // statistics/`Activate` start at `+140`: rows `40..128` are pure picture.
+    let mut compared = 0;
+
+    for y in 40..128u32 {
+        for x in 0..128u32 {
+            let index = portrait.pixel(x, y).expect("pixel portrait");
+            let expected = Rgba::from_rgb(portrait.color(index));
+            let actual = frame
+                .get(rect.ulx + x as i32, rect.uly + y as i32)
+                .expect("pixel frame");
+
+            assert_eq!(
+                actual, expected,
+                "слот 0: пиксель ({x},{y}) — портрет юнита, а не текст"
+            );
+            compared += 1;
+        }
+    }
+
+    assert_eq!(compared, 128 * 88);
 }

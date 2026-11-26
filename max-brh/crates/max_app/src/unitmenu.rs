@@ -864,7 +864,10 @@ impl UnitMenu {
 
         for (index, item) in self.items.iter().enumerate() {
             let rect = self.button_rect(index);
-            let image = if item.pressed { down } else { up };
+            // The mode's pressed picture (`state[i]`) plus the mouse press feedback
+            // (`Button::Run`: `*D` while the pointer is held, `button.c:479-531`).
+            let pressed = item.pressed || crate::press::pressed(rect);
+            let image = if pressed { down } else { up };
             painted +=
                 crate::menu::blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
 
@@ -918,6 +921,7 @@ pub fn menu_event(menu: &UnitMenu, event: crate::ui::InputEvent) -> MenuEvent {
             None => MenuEvent::Close,
         },
         crate::ui::InputEvent::RightClick(..) => MenuEvent::Close,
+        crate::ui::InputEvent::MouseRelease(..) => MenuEvent::None,
         crate::ui::InputEvent::Key(key) => match menu.key(key) {
             Some(MenuKey::Close) => MenuEvent::Close,
             Some(MenuKey::Item(index)) => {

@@ -107,6 +107,13 @@ pub enum WindowInput {
         /// y coordinate.
         y: i32,
     },
+    /// Left mouse button release (ends the pressed picture, `GNW` `MOUSE_RELEASE`).
+    MouseRelease {
+        /// x coordinate.
+        x: i32,
+        /// y coordinate.
+        y: i32,
+    },
     /// Right mouse button press (move order/cancel in the game).
     MouseRightClick {
         /// x coordinate.
@@ -654,6 +661,17 @@ impl SdlWindow {
                         .window_to_frame(x.round() as i32, y.round() as i32)
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseRightClick { x, y });
+                }
+                sdl3::event::Event::MouseButtonUp {
+                    mouse_btn: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                } => {
+                    let (x, y) = geometry
+                        .window_to_frame(x.round() as i32, y.round() as i32)
+                        .unwrap_or((-1, -1));
+                    inputs.push(WindowInput::MouseRelease { x, y });
                 }
                 // P4 (TC-1107), 1.4.2: alt-tab/minimize/restore do not stop the loop.
                 // Presentation state only; the geometry is refreshed when the

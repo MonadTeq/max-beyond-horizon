@@ -810,23 +810,33 @@ pub fn draw_title(frame: &mut RgbaBuffer, palette: &UiPalette, rect: PixelRect, 
 /// Menu button with an `up/down` picture and a `GNW_TEXT_FONT_1` label.
 ///
 /// In the original `*D` is shown only while the button is **pressed** (`Button` in
-/// `GNW`/`Button::Run`). Mouse hover is not a press, so here
-/// `up` is always drawn; the pressed state is left for the radio/toggle buttons
-/// that pass `down` explicitly. `_down_image` and `_pressed` are kept in the
-/// signature so as not to change all calls.
+/// `GNW`/`Button::Run`); mouse hover is not a press. The pressed picture and the
+/// `Fonts_DarkOrageColor (5,56,199)` label are taken from the press feedback
+/// ([`crate::press`]) — manual-run defect 4. `_down_image` and `_pressed` are kept
+/// in the signature so as not to change all calls; the pressed state itself is the
+/// global (per-frame) press point, because the callers are free functions without
+/// an `App` at hand.
 pub fn draw_image_button(
     frame: &mut RgbaBuffer,
     palette: &UiPalette,
     image: &SimpleImage,
-    _down_image: &SimpleImage,
+    down_image: &SimpleImage,
     rect: PixelRect,
     label: &str,
     _pressed: bool,
 ) -> u32 {
+    let pressed = crate::press::pressed(rect);
+    let image = if pressed { down_image } else { image };
     let mut painted = blit_simple(frame, palette, image, rect.ulx, rect.uly, true);
 
     if !label.is_empty() {
-        let (base, outline, shadow) = (165u8, 175u8, 199u8);
+        // `Button::SetCaption` defaults (`button.hpp:91-96`): released —
+        // `Fonts_GoldColor`, pressed — `Fonts_DarkOrageColor`.
+        let (base, outline, shadow) = if pressed {
+            (5u8, 56u8, 199u8)
+        } else {
+            (165u8, 175u8, 199u8)
+        };
 
         painted += draw_text_gnw_centered_shadowed(
             frame,

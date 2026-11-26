@@ -478,7 +478,9 @@ impl SaveLoadMenu {
         match event {
             InputEvent::Key(key) => self.key(key),
             InputEvent::MouseClick(x, y) => self.click(x, y),
-            InputEvent::RightClick(_, _) | InputEvent::MouseMove(_, _) => SaveLoadAction::None,
+            InputEvent::RightClick(_, _)
+            | InputEvent::MouseMove(_, _)
+            | InputEvent::MouseRelease(_, _) => SaveLoadAction::None,
         }
     }
 

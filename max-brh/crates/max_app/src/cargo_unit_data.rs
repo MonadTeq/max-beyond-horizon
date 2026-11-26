@@ -42,6 +42,9 @@ pub struct CargoUnitData {
     pub shadow: Option<String>,
     /// Portrait resource `P_*` (`Unit::GetPortrait`); `None` — `INVALID_ID`.
     pub portrait: Option<String>,
+    /// Armory portrait `A_*` (`Unit::GetArmoryPortrait`), drawn in the
+    /// `RepairShopMenu` slots (`repairshopmenu.cpp:243-245`); `None` — `INVALID_ID`.
+    pub armory_portrait: Option<String>,
     /// Description text (`Unit::GetDescription`); empty if there is none in the original.
     pub description: String,
     /// `D_*` resource — `Unit::GetFrameInfo()`: body/turret frame bases,
@@ -104,6 +107,15 @@ pub fn unit_description(unit: UnitType) -> &'static str {
 /// `Unit::GetPortrait()` — the `P_*` resource name (big image 300×240).
 pub fn unit_portrait(unit: UnitType) -> Option<&'static str> {
     unit_data(unit).and_then(|data| data.portrait.as_deref())
+}
+
+/// `Unit::GetArmoryPortrait()` — the `A_*` resource name (128×128; aircraft
+/// 200×128) of the `RepairShopMenu` slot portrait (`repairshopmenu.cpp:243-245`).
+///
+/// Every holdable unit (a mobile land/sea/air unit with a `cargo_type`) has one;
+/// `None` — `INVALID_ID` (buildings and the misc types, which are never stored).
+pub fn unit_armory_portrait(unit: UnitType) -> Option<&'static str> {
+    unit_data(unit).and_then(|data| data.armory_portrait.as_deref())
 }
 
 /// `Unit::GetFrameInfo()` — the `D_*` resource name (body/turret frames,

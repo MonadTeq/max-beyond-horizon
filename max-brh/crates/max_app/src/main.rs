@@ -888,6 +888,7 @@ fn input_event(input: WindowInput) -> InputEvent {
         WindowInput::Key(WindowKey::Other) => InputEvent::Key(Key::Other),
         WindowInput::MouseMove { x, y } => InputEvent::MouseMove(x, y),
         WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
+        WindowInput::MouseRelease { x, y } => InputEvent::MouseRelease(x, y),
         WindowInput::MouseRightClick { x, y } => InputEvent::RightClick(x, y),
     }
 }
@@ -908,6 +909,8 @@ impl max_app::net::FrameSink for WindowSink {
     fn render(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
         let buffer = app.render_frame();
+        // One drawn frame of the press feedback: this sink bypasses `Screen::render`.
+        app.advance_button_press();
 
         // Presentation only: a hidden window is not drawn, the lockstep loop
         // keeps running (barriers/timers are not tied to focus).
@@ -1464,12 +1467,27 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
             // Inside a session input goes to the HUD (`handle_session_input`): selection,
             // orders 38/08, End Turn/Menu buttons. In the menu — the screen machine.
+            // The press feedback is armed for both paths (the menu screens draw the
+            // same `*D` pictures through `menu::draw_image_button`).
+            match input {
+                InputEvent::MouseClick(x, y) => app.note_button_press(x, y),
+                InputEvent::MouseRelease(..) => app.release_button_press(),
+                _ => {}
+            }
+
+            let screen_before = std::mem::discriminant(&screen);
             let in_session = matches!(screen, Screen::InSession { .. });
             let transition = if in_session {
                 handle_session_input(&mut app, input)
             } else {
                 screen.handle_input(&mut ctx, input)
             };
+
+            // A menu click that changed the screen: the pressed picture belonged to
+            // the old screen, do not light up a same-position button of the new one.
+            if std::mem::discriminant(&screen) != screen_before {
+                app.clear_button_press();
+            }
 
             // Campaign stage 3a: `GameSetupMenu_Menu` (`menu.cpp:1972-1977`) writes a
             // `last_campaign` above the mission list back to the settings. The menu

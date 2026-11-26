@@ -1394,6 +1394,7 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
                 BuildMenuAction::None
             }
             crate::ui::InputEvent::MouseClick(x, y) => menu.click(self.state_ref(), x, y),
+            crate::ui::InputEvent::MouseRelease(..) => BuildMenuAction::None,
             // In C++ the right click is not assigned in the menu (`ProcessKey` does not catch
             // `RMB`); here it closes the screen, like `Esc`.
             crate::ui::InputEvent::RightClick(..) => BuildMenuAction::Close,

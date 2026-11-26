@@ -1371,7 +1371,9 @@ impl PreferencesDialog {
         match event {
             InputEvent::Key(key) => self.key(key),
             InputEvent::MouseClick(x, y) => self.click(x, y),
-            InputEvent::MouseMove(..) | InputEvent::RightClick(..) => PreferencesAction::None,
+            InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {
+                PreferencesAction::None
+            }
         }
     }
 

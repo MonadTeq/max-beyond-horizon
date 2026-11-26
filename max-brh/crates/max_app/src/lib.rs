@@ -69,6 +69,7 @@ pub mod portrait;
 pub mod preferences;
 pub mod pregame;
 pub mod presentation;
+pub mod press;
 pub mod profile;
 pub mod qa;
 pub mod render;
@@ -3145,6 +3146,38 @@ impl<D: Dispatcher> App<D> {
         }
     }
 
+    /// Arms the visual press feedback of a left button press (manual-run defect 4).
+    ///
+    /// The GNW button shows its `*D` picture while the pointer is held
+    /// (`button.c:479-531`); the port acts on the press, so [`Self::release_button_press`]
+    /// leaves a short pulse ([`crate::press::RELEASE_FRAMES`] drawn frames) for the
+    /// picture to be seen even when the click changes the screen.
+    pub fn note_button_press(&mut self, x: i32, y: i32) {
+        if x >= 0 && y >= 0 {
+            crate::press::arm(x, y);
+        }
+    }
+
+    /// Left button release: ends the hold and starts the release pulse.
+    pub fn release_button_press(&mut self) {
+        crate::press::release();
+    }
+
+    /// Drops the press feedback immediately (the click changed the screen).
+    pub fn clear_button_press(&mut self) {
+        crate::press::clear();
+    }
+
+    /// The pressed point, if the feedback is still visible (for tests/frames).
+    pub fn button_press(&self) -> Option<(i32, i32)> {
+        crate::press::point()
+    }
+
+    /// One drawn frame: shrinks the release pulse.
+    pub fn advance_button_press(&self) {
+        crate::press::advance();
+    }
+
     /// Scroll state (pointer/hold) — for tests and the live UI.
     pub fn scroll_state(&self) -> &scroll::ScrollState {
         &self.scroll
@@ -4219,7 +4252,14 @@ impl<D: Dispatcher> App<D> {
     /// the neighboring cell with the stationary mine: it was selected, the move
     /// order answered «Unit cannot move (air/stationary)», and the unit did not move.
     pub fn focus_player(&mut self) {
-        let team = self.state_ref().player_team();
+        self.focus_team(self.state_ref().player_team());
+    }
+
+    /// The same camera anchor for `team` — the hot-seat first-turn view of a human
+    /// whose `camera_position` is not known yet (`GameManager_UpdatePanelButtons`
+    /// restores the site-select camera, `game_manager.cpp:3750`; its place in the
+    /// port is the team's base).
+    pub fn focus_team(&mut self, team: TeamId) {
         let mut grid = None;
 
         // 1. `Access_GetFirstMiningStation`: a team mine in `StationaryUnits`.

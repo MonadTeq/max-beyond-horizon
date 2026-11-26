@@ -41,10 +41,11 @@
 //!
 //! # Differences from the oracle
 //!
-//! * the slot content is drawn as text (`name`, `Hits h/m`, `Ammo a/m` or
-//!   `Cargo c/m`) instead of the `ReportStats` rows with `SI_*` icons — the
-//!   mechanics (which unit is listed and released) are the same, the decoration
-//!   is simplified;
+//! * the slot **picture** is the oracle's armory portrait `A_*`
+//!   (`Unit::GetArmoryPortrait`, 128×128; aircraft 200×128); the statistics rows
+//!   are drawn as text (`Hits h/m`, `Ammo a/m` or `Cargo c/m`) instead of the
+//!   `ReportStats` rows with `SI_*` icons — the mechanics (which unit is listed
+//!   and released) are the same, the statistics decoration is simplified;
 //! * the `Reload`/`Repair`/`Upgrade` (and their `… All`) buttons of the
 //!   repair-shop **buildings** (`repairshopmenu.cpp:173-202,474-524`) are not
 //!   ported: this screen is the "which stored unit" selector of the manual-run
@@ -64,7 +65,7 @@ use max_core::enums::{UnitOrder, UnitType};
 use max_core::unit::UnitId;
 use max_core::unit_values::{ATTRIB_AMMO, ATTRIB_HITS, ATTRIB_STORAGE};
 use max_core::universe::StateRef;
-use max_render::buffer::{PixelRect, RgbaBuffer};
+use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::text::{draw_text_gnw_centered, GnwFontId};
 
 use crate::menu::{blit_simple, draw_big_image, draw_image_button, MenuButtonPair};
@@ -126,6 +127,13 @@ pub struct RepairShopAssets {
     pub help: Option<MenuButtonPair>,
     /// `DPTMNUUP/DN` — `Done`.
     pub done: Option<MenuButtonPair>,
+    /// `A_*` armory portraits by unit type (`Unit::GetArmoryPortrait`) — the
+    /// slot pictures of `RepairShopSlot::Draw` (`repairshopmenu.cpp:243-245`).
+    ///
+    /// Loaded once per asset load (36 resources, 128×128 for land/sea units and
+    /// 200×128 for aircraft — exactly the slot picture sizes). `Arc` keeps a
+    /// clone of [`RepairShopAssets`] cheap.
+    armory_portraits: std::collections::HashMap<UnitType, std::sync::Arc<BigImage>>,
 }
 
 impl RepairShopAssets {
@@ -147,6 +155,18 @@ impl RepairShopAssets {
             Some(MenuButtonPair::new(simple(up)?, simple(down)?))
         };
 
+        // `Unit::GetArmoryPortrait()` → `A_*` from `MAX.RES` (the same archive as the
+        // window backgrounds). Missing resources are skipped, not a load failure.
+        let armory_portraits = UnitType::ALL
+            .iter()
+            .filter_map(|unit_type| {
+                let name = crate::cargo_unit_data::unit_armory_portrait(*unit_type)?;
+                let image = big(name)?;
+
+                Some((*unit_type, std::sync::Arc::new(image)))
+            })
+            .collect();
+
         Self {
             depot_background: big("DEPOTFRM"),
             hangar_background: big("HANGRFRM"),
@@ -157,7 +177,15 @@ impl RepairShopAssets {
             page_down_disabled: simple("DPTDN_X"),
             help: pair("DPTHP_UP", "DPTHP_DN"),
             done: pair("DPTMNUUP", "DPTMNUDN"),
+            armory_portraits,
         }
+    }
+
+    /// `Unit::GetArmoryPortrait()` picture of a stored unit (`None` — `INVALID_ID`).
+    pub fn armory_portrait(&self, unit_type: UnitType) -> Option<&BigImage> {
+        self.armory_portraits
+            .get(&unit_type)
+            .map(|image| image.as_ref())
     }
 
     /// The window can be drawn: the background and the slot button are present.
@@ -427,6 +455,17 @@ impl RepairShopMenu {
             let image = self.slot_image_rect(slot);
             let stats = self.slot_stats_rect(slot);
 
+            // `RepairShopSlot::Draw` (`repairshopmenu.cpp:236-251`): the armory
+            // portrait `A_*`, taken at the slot's top-left corner. Aircraft are
+            // 200×128, land/sea units 128×128 — exactly the slot picture size, so
+            // no scaling is needed. C++ indexes the picture through the window
+            // palette; the port draws big images with their own palette, which for
+            // `A_*` is the `DEPOTFRM`/`HANGRFRM` one. A type without `A_*` is a
+            // building (`INVALID_ID` for all non-holdable types), never a slot unit.
+            if let Some(picture) = assets.armory_portrait(unit.unit_type) {
+                painted += draw_big_picture(frame, picture, (image.ulx, image.uly), image);
+            }
+
             // `RepairShopSlot::Draw` writes the display name into the picture area
             // (`Text_TextBox(..., 10, 3, width - 20, height - 6, GNW_TEXT_OUTLINE)`).
             let name = crate::unit_names::unit_user_friendly_name(unit.unit_type);
@@ -593,6 +632,41 @@ impl RepairShopMenu {
 /// `!(target_unit->flags & MOBILE_AIR_UNIT) || target_unit->speed > 0`.
 pub fn activate_viable(unit: &max_core::unit::UnitInfo) -> bool {
     !unit.is_air() || unit.speed > 0
+}
+
+/// Copies a big image with its own palette at `origin`, clipped by `clip`.
+///
+/// The `RepairShopMenu` backgrounds (`DEPOTFRM`/`HANGRFRM`) are decoded with their
+/// own palettes too ([`crate::menu::draw_big_image`]); the `A_*` armory portraits
+/// share the depot palette, so the slot picture stays consistent with the window.
+fn draw_big_picture(
+    frame: &mut RgbaBuffer,
+    image: &BigImage,
+    origin: (i32, i32),
+    clip: PixelRect,
+) -> u32 {
+    let mut painted = 0;
+
+    for y in 0..image.height as u32 {
+        for x in 0..image.width as u32 {
+            let px = origin.0 + x as i32;
+            let py = origin.1 + y as i32;
+
+            if !clip.contains(px, py) {
+                continue;
+            }
+
+            let Some(index) = image.pixel(x, y) else {
+                continue;
+            };
+
+            if frame.set(px, py, Rgba::from_rgb(image.color(index))) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
 }
 
 #[cfg(test)]

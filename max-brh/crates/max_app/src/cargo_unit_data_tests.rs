@@ -43,6 +43,45 @@ fn portraits_match_sc_units() {
     }
 }
 
+/// Armory portraits (`RepairShopMenu` slots): 36 mobile unit types have `A_*`;
+/// the buildings and the misc types — `INVALID_ID` (they are never stored).
+#[test]
+fn armory_portraits_match_sc_units() {
+    let with_armory = (0..UNIT_END)
+        .map(|index| UnitType::try_from(index).unwrap())
+        .filter(|unit| unit_armory_portrait(*unit).is_some())
+        .count();
+    assert_eq!(with_armory, 36, "SC_UNITS: 36 armory-портретов A_*");
+
+    assert_eq!(unit_armory_portrait(UnitType::Tank), Some("A_TANK"));
+    assert_eq!(unit_armory_portrait(UnitType::Infantry), Some("A_INFANT"));
+    assert_eq!(unit_armory_portrait(UnitType::Fighter), Some("A_FIGHTR"));
+    assert_eq!(unit_armory_portrait(UnitType::AirTransport), Some("A_AIRTRN"));
+
+    // Every holdable mobile unit has a portrait to put into a slot.
+    for unit in [
+        UnitType::ArmouredPersonnelCarrier,
+        UnitType::SeaTransport,
+        UnitType::Bomber,
+        UnitType::Infiltrator,
+    ] {
+        assert!(unit_armory_portrait(unit).is_some(), "{unit:?}");
+    }
+
+    // Buildings are containers, not cargo (`cargo_type = NONE` handles the rest).
+    for unit in [
+        UnitType::Barracks,
+        UnitType::Depot,
+        UnitType::Hangar,
+        UnitType::Dock,
+        UnitType::MiningStation,
+        UnitType::Harvester,
+        UnitType::DeadWaldo,
+    ] {
+        assert_eq!(unit_armory_portrait(unit), None, "{unit:?}");
+    }
+}
+
 /// Descriptions: 69 non-empty; every type reachable in `CargoMenu` is described.
 #[test]
 fn descriptions_cover_every_cargo_menu_unit() {

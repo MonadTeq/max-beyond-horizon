@@ -485,6 +485,16 @@ pub struct LocalGame {
     /// [`LocalSetup::display_name`]. Not part of the simulation CRC: it is a UI
     /// name (like `Settings` in C++).
     pub team_names: [Option<String>; LOCAL_TEAM_COUNT],
+    /// Camera kept for a team that has already played (`CTInfo::camera_position`).
+    ///
+    /// C++ stores the view of the team that is handing the turn over
+    /// (`GameManager_GuiSwitchTeam`, `game_manager.cpp:5220-5240`) and restores it
+    /// when that human takes the turn again
+    /// (`GameManager_UpdatePanelButtons` → `GameManager_UpdateMainMapView(MAP_VIEW_CENTER, …)`,
+    /// `:3750`). The world state of the port is a single viewport, so this is the
+    /// only per-team presentation state; it is not part of the snapshot/CRC.
+    /// A pixel center is kept (the port camera scrolls smoothly, C++ keeps a grid).
+    pub camera_positions: [Option<(i32, i32)>; LOCAL_TEAM_COUNT],
 }
 
 impl LocalGame {
@@ -505,7 +515,24 @@ impl LocalGame {
             human_teams,
             notice: None,
             team_names: std::array::from_fn(|_| None),
+            camera_positions: [None; LOCAL_TEAM_COUNT],
         }
+    }
+
+    /// Remembers the camera of `team` — `GameManager_GuiSwitchTeam`
+    /// (`game_manager.cpp:5227-5228`): `team_info->camera_position = GameManager_MapViewCenter`.
+    pub fn remember_camera(&mut self, team: TeamId, center: (i32, i32)) {
+        if let Some(slot) = self.camera_positions.get_mut(usize::from(team.0)) {
+            *slot = Some(center);
+        }
+    }
+
+    /// Camera saved for `team`, if that team has already handed a turn over.
+    pub fn camera_position(&self, team: TeamId) -> Option<(i32, i32)> {
+        self.camera_positions
+            .get(usize::from(team.0))
+            .copied()
+            .flatten()
     }
 
     /// Team name in game: the rename from Preferences or
@@ -1018,6 +1045,23 @@ impl App {
         let turn_counter = self.state_ref().turn_counter();
         let _profile = closing.then(|| crate::profile::finish_turn_scope(turn_counter));
 
+        // `GameManager_GuiSwitchTeam` (`game_manager.cpp:5220-5240`), called by
+        // `GameManager_TeamTurnTurnBased` after the human turn (`:492`): the view is
+        // stored per team, so a hot-seat player returns to the same place. A single
+        // human never reads it back — the camera simply stays where the player left it,
+        // exactly like C++ (a normal turn start does not call `UpdatePanelButtons`).
+        if self
+            .local
+            .as_ref()
+            .is_some_and(|local| local.human_teams.contains(&team))
+        {
+            let center = self.viewport.center();
+
+            if let Some(local) = self.local.as_mut() {
+                local.remember_camera(team, center);
+            }
+        }
+
         self.universe.end_local_turn(team);
         self.local_next_team(true);
     }
@@ -1129,8 +1173,8 @@ impl App {
     }
 
     /// Human team turn start (`GameManager_UpdateGui`, `TEAM_TYPE_PLAYER`): the
-    /// timer, the hot-seat «Begin turn» window, the selection reset, the camera
-    /// focus and the HUD log.
+    /// timer, the hot-seat «Begin turn» window, the selection reset, the stored
+    /// per-team camera and the HUD log.
     fn local_start_human_turn(
         &mut self,
         team: TeamId,
@@ -1179,7 +1223,29 @@ impl App {
         // The command popup belongs to the previous selection
         // (`GameManager_DeinitPopupButtons` on the turn change).
         self.close_unit_menu();
-        self.focus_player();
+        // The camera is **not** re-centred on a turn start. C++ calls
+        // `GameManager_UpdatePanelButtons` only for `GAME_STATE_10_LOAD_GAME`
+        // (`game_manager.cpp:2415-2419`) and, for a human team change, from
+        // `GameManager_UpdateGuiControl` (`:2312`) — which restores the team's saved
+        // `camera_position` (`:3750`). The previous port called `focus_player()` on
+        // every human turn, so the view jumped to the mine at the start of each turn
+        // (manual-run defect 1). In hot-seat the incoming player's stored view is
+        // restored; a single human keeps the current camera untouched.
+        if previous_player_team != team {
+            if let Some(center) = self
+                .local
+                .as_ref()
+                .and_then(|local| local.camera_position(team))
+            {
+                self.viewport.center_on_world(center.0, center.1);
+            } else {
+                // The first turn of this hot-seat human: C++ restores the team's
+                // site-select `camera_position` (`game_manager.cpp:6721-6723`) — for
+                // this port the same place is the team's own base
+                // (`GameManager_GetFirstRelevantUnit`). Never the previous player's view.
+                self.focus_team(team);
+            }
+        }
 
         if let Some(notice) = notice {
             self.hud.push_log(crate::hotseat::notice_log_line(&notice));

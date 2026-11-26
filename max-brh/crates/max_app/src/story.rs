@@ -413,7 +413,7 @@ impl StoryScreen {
         }
 
         match event {
-            InputEvent::MouseMove(..) => StoryAction::None,
+            InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => StoryAction::None,
             InputEvent::MouseClick(x, y) => match self.phase {
                 StoryPhase::Text => {
                     if STORY_OK.contains(x, y) {

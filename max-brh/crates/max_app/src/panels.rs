@@ -786,8 +786,12 @@ pub struct Panels {
     toggles: [ButtonPair; 9],
     minimap_2x: ButtonPair,
     minimap_tnt: ButtonPair,
-    /// Other buttons: a ready picture and its position in the window.
-    aux: Vec<(SimpleImage, PixelRect)>,
+    /// Other buttons: the released/pressed pair and its position in the window.
+    ///
+    /// The pressed picture (`*_ON`) is the GNW `*D` look of `Button` while the
+    /// pointer is held; the released state is already baked into `FRAMEPIC` for the
+    /// `*_OF` pictures that lie exactly where the chrome draws them.
+    aux: Vec<(ButtonPair, PixelRect)>,
     /// `STATUS` overlay icons (`IL_DSBLD`/`IL_SPEED`/`IL_SHOTS`).
     pub status_icons: StatusIcons,
     /// Statistics row pips (`SI_*`/`EI_*`, `GameManager_DrawInfoDisplayRowIcons`).
@@ -825,20 +829,20 @@ impl Panels {
         ];
 
         let mut aux = Vec::new();
-        for (name, rect) in [
-            ("PLAY_OF", layout::PLAY_BUTTON),
-            ("PAUSE_OF", layout::PAUSE_BUTTON),
-            ("FIND_OFF", layout::CENTER_BUTTON),
-            ("LOCK_OF", layout::LOCK_BUTTON),
-            ("PREV_OF", layout::PREV_BUTTON),
-            ("UDONE_OF", layout::DONE_BUTTON),
-            ("NEXT_OF", layout::NEXT_BUTTON),
-            ("HELP_OF", layout::HELP_BUTTON),
-            ("REPT_OFF", layout::REPORTS_BUTTON),
-            ("CHAT_OFF", layout::CHAT_BUTTON),
+        for (up, down, rect) in [
+            ("PLAY_OF", "PLAY_ON", layout::PLAY_BUTTON),
+            ("PAUSE_OF", "PAUSE_ON", layout::PAUSE_BUTTON),
+            ("FIND_OFF", "FIND_ON", layout::CENTER_BUTTON),
+            ("LOCK_OF", "LOCK_ON", layout::LOCK_BUTTON),
+            ("PREV_OF", "PREV_ON", layout::PREV_BUTTON),
+            ("UDONE_OF", "UDONE_ON", layout::DONE_BUTTON),
+            ("NEXT_OF", "NEXT_ON", layout::NEXT_BUTTON),
+            ("HELP_OF", "HELP_ON", layout::HELP_BUTTON),
+            ("REPT_OFF", "REPT_ON", layout::REPORTS_BUTTON),
+            ("CHAT_OFF", "CHAT_ON", layout::CHAT_BUTTON),
         ] {
-            if let Some(image) = simple(name) {
-                aux.push((image, rect));
+            if let Some(pair) = pair(up, down) {
+                aux.push((pair, rect));
             }
         }
 
@@ -929,7 +933,8 @@ impl Panels {
             .get(usize::from(active_team.0))
             .map(|team| team.team_type)
             .unwrap_or(TeamKind::None);
-        let pressed = end_turn_pressed(active_kind);
+        let pressed = end_turn_pressed(active_kind)
+            || crate::press::pressed(max_render::layout::END_TURN_BUTTON);
 
         if pressed {
             let slot = usize::from(active_team.0).min(self.end_turn_down.len() - 1);
@@ -1004,8 +1009,14 @@ impl Panels {
             timer_color,
         );
 
-        // Other buttons (Play/Pause/Center/Prev/Done/Next/Help/Reports/Chat).
-        for (image, rect) in &self.aux {
+        // Other buttons (Play/Pause/Center/Prev/Done/Next/Help/Reports/Chat): the
+        // pressed picture of the held button (`GNW` `*D` — `button.c:479-531`).
+        for (pair, rect) in &self.aux {
+            let image = if crate::press::pressed(*rect) {
+                &pair.down
+            } else {
+                &pair.up
+            };
             painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
         }
         for button in [
@@ -1285,7 +1296,10 @@ impl Panels {
         active: bool,
         painted: &mut u32,
     ) {
-        let image = if active { &pair.down } else { &pair.up };
+        // `Button::Run` draws `*D` while the pointer is held over the button
+        // (`button.c:479-531`); `active` is the toggle rest state.
+        let pressed = active || crate::press::pressed(rect);
+        let image = if pressed { &pair.down } else { &pair.up };
 
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
     }
@@ -1303,11 +1317,18 @@ impl Panels {
         draw_up: bool,
         painted: &mut u32,
     ) {
-        if !active && !draw_up {
+        // A pressed minimap button shows `*_ON` even when the mode is off.
+        let pressed = crate::press::pressed(rect);
+
+        if !active && !pressed && !draw_up {
             return;
         }
 
-        let image = if active { &pair.down } else { &pair.up };
+        let image = if active || pressed {
+            &pair.down
+        } else {
+            &pair.up
+        };
 
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
     }
