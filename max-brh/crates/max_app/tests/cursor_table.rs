@@ -311,6 +311,73 @@ fn air_unit_cursor_is_unit_go_or_way() {
 }
 
 #[test]
+fn air_cursor_over_own_ground_unit_and_building_is_unit_go() {
+    // An aircraft may enter a cell with an own ground/sea unit or an own
+    // `STATIONARY` building and hover above it (manual "park in any square",
+    // `manual.txt:3365-3367`; `Access_IsAccessible` blocks air only with air,
+    // `access.cpp:131-137`). Air over air and the aircraft's own cell stay
+    // `CURSOR_FRIEND` (`game_manager.cpp:4456-4457`).
+    let mut app = app();
+    let plane = spawn(&mut app, UnitType::Fighter, TeamId::RED, Point::new(40, 40)).expect("plane");
+    let tank = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(41, 40)).expect("tank");
+    let ship = spawn(
+        &mut app,
+        UnitType::Corvette,
+        TeamId::RED,
+        Point::new(42, 40),
+    )
+    .expect("ship");
+    let building = spawn(
+        &mut app,
+        UnitType::Barracks,
+        TeamId::RED,
+        Point::new(44, 40),
+    )
+    .expect("barracks");
+    let own_air =
+        spawn(&mut app, UnitType::Fighter, TeamId::RED, Point::new(46, 40)).expect("own aircraft");
+
+    for id in [plane, tank, ship, building, own_air] {
+        ready(&mut app, id);
+    }
+    app.hud_mut().select(Some(plane));
+
+    assert_eq!(
+        window_cursor(&app, Point::new(41, 40)),
+        CursorId::UnitGo,
+        "свой наземный юнит — точка зависания самолёта"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(42, 40)),
+        CursorId::UnitGo,
+        "свой водный юнит — точка зависания самолёта"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 40)),
+        CursorId::UnitGo,
+        "своё STATIONARY-здание — точка зависания самолёта"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(46, 40)),
+        CursorId::Friend,
+        "свой самолёт: воздух над воздухом блокируется SameClassBlocks"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(40, 40)),
+        CursorId::Friend,
+        "клетка самого самолёта — меню юнита, не приказ"
+    );
+
+    app.set_shift_pressed(true);
+
+    assert_eq!(
+        window_cursor(&app, Point::new(41, 40)),
+        CursorId::Way,
+        "Shift над своим юнитом — WAY_PTR"
+    );
+}
+
+#[test]
 fn builder_in_build_progress_is_unit_no_go() {
     let mut app = app();
     let constructor =

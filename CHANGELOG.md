@@ -239,6 +239,41 @@
 
 ### Исправлено
 
+- **Самолёт в фокусе зависает и над СВОИМИ юнитами/зданиями (клик по своему
+  наземному/водному юниту или своему зданию → `ORDER_MOVE`).** Оракул:
+  `GameManager_GetWindowCursor` (`game_manager.cpp:4456-4457`) возвращает
+  `CURSOR_FRIEND` для любого своего `SELECTABLE` юнита (`Access_GetTeamUnit`,
+  `access.cpp:1804-1839`, включая `STATIONARY`-здание с `SELECTABLE`, например
+  `MININGST` `0x01604210`), а `CURSOR_FRIEND` → `GameManager_ClickUnit`
+  (`:6844-6852`, `:6265-6268`) выделяет его; это противоречит мануалу
+  («fly to any square … park in any square»,
+  `max-brh-assets/text/manual.txt:3365-3367`) и `Access_IsAccessible`
+  (`access.cpp:107-137`), где самолёт блокирует только другой воздушный юнит
+  (`AccessModifier_SameClassBlocks`), а наземный/водный юнит и `STATIONARY`-здание
+  оставляют клетку проходимой (`result = 4`). Владелец подтвердил зависание над
+  своими. Корень: порт повторял `CURSOR_FRIEND`-выделение для своих в любом
+  контексте. Исправление: `hud::air_move_over_own_unit` (+ общий
+  `air_hovers_over_own`) и ветка в `session_map_left_click` после курсорных
+  режимов — самолёт в фокусе (`is_air`, не `ORDER_IDLE`) над своим наземным/
+  водным юнитом или своим `STATIONARY`-зданием получает `ORDER_MOVE`/`INIT`
+  (`Move (air)`), фокус остаётся на самолёте; `cursor::window_cursor` в той же
+  ситуации даёт `CURSOR_UNIT_GO`/`CURSOR_WAY` (Shift) вместо `CURSOR_FRIEND`.
+  Граница: свой **самолёт** в клетке (воздух над воздухом блокируется), клетка
+  самого самолёта (меню/стек), `LANDPAD`/`GROUND_COVER` (прежний путь
+  `clicks_through_unit_to_move`) и активные `cursor_mode`/`targeting_mode`/
+  `enter_mode`, а также самолёт «не готов к приказам» (`:4305-4338`) остаются
+  прежним выделением; выделение своих юнитов без самолёта в фокусе не менялось.
+  CRC/снапшот не меняются — только ввод/курсор. Тесты:
+  `max_app/src/hud_tests.rs::aircraft_hovers_over_its_own_ground_unit_and_building`,
+  `max_app/tests/cursor_table.rs::
+  air_cursor_over_own_ground_unit_and_building_is_unit_go`,
+  `max_app/tests/mouse_input_regressions.rs::
+  aircraft_left_click_hovers_over_an_own_ground_unit`/`..._over_an_own_building`,
+  контроли `..._on_an_own_aircraft_still_selects_it`,
+  `ground_selection_of_an_own_unit_is_unchanged`. QA `move-input.qa` + golden
+  `move-input` — PASS (7/7, максимум 0.184 %). Подробности —
+  `max-brh-docs/analysis/visual-1to1-status.md` §52.3.
+
 - **Самолёт в фокусе занимает клетку с наземным/водным юнитом (зависает над ним).**
   Оракул: `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`) — ветка
   `case MOBILE_AIR_UNIT` даёт `CURSOR_UNIT_GO`, когда в клетке нет **своего**

@@ -504,14 +504,20 @@ fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
     });
 }
 
-/// #4 (oracle contrast): the same click on an **own** unit still selects it —
-/// C++ `GameManager_GetWindowCursor` returns `CURSOR_FRIEND` for an own
-/// `SELECTABLE` unit (`game_manager.cpp:4456-4458`), and `CURSOR_FRIEND` →
-/// `GameManager_ClickUnit` (`:6844-6852`). Only an own unit in `ORDER_IDLE` is
-/// not found by `Access_GetTeamUnit` (`access.cpp:1813`: `GetOrder() !=
-/// ORDER_IDLE`) and becomes a move target.
+/// The own-unit rule confirmed by the run owner: with an aircraft in focus, LMB
+/// on a cell holding an **own** ground unit is a move — the aircraft hovers above
+/// it.
+///
+/// The Interplay manual allows aircraft to "fly to any square … park in any
+/// square" (`max-brh-assets/text/manual.txt:3365-3367`), and `Access_IsAccessible`
+/// blocks an aircraft's destination only with another **air** unit
+/// (`access.cpp:131-137`). C++ `GameManager_GetWindowCursor` ends the click on
+/// `CURSOR_FRIEND` (`game_manager.cpp:4456-4457`) and selects the own unit
+/// (`:6844-6852`), but that routing contradicts the manual — the simulation
+/// already accepts the air/ground stack, so LMB must give
+/// `ORDER_MOVE`/`ORDER_STATE_INIT` (`:6892-6898`).
 #[test]
-fn aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving() {
+fn aircraft_left_click_hovers_over_an_own_ground_unit() {
     with_big_stack(|| {
         let Some(mut app) = local_game() else {
             return;
@@ -541,7 +547,12 @@ fn aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving() {
                 max_core::access::unit_type_flags(UnitType::Fighter),
             )
             .expect("fighter");
-        let own_grid = free_point(&app, Point::new(aircraft_grid.x + 2, aircraft_grid.y));
+        {
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+        }
+
+        let own_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
         let own = app
             .universe_mut()
             .spawn_unit(
@@ -554,22 +565,299 @@ fn aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving() {
 
         app.viewport_mut()
             .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+
+        // Focus the aircraft with a click on its own cell.
         let (ax, ay) = screen_point(&app, aircraft_grid);
         handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
         assert_eq!(app.hud().selected, Some(aircraft));
 
+        // LMB on the own tank's cell: the aircraft flies there and hovers above
+        // it; the focus stays on the aircraft.
         let (ox, oy) = screen_point(&app, own_grid);
         handle_session_input(&mut app, InputEvent::MouseClick(ox, oy));
 
         assert_eq!(
             app.hud().selected,
-            Some(own),
-            "CURSOR_FRIEND over an own unit selects it"
+            Some(aircraft),
+            "the click must not move the focus to the own unit"
+        );
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Move (air)")),
+            "LMB on a cell with an own ground unit must be an air move, log: {:?}",
+            app.hud().log.lines()
+        );
+
+        let unit = app.state_ref().unit(aircraft).expect("fighter");
+        assert_eq!(unit.orders, UnitOrder::Move, "ORDER_MOVE was given");
+        assert_eq!(
+            app.state_ref().order_data(aircraft).move_to,
+            own_grid,
+            "move_to is the own unit's cell"
+        );
+
+        for _ in 0..240 {
+            if app.state_ref().unit(aircraft).map(|unit| unit.grid) == Some(own_grid) {
+                break;
+            }
+            app.tick();
+        }
+        assert_eq!(
+            app.state_ref().unit(aircraft).map(|unit| unit.grid),
+            Some(own_grid),
+            "the aircraft must hover above the own ground unit"
+        );
+        let cell = app.state_ref().units_at(own_grid);
+        assert!(
+            cell.contains(&aircraft) && cell.contains(&own),
+            "the cell must hold both the aircraft and the own ground unit, got {cell:?}"
+        );
+    });
+}
+
+/// The same rule for a **building**: `MININGST`/`BARRACKS` are `STATIONARY`
+/// (`0x200`) and `SELECTABLE` (`0x400000`) in `SC_UNITS`, and
+/// `Access_IsAccessible` does not let a building block an aircraft
+/// (`access.cpp:131-137` only compares air with air), so LMB on an own building
+/// is an air move and the aircraft hovers over it.
+#[test]
+fn aircraft_left_click_hovers_over_an_own_building() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        {
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+        }
+
+        // A 2×2 own building; its anchor cell is the click target
+        // (`MapHash` keeps the building in all four cells).
+        let building_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
+        let building = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Barracks,
+                team,
+                building_grid,
+                max_core::access::unit_type_flags(UnitType::Barracks),
+            )
+            .expect("own barracks");
+        assert_ne!(building, aircraft);
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        let (bx, by) = screen_point(&app, building_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(bx, by));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(aircraft),
+            "the click must not select the own building"
+        );
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Move (air)")),
+            "LMB on an own building must be an air move, log: {:?}",
+            app.hud().log.lines()
+        );
+        assert_eq!(
+            app.state_ref().unit(aircraft).map(|unit| unit.orders),
+            Some(UnitOrder::Move),
+            "ORDER_MOVE was given to the aircraft"
+        );
+        assert_eq!(
+            app.state_ref().order_data(aircraft).move_to,
+            building_grid,
+            "move_to is the own building's cell"
+        );
+
+        for _ in 0..240 {
+            if app.state_ref().unit(aircraft).map(|unit| unit.grid) == Some(building_grid) {
+                break;
+            }
+            app.tick();
+        }
+        assert_eq!(
+            app.state_ref().unit(aircraft).map(|unit| unit.grid),
+            Some(building_grid),
+            "the aircraft must hover above the own building"
+        );
+        let cell = app.state_ref().units_at(building_grid);
+        assert!(
+            cell.contains(&aircraft) && cell.contains(&building),
+            "the cell must hold both the aircraft and the own building, got {cell:?}"
+        );
+    });
+}
+
+/// Control: the hover rule is only for an **aircraft in focus** and only for an
+/// own **non-air** unit. An own aircraft in the destination cell is air-over-air,
+/// which `AccessModifier_SameClassBlocks` blocks (`access.cpp:131-137`), so the
+/// click keeps the C++ `CURSOR_FRIEND` behavior and selects the own aircraft
+/// (`game_manager.cpp:4456-4457`, `:6844-6852`).
+#[test]
+fn aircraft_left_click_on_an_own_aircraft_still_selects_it() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        let own_air_grid = free_point(&app, Point::new(aircraft_grid.x + 2, aircraft_grid.y));
+        let own_air = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                own_air_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("own fighter");
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        let (ox, oy) = screen_point(&app, own_air_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ox, oy));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(own_air),
+            "air over air is blocked: CURSOR_FRIEND selects the own aircraft"
         );
         assert_eq!(
             app.state_ref().unit(aircraft).map(|unit| unit.orders),
             Some(UnitOrder::Await),
-            "no move order is given to the aircraft"
+            "the aircraft in focus was not given a move order"
+        );
+    });
+}
+
+/// Control: without an aircraft in focus the click on an own unit stays a plain
+/// selection (`GameManager_ClickUnit`, `game_manager.cpp:6265-6268`); the new
+/// air rule must not leak into the ground/sea cursor.
+#[test]
+fn ground_selection_of_an_own_unit_is_unchanged() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -2..=2 {
+            for dx in -2..=2 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let first_grid = free_point(&app, center);
+        let first = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Tank,
+                team,
+                first_grid,
+                max_core::access::unit_type_flags(UnitType::Tank),
+            )
+            .expect("own tank");
+        let second_grid = free_point(&app, Point::new(first_grid.x + 2, first_grid.y));
+        let second = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Tank,
+                team,
+                second_grid,
+                max_core::access::unit_type_flags(UnitType::Tank),
+            )
+            .expect("own tank");
+
+        app.viewport_mut()
+            .center_on_grid(first_grid.x, first_grid.y);
+        let (fx, fy) = screen_point(&app, first_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(fx, fy));
+        assert_eq!(app.hud().selected, Some(first));
+
+        let (sx, sy) = screen_point(&app, second_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(sx, sy));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(second),
+            "a click on an own unit with a ground unit in focus selects it"
+        );
+        assert_eq!(
+            app.state_ref().unit(second).map(|unit| unit.orders),
+            Some(UnitOrder::Await),
+            "no move order is given by a selection click"
         );
     });
 }

@@ -3580,8 +3580,10 @@ fn debug_input() -> bool {
 /// Ground cover (`ROAD`/`BRIDGE`/`WTRPLTFM`) never blocks
 /// `Access_IsAccessible`: C++ reports `CURSOR_UNIT_GO` and the click moves the
 /// selected unit onto the bridge/platform/road. An aircraft treats a `LANDPAD`
-/// the same way (the only own unit type excluded from `CURSOR_FRIEND`), which is
-/// how a plane gets a landing order.
+/// the same way, which is how a plane gets a landing order. The other own cells
+/// an aircraft may enter — a ground/water unit or a building — are routed by
+/// [`hud::air_move_over_own_unit`] after the cursor modes, because those modes
+/// have priority over the air class branch (`game_manager.cpp:4442-4454`).
 fn clicks_through_unit_to_move(
     state: max_core::universe::StateRef<'_>,
     selected: max_core::unit::UnitId,
@@ -3837,6 +3839,12 @@ where
 
     if unit_team == team {
         let selected = app.hud().selected;
+        // Modes that take priority over the air hover: C++ checks
+        // `targeting_mode`/`enter_mode` before the class branch
+        // (`game_manager.cpp:4384`/`:4416`); `enter_mode` is cleared below when
+        // the click gave no boarding order, so keep the value from this click.
+        let targeting_mode = app.hud().targeting_mode;
+        let enter_mode = app.hud().enter_mode;
 
         // `GameManager_GetWindowCursor`/`GetUnitActionCursor`/`GetAirUnitCursor`
         // (`game_manager.cpp:4436-4465/5937-5962`): with a mobile own unit
@@ -3966,6 +3974,25 @@ where
                 }
             }
             app.hud_mut().enter_mode = false;
+        }
+
+        // An aircraft in focus over its **own** ground/water unit or building:
+        // LMB gives `ORDER_MOVE` (`CURSOR_UNIT_GO`), the aircraft hovers above
+        // that unit and the focus stays on the aircraft. C++ ends this click on
+        // `CURSOR_FRIEND` (`game_manager.cpp:4456-4457`) and
+        // `GameManager_ClickUnit` selects the own unit (`:6844-6852`), but the
+        // manual allows parking "in any square" (`manual.txt:3365-3367`) and
+        // `Access_IsAccessible` blocks an aircraft only with another air unit
+        // (`access.cpp:131-137`) — the run owner confirmed the hover. Cursor
+        // modes, `targeting_mode` and `enter_mode` keep priority
+        // (`:4384`/`:4416` are before the class branch).
+        if cursor == 0
+            && !targeting_mode
+            && !enter_mode
+            && selected
+                .is_some_and(|selected| hud::air_move_over_own_unit(app.state_ref(), selected, id))
+        {
+            return session_map_order_click(app, viewport, x, y);
         }
 
         // A repeated click on the already selected unit: the command menu, and with

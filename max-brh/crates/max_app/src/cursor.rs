@@ -946,9 +946,29 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             }
         }
 
-        return if team_unit.is_some_and(|unit| {
-            unit.unit_type != UnitType::LandingPad && unit.flags & unit_flags::GROUND_COVER == 0
-        }) {
+        // An aircraft may enter a cell with an own ground/water unit or an own
+        // building — it hovers above it (manual "park in any square",
+        // `manual.txt:3365-3367`; `Access_IsAccessible` blocks air only with
+        // air, `access.cpp:131-137`), so the cursor is the move cursor there.
+        // `CURSOR_FRIEND` stays for an own **aircraft** in the cell (air over air
+        // is blocked), for the aircraft's own cell (the click is the unit menu)
+        // and for every active cursor mode (`targeting_mode`/`enter_mode` were
+        // handled above; the load arm of the C++ branch is above this one too).
+        let own_cell_is_move = team_unit.is_some_and(|unit| {
+            unit.unit_type == UnitType::LandingPad
+                || unit.flags & unit_flags::GROUND_COVER != 0
+                || (cursor_mode == 0 && crate::hud::air_hovers_over_own(selected, unit))
+        });
+
+        if own_cell_is_move {
+            return if app.shift_pressed() {
+                CursorId::Way
+            } else {
+                CursorId::UnitGo
+            };
+        }
+
+        return if team_unit.is_some() {
             CursorId::Friend
         } else if app.shift_pressed() {
             CursorId::Way

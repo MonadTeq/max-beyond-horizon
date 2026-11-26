@@ -1130,8 +1130,8 @@ pub fn build_air_move_order(
 ///
 /// Oracle `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): the
 /// `MOBILE_AIR_UNIT` branch is reached with `team_unit == nullptr` (there is no
-/// own `SELECTABLE` unit in the cell — otherwise the cursor is `CURSOR_FRIEND`
-/// and the caller selects that unit) and after the military-cursor block
+/// own `SELECTABLE` unit in the cell — an own one is routed separately, see
+/// [`air_move_over_own_unit`]) and after the military-cursor block
 /// (`:4366-4382`) took every valid attack target away. The air branch then
 /// yields `CURSOR_UNIT_GO`, and LMB gives `GameManager_SetUnitOrder(ORDER_MOVE,
 /// ORDER_STATE_INIT, …)` (`:6892-6898`). `Access_IsAccessible` never blocks an
@@ -1168,6 +1168,99 @@ pub fn air_move_over_foreign_unit(state: StateRef<'_>, selected: UnitId, clicked
     // a hovering aircraft can only target what its `SC_ATTRI` weapon covers (air
     // for FIGHTER/SP_FLAK/ANTIAIR, …), and a landed one targets nothing at all.
     !state.is_valid_attack_target(aircraft, other)
+}
+
+/// Whether the aircraft `aircraft` may hover over the **own** unit `other` (the
+/// unit under the cursor) — the shared body of [`air_move_over_own_unit`] and
+/// the air arm of [`crate::cursor::window_cursor`].
+///
+/// Manual (the Interplay oracle): "Once aircrafts are created in an Air Unit
+/// Plant, they can fly to any square within their range, whether over land or
+/// sea. They can also "park" in any square"
+/// (`max-brh-assets/text/manual.txt:3365-3367`). The simulation already allows
+/// the stack: `Access_IsAccessible` (`access.cpp:107-137`) blocks an aircraft's
+/// destination only with another **air** unit (`AccessModifier_SameClassBlocks`
+/// compares air with air); a ground/sea unit or a `STATIONARY` building leaves
+/// `result = 4`, so `ORDER_MOVE`/`ORDER_STATE_INIT` (`game_manager.cpp:6892-6898`)
+/// makes the aircraft hover above it.
+///
+/// `Access_GetTeamUnit` (`access.cpp:1804-1839`) finds an own unit only with
+/// `SELECTABLE` (`0x400000`) and `GetOrder() != ORDER_IDLE`. A building carries
+/// both `SELECTABLE` and `STATIONARY` (`0x200`; e.g. `MININGST` `0x01604210`),
+/// so it is a hover target as well.
+///
+/// What stays a **selection** (`CURSOR_FRIEND`, `game_manager.cpp:4456-4457`):
+/// * another own **aircraft** in the cell — air over air is blocked by
+///   `SameClassBlocks`, so the click picks that aircraft;
+/// * the aircraft itself or its own cell — it is already there, so the click is
+///   the unit menu/stack walk (`GameManager_ClickUnit`, `:6265-6290`);
+/// * `GROUND_COVER` (`ROAD`/`BRIDGE`/`WTRPLTFM`) and a `LANDPAD` — their move
+///   path is `clicks_through_unit_to_move`, which runs before this predicate.
+pub(crate) fn air_hovers_over_own(aircraft: &UnitInfo, other: &UnitInfo) -> bool {
+    // C++ branch "the unit is not ready for orders" (`game_manager.cpp:4305-4338`)
+    // runs before the class branch: a mid-move/firing/disabled/loading aircraft
+    // gets `CURSOR_FRIEND`/`CURSOR_UNIT_NO_GO`, so the click must not give a new
+    // order (the cursor already follows that branch).
+    let not_ready = matches!(
+        aircraft.orders,
+        UnitOrder::Fire
+            | UnitOrder::Explode
+            | UnitOrder::Disable
+            | UnitOrder::AwaitDisableUnit
+            | UnitOrder::AwaitStealUnit
+            | UnitOrder::Load
+            | UnitOrder::AwaitScaling
+    ) || aircraft.state == UnitOrderState::Destroy
+        || (matches!(
+            aircraft.orders,
+            UnitOrder::Move | UnitOrder::MoveToUnit | UnitOrder::MoveToAttack
+        ) && aircraft.state != UnitOrderState::ExecutingOrder);
+
+    if not_ready
+        || !aircraft.is_air()
+        || aircraft.hits == 0
+        || aircraft.team != other.team
+        || aircraft.orders == UnitOrder::Idle
+        || other.hits == 0
+        || other.orders == UnitOrder::Idle
+        || other.flags & unit_flags::SELECTABLE == 0
+        || aircraft.id == other.id
+        || aircraft.grid == other.grid
+        || other.is_air()
+        || other.unit_type == UnitType::LandingPad
+        || other.flags & unit_flags::GROUND_COVER != 0
+    {
+        return false;
+    }
+
+    // A mobile ground/sea/amphibious unit or any other `STATIONARY` own unit —
+    // a building, a turret, a mine: the aircraft hovers above it.
+    other.is_ground() || other.is_sea() || other.is_amphibious() || !other.is_mobile()
+}
+
+/// Whether an LMB on the **own** unit `clicked` moves the aircraft `selected`
+/// onto that unit's cell — the aircraft hovers above its own ground/water unit
+/// or its own building (the owner-confirmed behavior).
+///
+/// This is the own-unit counterpart of [`air_move_over_foreign_unit`]: C++
+/// `GameManager_GetWindowCursor` ends such a click on `CURSOR_FRIEND`
+/// (`game_manager.cpp:4456-4457`) and `CURSOR_FRIEND` →
+/// `GameManager_ClickUnit` selects the own unit (`:6844-6852`, `:6265-6268`).
+/// The manual and `Access_IsAccessible` (see [`air_hovers_over_own`]) do not
+/// make an exception for own units, and the simulation already accepts the move,
+/// so the click must give `ORDER_MOVE`/`ORDER_STATE_INIT` (`:6892-6898`) and
+/// keep the focus on the aircraft. Only the input routing changes — the
+/// simulation, the snapshot and the CRC are untouched.
+///
+/// `cursor_mode`/`targeting_mode`/`enter_mode` still take priority in the
+/// caller: C++ checks them before the class branch (`:4384`/`:4416`), and the
+/// load arm of the air branch (`:4442-4454`) before the friend check.
+pub fn air_move_over_own_unit(state: StateRef<'_>, selected: UnitId, clicked: UnitId) -> bool {
+    let (Some(aircraft), Some(other)) = (state.unit(selected), state.unit(clicked)) else {
+        return false;
+    };
+
+    air_hovers_over_own(aircraft, other)
 }
 
 /// Builds a power on/off order (the `Power On`/`Power Off` popup

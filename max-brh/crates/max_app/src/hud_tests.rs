@@ -930,10 +930,11 @@ fn escape_cancels_chat_without_leaving_the_session() {
 /// [`air_move_over_foreign_unit`] — the `MOBILE_AIR_UNIT` branch of
 /// `GameManager_GetWindowCursor` (`game_manager.cpp:4456-4464`): an aircraft in
 /// focus moves over a foreign ground/sea unit (the plane hovers above it), while
-/// an own unit (`CURSOR_FRIEND`), a unit the aircraft can attack (`CURSOR_ENEMY`)
-/// and a fogged unit (`Access_GetEnemyUnit` needs `IsVisibleToTeam`) are not move
-/// targets. An `ORDER_IDLE` aircraft sits in a container:
-/// `GameManager_GetAirUnitCursor` (`:5937-5962`) handles that click instead.
+/// a unit the aircraft can attack (`CURSOR_ENEMY`) and a fogged unit
+/// (`Access_GetEnemyUnit` needs `IsVisibleToTeam`) are not move targets. Own
+/// units are the separate rule of [`air_move_over_own_unit`]. An `ORDER_IDLE`
+/// aircraft sits in a container: `GameManager_GetAirUnitCursor`
+/// (`:5937-5962`) handles that click instead.
 #[test]
 fn aircraft_moves_over_a_foreign_ground_unit_only() {
     let mut app = App::new(AppConfig::default().with_screen(512, 384));
@@ -998,7 +999,7 @@ fn aircraft_moves_over_a_foreign_ground_unit_only() {
     );
     assert!(
         !air_move_over_foreign_unit(state, fighter, own),
-        "an own unit is CURSOR_FRIEND: the click selects it"
+        "an own unit is decided by air_move_over_own_unit, not by this predicate"
     );
     assert!(
         !air_move_over_foreign_unit(state, fighter, enemy_air),
@@ -1015,5 +1016,126 @@ fn aircraft_moves_over_a_foreign_ground_unit_only() {
     assert!(
         !air_move_over_foreign_unit(state, own, ground),
         "a ground unit has no air move cursor"
+    );
+}
+
+/// [`air_move_over_own_unit`] — the own-unit counterpart of the foreign rule:
+/// an aircraft in focus hovers over its **own** ground/water unit and its own
+/// building (manual "park in any square", `manual.txt:3365-3367`;
+/// `Access_IsAccessible` blocks an aircraft only with another air unit,
+/// `access.cpp:131-137`). Another own aircraft (air over air is blocked by
+/// `SameClassBlocks`), the aircraft's own cell (the click is the unit menu) and
+/// foreign/fogged/`ORDER_IDLE` units stay selections.
+#[test]
+fn aircraft_hovers_over_its_own_ground_unit_and_building() {
+    let mut app = App::new(AppConfig::default().with_screen(512, 384));
+    let universe = &mut app.universe;
+    universe.set_player_team(TeamId::RED);
+    *universe.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+    *universe.team_units_mut(TeamId::BLUE).expect("BLUE economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+
+    let fighter = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(10, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("fighter");
+    let tank = universe
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(11, 10), 0)
+        .expect("own tank");
+    let ship = universe
+        .spawn_unit(UnitType::Corvette, TeamId::RED, Point::new(12, 10), 0)
+        .expect("own ship");
+    let building = universe
+        .spawn_unit(UnitType::Barracks, TeamId::RED, Point::new(14, 10), 0)
+        .expect("own building");
+    let own_air = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(18, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("own fighter");
+    let foreign = universe
+        .spawn_unit(UnitType::Tank, TeamId::BLUE, Point::new(19, 10), 0)
+        .expect("foreign tank");
+    // A ground unit in the aircraft's own cell: the click opens the unit menu
+    // and walks the stack (`GameManager_ClickUnit`, `game_manager.cpp:6265-6290`).
+    let same_cell = universe
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(10, 10), 0)
+        .expect("tank under the aircraft");
+    // `Access_GetTeamUnit` does not find an `ORDER_IDLE` own unit
+    // (`access.cpp:1813/1824`).
+    let stored = universe
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(20, 10), 0)
+        .expect("idle tank");
+    {
+        let unit = universe.unit_mut(stored).expect("idle tank");
+        unit.orders = UnitOrder::Idle;
+        unit.state = UnitOrderState::Store;
+    }
+    // A mid-move aircraft is "not ready for orders"
+    // (`game_manager.cpp:4305-4338`): the cursor is `CURSOR_FRIEND`, so the
+    // click stays a selection.
+    let mid_flight = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(22, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("mid-flight fighter");
+    {
+        let unit = universe.unit_mut(mid_flight).expect("mid-flight fighter");
+        unit.orders = UnitOrder::Move;
+        unit.state = UnitOrderState::Init;
+    }
+
+    let state = app.state_ref();
+
+    assert!(
+        air_move_over_own_unit(state, fighter, tank),
+        "an aircraft in focus hovers over its own ground unit"
+    );
+    assert!(
+        air_move_over_own_unit(state, fighter, ship),
+        "an aircraft in focus hovers over its own sea unit"
+    );
+    assert!(
+        air_move_over_own_unit(state, fighter, building),
+        "an aircraft in focus hovers over its own STATIONARY building"
+    );
+    assert!(
+        !air_move_over_own_unit(state, fighter, own_air),
+        "an own aircraft in the cell is air-over-air: the click selects it"
+    );
+    assert!(
+        !air_move_over_own_unit(state, fighter, same_cell),
+        "the aircraft's own cell is the unit menu, not a move"
+    );
+    assert!(
+        !air_move_over_own_unit(state, fighter, fighter),
+        "the aircraft itself is not a hover target"
+    );
+    assert!(
+        !air_move_over_own_unit(state, fighter, foreign),
+        "a foreign unit is not an own hover target"
+    );
+    assert!(
+        !air_move_over_own_unit(state, fighter, stored),
+        "an ORDER_IDLE own unit is not found by Access_GetTeamUnit"
+    );
+    assert!(
+        !air_move_over_own_unit(state, mid_flight, tank),
+        "a mid-move aircraft is not ready for orders: the click selects"
+    );
+    assert!(
+        !air_move_over_own_unit(state, tank, ship),
+        "a ground unit in focus has no air move cursor"
     );
 }

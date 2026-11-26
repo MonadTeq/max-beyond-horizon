@@ -6016,7 +6016,7 @@ disabled_item_does_not_act}`, `unitmenu::tests` (пункт включён).
 aircraft_left_click_hovers_over_a_foreign_ground_unit` (мышиный путь: `Move (air)`,
 `move_to`, полёт и общий стек с танком),
 `aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving` (контроль:
-`CURSOR_FRIEND` на своём юните).
+`CURSOR_FRIEND` на своём юните; заменён в §52.3 после подтверждения владельца).
 
 **CRC.** Исправление только в слое ввода: симуляция (`is_accessible`, `AirPath`)
 движение уже разрешала, `snapshot_bytes`/CRC не меняются; golden `move-input` — без
@@ -6026,6 +6026,80 @@ aircraft_left_click_hovers_over_a_foreign_ground_unit` (мышиный путь:
 
 * `cargo check --workspace` — зелёный;
 * `cargo nextest run -p max_core -p max_app --no-default-features` — 1910/1910;
+* `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %;
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.
+
+### 52.3 Уточнение (2026-11-26): самолёт в фокусе зависает и над СВОИМИ юнитами/зданиями
+
+**Оракул.** `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): в ветке
+`case MOBILE_AIR_UNIT` после загрузки (`CURSOR_ARROW_SW`, `:4442-4454`) стоит
+проверка `if (team_unit && team_unit->GetUnitType() != LANDPAD &&
+!(team_unit->flags & GROUND_COVER))` → `CURSOR_FRIEND` (`:4456-4457`).
+`team_unit` — `Access_GetTeamUnit(grid, GameManager_PlayerTeam, SELECTABLE)`
+(`access.cpp:1804-1839`): свой юнит с `SELECTABLE` (`0x400000`) и
+`GetOrder() != ORDER_IDLE`; здание подходит (у `MININGST` флаги `0x01604210` —
+`STATIONARY` `0x200` + `SELECTABLE`). `CURSOR_FRIEND` в `GameManager_ProcessMouse`
+даёт `GameManager_UpdateSelection` + `GameManager_ClickUnit`
+(`:6844-6852`/`:6265-6268`), а тот **выделяет** свой юнит — приказа нет.
+
+При этом сам полёт в клетку со своим юнитом/зданием оракул разрешает:
+`Access_IsAccessible` (`access.cpp:107-137`) для `MOBILE_AIR_UNIT` возвращает `0`
+только при другом **воздушном** юните в клетке (`AccessModifier_SameClassBlocks`
+сравнивает «воздух с воздухом»); наземный/водный юнит и `STATIONARY`-здание
+оставляют `result = 4`. `Paths_GetAirPath` (`paths.cpp:97`) — прямая без обхода
+препятствий. Мануал (Оракул Interplay) прямо разрешает любую клетку: «they can fly
+to any square within their range, whether over land or sea. They can also "park" in
+any square» (`max-brh-assets/text/manual.txt:3365-3367`).
+
+**Расхождение.** Порт копировал `CURSOR_FRIEND`-выделение для своих юнитов в любом
+контексте: самолёт в фокусе над своим танком/кораблём/зданием выделял цель вместо
+зависания. Владелец подтвердил, что в оригинале самолёт висит над своими.
+
+**Граница «выделить свой» vs «двигаться над ним».** Движение (зависание) — только
+когда в фокусе воздушный юнит (`MOBILE_AIR_UNIT`, не `ORDER_IDLE`) и в клетке свой
+`SELECTABLE` **не воздушный** юнит или `STATIONARY`-здание. Выделением остаются:
+* свой **самолёт** в клетке — воздух над воздухом блокирует `SameClassBlocks`
+  (`access.cpp:131-137`), клик выбирает его (`CURSOR_FRIEND`);
+* клетка самого самолёта — он уже там, клик открывает меню/стек
+  (`GameManager_ClickUnit`, `:6265-6290`);
+* `LANDPAD` и `GROUND_COVER` (`ROAD`/`BRIDGE`/`WTRPLTFM`) — прежний путь
+  `clicks_through_unit_to_move`;
+* активные `cursor_mode` (repair/reload/load/X-FER), `targeting_mode` и
+  `enter_mode` — приоритетнее классовой ветки (`:4384`/`:4416`, загрузка
+  `:4442-4454`);
+* самолёт «не готов к приказам» (ветка `:4305-4338`: `ORDER_MOVE` в не-`EXECUTING`
+  состоянии, `FIRE`/`EXPLODE`/`DISABLE`/`LOAD`/`AWAIT_SCALING`/`DESTROY`) — курсор
+  `CURSOR_FRIEND`, клик остаётся выделением;
+* любой свой юнит, когда в фокусе **не** самолёт — выделение не менялось.
+
+**Исправление.** `hud::air_hovers_over_own` (общее тело) +
+`hud::air_move_over_own_unit` (предикат по оракулу) + ветка в
+`session_map_left_click` после курсорных режимов: `ORDER_MOVE`/`INIT` (`Move (air)`,
+`:6892-6898`), фокус остаётся на самолёте. `cursor::window_cursor` в той же
+ситуации отдаёт `CURSOR_UNIT_GO`/`CURSOR_WAY` (Shift) вместо `CURSOR_FRIEND` —
+курсор соответствует действию клика. Правка только в слое ввода/презентации.
+
+**Тесты.** `max_app/src/hud_tests.rs::
+aircraft_hovers_over_its_own_ground_unit_and_building` (правила предиката: свой
+наземный/водный юнит, своё здание — да; свой самолёт, своя клетка, `ORDER_IDLE`,
+чужой юнит — нет),
+`max_app/tests/cursor_table.rs::
+air_cursor_over_own_ground_unit_and_building_is_unit_go` (курсор, включая Shift),
+`max_app/tests/mouse_input_regressions.rs::
+aircraft_left_click_hovers_over_an_own_ground_unit`/`..._over_an_own_building`
+(мышиный путь: `Move (air)`, `move_to`, полёт и общий стек), контроли
+`aircraft_left_click_on_an_own_aircraft_still_selects_it` (свой самолёт — выделение)
+и `ground_selection_of_an_own_unit_is_unchanged` (без самолёта в фокусе выделение
+прежнее).
+
+**CRC.** Симуляция (`is_accessible`, `AirPath`) движение уже разрешала, поэтому
+`snapshot_bytes`/CRC не меняются; golden `move-input` — 7/7, максимум 0.184 %
+(`game-turn2`, ниже порога 1 %).
+
+### 52.4 Валидация (2026-11-26)
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_app --no-default-features` — 965/965;
 * `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %;
 * оракулы `max-cpp-port/` и `max-original/` не изменялись.
 
