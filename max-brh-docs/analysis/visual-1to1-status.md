@@ -1909,7 +1909,7 @@ ammo > 0, не диверсант), `x-fer` (груз `RAW..GOLD`, не `CLEAR`/
 | `x-fer` | курсор `cursor = 3` → `GameManager_TransferCargo` → `TransferMenu_Menu` + `ORDER_TRANSFER` (P3) | **реализовано**: `App::open_transfer_menu` → `max_app::transfermenu` (окно `XFERPIC`), `GameManager_GetUnitWithCargoType`, `ProcessOrderTransfer`/`ProcessTransfer` в ядре; см. §29 |
 | `attack` | тумблер `targeting_mode` | **сделано (B1, §33)**: наведение, `CURSOR_ENEMY`, огонь по клетке (`ORDER_FIRE`) |
 | `load` | курсор `cursor = 7` → `ORDER_LAND`/`MOVE_TO_UNIT` | **сделано (B1, §33)**: P3 с `parent`, `ORDER_MOVE_TO_UNIT` у пассажира, `ORDER_LAND` в клетке транспорта |
-| `activate` | `RepairShopMenu_Menu` | **отключено**: экран `repairshopmenu.cpp:144-1141` не портирован |
+| `activate` | `RepairShopMenu_Menu` (экран слотов не портирован) | **сделано (§50)**: транспорты `CLNTRANS`/`SEATRANS`/`AIRTRANS` — `RepairShopMenu::Activate` без экрана: `AIRTRANS` → `ORDER_UNLOAD` в своей клетке; `CLNTRANS`/`SEATRANS` → выбор пассажира + клик по клетке высадки (`CURSOR_ACTIVATE` → `ORDER_ACTIVATE`), `UnitsManager_ActivateUnit` ставит юнита в указанную клетку. У зданий (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) пункт остался disabled |
 | `allocate` | `AllocMenu_Menu` (окно `ALLOCFRM`) | **реализовано**: `App::open_alloc_menu` → `max_app::allocmenu` (см. §20) |
 | `start` завод | `UnitInfo::BuildOrder` | **реализовано**: P1 `ORDER_BUILD`/`INIT` (очередь и `build_time` сохранены остановкой), см. §21 |
 | `stop` стройки | `GameManager_SelectBuildSite` (`game_manager.cpp:3529`) | **реализовано**: P1 `ORDER_BUILD`/`BUILD_CANCEL` → `CancelBuilding` (мобильный строитель — `AWAIT` и чистая очередь; завод — `HaltBuilding`), см. §21 |
@@ -3431,7 +3431,7 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 | бульдозер `remove`/`stop` | `UnitsManager_Popup_OnClick_StopRemove` (`:1082`), `Access_GetRemovableRubble` (`access.cpp:1817`), `GameManager_SelectBuildSite` (`game_manager.cpp:3549`) | `unitmenu::removable_rubble` (SMLRUBLE/LRGRUBLE + 2×2 проходимость), `parent = обломки`, `build_time = 4/1`, `ORDER_CLEAR`/`INIT`; `stop` — `ORDER_BUILD`/`BUILD_CANCEL` |
 | `remove` здания | `UnitsManager_Popup_OnClick_Remove` (`:506`), `UnitsManager_SelfDestructMenu`/`ActiveMenu` (`:292`/`:233`) | новый модуль `selfdestruct.rs`: окно `SELFDSTR` (174×82 в (317,201)), `Arm`/`Cancel` (`SLFDAR/SLFDCN`), кадры `SLFDOPN1..6` по 48 мс, `OK` (`SLFDOK`) → `ORDER_EXPLODE`/`EXPLODE`; `Esc` — отмена |
 | `Upg. All` | `UnitsManager_Popup_OnClick_UpgradeAll` (`:414`), `UnitInfo::GetUpgradeCost` (`unitinfo.cpp`), `Complex::GetCargoInfo` | `unitmenu::upgrade_all_orders`: все стационарные своего типа/команды с `is_upgrade_available`, материалы комплекса (`complex.material`, пересчитанный `OptimizeComplexes`), `ORDER_UPGRADE`/`EXECUTING_ORDER` (P2, `parent = self`), сообщения `_(a0ee)`/`_(8967)`/`_(2693)` с римской маркой (`roman_version`) |
-| `activate` | `RepairShopMenu_Menu` (`repairshopmenu.cpp:144-1141`) | **остался disabled**: экран 6 слотов (портрет, статистика, `Activate/Reload/Repair/Upgrade`, стрелки, полоса сырья) не портирован; причина видна в `UnitMenuItem::note` |
+| `activate` | `RepairShopMenu_Menu` (`repairshopmenu.cpp:144-1141`), `RepairShopMenu::Activate` (`:661-690`), `GameManager_GetAirUnitCursor` (`game_manager.cpp:5937-5962`), `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`) | **сделано для транспортов (§50)**: экран 6 слотов (портрет, статистика, `Activate/Reload/Repair/Upgrade`, стрелки, полоса сырья) не портирован, поэтому `App::activate_unit_menu_item` повторяет только `RepairShopMenu::Activate`: `AIRTRANS` — `ORDER_UNLOAD`/`INIT` с пассажиром-родителем (выгрузка в своей клетке); `CLNTRANS`/`SEATRANS` — `Access_FindReachableSpot` как допуск, затем выбор пассажира (`GameManager_EnableMainMenu`) + подсказка `_(755b)`; клик по клетке рядом с транспортом — `CURSOR_ACTIVATE` → `ORDER_ACTIVATE`/`EXECUTING_ORDER` транспорту (08/P3, `parent_unit` = пассажир), `UnitsManager_ActivateUnit` ставит юнита в указанную клетку. У зданий (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) пункт disabled — причина в `UnitMenuItem::note` |
 | мастер `start` | `UnitsManager_Popup_InitMaster`/`FindValidPowerGeneratorPosition` (`:1240`/`:1134`) | **пункт не регистрируется**: проверка площадки `POWGEN` + спавн `LRGTAPE` не портированы (как при `is_placeable == false`) |
 
 ### B2. Help-пейджинг (1:1)
@@ -3522,7 +3522,9 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 
 ### Осталось
 
-* `RepairShopMenu` (`activate`) — экран не портирован (B1);
+* `RepairShopMenu` (`activate`) — экран слотов не портирован; транспорты
+  закрыты через `RepairShopMenu::Activate` (§50), у зданий
+  (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) пункт пока disabled;
 * мастер-строитель (`start`) — проверка площадки `POWGEN` не портирована;
 * музыка (`disable_music`) и MVE-аудио — D2/C3.
 
@@ -5741,5 +5743,118 @@ QA `move-input.qa` (`rclick 38 377` → `assert preview`/`assert log=Move:`, п�
 * оракулы `max-cpp-port/` и `max-original/` не изменялись (`save10.*`
   восстановлены после QA-прогонов).
 
+## 50. Activate транспорта: игрок указывает место высадки (CLNTRANS/SEATRANS) — **сделано** (2026-11-26)
 
+**Дефект.** У транспорта с грузом пункт `activate` был включён только для
+`AIRTRANS` (выгрузка в собственной клетке), у `CLNTRANS` (Personnel Carrier) и
+`SEATRANS` он оставался серым: «`RepairShopMenu_Menu` не портирован». Высадить
+пехотинца/танк в выбранную клетку игрок не мог — только `load` (погрузка).
+
+**Оракул (Klei = структура, Interplay = первичное поведение).**
+
+* `UnitsManager_Popup_OnClick_Activate` (`units_manager.cpp:997-1009`) →
+  `RepairShopMenu_Menu` для небоевых «ремонтных» юнитов
+  (`CLNTRANS`/`SEATRANS`/`AIRTRANS`) и зданий (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`).
+* `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`), **не** воздушная
+  ветка: `Access_FindReachableSpot(target_unit->GetUnitType(), target_unit,
+  &grid_x = repairshop->grid_x, &grid_y = repairshop->grid_y, 1,
+  repairshop->flags & BUILDING, 0)` — только допуск «есть ли рядом клетка»;
+  при успехе `repairshop->FollowUnit(); MessageManager_DrawMessage(_(755b),
+  MESSAGE_BOX_INFO, …); GameManager_EnableMainMenu(target_unit);` — **выбранным
+  становится сам пассажир**, а не транспорт (`GameManager_MenuUnitSelect`,
+  `game_manager.cpp:7141-7255`). При неудаче — `_(a1f0)`
+  («Unable to activate unit at this site.»), выбор остаётся на транспорте.
+* Стартовая клетка `Access_FindReachableSpot` (`access.cpp:458-473`) —
+  `(grid−1, grid−1)`, затем N/E/S/W по `exclusion + 2i` шагов: для 1×1
+  транспорта это ровно 8 соседних клеток.
+* Клик игрока: у выделенного юнита `ORDER_IDLE` `GameManager_GetWindowCursor`
+  (`game_manager.cpp:4362`) уходит в `GameManager_GetAirUnitCursor`
+  (`:5937-5962`) — `CURSOR_ACTIVATE` для клетки в прямоугольнике
+  `GameManager_IsUnitNextToPosition(parent, …)` (`:3208`, `grid−1 … grid+size`),
+  доступной для **пассажира** (`Access_IsAccessible`, `SameClassBlocks`); любая
+  другая клетка — `CURSOR_UNIT_NO_GO`.
+* Клик по `CURSOR_ACTIVATE` (`game_manager.cpp:6936-6946`):
+  `parent->move_to_grid_x/y = GameManager_MousePosition;
+  parent->SetParent(GameManager_SelectedUnit);
+  UnitsManager_SetNewOrder(parent, ORDER_ACTIVATE, ORDER_STATE_EXECUTING_ORDER)`
+  — приказ получает **транспорт** (08/P3: `parent_unit` = пассажир,
+  `move_to` = клетка клика).
+* `UnitsManager_ActivateUnit` (`units_manager.cpp:3826-3913`): `client =
+  unit->GetParent()`, проверка `!Paths_IsOccupied(move_to) &&
+  Access_IsAccessible(client->type, …)`, `--unit->storage`,
+  `unit->SetParent(nullptr)`, `UnitsManager_UpdateMapHash(client, move_to)`,
+  `SetSpriteFrameForTerrain`, `InitStealthStatus`, `ScaleUnit(EXPAND)`; отказ —
+  `unit->RestoreOrders()`.
+
+Высадка — **по одному юниту на активацию**: `RepairShopMenu` показывает слоты
+хранимых юнитов (`RepairShopMenu::Init`, `repairshopmenu.cpp:527-538` —
+`Access_IsHeldByUnit` по `UnitsManager_MobileLandSeaUnits`/`MobileAirUnits` с
+`Begin()`), и `Activate` освобождает ровно выбранный слот. Список мобильных
+юнитов — `PushFront` (`UnitInfo::AddToDrawList`), поэтому первый слот — последний
+выставленный хранимый юнит; повторная активация берёт следующий слот и
+высаживает следующего. ИИ-путь
+(`TaskTransport_FinishTransport`, `tasktransport.cpp:718-756`) отдаёт тот же
+`ORDER_ACTIVATE`; в порте он уже работал (`ai/tasks/move_tasks.rs`).
+
+**Корень.** В порте не было пути игрока: (1) пункт `activate` выключен для
+`CLNTRANS`/`SEATRANS`; (2) не было выбора пассажира транспорта как активного
+юнита; (3) клик по клетке рядом с транспортом при выделенном пассажире
+(`ORDER_IDLE`) проваливался в наземный `build_move_order` и мог отдать
+**пассажиру** `ORDER_MOVE` из трюма вместо `ORDER_ACTIVATE` транспорту.
+
+**Исправление.**
+
+* `max_core::unit_order::stored_passenger` — первый юнит в трюме
+  (`ORDER_IDLE`, `parent = контейнер`), как порядок слотов `RepairShopMenu`
+  (`repairshopmenu.cpp:737-745`); `max_core::unit_order::transport_drop_possible`
+  — порт `Access_FindReachableSpot` (mode 0) с `range = 1`, `exclusion =
+  is_building`; оба доступны через `StateRef` (`stored_passenger`,
+  `transport_drop_possible`).
+* `unitmenu.rs`: `activate` включён для `AIRTRANS`/`CLNTRANS`/`SEATRANS`, пока
+  `storage > 0`; у зданий (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) остался
+  выключенным (экран слотов не портирован). Тексты — `_(755b)`/`_(a1f0)` из
+  `assets/language.json` (`SELECT_DROP_SQUARE`, `UNABLE_TO_ACTIVATE`).
+* `App::activate_unit_menu_item`, `activate`: `AIRTRANS` — прежний
+  `ORDER_UNLOAD`/`INIT`; `CLNTRANS`/`SEATRANS` — проверка
+  `transport_drop_possible`, затем `select_unit(пассажир)` и подсказка `_(755b)`
+  (`MESSAGE_BOX_INFO`); отказ — `_(a1f0)` с `MESSAGE_BOX_NOTICE`, выбор не
+  меняется.
+* `ui::session_map_order_at`: у выделенного юнита `ORDER_IDLE` с родителем
+  (пассажир завода/транспорта) единственный допустимый приказ — активация,
+  как `CURSOR_UNIT_NO_GO` в оракуле: без этого клик по далёкой клетке отдавал
+  пассажиру `ORDER_MOVE` из трюма.
+
+**Тесты.**
+
+* `max_core::unit_order::tests::personnel_carrier_activate_sets_the_passenger_down_on_the_chosen_cell`
+  — `ORDER_ACTIVATE` ставит пехотинца в указанную клетку, трюм освобождается,
+  транспорт возвращается в `AWAIT`;
+* `repeated_activate_unloads_the_stored_units_one_by_one` — два хранимых юнита
+  высаживаются по одному, каждый в свою указанную клетку (порядок слотов — как
+  в `RepairShopMenu`: голова списка отрисовки);
+* `sea_transport_activate_sets_the_passenger_down_on_the_shore` — тот же путь
+  для `SEATRANS` (танк на берег);
+* `transport_activate_keeps_the_passenger_aboard_on_an_impassable_cell` —
+  вода для наземного пассажира: `RestoreOrders`, трюм занят;
+* `max_app/tests/transport_unload.rs`: `personnel_carrier_activate_drops_the_unit_on_the_clicked_cell`
+  — полный путь игрока (меню → `activate` → выбор пассажира + `_(755b)` → клик
+  по клетке → `ORDER_ACTIVATE` у транспорта → тик → юнит в клетке) + кадровая
+  проверка, что освобождённый юнит **нарисован** в клетке высадки;
+  `sea_transport_activate_sets_the_unit_down_on_the_shore` — вода как клетка
+  высадки отклоняется (`ORDER_IDLE`-защита), берег принимается.
+
+**Поведение и CRC.** Меняется только путь игрока (приказ/выбор/подсказка):
+симуляция уже умела `ActivateUnit` (ИИ-путь). Снапшот меняется только если
+игрок реально активирует транспорт (как и в оракуле), в сценариях QA без
+активации — не меняется.
+
+### 50.1 Валидация (2026-11-26)
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_core -p max_app --no-default-features` — 1877/1877;
+* `qa_run move-input.qa` — PASS (7 PNG), `qa_golden_check` 7/7 — 0 пикселей;
+  `unit-menu.qa` — PASS (9 PNG), golden 9/9 — 0 пикселей (меню транспорта с
+  пустым трюмом не изменилось);
+* оракулы `max-cpp-port/` и `max-original/` не изменялись (`save10.*`
+  восстановлены после QA-прогонов).
 

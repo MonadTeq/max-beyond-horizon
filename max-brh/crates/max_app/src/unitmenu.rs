@@ -71,8 +71,11 @@
 //! [`UnitMenuItem::note`]. Since 2026-11-20 (B1) `attack` (targeting_mode),
 //! `load` (cursor mode 7), `disable`/`steal` (modes 9/8), bulldozer
 //! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) and `Upg. All` are enabled.
-//! Only `activate` is disabled (`RepairShopMenu` is not ported); the master builder
-//! does not register the item (`FindValidPowerGeneratorPosition`). The list of reasons and
+//! `activate` is enabled for the transports (`AIRTRANS`/`CLNTRANS`/`SEATRANS`) — the
+//! port reproduces `RepairShopMenu::Activate` without its slot screen; the repair-shop
+//! buildings (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) keep it disabled (`RepairShopMenu`
+//! is not ported). The master builder does not register the item
+//! (`FindValidPowerGeneratorPosition`). The list of reasons and
 //! references — `max-brh-docs/analysis/visual-1to1-status.md` §33.
 //!
 //! # Deliberate divergences
@@ -128,6 +131,16 @@ pub const CURSOR_REPAIR: u8 = 4;
 pub const CURSOR_RELOAD: u8 = 6;
 /// Cursor mode `load` — C++ `unit->cursor = 7` (`CURSOR_LOAD`).
 pub const CURSOR_LOAD: u8 = 7;
+
+/// `_(755b)` (`language.json`, en-US) — `RepairShopMenu::Activate`
+/// (`repairshopmenu.cpp:683`) asks the player to point at the cell where the
+/// stored unit is set down (`MESSAGE_BOX_INFO`).
+pub const SELECT_DROP_SQUARE: &str = "Select an open square to place unit.";
+
+/// `_(a1f0)`/`_(eeb4)` (`language.json`, en-US) — `RepairShopMenu::Activate`
+/// (`repairshopmenu.cpp:672/687`): no cell next to the container accepts the
+/// stored unit (`MESSAGE_BOX_NOTICE`).
+pub const UNABLE_TO_ACTIVATE: &str = "Unable to activate unit at this site.";
 
 /// Menu item identifier (all items of the C++ popup).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -648,26 +661,35 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
             } else {
                 "activate"
             };
-            // `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:910-921`):
-            // `activate` opens `RepairShopMenu`. For an `AIRTRANS` the menu's
-            // `Activate` unloads one stored passenger
-            // (`RepairShopMenu::Activate`, `repairshopmenu.cpp:661-678`:
-            // `repairshop->SetParent(target); ORDER_UNLOAD/INIT`), so the item is
-            // live while the hold is not empty. Other repair shops need the
-            // unported screen (`FindReachableSpot`/`FollowUnit`) and stay disabled.
+            // `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:1022-1033`):
+            // `activate` opens `RepairShopMenu`. The port has no slot screen, so the
+            // item reproduces `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`):
+            // for `AIRTRANS` the carrier releases one passenger on its own cell
+            // (`ORDER_UNLOAD`/`INIT`), for `CLNTRANS`/`SEATRANS` it selects the stored
+            // passenger and the player clicks the drop cell (`ORDER_ACTIVATE`, see
+            // [`crate::App::activate_unit_menu_item`]). The other repair shops
+            // (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) still need the unported screen and
+            // stay disabled.
             let activate = UnitMenuItem::new(ItemId::Activate, caption, '1', false);
 
-            items.push(if unit.unit_type == UnitType::AirTransport {
-                if unit.storage > 0 {
-                    activate
+            items.push(
+                if matches!(
+                    unit.unit_type,
+                    UnitType::AirTransport
+                        | UnitType::ArmouredPersonnelCarrier
+                        | UnitType::SeaTransport
+                ) {
+                    if unit.storage > 0 {
+                        activate
+                    } else {
+                        activate.disabled("пустой трюм: нечего выгружать")
+                    }
                 } else {
-                    activate.disabled("пустой трюм: нечего выгружать")
-                }
-            } else {
-                activate.disabled(
-                    "RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141",
-                )
-            });
+                    activate.disabled(
+                        "RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141",
+                    )
+                },
+            );
             // `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`):
             // mode 7 toggle; boarding — `GameManager_ProcessMouse`
             // (CURSOR_LOAD, `game_manager.cpp:6807-6842`).

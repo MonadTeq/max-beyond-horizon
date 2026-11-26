@@ -4204,6 +4204,30 @@ where
         return Transition::None;
     }
 
+    // A unit inside a container (`ORDER_IDLE` with a parent — a factory's ready
+    // unit or a transport's stored passenger) accepts only the launch/drop cell:
+    // `GameManager_GetWindowCursor` sends `ORDER_IDLE` to
+    // `GameManager_GetAirUnitCursor` (`game_manager.cpp:4362/5937-5962`), which
+    // gives `CURSOR_ACTIVATE` next to the container and `CURSOR_UNIT_NO_GO`
+    // everywhere else. Without this guard the click fell through to the ground
+    // path and could give a stored passenger an `ORDER_MOVE` out of the hold.
+    if app.state_ref().unit(selected).is_some_and(|unit| {
+        unit.orders == max_core::enums::UnitOrder::Idle && unit.parent_unit.is_some()
+    }) {
+        app.hud_mut().preview = None;
+        app.hud_mut()
+            .push_log("No-go: click a cell next to the container to set the unit down");
+
+        if debug {
+            eprintln!(
+                "[order] result=no-go-container selected={} to=({},{})",
+                selected.0, destination.x, destination.y
+            );
+        }
+
+        return Transition::None;
+    }
+
     // Aviation moves via `ORDER_MOVE`/`INIT` (packet 08/P3): the `AirPath` is built
     // by the simulation (`Paths_GetAirPath`), and `unit_can_move` deliberately
     // excludes `MOBILE_AIR_UNIT` (the ground `Packet38Move` does not suit it).

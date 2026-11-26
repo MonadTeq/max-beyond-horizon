@@ -238,8 +238,9 @@ fn menu_items_follow_unit_type() {
     assert!(menu.items[0].enabled);
     let _ = key(&mut app, Key::Escape);
 
-    // Transport: `load` is enabled (cursor mode 7), `activate` — not
-    // (RepairShopMenu is not ported).
+    // Transport: `load` (cursor mode 7) and `activate`; the latter is live as
+    // soon as the hold is not empty (`RepairShopMenu::Activate`,
+    // `repairshopmenu.cpp:661-690`) — the freshly spawned carrier is empty.
     let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, transport);
     let menu = app.unit_menu().expect("меню транспорта");
@@ -252,7 +253,11 @@ fn menu_items_follow_unit_type() {
         .index_of(ItemId::Activate)
         .map(|index| &menu.items[index])
         .expect("activate у транспорта");
-    assert!(!activate.enabled, "RepairShopMenu не портирован");
+    assert!(
+        !activate.enabled,
+        "пустой трюм: выгружать нечего (пункт остаётся в списке, как в C++)"
+    );
+    assert!(activate.note.contains("трюм"), "причина в note: {}", activate.note);
 }
 
 #[test]
@@ -351,14 +356,21 @@ fn build_item_opens_build_menu() {
 fn disabled_item_does_not_act() {
     let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
-    // The only remaining disabled item — the repair shop `activate`.
-    let carrier = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
-    open_menu(&mut app, carrier);
+    // The remaining disabled `activate` — a repair-shop **building** (`DEPOT`):
+    // the port reproduces `RepairShopMenu::Activate` only for the transports,
+    // the slot screen itself is not ported.
+    let depot = spawn(&mut app, UnitType::Depot);
+    app.hud_mut().select(Some(depot));
+    assert!(app.open_unit_menu(), "меню депо открывается");
 
     let index = app
         .unit_menu()
         .and_then(|menu| menu.index_of(ItemId::Activate))
         .expect("activate в меню");
+    assert!(
+        !app.unit_menu().expect("меню").items[index].enabled,
+        "activate депо отключён"
+    );
     let rect = app.unit_menu().expect("меню").button_rect(index);
     let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
 

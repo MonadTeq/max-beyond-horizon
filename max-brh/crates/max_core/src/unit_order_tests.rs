@@ -738,6 +738,347 @@ fn unloading_puts_the_cargo_back_on_the_transport_cell() {
     );
 }
 
+/// A carrier of `container_type` with one stored passenger — the hold state
+/// `UnitInfo::ProcessLoading` (`unitinfo.cpp:5161`) leaves behind: the passenger
+/// is `ORDER_IDLE`/`STORE`, its parent is the carrier and it is out of
+/// `Hash_MapHash`.
+fn state_with_stored_cargo(
+    container_type: UnitType,
+    container_flags: u32,
+    passenger_type: UnitType,
+    passenger_flags: u32,
+) -> (GameState, UnitId, UnitId) {
+    let mut state = GameState::new();
+    state.teams[0].team_type = TeamKind::Player;
+    state.team_units[0] = crate::team::TeamUnits::with_clan(TeamClan::Random);
+
+    let carrier_grid = Point::new(10, 10);
+    let carrier = state
+        .spawn_unit(container_type, TeamId::RED, carrier_grid, container_flags)
+        .expect("carrier");
+    let passenger = state
+        .spawn_unit(passenger_type, TeamId::RED, carrier_grid, passenger_flags)
+        .expect("passenger");
+
+    let cargo_grid = state.unit(passenger).expect("passenger").grid;
+    let cargo_flags = state.unit(passenger).expect("passenger").flags;
+    state.map_hash_remove(passenger, cargo_grid, cargo_flags);
+
+    {
+        let cargo = state.unit_mut(passenger).expect("passenger");
+        cargo.orders = UnitOrder::Idle;
+        cargo.state = UnitOrderState::Store;
+        cargo.parent_unit = Some(carrier);
+    }
+    state.unit_mut(carrier).expect("carrier").storage = 1;
+
+    (state, carrier, passenger)
+}
+
+/// The click that follows `RepairShopMenu::Activate`: the carrier receives
+/// `ORDER_ACTIVATE`/`EXECUTING_ORDER` with the passenger as its parent and the
+/// pointed cell in `move_to` (`game_manager.cpp:6936-6946`).
+fn order_transport_activate(
+    state: &mut GameState,
+    carrier: UnitId,
+    passenger: UnitId,
+    drop: Point,
+) {
+    state.set_order_data(
+        carrier,
+        OrderData {
+            move_to: drop,
+            fire_on: Point::ZERO,
+        },
+    );
+    state.unit_mut(carrier).expect("carrier").parent_unit = Some(passenger);
+    state.set_order(carrier, UnitOrder::Activate, UnitOrderState::ExecutingOrder);
+}
+
+/// The CLNTRANS unloading defect: `RepairShopMenu::Activate` on a personnel
+/// carrier selects the stored passenger (`game_manager.cpp:661-690` /
+/// `GameManager_EnableMainMenu`), the player points at a cell
+/// (`GameManager_GetAirUnitCursor` → `CURSOR_ACTIVATE`), and the carrier gets
+/// `ORDER_ACTIVATE`/`EXECUTING_ORDER` for `UnitsManager_ActivateUnit`
+/// (`units_manager.cpp:3826-3913`): the passenger is set down on **that** cell,
+/// one bay is given back and the carrier returns to `AWAIT`.
+#[test]
+fn personnel_carrier_activate_sets_the_passenger_down_on_the_chosen_cell() {
+    let container_grid = Point::new(10, 10);
+    let drop = Point::new(11, 10);
+    let (mut state, carrier, passenger) = state_with_stored_cargo(
+        UnitType::ArmouredPersonnelCarrier,
+        MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | SELECTABLE,
+        UnitType::Infantry,
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+
+    // `Access_FindReachableSpot(passenger type, passenger, carrier grid, 1, 0, 0)`.
+    let carrier_info = state.unit(carrier).expect("carrier").clone();
+    let passenger_info = state.unit(passenger).expect("passenger").clone();
+    assert_eq!(
+        stored_passenger(&state, carrier),
+        Some(passenger),
+        "the popup takes the stored passenger from the hold"
+    );
+    assert!(
+        transport_drop_possible(&state, &carrier_info, &passenger_info),
+        "an open land cell next to the carrier is a valid drop site"
+    );
+
+    order_transport_activate(&mut state, carrier, passenger, drop);
+
+    let mut unloaded = false;
+    for _ in 0..16 {
+        state.tick();
+        unloaded |= state
+            .unit(passenger)
+            .is_some_and(|unit| unit.orders == UnitOrder::Await);
+        if unloaded {
+            break;
+        }
+    }
+
+    assert!(unloaded, "the passenger must leave the hold");
+
+    let cargo = state.unit(passenger).expect("passenger");
+    assert_eq!(cargo.grid, drop, "the unit is set down on the pointed cell");
+    assert!(cargo.parent_unit.is_none(), "the hold link is cleared");
+    assert!(
+        state.units_at(drop).contains(&passenger),
+        "the released unit is in Hash_MapHash at the drop cell"
+    );
+    assert!(
+        !state.units_at(container_grid).contains(&passenger),
+        "it is no longer on the carrier cell"
+    );
+
+    let carrier_unit = state.unit(carrier).expect("carrier");
+    assert_eq!(carrier_unit.storage, 0, "one cargo bay was given back");
+    assert!(
+        carrier_unit.parent_unit.is_none(),
+        "the carrier no longer points at the released unit"
+    );
+    assert_eq!(carrier_unit.orders, UnitOrder::Await);
+    assert_eq!(carrier_unit.state, UnitOrderState::ExecutingOrder);
+}
+
+/// `RepairShopMenu` lists the hold as slots: one `Activate` releases exactly one
+/// stored unit (`RepairShopSlot_OnClick_Activate`, `repairshopmenu.cpp:737-745`),
+/// and the next popup call takes the next one. The port has no slot screen, so
+/// `stored_passenger` moves down the hold on every activation — the units leave
+/// **one by one**, each on the cell the player points at.
+///
+/// The slot order is the oracle's: `RepairShopMenu::Init` walks
+/// `UnitsManager_MobileLandSeaUnits` from `Begin()`, and that list is
+/// `PushFront`-ed, so the first slot is the most recently deployed held unit.
+#[test]
+fn repeated_activate_unloads_the_stored_units_one_by_one() {
+    let container_grid = Point::new(10, 10);
+    let first_drop = Point::new(11, 10);
+    let second_drop = Point::new(10, 9);
+    let (mut state, carrier, older) = state_with_stored_cargo(
+        UnitType::ArmouredPersonnelCarrier,
+        MOBILE_SEA_UNIT | MOBILE_LAND_UNIT | SELECTABLE,
+        UnitType::Infantry,
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+
+    // The second passenger: the same hold state, two bays in use.
+    let newer = state
+        .spawn_unit(
+            UnitType::Infantry,
+            TeamId::RED,
+            container_grid,
+            MOBILE_LAND_UNIT | SELECTABLE,
+        )
+        .expect("second passenger");
+    let newer_flags = state.unit(newer).expect("second").flags;
+    state.map_hash_remove(newer, container_grid, newer_flags);
+    {
+        let cargo = state.unit_mut(newer).expect("second passenger");
+        cargo.orders = UnitOrder::Idle;
+        cargo.state = UnitOrderState::Store;
+        cargo.parent_unit = Some(carrier);
+    }
+    state.unit_mut(carrier).expect("carrier").storage = 2;
+
+    // The C++ slot list is the draw-list order: `PushFront` puts the most
+    // recently deployed unit first (`UnitInfo::AddToDrawList`).
+    let first_slot = stored_passenger(&state, carrier).expect("a stored unit");
+    assert_eq!(first_slot, newer, "the newest held unit is the first slot");
+    let second_slot = if first_slot == newer { older } else { newer };
+    let (first_cell, second_cell) = if first_slot == newer {
+        (first_drop, second_drop)
+    } else {
+        (second_drop, first_drop)
+    };
+
+    order_transport_activate(&mut state, carrier, first_slot, first_cell);
+    for _ in 0..16 {
+        state.tick();
+        if state
+            .unit(first_slot)
+            .is_some_and(|unit| unit.orders == UnitOrder::Await)
+        {
+            break;
+        }
+    }
+
+    assert_eq!(
+        state.unit(first_slot).expect("first slot").grid,
+        first_cell,
+        "the first slot unit is set down on the first pointed cell"
+    );
+    assert_eq!(
+        stored_passenger(&state, carrier),
+        Some(second_slot),
+        "the next activation takes the next stored unit"
+    );
+
+    order_transport_activate(&mut state, carrier, second_slot, second_cell);
+    for _ in 0..16 {
+        state.tick();
+        if state
+            .unit(second_slot)
+            .is_some_and(|unit| unit.orders == UnitOrder::Await)
+        {
+            break;
+        }
+    }
+
+    assert_eq!(
+        state.unit(second_slot).expect("second slot").grid,
+        second_cell,
+        "the second unit is set down on the second pointed cell"
+    );
+    assert_eq!(stored_passenger(&state, carrier), None, "the hold is empty");
+    assert_eq!(
+        state.unit(carrier).expect("carrier").storage,
+        0,
+        "both bays were given back"
+    );
+}
+
+/// The same mechanism for the sea transport (SEATRANS): the passenger lands on
+/// the pointed shore cell while the carrier stays in the water. The drop site is
+/// still a cell next to the carrier (`GameManager_IsUnitNextToPosition`,
+/// `game_manager.cpp:3208`) and must be enterable for the **passenger**
+/// (`Access_IsAccessible`, `units_manager.cpp:3835`).
+#[test]
+fn sea_transport_activate_sets_the_passenger_down_on_the_shore() {
+    let water = Point::new(10, 10);
+    let shore = Point::new(11, 10);
+    let (mut state, carrier, passenger) = state_with_stored_cargo(
+        UnitType::SeaTransport,
+        MOBILE_SEA_UNIT | SELECTABLE,
+        UnitType::Tank,
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+
+    state
+        .map
+        .surface
+        .set(water.x, water.y, crate::enums::Surface::WATER);
+    state
+        .map
+        .surface
+        .set(shore.x, shore.y, crate::enums::Surface::LAND);
+
+    let carrier_info = state.unit(carrier).expect("carrier").clone();
+    let passenger_info = state.unit(passenger).expect("passenger").clone();
+    assert!(
+        transport_drop_possible(&state, &carrier_info, &passenger_info),
+        "the shore cell accepts the tank"
+    );
+
+    order_transport_activate(&mut state, carrier, passenger, shore);
+
+    let mut unloaded = false;
+    for _ in 0..16 {
+        state.tick();
+        unloaded |= state
+            .unit(passenger)
+            .is_some_and(|unit| unit.orders == UnitOrder::Await);
+        if unloaded {
+            break;
+        }
+    }
+
+    assert!(unloaded, "the tank must leave the sea transport");
+
+    let cargo = state.unit(passenger).expect("passenger");
+    assert_eq!(cargo.grid, shore, "the tank stands on the shore cell");
+    assert!(
+        state.units_at(shore).contains(&passenger),
+        "the released unit is in Hash_MapHash at the shore"
+    );
+    assert_eq!(state.unit(carrier).expect("carrier").storage, 0);
+}
+
+/// A pointed cell the passenger cannot enter (water for a land unit) leaves the
+/// hold untouched: `UnitsManager_ActivateUnit` restores the deferred orders
+/// (`units_manager.cpp:3911`) instead of placing the unit.
+#[test]
+fn transport_activate_keeps_the_passenger_aboard_on_an_impassable_cell() {
+    let water = Point::new(10, 10);
+    let other_water = Point::new(10, 11);
+    let (mut state, carrier, passenger) = state_with_stored_cargo(
+        UnitType::SeaTransport,
+        MOBILE_SEA_UNIT | SELECTABLE,
+        UnitType::Tank,
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+
+    // Open water around the carrier: no neighbouring cell accepts a land unit.
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            state.map.surface.set(
+                water.x.wrapping_add(dx),
+                water.y.wrapping_add(dy),
+                crate::enums::Surface::WATER,
+            );
+        }
+    }
+
+    // `Access_FindReachableSpot` over a carrier on open water finds no cell for
+    // a tank — `RepairShopMenu::Activate` refuses to select the passenger then
+    // (`_(a1f0)`).
+    let carrier_info = state.unit(carrier).expect("carrier").clone();
+    let passenger_info = state.unit(passenger).expect("passenger").clone();
+    assert!(
+        !transport_drop_possible(&state, &carrier_info, &passenger_info),
+        "no adjacent cell accepts a tank"
+    );
+
+    let prior = state.unit(carrier).expect("carrier").orders;
+    order_transport_activate(&mut state, carrier, passenger, other_water);
+
+    for _ in 0..16 {
+        state.tick();
+    }
+
+    let cargo = state.unit(passenger).expect("passenger");
+    assert_eq!(
+        cargo.orders,
+        UnitOrder::Idle,
+        "the passenger stays in the hold"
+    );
+    assert_eq!(cargo.parent_unit, Some(carrier));
+    assert_eq!(cargo.grid, water, "the passenger did not move");
+    assert!(
+        !state.units_at(other_water).contains(&passenger),
+        "nothing was placed on the reported cell"
+    );
+
+    let carrier_unit = state.unit(carrier).expect("carrier");
+    assert_eq!(carrier_unit.storage, 1, "the cargo bay is still in use");
+    assert_eq!(
+        carrier_unit.orders, prior,
+        "`RestoreOrders` returns the carrier to its deferred order"
+    );
+}
+
 /// `UnitsManager_LoadUnit` (`units_manager.cpp:5027`), the first branch of
 /// `Paths_FinishMove` (`airpath.cpp:430`): an aircraft that finishes its path over
 /// an own landing pad starts landing (`ORDER_LAND/INIT`) instead of stopping.

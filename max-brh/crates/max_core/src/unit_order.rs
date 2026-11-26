@@ -67,6 +67,7 @@
 
 use crate::access;
 use crate::combat;
+use crate::deploy;
 use crate::enums::{unit_flags::*, UnitOrder, UnitOrderState, UnitType};
 use crate::game::{GameState, OrderData};
 use crate::geo::{PathStep, Point, DIRECTION_OFFSETS};
@@ -2958,6 +2959,51 @@ pub(crate) fn issue_factory_exit(state: &mut GameState, factory_id: UnitId) -> b
     );
 
     true
+}
+
+/// The stored unit the next `activate` brings out - the first slot of the hold.
+///
+/// C++ `RepairShopMenu` builds its slots by walking the mobile lists from
+/// `Begin()` (`RepairShopMenu::Init`, `repairshopmenu.cpp:527-538`, filtered by
+/// `Access_IsHeldByUnit`) and its `Activate` button releases exactly that slot
+/// (`RepairShopSlot_OnClick_Activate`, `:737-745`). The mobile land/sea list is
+/// `PushFront`-ed (`UnitInfo::AddToDrawList`), so its head - the first slot - is
+/// the most recently deployed held unit; `GameState::unit_ids_in_order` walks the
+/// same list in the same order. The port has no slot screen and takes that slot.
+pub(crate) fn stored_passenger(state: &GameState, container: UnitId) -> Option<UnitId> {
+    state.unit_ids_in_order().into_iter().find(|id| {
+        state.unit(*id).is_some_and(|unit| {
+            unit.orders == UnitOrder::Idle && unit.parent_unit == Some(container)
+        })
+    })
+}
+
+/// `RepairShopMenu::Activate` (`repairshopmenu.cpp:676-690`), the non-air
+/// branch: `Access_FindReachableSpot(passenger type, passenger,
+/// grid = container cell, range = 1, exclusion = container is a building,
+/// mode 0)` - is there at least one cell next to the container where the
+/// passenger fits?
+///
+/// The oracle uses the found cell only as a go/no-go for the message
+/// `_(755b)`/`_(a1f0)`; the cell itself is not recorded. The player points at a
+/// cell afterwards, and `UnitsManager_ActivateUnit` (`units_manager.cpp:3832-3836`)
+/// validates it again (`Paths_IsOccupied` + `Access_IsAccessible`).
+pub(crate) fn transport_drop_possible(
+    state: &GameState,
+    container: &UnitInfo,
+    passenger: &UnitInfo,
+) -> bool {
+    let mut position = container.grid;
+    let exclusion_zone = if container.is_building() { 1 } else { 0 };
+
+    deploy::find_reachable_spot(
+        state,
+        passenger.unit_type,
+        passenger.team,
+        &mut position,
+        1,
+        exclusion_zone,
+    )
 }
 
 /// `UnitsManager_BuildingReady` (`units_manager.cpp:4183`) вЂ”

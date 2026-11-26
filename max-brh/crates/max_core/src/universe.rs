@@ -889,6 +889,18 @@ impl<'a> StateRef<'a> {
         crate::unit_order::get_target_unit_angle(self.state, unit, move_to)
     }
 
+    /// The stored unit the next `activate` brings out — the first passenger in
+    /// the hold (`RepairShopMenu` slot order, `repairshopmenu.cpp:737-745`).
+    pub fn stored_passenger(&self, container: UnitId) -> Option<UnitId> {
+        crate::unit_order::stored_passenger(self.state, container)
+    }
+
+    /// `RepairShopMenu::Activate` (`repairshopmenu.cpp:676-690`): can the stored
+    /// passenger be set down next to the container at all?
+    pub fn transport_drop_possible(&self, container: &UnitInfo, passenger: &UnitInfo) -> bool {
+        crate::unit_order::transport_drop_possible(self.state, container, passenger)
+    }
+
     /// `UnitInfo::GetTurnsToBuild` (`production.rs`) — the team's upgrade value.
     pub fn turns_to_build(&self, team: TeamId, unit_type: UnitType) -> i32 {
         crate::production::turns_to_build(self.state, team, unit_type)
