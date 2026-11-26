@@ -2300,6 +2300,13 @@ impl<D: Dispatcher> GameUniverse<D> {
         // The sequential loop closes every team turn through `GAME_STATE_9_END_TURN`
         // (`finish_turn` requires the phase; `06` itself sets it only in `TurnBased`).
         self.state.enter_end_turn();
+        // `GameManager_TeamTurnTurnBased`/`GameManager_TeamTurnConcurrent`: the turn
+        // close drains the still-walking routes —
+        // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
+        // (`game_manager.cpp:488-490`, `:549-558`). A unit with a path and movement
+        // points left advances along it, spending `speed` per cell, before the next
+        // team of the round is started.
+        self.state.finish_end_turn_movement(team);
         let over = self.run_turn_machine();
         // The turn transition is an observable state change (ADR §1.3): bump the
         // facade version once per atomic facade operation.

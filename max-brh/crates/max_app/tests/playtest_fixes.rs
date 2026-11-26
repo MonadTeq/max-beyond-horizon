@@ -282,6 +282,65 @@ fn an_ordered_route_survives_the_turn_end_and_is_walked() {
     );
 }
 
+/// The same route, but with movement points left when the human closes the turn:
+/// `GameManager_RefreshOrders` → `GAME_STATE_9_END_TURN` → the pending-task loop
+/// (`GameManager_TeamTurnTurnBased`, `game_manager.cpp:488-490`) walks the route
+/// **before** the next team starts, spending `speed` per cell.
+///
+/// In the port's local loop the simulation also ticks during the planning turn
+/// (`TurnActive` gating is a separate turn-model task), so a route is normally
+/// already walked there; this test pins the turn-close drain itself.
+#[test]
+fn end_turn_walks_the_remaining_route_of_the_closing_team() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let id = spawn(&mut app, UnitType::Tank);
+    let start = app.state_ref().unit(id).expect("unit").grid;
+    let land = max_core::enums::Surface::LAND.bits();
+    // A cardinal lane of two free land cells away from the base buildings: the
+    // cells the route has to enter within one turn of speed 2.
+    let direction = [
+        Point::new(1, 0),
+        Point::new(-1, 0),
+        Point::new(0, 1),
+        Point::new(0, -1),
+    ]
+    .into_iter()
+    .find(|step| {
+        [1i16, 2].into_iter().all(|distance| {
+            let cell = Point::new(start.x + step.x * distance, start.y + step.y * distance);
+            app.state_ref().units_at(cell).is_empty()
+                && app.state_ref().map().surface_at(cell.x, cell.y).bits() & land != 0
+        })
+    })
+    .expect("a free two-cell land lane next to the unit");
+
+    let steps = vec![PathStep::new(direction.x as i8, direction.y as i8); 4];
+    give_route(&mut app, id, steps, 2);
+    // A queued route of a team that has not spent its points yet: the state the
+    // path manager leaves after `PathRequest::Finish` (`ORDER_STATE_IN_PROGRESS`).
+    app.universe_mut().unit_mut(id).expect("unit").state = UnitOrderState::InProgress;
+
+    assert_eq!(app.state_ref().active_turn_team(), TeamId::RED);
+
+    app.local_end_turn();
+
+    let unit = app.state_ref().unit(id).cloned().expect("unit");
+    assert_eq!(
+        unit.grid,
+        Point::new(start.x + direction.x * 2, start.y + direction.y * 2),
+        "the turn close walks two cells (speed 2, one point per land cell)"
+    );
+    assert_eq!(unit.speed, 0, "the remaining speed is spent");
+    assert!(unit.path.is_some(), "the rest of the route is kept");
+    assert_eq!(
+        unit.path.as_ref().map(UnitPath::remaining_steps),
+        Some(2)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Defect 3: scrolling closes the command popup
 // ---------------------------------------------------------------------------

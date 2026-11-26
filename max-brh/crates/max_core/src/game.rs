@@ -402,6 +402,26 @@ pub(crate) struct GameState {
     pub(crate) victory_limit: i32,
 }
 
+/// The movement part of `Access_AreTaskEventsPending` (`access.cpp:2270`): a unit
+/// whose move order is waiting to be executed (state is not `EXECUTING_ORDER`) and
+/// has an assigned route.
+///
+/// The oracle's pass on such a unit is `UnitInfo::ExecuteMove` →
+/// `GroundPath::Execute`, which enters a cell only while `speed` covers its cost
+/// (`Paths_CalculateStep`, `paths.cpp:292`); with no speed left it still stops the
+/// order state (`EXECUTING_ORDER` + `MoveFinished`), which is where the end-of-turn
+/// drain ends. Used only by [`GameState::finish_end_turn_movement`]: the other
+/// pending orders of the oracle predicate (fire, explode, activate, tape
+/// positioning, scaling) are not part of the end-of-turn route drain.
+fn end_turn_path_pending(unit: &UnitInfo) -> bool {
+    unit.has_move_order()
+        && unit.path.is_some()
+        && matches!(
+            unit.state,
+            UnitOrderState::InProgress | UnitOrderState::InTransition
+        )
+}
+
 impl Default for GameState {
     fn default() -> Self {
         Self::new()
@@ -1920,6 +1940,89 @@ impl GameState {
     // -----------------------------------------------------------------------
     // End of turn (DESIGN §5.3, `game_manager.cpp:2042-2087`)
     // -----------------------------------------------------------------------
+
+    /// The end-of-turn route drain — `GameManager_TeamTurnTurnBased` /
+    /// `GameManager_TeamTurnConcurrent` "waiting for units to finish moving":
+    ///
+    /// ```c
+    /// while (Access_AreTaskEventsPending()) {
+    ///     GameManager_ProgressTurn();     // one ProcessTick(false)
+    /// }
+    /// ```
+    ///
+    /// (`game_manager.cpp:488-490` after `UpdateGui` of the team, and
+    /// `:549-558` for the concurrent round close). The team's `06` already ran,
+    /// the phase is `GAME_STATE_9_END_TURN`, and the oracle keeps ticking the
+    /// simulation while a unit still has a pending task. On each
+    /// `UnitsManager_ProcessOrders` pass a `Move/IN_PROGRESS` unit executes one
+    /// cell — `UnitInfo::ExecuteMove` → `GroundPath::Execute` (`groundpath.cpp:210`)
+    /// — and `Paths_CalculateStep` (`paths.cpp:292`) spends the cell's cost from
+    /// `speed`. The drain ends when no waiting route step is left: the unit ran out
+    /// of speed and `GroundPath::Execute` set `EXECUTING_ORDER` or the route ended.
+    ///
+    /// The port narrows the predicate to the **movement** part of
+    /// `Access_AreTaskEventsPending` (`access.cpp:2270`): `FIRE`/`EXPLODE`/
+    /// `ACTIVATE`/tape/scaling orders keep their normal tick-loop handling, so
+    /// the execution order of all orders is unchanged — only a route with
+    /// movement points left is walked to its end at the turn close.
+    ///
+    /// Returns the number of completed cell transitions.
+    pub(crate) fn finish_end_turn_movement(&mut self, team: TeamId) -> usize {
+        let mut transitions = 0usize;
+        // `GameManager_ProgressTurn` is one `ProcessTick`; the pass cap mirrors
+        // the oracle's own bound on a pinned unit (`UnitInfo::RegisterMovementWait`
+        // stops the retry at `MOVEMENT_WAIT_LIMIT`).
+        for _ in 0..unit_order::MOVEMENT_WAIT_LIMIT {
+            let mut progressed = false;
+
+            for kind in UnitListKind::ALL {
+                let ids = self.lists[kind.index()].clone();
+                for id in ids {
+                    let Some(before) = self.unit(id).and_then(|unit| {
+                        // `Access_AreTaskEventsPending`: a move order whose state
+                        // is not `EXECUTING_ORDER`, i.e. a route step is pending.
+                        (unit.team == team && end_turn_path_pending(unit)).then_some((
+                            unit.grid,
+                            unit.state,
+                            unit.speed,
+                            unit.path.is_some(),
+                            // `Paths_UpdateAngle` rotates one 45° step per
+                            // `GroundPath::Execute` call before the cell can be
+                            // entered — a rotation is progress too.
+                            unit.angle,
+                        ))
+                    }) else {
+                        continue;
+                    };
+
+                    unit_order::process_order(self, id);
+
+                    let Some(after) = self.unit(id) else {
+                        // The unit was destroyed while walking (a mine, an
+                        // explosion) — the route is over.
+                        progressed = true;
+                        continue;
+                    };
+
+                    if after.grid != before.0 {
+                        transitions += 1;
+                    }
+
+                    if (after.grid, after.state, after.speed, after.path.is_some(), after.angle)
+                        != before
+                    {
+                        progressed = true;
+                    }
+                }
+            }
+
+            if !progressed {
+                break;
+            }
+        }
+
+        transitions
+    }
 
     /// `GameManager_RefreshOrders` (`game_manager.cpp:838-891`), the economy part —
     /// run when a team **ends its turn**, before the `06` packet.
