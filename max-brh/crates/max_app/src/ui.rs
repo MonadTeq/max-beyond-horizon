@@ -878,10 +878,14 @@ impl Screen {
             }
         }
         if matches!(self, Self::Introduction(_)) {
-            // MVE: like `mve_cb_ctl` in the original — any key/click
-            // interrupts and returns to the main menu.
+            // MVE: like `mve_cb_ctl` in the original — any key or left/right *press*
+            // interrupts and returns to the main menu (`movie.cpp:64-72`:
+            // `input > 0 || (mouse_get_buttons() & (MOUSE_PRESS_LEFT | MOUSE_PRESS_RIGHT))`).
+            // A left-button **release** is not an interrupt: it is the tail of the
+            // click/Enter that started the movie, and closing on it made the
+            // introduction flash by.
             return match event {
-                InputEvent::MouseMove(..) => Transition::None,
+                InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => Transition::None,
                 _ => {
                     *self = Self::MainMenu;
                     ctx.status = "Introduction closed".to_string();
@@ -926,6 +930,11 @@ impl Screen {
 
     /// Input on the credits screen: `KP-`/`KP+` change the speed (in the client — `-`/`+`),
     /// any other key or click closes the screen (`menu_credits_menu_loop`).
+    ///
+    /// A left-button **release** is the tail of the click that opened the screen: the
+    /// oracle loop reads `get_input()` (`menu.cpp:1637-1652`), and a release without a
+    /// registered button produces no input there; closing on it made the credits
+    /// disappear immediately.
     fn handle_credits(&mut self, ctx: &mut UiContext, event: InputEvent) -> Transition {
         let Self::Credits(screen) = self else {
             return Transition::None;
@@ -933,7 +942,7 @@ impl Screen {
         let mut close = false;
 
         match event {
-            InputEvent::MouseMove(..) => {}
+            InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => {}
             InputEvent::Key(Key::Char('+')) | InputEvent::Key(Key::Char('=')) => screen.faster(),
             InputEvent::Key(Key::Char('-')) | InputEvent::Key(Key::Char('_')) => screen.slower(),
             _ => close = true,
@@ -2423,7 +2432,19 @@ where
 
             Transition::None
         }
-        InputEvent::MouseRelease(..) => Transition::None,
+        InputEvent::MouseRelease(x, y) => {
+            // The chrome zoom buttons are not `GNW` buttons: `GameManager_ProcessInput`
+            // acts on `MOUSE_RELEASE_LEFT` (`game_manager.cpp:6645-6679`), while the
+            // slider acts on `MOUSE_PRESS_LEFT` (`:6651`). The press only arms the
+            // press picture; the zoom step happens on the release.
+            if chrome {
+                if let Some(button) = panels::panel_button_at(x, y) {
+                    return session_panel_zoom_release(app, button);
+                }
+            }
+
+            Transition::None
+        }
         InputEvent::MouseClick(x, y) => {
             if chrome {
                 // Panels/minimap are view controls; during a foreign turn the map
@@ -3466,11 +3487,21 @@ where
     Transition::None
 }
 
-/// 1:1 panel button: End Turn, toggles, zoom, minimap, menu.
+/// 1:1 panel button: End Turn, toggles, minimap, menu.
+///
+/// Zoom `+`/`−` are **not** handled here: the original chrome acts on the release
+/// (`GameManager_ProcessInput`, `game_manager.cpp:6645-6679`) — see
+/// [`session_panel_zoom_release`]. The zoom slider is not a `GNW` button either and
+/// acts on the press (`:6651`).
 fn session_panel_button<D: Dispatcher>(app: &mut App<D>, button: PanelButton, x: i32) -> Transition
 where
     App<D>: SessionLocal,
 {
+    // The zoom pair has no press action and no `MBUTT0` sound (`game_manager.cpp:6645-6679`).
+    if matches!(button, PanelButton::ZoomPlus | PanelButton::ZoomMinus) {
+        return Transition::None;
+    }
+
     // Panel buttons — `PlaySfx(MBUTT0)` (`game_manager.cpp:5446/5692/5713`).
     app.play_sfx(Sfx::Button);
 
@@ -3484,16 +3515,6 @@ where
                 app.viewport_mut().center_on_grid(grid.x, grid.y);
                 app.hud_mut().push_log("Center on selected unit");
             }
-            return Transition::None;
-        }
-        PanelButton::ZoomPlus => {
-            let zoom = (app.viewport().zoom() + 8).clamp(8, 64);
-            app.viewport_mut().set_zoom(zoom);
-            return Transition::None;
-        }
-        PanelButton::ZoomMinus => {
-            let zoom = app.viewport().zoom().saturating_sub(8).max(8);
-            app.viewport_mut().set_zoom(zoom);
             return Transition::None;
         }
         PanelButton::ZoomSlider => {
@@ -3558,6 +3579,35 @@ where
             app.hud_mut()
                 .push_log(format!("{caption}: {}", if enabled { "on" } else { "off" }));
             return Transition::None;
+        }
+        _ => {}
+    }
+
+    Transition::None
+}
+
+/// Chrome zoom `+`/`−` on the release — `GameManager_ProcessInput`
+/// (`game_manager.cpp:6645-6679`).
+///
+/// The original chrome does not register `GNW` buttons for the zoom pair: the
+/// window switch applies `Gfx_ZoomLevel + 10` on `MOUSE_RELEASE_LEFT` and
+/// `Gfx_ZoomLevel - 10` on the `−` one (and nothing on the press).
+/// `GameManager_ZoomMainMapView` clamps the result to 4…64; the port's viewport
+/// keeps [`max_render::viewport::MIN_ZOOM`]…64.
+fn session_panel_zoom_release<D: Dispatcher>(app: &mut App<D>, button: PanelButton) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let zoom = app.viewport().zoom();
+
+    match button {
+        PanelButton::ZoomPlus => {
+            app.viewport_mut()
+                .set_zoom((zoom + panels::ZOOM_BUTTON_STEP).min(64));
+        }
+        PanelButton::ZoomMinus => {
+            app.viewport_mut()
+                .set_zoom(zoom.saturating_sub(panels::ZOOM_BUTTON_STEP));
         }
         _ => {}
     }

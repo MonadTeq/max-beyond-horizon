@@ -285,8 +285,17 @@ LUA — win/loss уже захардкожено; game-rules — по катег
   Up/Down/PageUp/PageDown со счётчиком страниц — сценарий `SC_C0001` полностью
   укладывается в первую страницу после отбрасывания хвостовых пустых строк.
   (2) Панель диагностик внизу — добавлена для видимости fallback'а.
-  (3) Печатающая машинка (`Text_TypeWriter`) не анимируется: страница
-  рисуется целиком, чтобы `dt = 0` в QA был детерминирован.
+  (3) Печатающая машинка (`Text_TypeWriter`) **анимируется** по оракулу:
+  `Text_TypeWriter_CharacterTimeMs = 10` (`menu.cpp:795`), каждый символ
+  рисуется `Text_TextLine` с `Fonts_BrightSilverColor` (заливка `0xA2`,
+  обводка `0xAC`, тень `0xC7`, `text.cpp:840`); кадр `dt = 0` — детерминированный
+  полный стоп-кадр. Отпускание ЛКМ, которым была запущена миссия, не является
+  вводом телетайпа: во время набора у оракула ещё нет зарегистрированных кнопок
+  (`button_end_ok` создаётся после `Text_TypeWriter_TextBoxMultiLineWrapText`,
+  `menu.cpp:816-826`), поэтому `get_input()` не возвращает release. Регрессия
+  `InputEvent::MouseRelease` («любой ввод завершает страницу») закрыта тестами
+  `a_left_button_release_does_not_finish_the_typed_page` и
+  `every_frame_draws_only_the_typed_prefix`.
 - **Гейт** (`max_app/tests/mission_story.rs`, 7 тестов): старт Campaign 1 с
   показом/закрытием стори-экрана и без него даёт побайтово тот же
   `snapshot_bytes`/digest (на старте и после 5 тиков); сквозной прогон реального

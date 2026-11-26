@@ -1065,14 +1065,16 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
 #[test]
 fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
     let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let center = |rect: max_render::buffer::PixelRect| {
+        (rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
+    };
     let click = |app: &mut App, rect: max_render::buffer::PixelRect| {
-        max_app::ui::handle_session_input(
-            app,
-            max_app::ui::InputEvent::MouseClick(
-                rect.ulx + rect.width / 2,
-                rect.uly + rect.height / 2,
-            )
-        );
+        max_app::ui::handle_session_input(app, max_app::ui::InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2));
+    };
+    let release = |app: &mut App, rect: max_render::buffer::PixelRect| {
+        let (x, y) = center(rect);
+
+        max_app::ui::handle_session_input(app, max_app::ui::InputEvent::MouseRelease(x, y));
     };
 
     click(&mut app, max_render::layout::SURVEY_BUTTON);
@@ -1080,10 +1082,14 @@ fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
     click(&mut app, max_render::layout::SURVEY_BUTTON);
     assert!(!app.hud().panels.survey);
 
+    // `GameManager_ProcessInput` (`game_manager.cpp:6645-6679`): the zoom pair acts
+    // on `MOUSE_RELEASE_LEFT` with a step of 10; the press changes nothing.
     assert_eq!(app.viewport().zoom(), 64);
     click(&mut app, max_render::layout::ZOOM_MINUS);
-    assert_eq!(app.viewport().zoom(), 56, "кнопка − уменьшает зум");
-    click(&mut app, max_render::layout::ZOOM_PLUS);
+    assert_eq!(app.viewport().zoom(), 64, "нажатие − ещё не меняет зум");
+    release(&mut app, max_render::layout::ZOOM_MINUS);
+    assert_eq!(app.viewport().zoom(), 54, "отпускание − уменьшает зум на 10");
+    release(&mut app, max_render::layout::ZOOM_PLUS);
     assert_eq!(app.viewport().zoom(), 64, "кнопка + возвращает 1:1");
 }
 

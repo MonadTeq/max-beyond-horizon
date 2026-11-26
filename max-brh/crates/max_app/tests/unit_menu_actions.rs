@@ -471,13 +471,27 @@ fn ui_events_queue_cpp_sounds() {
     let _ = handle_session_input(&mut app, InputEvent::MouseClick(300, 200));
     assert_eq!(app.take_sounds(), vec![Sfx::Click]);
 
-    // A panel button — `MBUTT0`.
+    // A panel button — `MBUTT0`. `ZOOM_PLUS` would not do: the chrome zoom pair is
+    // not a `GNW` button and its `GameManager_ProcessInput` case plays no sound and
+    // acts on the release (`game_manager.cpp:6645-6679`).
+    let survey = max_render::layout::SURVEY_BUTTON;
+    let _ = handle_session_input(
+        &mut app,
+        InputEvent::MouseClick(survey.ulx + 2, survey.uly + 2),
+    );
+    assert_eq!(app.take_sounds(), vec![Sfx::Button]);
+
     let zoom = max_render::layout::ZOOM_PLUS;
     let _ = handle_session_input(
         &mut app,
-        InputEvent::MouseClick(zoom.ulx + 2, zoom.uly + 2)
+        InputEvent::MouseClick(zoom.ulx + 2, zoom.uly + 2),
     );
-    assert_eq!(app.take_sounds(), vec![Sfx::Button]);
+    assert!(app.take_sounds().is_empty(), "зум не играет MBUTT0");
+    let _ = handle_session_input(
+        &mut app,
+        InputEvent::MouseRelease(zoom.ulx + 2, zoom.uly + 2),
+    );
+    assert!(app.take_sounds().is_empty(), "и на отпускании тоже");
 
     // Pause: `Alt+P` (MBUTT0) and `Esc` (NCANC0).
     let _ = handle_session_input(&mut app, InputEvent::Key(Key::Alt('p')));

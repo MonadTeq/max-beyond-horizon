@@ -571,6 +571,41 @@ x 180…627, y 18…465 (448×448), левее — панель (`FRAMEPIC`), п
 - Тест `text::gnw::tests::rendering_matches_the_cpp_reference_bitmaps` сверяет
   каждый пиксель с `tools/font_vectors/render.txt`; тест
   `embedded_fonts_match_the_original_files` — с `max-original/FONT*.FON`.
+- **Рельеф (emboss) подписей — исправлено.** `Text_TextLine` (`text.cpp:772-808`)
+  рисует заливку, затем **перезаписывает** пиксель `(x+1, y+1)`: `outline`, если
+  там тоже заливка, иначе `shadow`. Внутри штриха нижне-правый диагональный пиксель
+  становится обводкой — это и есть выпуклый/рельефный вид подписей кнопок.
+  `draw_text_gnw_shadowed` сначала рисовал обводку/тень **под** заливкой
+  (порядок `Text_Blit` с `GNW_TEXT_OUTLINE`, `text.cpp:492-523`), из-за чего шрифт
+  был плоским. Теперь порядок оракула (заливка → сдвинутая перезапись); отдельная
+  `draw_text_gnw_outlined` сохраняет порядок `Text_Blit` (копия под заливкой).
+  Регресс-тест: `the_textline_relief_overwrites_the_lower_right_diagonal` —
+  побайтовая модель `(x+1, y+1)` по всей рамке текста.
+- **Цвета подписи в нажатом состоянии** (`Button::SetCaption`,
+  `button.cpp:412-449`; `game_manager.cpp:7834-7846`): у up-картинки
+  `FontColor(0xA2, 0xA7, 0xE6)`, у down-картинки `FontColor(0xA2, 0xA3, 0x24)`
+  (End Turn — `(0xA0, 0xA2, 0xE6)` для обеих). Порт рисовал подпись только
+  up-цветами поверх обеих картинок; теперь `PanelButton::caption_colors(pressed)`
+  переключает тройку вместе с картинкой (тесты `caption_colours_follow_the_drawn_picture`,
+  `a_checked_toggle_paints_the_pressed_label_colours`).
+- **Зум панели** — не `GNW`-кнопки: `GameManager_ProcessInput`
+  (`game_manager.cpp:6645-6679`) применяет `Gfx_ZoomLevel ± 10` по
+  `MOUSE_RELEASE_LEFT`, слайдер — по `MOUSE_PRESS_LEFT` с формулой
+  `64 - ((x - ulx - 14) * 60) / 99`; указатель слайдера —
+  `101 * (64 - zoom) / 60 + 14` (`:1731-1740`). Порт действовал по нажатию с шагом
+  8 и аппроксимировал шкалу на 8…64; исправлено (`session_panel_zoom_release`,
+  `panels::zoom_*`; интеграционный тест `panel_controls.rs`).
+- **Телетайп стори-экрана** (`Text_TypeWriter_TextBoxMultiLineWrapText`,
+  `menu.cpp:795/816`, `text.cpp:810-872`): символ за символом, 10 мс,
+  `Text_TextLine` с `Fonts_BrightSilverColor` (`0xA2`/`0xAC`/`0xC7`). Отпускание
+  ЛКМ, запустившей миссию, **не** завершает страницу: во время набора у оракула
+  нет зарегистрированных кнопок (`button_end_ok` создаётся после телетайпа,
+  `menu.cpp:816-826`), поэтому `get_input()` не возвращает release. В порте
+  `InputEvent::MouseRelease` попадал в ветку «любой ввод завершает страницу» и
+  телетайп схлопывался на первом же кадре после клика — регрессия от добавления
+  события release (8f770cb). Исправлено; тесты
+  `a_left_button_release_does_not_finish_the_typed_page`,
+  `every_frame_draws_only_the_typed_prefix`.
 
 **Критерий:** начертание/метрики совпадают с оригиналом — подтверждено
 побайтовой сверкой с C++-путём (FreeType) для ASCII.

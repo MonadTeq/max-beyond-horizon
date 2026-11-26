@@ -48,7 +48,9 @@ use max_assets::image::BigImage;
 use max_assets::mission::{Media, MediaResource, StoryBlock, DEFAULT_LANGUAGE};
 use max_assets::{MissionDescriptor, ResArchive};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
-use max_render::text::{draw_text_gnw, draw_text_gnw_centered_shadowed, GnwFontId};
+use max_render::text::{
+    draw_text_gnw, draw_text_gnw_centered_shadowed, draw_text_gnw_shadowed, GnwFontId,
+};
 
 use crate::intro::IntroScreen;
 use crate::menu::{blit_simple, clean_status, draw_big_image, MenuAssets};
@@ -69,7 +71,8 @@ pub const STORY_OK_CAPTION: &str = "OK";
 pub const STORY_STATUS: PixelRect = PixelRect::new(8, 436, 624, 18);
 /// Page counter line (only when the text has more than one page).
 pub const STORY_PAGE_LINE: PixelRect = PixelRect::new(20, 424, 300, 12);
-/// `Fonts_BrightSilverColor` (`fonts.cpp`), the story text color.
+/// `Fonts_BrightSilverColor` (`fonts.cpp:31`): base `0xA2`, outline `0xAC`,
+/// shadow `0xC7` — the three colours of `Text_TextLine`, not just the fill.
 pub const SILVER: (u8, u8, u8) = (162, 172, 199);
 /// Green text index (`COLOR_GREEN`).
 pub const GREEN: u8 = crate::menu::GREEN;
@@ -403,8 +406,18 @@ impl StoryScreen {
 
         // `Text_TypeWriter_TextBox`: any input while the text is being typed only
         // completes the current page (the key is consumed), exactly like the oracle.
+        //
+        // A bare left-button **release** is not an input of the oracle here: during
+        // the typewriter the briefing window has no registered buttons yet
+        // (`button_end_ok` is created after `Text_TypeWriter_TextBoxMultiLineWrapText`,
+        // `menu.cpp:816-826`), and `get_input()` only returns keys/button events.
+        // The release of the click that started the mission would otherwise complete
+        // the whole page on the first frame — the typewriter regression.
         if self.phase == StoryPhase::Text && self.typing() {
-            if !matches!(event, InputEvent::MouseMove(..)) {
+            if !matches!(
+                event,
+                InputEvent::MouseMove(..) | InputEvent::MouseRelease(..)
+            ) {
                 self.typed = self.page_chars();
                 self.typing_elapsed = 0.0;
 
@@ -624,6 +637,11 @@ impl StoryScreen {
     /// `Text_TypeWriter_TextBoxMultiLineWrapText`: every row is typed character by
     /// character (10 ms per character, `menu.cpp:795/816`). A `dt = 0` frame draws
     /// the complete page, so QA screenshots stay deterministic.
+    ///
+    /// Each character is drawn through `Text_TextLine` with `Fonts_BrightSilverColor`
+    /// (`text.cpp:840`: `Text_TextLine(window, character, …, Fonts_BrightSilverColor)`),
+    /// i.e. fill `0xA2` **plus** the outline `0xAC`/shadow `0xC7` relief — the typed
+    /// text must not be a flat single-colour fill.
     fn draw_text(&self, frame: &mut RgbaBuffer, menu: Option<&MenuAssets>) -> u32 {
         let font = GnwFontId::Font1.font();
         let line_height = font.line_height();
@@ -635,9 +653,17 @@ impl StoryScreen {
 
         let top = STORY_TEXT_RECT.uly
             + (STORY_TEXT_HEIGHT + 1 - rows.len() as i32 * line_height).max(0) / 2;
-        let color = match menu {
-            Some(menu) => menu.palette.rgba(SILVER.0),
-            None => Rgba::rgb(SILVER.0, SILVER.1, SILVER.2),
+        let (base, outline, shadow) = match menu {
+            Some(menu) => (
+                menu.palette.rgba(SILVER.0),
+                menu.palette.rgba(SILVER.1),
+                menu.palette.rgba(SILVER.2),
+            ),
+            None => (
+                Rgba::rgb(SILVER.0, SILVER.0, SILVER.0),
+                Rgba::rgb(SILVER.1, SILVER.1, SILVER.1),
+                Rgba::rgb(SILVER.2, SILVER.2, SILVER.2),
+            ),
         };
         // Complete page until the first positive `dt` (deterministic freeze-frame).
         let mut budget = if self.typing_started {
@@ -660,13 +686,15 @@ impl StoryScreen {
 
             budget = budget.saturating_sub(line.chars().count());
 
-            painted += draw_text_gnw(
+            painted += draw_text_gnw_shadowed(
                 frame,
                 STORY_TEXT_RECT.ulx,
                 top + row as i32 * line_height,
                 font,
                 &shown,
-                color,
+                base,
+                outline,
+                shadow,
             )
             .max(0) as u32;
         }

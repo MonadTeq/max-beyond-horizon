@@ -257,6 +257,108 @@ fn a_page_turn_restarts_the_typewriter() {
     assert_eq!(screen.typed_chars(), 2);
 }
 
+/// Regression: the **release** of the left button that started the mission is not
+/// an input for the typewriter.
+///
+/// During `Text_TypeWriter_TextBoxMultiLineWrapText` the oracle briefing window has
+/// no registered `GNW` buttons (`button_end_ok` is created afterwards,
+/// `menu.cpp:816-826`), so `get_input()` never returns a bare release; only keys and
+/// a click/press complete the page. The port treated `InputEvent::MouseRelease` as
+/// "any input", so the release of the starting click revealed the whole page on the
+/// first animated frame — the typewriter looked broken.
+#[test]
+fn a_left_button_release_does_not_finish_the_typed_page() {
+    let mut screen = StoryScreen::from_block(
+        StoryKind::Intro,
+        &block("The Secret Council of Freedom."),
+        DEFAULT_LANGUAGE,
+        0,
+        None,
+        Path::new("."),
+    );
+    let total: usize = screen
+        .visible_rows()
+        .iter()
+        .map(|row| row.chars().count())
+        .sum();
+
+    screen.advance(1.0 / 60.0);
+    let typed = screen.typed_chars();
+
+    assert!(typed > 0 && screen.typing(), "the typewriter is running");
+
+    assert_eq!(
+        screen.input(crate::ui::InputEvent::MouseRelease(320, 240)),
+        StoryAction::None
+    );
+    assert_eq!(
+        screen.typed_chars(),
+        typed,
+        "a release must not complete the page"
+    );
+    assert!(screen.typing());
+
+    // A click (a real `GNW` input) still completes the page and is consumed.
+    assert_eq!(
+        screen.input(crate::ui::InputEvent::MouseClick(320, 240)),
+        StoryAction::None
+    );
+    assert_eq!(screen.typed_chars(), total);
+    assert!(!screen.typing());
+}
+
+/// Frame regression of the story typewriter: a page drawn before the first
+/// positive `dt` is complete (freeze-frame), while every frame after it draws
+/// **only the typed prefix** — the ink area grows with `typed` and never exceeds
+/// the complete page. The text is drawn through `Text_TextLine` with outline and
+/// shadow, so the frame contains all three `Fonts_BrightSilverColor` indices.
+#[test]
+fn every_frame_draws_only_the_typed_prefix() {
+    let mut screen = StoryScreen::from_block(
+        StoryKind::Intro,
+        &block("The Secret Council of Freedom keeps the Great Ships of the Concord."),
+        DEFAULT_LANGUAGE,
+        0,
+        None,
+        Path::new("."),
+    );
+    let mut complete = RgbaBuffer::new(640, 480);
+    let full = screen.draw(&mut complete, None, None);
+
+    screen.advance(0.05);
+    assert_eq!(screen.typed_chars(), 5);
+
+    let mut early = RgbaBuffer::new(640, 480);
+    let early_ink = screen.draw(&mut early, None, None);
+    assert!(
+        early_ink < full,
+        "partial frame {early_ink} must be smaller than the complete page {full}"
+    );
+
+    screen.advance(0.2);
+    let mut later = RgbaBuffer::new(640, 480);
+    let later_ink = screen.draw(&mut later, None, None);
+    assert!(
+        later_ink > early_ink,
+        "the typed prefix grows: {early_ink} -> {later_ink}"
+    );
+    assert!(later_ink <= full);
+
+    // `Fonts_BrightSilverColor`: the fill, the outline and the shadow are drawn.
+    let pixels = later.pixels();
+
+    for channel in [SILVER.0, SILVER.1, SILVER.2] {
+        let found = pixels.chunks_exact(4).any(|pixel| {
+            pixel[0] == channel && pixel[1] == channel && pixel[2] == channel && pixel[3] != 0
+        });
+
+        assert!(
+            found,
+            "the story frame misses Fonts_BrightSilverColor index {channel:#04X}"
+        );
+    }
+}
+
 /// The drawing is deterministic (`dt = 0` frames) even without `MAX.RES`/menu.
 #[test]
 fn drawing_without_assets_is_deterministic_and_visible() {

@@ -2378,12 +2378,22 @@ impl QaRunner {
     ///
     /// A `MouseClick` is a **complete** click for the driver: the press feedback is
     /// released right after it, so the next `shot` captures the release pulse and the
-    /// following frames show the button at rest (manual-run defect 4).
+    /// following frames show the button at rest (manual-run defect 4). The matching
+    /// `MouseRelease` is delivered to the screen as well — the live client gets it
+    /// from SDL, and the original chrome acts on `MOUSE_RELEASE_LEFT` for the zoom
+    /// buttons (`game_manager.cpp:6645-6679`).
     fn send(&mut self, event: InputEvent) -> Result<Flow, String> {
         let result = self.send_inner(event);
 
-        if matches!(event, InputEvent::MouseClick(..)) {
+        if let InputEvent::MouseClick(x, y) = event {
             self.app.release_button_press();
+
+            if matches!(
+                self.send_inner(InputEvent::MouseRelease(x, y))?,
+                Flow::Exit
+            ) {
+                return Ok(Flow::Exit);
+            }
         }
 
         result

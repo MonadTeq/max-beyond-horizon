@@ -66,6 +66,11 @@ pub const YELLOW: u8 = 0x04;
 pub const CAPTION_OUTLINE: u8 = 0xA7;
 /// Shadow of button labels and text (`0xE6`).
 pub const SHADOW: u8 = 0xE6;
+/// Pressed/checked label outline — `FontColor(0xA2, 0xA3, 0x24)` of the down
+/// image (`game_manager.cpp:7840-7845`, `Button::SetCaption`, `button.cpp:412-449`).
+pub const CAPTION_OUTLINE_DOWN: u8 = 0xA3;
+/// Pressed/checked label shadow — the `0x24` of the same `FontColor`.
+pub const CAPTION_SHADOW_DOWN: u8 = 0x24;
 /// End Turn light text (`0xA0`).
 pub const END_TURN_TEXT: u8 = 0xA0;
 /// End Turn button pressed (not used in a static frame).
@@ -468,6 +473,24 @@ impl PanelButton {
         match self {
             Self::EndTurn => GnwFontId::Font5,
             _ => GnwFontId::Font2,
+        }
+    }
+
+    /// Label colours `(base, outline, shadow)` of the released (`pressed == false`)
+    /// or pressed/checked (`pressed == true`) picture.
+    ///
+    /// Oracle: `GameManager_MenuInitButtons` (`game_manager.cpp:7834-7846`) gives
+    /// every button **two** `SetCaption` colours — the up image gets
+    /// `FontColor(0xA2, 0xA7, 0xE6)`, the down image `FontColor(0xA2, 0xA3, 0x24)`;
+    /// End Turn gets `FontColor(0xA0, 0xA2, 0xE6)` for both (its down image is
+    /// replaced by the team-coloured baked label, `game_manager.cpp:7860-7883`).
+    /// `Button::SetCaption` (`button.cpp:412-449`) bakes the label into both image
+    /// buffers, so the port has to switch the colours together with the picture.
+    pub const fn caption_colors(self, pressed: bool) -> (u8, u8, u8) {
+        match self {
+            Self::EndTurn => (END_TURN_TEXT, END_TURN_OUTLINE, SHADOW),
+            _ if pressed => (TEXT, CAPTION_OUTLINE_DOWN, CAPTION_SHADOW_DOWN),
+            _ => (TEXT, CAPTION_OUTLINE, SHADOW),
         }
     }
 
@@ -897,8 +920,10 @@ impl Panels {
         let palette = &palette;
         let mut painted = 0;
 
-        // Top buttons.
-        self.draw_pair(
+        // Top buttons: the label colours follow the drawn picture
+        // (`Button::SetCaption` bakes `color_up` into `*_OF`, `color_down` into
+        // `*_ON` — `game_manager.cpp:7840-7845`).
+        let files_pressed = self.draw_pair(
             frame,
             palette,
             &self.files,
@@ -906,8 +931,8 @@ impl Panels {
             false,
             &mut painted,
         );
-        self.draw_caption(frame, palette, PanelButton::Files);
-        self.draw_pair(
+        draw_panel_caption(frame, palette, PanelButton::Files, files_pressed);
+        let prefs_pressed = self.draw_pair(
             frame,
             palette,
             &self.preferences,
@@ -915,7 +940,7 @@ impl Panels {
             false,
             &mut painted,
         );
-        self.draw_caption(frame, palette, PanelButton::Preferences);
+        draw_panel_caption(frame, palette, PanelButton::Preferences, prefs_pressed);
 
         // End Turn (extends onto the map — drawn over it).
         //
@@ -949,7 +974,7 @@ impl Panels {
                 true,
             );
             let color = end_turn_caption_color(active_team);
-            self.draw_caption_colored(
+            draw_panel_caption_colored(
                 frame,
                 palette,
                 PanelButton::EndTurn,
@@ -966,7 +991,7 @@ impl Panels {
                 layout::END_TURN_BUTTON.uly,
                 true,
             );
-            self.draw_caption(frame, palette, PanelButton::EndTurn);
+            draw_panel_caption(frame, palette, PanelButton::EndTurn, false);
         }
 
         // Turn number and timer.
@@ -1010,7 +1035,8 @@ impl Panels {
         );
 
         // Other buttons (Play/Pause/Center/Prev/Done/Next/Help/Reports/Chat): the
-        // pressed picture of the held button (`GNW` `*D` — `button.c:479-531`).
+        // pressed picture of the held button (`GNW` `*D` — `button.c:479-531`) and
+        // the pressed label colours baked into `*_ON` (`game_manager.cpp:7840-7845`).
         for (pair, rect) in &self.aux {
             let image = if crate::press::pressed(*rect) {
                 &pair.down
@@ -1026,15 +1052,17 @@ impl Panels {
             PanelButton::Reports,
             PanelButton::Chat,
         ] {
-            self.draw_caption(frame, palette, button);
+            draw_panel_caption(frame, palette, button, crate::press::pressed(button.rect()));
         }
 
-        // Toggle grid.
+        // Toggle grid: the checked/pressed picture and its `FontColor(0xA2, 0xA3, 0x24)`
+        // label (`GameManager_MenuClick*Button` → `SetRestState(rest_state)`).
         for (index, button) in PanelButton::TOGGLES.into_iter().enumerate() {
             let pair = &self.toggles[index];
             let active = panel.get(button);
-            self.draw_pair(frame, palette, pair, button.rect(), active, &mut painted);
-            self.draw_caption(frame, palette, button);
+            let pressed =
+                self.draw_pair(frame, palette, pair, button.rect(), active, &mut painted);
+            draw_panel_caption(frame, palette, button, pressed);
         }
 
         // Minimap buttons. In the original their released state is already drawn in
@@ -1295,13 +1323,15 @@ impl Panels {
         rect: PixelRect,
         active: bool,
         painted: &mut u32,
-    ) {
+    ) -> bool {
         // `Button::Run` draws `*D` while the pointer is held over the button
         // (`button.c:479-531`); `active` is the toggle rest state.
         let pressed = active || crate::press::pressed(rect);
         let image = if pressed { &pair.down } else { &pair.up };
 
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
+
+        pressed
     }
 
     /// Minimap button: `*_ON` always, `*_OF` — only if there is no chrome
@@ -1331,54 +1361,6 @@ impl Panels {
         };
 
         *painted += self.blit(frame, palette, image, rect.ulx, rect.uly, true);
-    }
-
-    fn draw_caption(&self, frame: &mut RgbaBuffer, palette: &UiPalette, button: PanelButton) {
-        let (base, outline, shadow) = if button == PanelButton::EndTurn {
-            (END_TURN_TEXT, END_TURN_OUTLINE, SHADOW)
-        } else {
-            (TEXT, CAPTION_OUTLINE, SHADOW)
-        };
-
-        self.draw_caption_colored(frame, palette, button, base, outline, shadow);
-    }
-
-    /// Button label with the given palette indices — `Button::SetCaption`
-    /// (utton.cpp:412-449) and the End Turn label baked into the resource
-    /// (`Text_TextBox(..., 0, 0, w, h, true, true, FontColor(...))`).
-    ///
-    /// C++ 1:1 geometry: `SetCaption(caption, x, y, …)` shrinks the
-    /// centering area to `width - x` / `height - y`, then `Text_TextLine`
-    /// (`text.cpp:772`) centers the line in this area:
-    /// `x = (swidth - (Text_GetWidth + 1)) / 2` (a shift only if > 0),
-    /// `y = ((height - y) - Text_GetHeight()) / 2 + y`. Earlier the port centered
-    /// in the full button rectangle — the 3×3 labels drifted 1-2 px down and
-    /// 1 px right.
-    fn draw_caption_colored(
-        &self,
-        frame: &mut RgbaBuffer,
-        palette: &UiPalette,
-        button: PanelButton,
-        base: u8,
-        outline: u8,
-        shadow: u8,
-    ) {
-        let Some(caption) = button.caption() else {
-            return;
-        };
-        let font = button.caption_font().font();
-        let (x, y) = button.caption_position();
-
-        draw_text_gnw_shadowed(
-            frame,
-            x,
-            y,
-            font,
-            caption,
-            palette.rgba(base),
-            palette.rgba(outline),
-            palette.rgba(shadow),
-        );
     }
 
     /// Copies a `SimpleImage` with transparency (the `image.transparent` index).
@@ -1435,22 +1417,97 @@ impl Panels {
     }
 }
 
-/// Zoom pointer offset.
-///
-/// C++ formula (`GameManager_UpdateZoomSlider`): `((130-28) * (64-zoom)) / 60 +
-/// 14` for the 4…64 range. Our `Viewport` keeps 8…64, so the denominator is
-/// `56`; at `zoom == 64` the pointer stands at 14, at `zoom == 8` — at 116.
-pub fn zoom_slider_offset(zoom: u32) -> i32 {
-    let zoom = zoom.clamp(8, 64);
-    ((102 * (64 - zoom) as i32) / 56) + 14
+/// Button label with the released or pressed/checked palette indices —
+/// `Button::SetCaption` (`button.cpp:412-449`) with the two `FontColor`s of
+/// `GameManager_MenuInitButtons` (`game_manager.cpp:7834-7846`).
+pub fn draw_panel_caption(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    button: PanelButton,
+    pressed: bool,
+) {
+    let (base, outline, shadow) = button.caption_colors(pressed);
+
+    draw_panel_caption_colored(frame, palette, button, base, outline, shadow);
 }
 
-/// The inverse conversion: slider x → scale (`8..=64`).
-pub fn zoom_from_slider_x(x: i32) -> u32 {
-    let relative = (x - layout::ZOOM_SLIDER.ulx - 14).clamp(0, 102);
-    let zoom = 64 - (relative * 56 / 102);
+/// Button label with explicit palette indices — `Button::SetCaption`
+/// (button.cpp:412-449) and the End Turn label baked into the resource
+/// (`Text_TextBox(..., 0, 0, w, h, true, true, FontColor(...))`).
+///
+/// C++ 1:1 geometry: `SetCaption(caption, x, y, …)` shrinks the centering area to
+/// `width - x` / `height - y`, then `Text_TextLine` (`text.cpp:772`) centers the line
+/// in it: `x = (swidth - (Text_GetWidth + 1)) / 2` (a shift only if > 0),
+/// `y = ((height - y) - Text_GetHeight()) / 2 + y`.
+pub fn draw_panel_caption_colored(
+    frame: &mut RgbaBuffer,
+    palette: &UiPalette,
+    button: PanelButton,
+    base: u8,
+    outline: u8,
+    shadow: u8,
+) {
+    let Some(caption) = button.caption() else {
+        return;
+    };
+    let font = button.caption_font().font();
+    let (x, y) = button.caption_position();
 
-    zoom.clamp(8, 64) as u32
+    draw_text_gnw_shadowed(
+        frame,
+        x,
+        y,
+        font,
+        caption,
+        palette.rgba(base),
+        palette.rgba(outline),
+        palette.rgba(shadow),
+    );
+}
+
+/// Zoom slider travel — click `x` minus `window.ulx + 14`, clamped to
+/// `window.lrx - window.ulx - 30` (`game_manager.cpp:6657-6667`; the inclusive
+/// window rect (20,275)…(149,288) gives `149 - 20 - 30 = 99`).
+pub const ZOOM_SLIDER_TRAVEL: i32 = 99;
+/// Zoom slider knob offset from the window left edge — `width / 2` with
+/// `width = (25 + 3) * scale` (`game_manager.cpp:1734`).
+pub const ZOOM_SLIDER_KNOB_OFFSET: i32 = 14;
+/// Zoom slider knob span — `window.lrx - window.ulx - width`
+/// (`game_manager.cpp:1734-1736`: `149 - 20 - 28 = 101`).
+pub const ZOOM_SLIDER_KNOB_SPAN: i32 = 101;
+/// Zoom range of the original slider — `64 - 4` (`game_manager.cpp:1669`).
+pub const ZOOM_RANGE: i32 = 60;
+/// Zoom increment of the `+`/`−` panel buttons — `Gfx_ZoomLevel ± 10`
+/// (`game_manager.cpp:6645-6679`).
+pub const ZOOM_BUTTON_STEP: u32 = 10;
+
+/// Zoom pointer offset.
+///
+/// C++ `GameManager_UpdateZoomSlider` (`game_manager.cpp:1731-1740`):
+/// `offset = ((window.lrx - window.ulx - width) * (64 - zoom)) / 60 + width / 2`,
+/// i.e. `101 * (64 - zoom) / 60 + 14` in the original 640×480 frame (`width = 28`).
+/// The port keeps the slider graphics and this exact mapping; only the smallest
+/// zoom is clamped to [`max_render::viewport::MIN_ZOOM`] (8) instead of the
+/// original 4.
+pub fn zoom_slider_offset(zoom: u32) -> i32 {
+    let zoom = zoom.clamp(max_render::viewport::MIN_ZOOM, 64);
+
+    (ZOOM_SLIDER_KNOB_SPAN * (64 - zoom) as i32) / ZOOM_RANGE + ZOOM_SLIDER_KNOB_OFFSET
+}
+
+/// The inverse conversion: slider x → scale.
+///
+/// C++ `GameManager_ProcessInput`, `WINDOW_ZOOM_SLIDER_BUTTON`
+/// (`game_manager.cpp:6651-6672`): on `MOUSE_PRESS_LEFT`
+/// `mouse_x -= window.ulx + 14`, clamped to `[0, lrx - ulx - 30]`, then
+/// `zoom = 64 - (mouse_x * 60) / (lrx - ulx - 30)` — 99 px of travel over the
+/// 60 zoom steps. The result is clamped to the port's viewport range (8…64).
+pub fn zoom_from_slider_x(x: i32) -> u32 {
+    let relative = (x - layout::ZOOM_SLIDER.ulx - ZOOM_SLIDER_KNOB_OFFSET)
+        .clamp(0, ZOOM_SLIDER_TRAVEL);
+    let zoom = 64 - (relative * ZOOM_RANGE) / ZOOM_SLIDER_TRAVEL;
+
+    (zoom as u32).clamp(max_render::viewport::MIN_ZOOM, 64)
 }
 
 /// Panel button under the window point (`None` — the point is not on a button).

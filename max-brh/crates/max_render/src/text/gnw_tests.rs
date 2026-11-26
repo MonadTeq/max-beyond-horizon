@@ -207,8 +207,66 @@ fn drawing_clips_without_panicking() {
     assert!(buffer.pixels().chunks_exact(4).any(|pixel| pixel[3] != 0));
 }
 
+/// The shadow/outline of `Text_TextLine` (`text.cpp:772-808`) — the exact
+/// per-pixel model that gives the button labels their embossed/relief look:
+///
+/// * the fill is painted first;
+/// * then, bottom-to-top, every fill pixel writes its down-right neighbour:
+///   `outline` when that neighbour is also fill (the lower-right diagonal of a
+///   stroke), `shadow` when it is empty.
+///
+/// Painting the outline layer *under* the fill (the previous order) left the glyphs
+/// flat — the regression this test guards against.
 #[test]
-fn shadowed_text_adds_the_back_layer_under_the_fill() {
+fn the_textline_relief_overwrites_the_lower_right_diagonal() {
+    let font = GnwFontId::Font1.font();
+    let text = "NAMES";
+    let width = font.text_width(text) + 1;
+    let height = font.height() + 1;
+    let base = Rgba::rgb(200, 200, 200);
+    let outline = Rgba::rgb(10, 20, 30);
+    let shadow = Rgba::rgb(40, 50, 60);
+    let mut plain = RgbaBuffer::new(width as u32, height as u32);
+
+    draw_text_gnw(&mut plain, 0, 0, font, text, base);
+
+    let mut relief = RgbaBuffer::new(width as u32, height as u32);
+    draw_text_gnw_shadowed(&mut relief, 0, 0, font, text, base, outline, shadow);
+
+    let ink = |x: i32, y: i32| plain.get(x, y) == Some(base);
+    let mut diagonal_outline = 0;
+
+    for y in 0..height {
+        for x in 0..width {
+            let diagonal = x > 0 && y > 0 && ink(x - 1, y - 1);
+            let expected = if ink(x, y) {
+                if diagonal {
+                    diagonal_outline += 1;
+
+                    Some(outline)
+                } else {
+                    Some(base)
+                }
+            } else if diagonal {
+                Some(shadow)
+            } else {
+                Some(Rgba::TRANSPARENT)
+            };
+
+            assert_eq!(relief.get(x, y), expected, "пиксель ({x},{y})");
+        }
+    }
+
+    assert!(
+        diagonal_outline > 0,
+        "FONT1 NAMES has stroke diagonals: the outline stays inside the glyphs"
+    );
+}
+
+/// The relief expands the text: the fill survives every ink pixel that has no ink
+/// above-left, the outline sits on the stroke diagonals and the shadow just outside.
+#[test]
+fn shadowed_text_keeps_the_fill_and_adds_outline_and_shadow() {
     let font = GnwFontId::Font5.font();
     let text = "H";
     let width = font.text_width(text) + 2;
@@ -230,63 +288,14 @@ fn shadowed_text_adds_the_back_layer_under_the_fill() {
             .count()
     };
 
-    // The outline is painted under the fill (`Text_Blit` order), so it does not
-    // survive on the glyph itself; the shadow and the complete fill do.
-    assert_eq!(count(&shadowed, base), count(&plain, base), "заливка целая");
-    assert!(count(&shadowed, shadow) > 0, "есть тень");
+    assert!(count(&shadowed, base) > 0, "заливка на месте");
+    assert!(count(&shadowed, outline) > 0, "обводка на диагонали штриха");
+    assert!(count(&shadowed, shadow) > 0, "тень снаружи");
     assert!(
         count(&shadowed, base) + count(&shadowed, outline) + count(&shadowed, shadow)
             > count(&plain, base),
-            "тень расширяет область текста"
+        "тень расширяет область текста"
     );
-}
-
-/// The fill is painted after the outline (`Text_Blit` order): every ink pixel of
-/// the glyph keeps the base colour. Regression for the "hollow fonts" defect — the
-/// outline used to overwrite the diagonal of the fill, so two-pixel stems of
-/// `FONT1` lost their second column.
-#[test]
-fn fill_is_painted_over_the_outline() {
-    let font = GnwFontId::Font1.font();
-    let text = "NAMES";
-    let width = font.text_width(text) + 2;
-    let height = font.height() + 2;
-    let base = Rgba::rgb(200, 200, 200);
-    let outline = Rgba::rgb(10, 20, 30);
-    let shadow = Rgba::rgb(40, 50, 60);
-    let mut plain = RgbaBuffer::new(width as u32, height as u32);
-    let mut shadowed = RgbaBuffer::new(width as u32, height as u32);
-
-    draw_text_gnw(&mut plain, 0, 0, font, text, base);
-    draw_text_gnw_shadowed(&mut shadowed, 0, 0, font, text, base, outline, shadow);
-
-    let mut ink = 0;
-    let mut kept = 0;
-
-    for y in 0..height {
-        for x in 0..width {
-            if plain.get(x, y) != Some(base) {
-                continue;
-            }
-
-            ink += 1;
-
-            if shadowed.get(x, y) == Some(base) {
-                kept += 1;
-            }
-        }
-    }
-
-    assert!(ink > 0, "глифы FONT1 содержат заливку");
-    assert_eq!(kept, ink, "каждый пиксель заливки остаётся базовым цветом");
-
-    let shadow_pixels = shadowed
-        .pixels()
-        .chunks_exact(4)
-        .filter(|pixel| pixel[0] == shadow.r && pixel[1] == shadow.g && pixel[2] == shadow.b)
-        .count();
-
-    assert!(shadow_pixels > 0, "тень рисуется под заливкой");
 }
 
 #[test]

@@ -35,19 +35,22 @@
 //!   `}` they differ by 1 px — that is TTF hinting, see `vectors.txt`);
 //! * line height — `height` (`Text_GetHeight`), the line spacing in
 //!   `Text_TextBox` — `height + 1`;
-//! * `Text_TextLine` draws the shadow/outline to the right and down: for every pixel
-//!   of the text `(x+1, y+1)` is painted with `outline` if there is text there too, otherwise with
-//!   `shadow`. This reproduces [`draw_text_gnw_shadowed`].
+//! * `Text_TextLine` paints the glyph fill, then **overwrites** the pixel to the
+//!   right and down: `outline` if there is text there too, otherwise `shadow`
+//!   (`text.cpp:789-802`). Inside a stroke this replaces the lower-right diagonal
+//!   pixel of the fill with the outline colour — that two-tone diagonal is the
+//!   embossed/relief look of the original button labels. [`draw_text_gnw_shadowed`]
+//!   reproduces exactly this order (fill first, then the shifted overwrite).
 //!
-//! # Fill and outline (`Text_Blit`)
+//! # `Text_Blit` with `GNW_TEXT_OUTLINE` — a different outline
 //!
-//! The original paints the shifted outline/shadow copy **first** and the glyph fill
-//! **on top of it** (`text.cpp:492-496` draws the `GNW_TEXT_OUTLINE` copy, then
-//! `:521-523` writes the fill colour), so the fill always wins and stays complete.
-//! [`draw_text_gnw_shadowed`] follows the same order: the back layer (outline/shadow)
-//! is painted first, the fill last. With the opposite order the outline colour ate the
-//! diagonal pixels of the fill; two-pixel-wide stems of `FONT1` lost their second
-//! column and the text looked hollow/outline-only instead of filled.
+//! `Text_Blit` with the `GNW_TEXT_OUTLINE` flag (`text.cpp:492-496`) draws a copy of
+//! the text shifted down-right in black **under** the fill (`:521-523` writes the
+//! fill on top); the fill wins there. That is what [`draw_text_gnw_outlined`] does.
+//! `Text_TextLine` (button captions, `Text_TextBox`) is **not** that path: it
+//! post-processes the already filled buffer, so the lower-right diagonal of the
+//! glyph becomes the outline colour. Painting the outline under the fill (the old
+//! order of this function) left the glyph flat and lost the relief.
 
 use std::sync::OnceLock;
 
@@ -415,16 +418,16 @@ pub fn draw_text_gnw(
     font.text_width(text)
 }
 
-/// The same as [`draw_text_gnw`], but with a shadow/outline like `Text_TextLine`.
+/// The same as [`draw_text_gnw`], but with the outline/shadow of `Text_TextLine`.
 ///
-/// For every "ink" pixel `(x, y)` the original paints `(x+1, y+1)`:
-/// `outline` if there is text there too, otherwise `shadow`. The traversal order is bottom
-/// to top, so an already repainted pixel no longer counts as text (as
-/// in C++, where the loop reads and writes one buffer).
-///
-/// The back layer is painted first and the glyph fill last, exactly like
-/// `Text_Blit` (outline copy at `text.cpp:492-496`, fill at `:521-523`): the fill is
-/// never eaten by the outline, so the glyphs stay solid (not hollow).
+/// Oracle order (`text.cpp:772-808`): the glyph fill is blitted first, then the
+/// buffer is post-processed bottom-to-top: for every fill pixel `(x, y)` the pixel
+/// `(x+1, y+1)` becomes `outline` when it also holds fill, and `shadow` otherwise.
+/// The lower-right diagonal of a stroke is therefore **replaced** by the outline
+/// colour — the embossed/relief look of the original button labels. Traversal is
+/// bottom to top, so an already repainted pixel is no longer the source of another
+/// pass (the C++ loop reads and writes one buffer; here the ink mask is equivalent
+/// because the target row was already visited).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_text_gnw_shadowed(
     buffer: &mut RgbaBuffer,
@@ -440,7 +443,7 @@ pub fn draw_text_gnw_shadowed(
     let height = font.height() + 1;
     let stride = width.max(1) as usize;
 
-    // 0 — empty, 1 — base, 2 — outline, 3 — shadow.
+    // 1 — glyph ink (the fill), 0 — empty.
     let mut mask = vec![0u8; stride * height.max(1) as usize];
     let mut pen_x = 0i32;
 
@@ -469,11 +472,21 @@ pub fn draw_text_gnw_shadowed(
         pen_x += i32::from(glyph.width);
     }
 
-    // 0 — nothing, 2 — outline, 3 — shadow: the back layer, painted under the fill.
-    let mut back = vec![0u8; stride * height.max(1) as usize];
+    // 1) The fill (`Text_Blit(buffer, str, swidth, text_width, color.base)`).
+    for row in 0..height {
+        for column in 0..width {
+            if mask[row as usize * stride + column as usize] == 1 {
+                buffer.set(x + column, y + row, base);
+            }
+        }
+    }
 
-    for row in (0..height - 1).rev() {
-        for column in 0..width - 1 {
+    // 2) The shifted overwrite of `Text_TextLine` (bottom-to-top, left-to-right):
+    //    the lower-right diagonal of the fill becomes the outline, the pixel just
+    //    outside the glyph the shadow. `width`/`height` include the +1 reserve of
+    //    `Text_GetWidth + 1` / `Text_GetHeight + 1`, so no write leaves the box.
+    for row in (0..height.saturating_sub(1)).rev() {
+        for column in 0..width.saturating_sub(1) {
             let index = row as usize * stride + column as usize;
 
             if mask[index] != 1 {
@@ -481,34 +494,9 @@ pub fn draw_text_gnw_shadowed(
             }
 
             let target = index + stride + 1;
+            let color = if mask[target] == 1 { outline } else { shadow };
 
-            back[target] = if mask[target] == 1 { 2 } else { 3 };
-        }
-    }
-
-    // The back layer first (outline/shadow), the glyph fill on top — the composition
-    // of `Text_Blit` with `GNW_TEXT_OUTLINE` (`text.cpp:492-523`). The fill must not
-    // be replaced by the outline colour: otherwise a two-pixel stem keeps only one
-    // column of fill and the text looks hollow.
-    for row in 0..height {
-        for column in 0..width {
-            let color = match back[row as usize * stride + column as usize] {
-                2 => outline,
-                3 => shadow,
-                _ => continue,
-            };
-
-            buffer.set(x + column, y + row, color);
-        }
-    }
-
-    for row in 0..height {
-        for column in 0..width {
-            if mask[row as usize * stride + column as usize] != 1 {
-                continue;
-            }
-
-            buffer.set(x + column, y + row, base);
+            buffer.set(x + column + 1, y + row + 1, color);
         }
     }
 

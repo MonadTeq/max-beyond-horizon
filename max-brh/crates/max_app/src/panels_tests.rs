@@ -326,10 +326,81 @@ fn minimap_unit_dots_use_the_no_fow_debug_mode() {
     );
 }
 
+/// The slider geometry is the oracle's, not an approximation of the port's
+/// 8…64 viewport: `GameManager_UpdateZoomSlider` (`game_manager.cpp:1731-1740`)
+/// places the knob at `101 * (64 - zoom) / 60 + 14`, and the click maps 99 px of
+/// travel onto the 60 zoom steps (`game_manager.cpp:6651-6672`).
+/// `Button::SetCaption` bakes two label colours into the two pictures
+/// (`button.cpp:412-449`): `game_manager.cpp:7840-7845` passes
+/// `FontColor(0xA2, 0xA7, 0xE6)` for `*_OF` and `FontColor(0xA2, 0xA3, 0x24)` for
+/// `*_ON`. End Turn keeps `FontColor(0xA0, 0xA2, 0xE6)` for both.
+#[test]
+fn caption_colours_follow_the_drawn_picture() {
+    assert_eq!(
+        PanelButton::Grid.caption_colors(false),
+        (TEXT, CAPTION_OUTLINE, SHADOW)
+    );
+    assert_eq!(
+        PanelButton::Grid.caption_colors(true),
+        (TEXT, CAPTION_OUTLINE_DOWN, CAPTION_SHADOW_DOWN)
+    );
+    assert_eq!(CAPTION_OUTLINE_DOWN, 0xA3);
+    assert_eq!(CAPTION_SHADOW_DOWN, 0x24);
+    assert_eq!(
+        PanelButton::EndTurn.caption_colors(false),
+        PanelButton::EndTurn.caption_colors(true),
+        "End Turn: `FontColor(0xA0, 0xA2, 0xE6)` for up and down"
+    );
+    assert_eq!(
+        PanelButton::EndTurn.caption_colors(true),
+        (END_TURN_TEXT, END_TURN_OUTLINE, SHADOW)
+    );
+}
+
+/// Frame regression: the toggle label really changes colour together with the
+/// picture. A checked `NAMES` toggle draws its label with the down `FontColor`
+/// (`0xA3` outline, `0x24` shadow) and no pixel of the released shadow `0xE6`;
+/// the released button is the other way round.
+#[test]
+fn a_checked_toggle_paints_the_pressed_label_colours() {
+    let mut colors = [[0u8, 0, 0]; 256];
+    colors[usize::from(TEXT)] = [243, 219, 187];
+    colors[usize::from(CAPTION_OUTLINE)] = [183, 163, 131];
+    colors[usize::from(SHADOW)] = [115, 39, 35];
+    colors[usize::from(CAPTION_OUTLINE_DOWN)] = [223, 199, 175];
+    colors[usize::from(CAPTION_SHADOW_DOWN)] = [67, 119, 7];
+    let palette = UiPalette::from_colors(colors);
+
+    let count = |frame: &RgbaBuffer, index: u8| {
+        let color = palette.rgba(index);
+
+        frame
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] == color.r && pixel[1] == color.g && pixel[2] == color.b)
+            .count()
+    };
+
+    let mut released = RgbaBuffer::new(640, 480);
+    draw_panel_caption(&mut released, &palette, PanelButton::Names, false);
+    assert!(count(&released, SHADOW) > 0, "released: shadow 0xE6");
+    assert_eq!(count(&released, CAPTION_SHADOW_DOWN), 0, "released: no 0x24");
+
+    let mut pressed = RgbaBuffer::new(640, 480);
+    draw_panel_caption(&mut pressed, &palette, PanelButton::Names, true);
+    assert!(count(&pressed, CAPTION_SHADOW_DOWN) > 0, "pressed: shadow 0x24");
+    assert_eq!(count(&pressed, SHADOW), 0, "pressed: no 0xE6");
+    assert!(
+        count(&released, SHADOW) + count(&pressed, CAPTION_OUTLINE_DOWN) > 0,
+        "the label is drawn in both states"
+    );
+}
+
 #[test]
 fn zoom_slider_maps_to_viewport_zoom() {
     assert_eq!(zoom_slider_offset(64), 14);
-    assert_eq!(zoom_slider_offset(8), 116);
+    // `101 * 56 / 60 + 14 = 94 + 14` — the oracle's position for the smallest zoom.
+    assert_eq!(zoom_slider_offset(8), 108);
     assert!(zoom_slider_offset(8) > zoom_slider_offset(64));
 
     assert_eq!(zoom_from_slider_x(20), 64, "левый край — 1:1");
@@ -348,6 +419,20 @@ fn zoom_slider_maps_to_viewport_zoom() {
                 "zoom {zoom} -> x {x} -> {roundtrip}"
         );
     }
+}
+
+/// The `+`/`−` step is 10 (`Gfx_ZoomLevel ± 10`, `game_manager.cpp:6645-6679`),
+/// the slider spans the original 4…64 range (stored clamped to the viewport).
+#[test]
+fn panel_zoom_constants_are_the_oracles() {
+    assert_eq!(ZOOM_BUTTON_STEP, 10);
+    assert_eq!(ZOOM_SLIDER_TRAVEL, 99);
+    assert_eq!(ZOOM_SLIDER_KNOB_OFFSET, 14);
+    assert_eq!(ZOOM_SLIDER_KNOB_SPAN, 101);
+    assert_eq!(ZOOM_RANGE, 60);
+    // Right end of the slider is `64 - 60 = 4` in the oracle; the port's viewport
+    // starts at 8 (`min(64, max(MainmapZoomLimit, zoom))`, `game_manager.cpp:1700`).
+    assert_eq!(zoom_from_slider_x(layout::ZOOM_SLIDER.ulx + 14 + 99), 8);
 }
 
 #[test]
