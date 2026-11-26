@@ -319,7 +319,7 @@ fn right_click_selects_a_unit_and_shows_stats_without_a_menu() {
 }
 
 #[test]
-fn right_click_on_a_free_cell_cancels_the_modes_but_keeps_the_selection() {
+fn right_click_on_a_free_cell_deselects_and_cancels_the_modes() {
     let (mut app, tank, _enemy) = test_app();
     let (x, y) = screen_of(&app, Point::new(10, 10));
 
@@ -332,17 +332,55 @@ fn right_click_on_a_free_cell_cancels_the_modes_but_keeps_the_selection() {
     handle_session_input(&mut app, InputEvent::RightClick(ex, ey));
 
     // `targeting_mode = 0`, `enter_mode = 0`, `cursor = CURSOR_HIDDEN`
-    // (`game_manager.cpp:6764-6770`); `GameManager_SelectedUnit` stays.
-    assert_eq!(app.hud().selected, Some(tank));
+    // (`game_manager.cpp:6764-6770`) and `GameManager_MenuUnitSelect(nullptr)`
+    // (`game_manager.cpp:7247-7253`): `GameManager_SelectedUnit = nullptr`.
+    assert_eq!(
+        app.hud().selected,
+        None,
+        "the empty cell under the right button drops the focus"
+    );
+    assert_ne!(app.hud().selected, Some(tank));
     assert!(!app.hud().targeting_mode);
     assert!(!app.hud().enter_mode);
     assert_eq!(app.hud().cursor_mode, 0);
+    assert!(app.portrait().is_none(), "the corner FLC is freed");
     assert!(app
         .hud()
         .log
         .lines()
         .iter()
         .any(|line| line.contains("Cancelled")));
+}
+
+#[test]
+fn right_click_on_a_free_cell_deselects_a_building() {
+    let (mut app, _tank, _enemy) = test_app();
+
+    // A stationary building of the same team, two cells below the tank.
+    let building = app
+        .universe
+        .spawn_unit(
+            UnitType::MiningStation,
+            TeamId::RED,
+            Point::new(10, 12),
+            max_core::access::unit_type_flags(UnitType::MiningStation),
+        )
+        .expect("mine spawned");
+
+    let (bx, by) = screen_of(&app, Point::new(10, 12));
+    handle_session_input(&mut app, InputEvent::MouseClick(bx, by));
+    assert_eq!(app.hud().selected, Some(building));
+
+    // A free cell next to it.
+    let (ex, ey) = screen_of(&app, Point::new(12, 12));
+    assert!(app.state_ref().units_at(Point::new(12, 12)).is_empty());
+    handle_session_input(&mut app, InputEvent::RightClick(ex, ey));
+
+    assert_eq!(
+        app.hud().selected,
+        None,
+        "RMB on an empty cell releases a building as well"
+    );
 }
 
 #[test]

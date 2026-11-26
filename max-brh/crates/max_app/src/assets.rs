@@ -717,6 +717,13 @@ pub struct Assets {
     pub alloc: Option<crate::allocmenu::AllocMenuAssets>,
     /// X-FER window (`XFERPIC` + `XFR*` + `SMBRRAW/FUEL/GOLD`), C++ `TransferMenu`.
     pub transfer: Option<crate::transfermenu::TransferMenuAssets>,
+    /// Repair shop screen (`DEPOTFRM`/`HANGRFRM` + `DPTBAY*`/`DPTUP*`/`DPTDN*`/
+    /// `DPTHP*`/`DPTMNU*`), C++ `RepairShopMenu`.
+    ///
+    /// Boxed: two 640×480 `BigImage`s carry their own 768-byte palettes, and
+    /// `App` (which holds `Assets` inline) has to stay small — the headless
+    /// session tests run the game loop on a 2 MiB thread stack.
+    pub repair_shop: Option<Box<crate::repairshopmenu::RepairShopAssets>>,
     /// Mobilization screen (`CARGOPIC` + `CRG*` + `BLD*`/`SEL*` + `VERT*` + `I_*`).
     pub cargo: Option<crate::mobilize::CargoMenuAssets>,
     /// Intro video: path to `maxint.mve` (the `INTROFLC` resource is an ASCIIZ reference).
@@ -924,6 +931,9 @@ impl Assets {
         let alloc = crate::allocmenu::AllocMenuAssets::load(&max_res);
         // X-FER window (`XFERPIC` + `XFR*` + `SMBR*`), C++ `TransferMenu`.
         let transfer = crate::transfermenu::TransferMenuAssets::load(&max_res);
+        // Repair shop slot list (`DEPOTFRM`/`HANGRFRM` + `DPT*`), C++
+        // `RepairShopMenu`.
+        let repair_shop = crate::repairshopmenu::RepairShopAssets::load(&max_res);
         // Mobilization screen (`CARGOPIC` + `CRG*` + bars + `I_*` icons).
         let cargo = crate::mobilize::CargoMenuAssets::load(&max_res);
 
@@ -1138,6 +1148,7 @@ impl Assets {
             self_destruct: Some(self_destruct),
             alloc: Some(alloc),
             transfer: Some(transfer),
+            repair_shop: Some(Box::new(repair_shop)),
             cargo: Some(cargo),
             intro_mve,
             cursors: Some(cursors),

@@ -187,13 +187,15 @@ fn transport_lists_load_and_activate() {
     );
     assert!(load.note.is_empty());
 
-    // `activate` (RepairShopMenu) stays disabled — the screen is not ported.
+    // `activate` (RepairShopMenu) is registered unconditionally for a repair
+    // shop — `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:1022-1033`)
+    // → the slot list of the hold.
     let activate = items
         .iter()
         .find(|item| item.id == ItemId::Activate)
         .expect("activate у транспорта");
-    assert!(!activate.enabled);
-    assert!(!activate.note.is_empty());
+    assert!(activate.enabled);
+    assert!(activate.note.is_empty());
 }
 
 #[test]

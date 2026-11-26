@@ -4,11 +4,13 @@
 //! The whole chain goes through the player's path:
 //!
 //! 1. the `activate` item of the transport menu — C++
-//!    `UnitsManager_Popup_OnClick_Activate` (`units_manager.cpp:997-1009`) →
-//!    `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`): for a
-//!    non-air `repairshop` the oracle only checks `Access_FindReachableSpot`,
-//!    selects the stored passenger (`GameManager_EnableMainMenu(target_unit)`)
-//!    and asks for a cell (`_(755b)` "Select an open square to place unit.");
+//!    `UnitsManager_Popup_OnClick_Activate` (`units_manager.cpp:997-1009`) opens
+//!    the `RepairShopMenu` **slot list**; its per-slot `Activate` button
+//!    (`repairshopmenu.cpp:737-745`) calls `RepairShopMenu::Activate`
+//!    (`:661-690`). For a non-air `repairshop` the oracle only checks
+//!    `Access_FindReachableSpot`, selects the stored passenger
+//!    (`GameManager_EnableMainMenu(target_unit)`) and asks for a cell (`_(755b)`
+//!    "Select an open square to place unit.");
 //! 2. a left click on a cell next to the carrier — `CURSOR_ACTIVATE`
 //!    (`GameManager_GetAirUnitCursor`, `game_manager.cpp:5937-5962`) gives the
 //!    **carrier** `ORDER_ACTIVATE`/`EXECUTING_ORDER` with the passenger as its
@@ -153,7 +155,9 @@ fn store_passenger(app: &mut App, carrier: UnitId, passenger: UnitId) {
         .storage = 1;
 }
 
-/// Opens the transport menu with real clicks and presses `activate`.
+/// Opens the transport menu with real clicks, presses `activate`, and then the
+/// `Activate` button of the **first slot** of the opened `RepairShopMenu`
+/// (`repairshopmenu.cpp:737-745`).
 fn press_activate(app: &mut App, carrier: UnitId) {
     app.hud_mut().select(Some(carrier));
     assert!(app.open_unit_menu(), "меню транспорта открывается");
@@ -171,6 +175,19 @@ fn press_activate(app: &mut App, carrier: UnitId) {
     click(app, (rect.ulx + 1, rect.uly + 1));
 
     assert!(app.unit_menu().is_none(), "пункт закрывает меню");
+
+    // `UnitsManager_Popup_OnClick_Activate` → `RepairShopMenu_Menu`: the slot
+    // list of the hold opens; the player picks the stored unit there.
+    let menu = app.repair_shop().expect("RepairShopMenu открыт");
+    assert!(!menu.units.is_empty(), "в списке есть хранимый юнит");
+
+    let slot = menu.activate_rect(0);
+    click(app, (slot.ulx + 1, slot.uly + 1));
+
+    assert!(
+        app.repair_shop().is_none(),
+        "выбор слота закрывает экран (`Deinit` в начале `Activate`)"
+    );
 }
 
 /// The CLNTRANS (personnel carrier) end-to-end: `activate` selects the stored

@@ -1569,6 +1569,8 @@ impl<D: Dispatcher> App<D> {
         self.draw_transfer_menu(&mut frame);
         // Selected unit command menu РІР‚вЂќ over the map and panels.
         self.draw_unit_menu(&mut frame);
+        // Repair shop slot list (`RepairShopMenu`) РІР‚вЂќ the full-screen `DEPOTFRM`/`HANGRFRM`.
+        self.draw_repair_shop(&mut frame);
         // Unit statistics window (`UnitStats_Menu`) РІР‚вЂќ the full-screen `STATS`.
         self.draw_unit_stats(&mut frame);
         // `Preferences`/`Setup` dialog (`OptionsMenu`, `PREFSPIC`).
@@ -1596,6 +1598,27 @@ impl<D: Dispatcher> App<D> {
 
         if let Some(palette) = palette {
             menu.draw(frame, assets, &palette);
+        }
+    }
+
+    /// Draws the open repair shop slot list (`RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`).
+    ///
+    /// A full-screen modal like `AllocMenu`: the window palette is the `FRAMEPIC`
+    /// one (`Window::palette_from_image = false`), falling back to the menu palette.
+    pub(crate) fn draw_repair_shop(&self, frame: &mut RgbaBuffer) {
+        let (Some(menu), Some(assets)) = (self.repair_shop(), self.assets()) else {
+            return;
+        };
+        let palette = UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+
+        if let Some(palette) = palette {
+            menu.draw(
+                frame,
+                assets.repair_shop.as_deref(),
+                &palette,
+                self.state_ref(),
+            );
         }
     }
 

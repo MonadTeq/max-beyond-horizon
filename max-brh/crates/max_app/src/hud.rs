@@ -505,9 +505,14 @@ impl HudState {
     ///
     /// C++ `GameManager_ProcessInput` right-button branch on an empty map cell
     /// (`game_manager.cpp:6764-6770`): `targeting_mode = 0`,
-    /// `enter_mode = 0`, `cursor = CURSOR_HIDDEN`; `GameManager_SelectedUnit`
-    /// is **not** cleared. The route preview belongs to the cancelled order,
-    /// so it goes away with the modes.
+    /// `enter_mode = 0`, `cursor = CURSOR_HIDDEN`. The route preview belongs to
+    /// the cancelled order, so it goes away with the modes.
+    ///
+    /// The empty-cell branch itself then calls `GameManager_MenuUnitSelect(nullptr)`
+    /// (`game_manager.cpp:7247-7253`) and drops `GameManager_SelectedUnit` too —
+    /// that part lives in [`Self::clear_interaction`] and is what
+    /// `ui::session_map_right_click` calls; this method is the "modes only"
+    /// variant (for a caller that keeps the focus).
     pub fn cancel_order_modes(&mut self) {
         self.preview = None;
         self.cursor_mode = 0;

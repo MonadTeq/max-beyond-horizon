@@ -5858,3 +5858,124 @@ QA `move-input.qa` (`rclick 38 377` → `assert preview`/`assert log=Move:`, п�
 * оракулы `max-cpp-port/` и `max-original/` не изменялись (`save10.*`
   восстановлены после QA-прогонов).
 
+## 51. Ручной прогон 2026-11-26 (второй): деселект RMB, RepairShopMenu, бонусы клана — **сделано**
+
+Три дефекта ручного прогона. Первичный источник — Оракул Interplay
+(`max-original/`, `max-original-dasm/`), структура/имена — Оракул Klei
+(`max-cpp-port/`).
+
+### 51.1 RMB по пустой клетке не снимал фокус (деселект)
+
+**Симптом.** После выделения юнита/здания правый клик по пустой клетке карты
+оставлял выделение (и портрет/панель статистики) на месте — «сбросить фокус»
+можно было только `Esc`.
+
+**Оракул.** `game_manager.cpp:6747-6776` (ветка `MOUSE_RELEASE_RIGHT` при
+`unit == nullptr && unit2 == nullptr`) — `targeting_mode = 0`, `enter_mode = 0`,
+`cursor = CURSOR_HIDDEN`; тогда же `GameManager_ManagePlayerAction()`.
+Снятие самого `GameManager_SelectedUnit` — `GameManager_MenuUnitSelect(nullptr)`
+(`game_manager.cpp:7247-7253`): `MenuDeleteFlic`, `FillOrRestoreWindow(CORNER_FLIC/
+STAT_WINDOW, COLOR_BLACK)`, `DeinitPopupButtons`, `GameManager_SelectedUnit = nullptr`.
+Очистка окна сообщений для клика по карте — `game_manager.cpp:6714-6716`.
+
+**Корень.** `ui::session_map_right_click` вызывал только
+`HudState::cancel_order_modes()` (режимы) и писал `Cancelled`; выделение и
+портрет не трогались. Комментарий модуля это даже фиксировал как норму
+(«C++ has no right click deselect») — расхождение с оракулом.
+
+**Исправление.** В той же ветке — `App::select_unit(None)` +
+`HudState::clear_interaction()` (выделение, предпросмотр маршрута,
+`cursor/enter/targeting`, подсказка) и `refresh_portrait` (портрет/панель
+очищаются). `HudState::cancel_order_modes` оставлен как «только режимы» и
+документирован. LMB по пустой клетке по-прежнему ничего не делает
+(`CURSOR_UNIT_NO_GO`). Состояние — UI-only, в снапшот/CRC не входит.
+
+**Тесты.** `hud::tests::right_click_on_a_free_cell_deselects_and_cancels_the_modes`
+(переименован из `…_keeps_the_selection`), новый
+`right_click_on_a_free_cell_deselects_a_building` (здание), существующий
+`right_click_selects_a_unit_and_shows_stats_without_a_menu` (RMB по юниту —
+статистика).
+
+### 51.2 `activate` выгружал первого хранимого юнита — нет экрана выбора
+
+**Симптом.** У транспорта/гаража/ангара/дока пункт `activate` сразу
+активировал «первого» юнита трюма; выбрать конкретного было нельзя. У зданий
+пункт был вообще выключен («RepairShopMenu не портирован»).
+
+**Оракул.** `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:1022-1033`)
+регистрирует `activate` всегда (`RegisterButton(..., false, …)`), обработчик —
+`UnitsManager_Popup_OnClick_Activate` (`:997-1009`) → `RepairShopMenu_Menu`
+(`repairshopmenu.cpp:735`). Экран (`repairshopmenu.cpp:363-563`) строит слоты
+`Access_IsHeldByUnit` по мобильным спискам (`:527-538`), 6 слотов (4 у
+`HANGAR`, `:382`), у каждого слота своя кнопка `Activate` (`DPTBAY_U/D`,
+`_(2443)`, `:165-171`), `Activate` слота — `RepairShopSlot_OnClick_Activate`
+(`:737-745`) → `RepairShopMenu::Activate` (`:661-690`): `AIRTRANS` —
+`ORDER_UNLOAD`/`INIT`, остальные — `Access_FindReachableSpot`, выбор
+пассажира (`GameManager_EnableMainMenu`) и `_(755b)`. Страницы —
+`unit_slot_index` (`:918-942`), `Done` — `:908`, help — `:944` (`TRANSFER_SETUP`
+в `default`).
+
+**Исправление.** Новый модуль `max_app/src/repairshopmenu.rs`: состояние слотов
+(`RepairShopMenu`, `Access_IsHeldByUnit`-порядок, 6/4 слота), геометрия слотов
+и кнопок 1:1 с `:384-424` (+ `DONE_RECT 511,372`, стрелки `504/530,426`,
+help `584,426`), ввод (клик по `Activate` слота, стрелки страниц, `Done`,
+`?`, `Esc`/`Enter`; `1..6` — расширение для headless), отрисовка
+`DEPOTFRM`/`HANGRFRM` 640×480 с текстовыми строками слота (имя, `Hits`,
+`Ammo`/`Cargo` — вместо `ReportStats`-иконок, зафиксировано в шапке модуля).
+`App`: `open_repair_shop_menu`/`repair_shop`/`close_repair_shop_menu`/
+`repair_shop_input`/`repair_shop_activate` (перенос прежней логики `activate`
+на выбранный юнит); `unitmenu` включает пункт у всех repair shop, при
+`ORDER_POWER_OFF` — питание (`Popup_OnClick_Activate`); `ui` — модальная ветка
+`session_repair_shop_input`; `render` — `draw_repair_shop`; `Assets` —
+`RepairShopAssets` (`DEPOTFRM`/`HANGRFRM`/`DPT*`).
+
+**Тесты.** `repairshopmenu::tests` (4: раскладка слотов/страницы/клик по слоту
+и клавиши/типы), `tests/repair_shop_menu.rs` (3: **выбор второго юнита трюма
+выгружает именно его**, модальность и `Done`, `HANGAR` — 4 слота),
+`tests/transport_unload.rs` (обновлён под экран),
+`tests/unit_menu_actions.rs::air_transport_activate_unloads_the_cargo`,
+`tests/unit_menu.rs::{depot_activate_opens_the_repair_shop_list,
+disabled_item_does_not_act}`, `unitmenu::tests` (пункт включён).
+
+**Поведение и CRC.** UI-путь: приказы те же, что в оракуле (`ORDER_UNLOAD`,
+`ORDER_ACTIVATE`), поэтому снапшот меняется только когда игрок реально
+выгружает юнита — как и в C++. Сценарии QA без активации не меняются.
+
+### 51.3 На экране выбора клана не было описания бонусов
+
+**Симптом.** Под карточками кланов — только имя выбранного клана и подсказка
+«Unit bonuses are applied…»; сами бонусы не показаны.
+
+**Оракул.** `ClanSelectMenu::DrawClanUpgrades` (`clanselectmenu.cpp:165-220`):
+`Clans::GetDescription` (`SC_CLANS` `description.en-US`) — зелёным в области
+`clan_select_menu_screen_text[0]` = `(41,350)-(610,409)`; ниже — таблица
+бонусов: для каждого `unit_id` из `UNIT_START..UNIT_END` и
+`ATTRIB_TURNS_TO_BUILD..ATTRIB_COUNT` печатается `{+delta} {attribute}` через
+запятую, юнит — `GetSingularName`, формат `" {unit}: {bonuses}."`, цвет `0xA2`.
+
+**Корень.** Тексты `SC_CLANS` в клиент не загружались (это было записано как
+известное ограничение в `plan-modes.md`); `draw_clan` рисовал подсказку.
+
+**Исправление.** `setup.rs`: `CLAN_DESCRIPTIONS` (8 `description.en-US` из
+`SC_CLANS`), `CLAN_ATTRIB_DISPLAY` (порядок `Clans::ATTRIB_*` → имена
+`_(6976)`…`_(e9d8)`), `clan_description`, `clan_bonus_text` (по
+`CLAN_TRADEOFFS`, имена юнитов — `unit_user_friendly_name`), `MSG_NO_CLAN_CHOSEN`
+(`_(7f53)` для `Random`); `draw_clan` рисует описание и бонусы (перенос
+`menu::wrap_gnw_text`, до 3 строк).
+
+**Тесты.** `setup::tests::clan_bonuses_are_the_sc_clans_tradeoffs_in_oracle_order`
+(The Chosen, Axis Inc., Musashi — точные строки; `Random` — пусто).
+
+**Golden.** Кадр `golden/sp-full/clan.png` содержит новую область бонусов и
+переснят (законное изменение поведения; `move-input`/`visual-screens` не
+затронуты).
+
+### 51.4 Валидация (2026-11-26)
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_core -p max_app --no-default-features` — зелёный;
+* `qa_run move-input.qa`/`visual-screens.qa` + `qa_golden_check` — PASS,
+  0 пикселей расхождения;
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.
+
+

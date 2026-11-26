@@ -79,8 +79,9 @@ InputEvent** (ui.rs/setup.rs/panels.rs/local.rs не требуют SDL). Зна
       меню → мобилизация → высадка `Enter` → клик по своему `Surveyor`'у
       (`assert selected`, `assert unit-pos=23,21`) → RMB (`assert preview`,
       `assert log=Move:`) → `End Turn` → повторный клик (`assert unit-pos=24,21`),
-      затем RMB по юниту (`assert log=Cancelled`). Камера после высадки — на
-      шахте (регресс «юнит не двигается»);
+      затем RMB по выбранному юниту (`assert log=Unit stats`, `assert
+      unit-stats=open`) и `Esc`. Камера после высадки — на шахте (регресс «юнит
+      не двигается»);
   12. `research-help.qa` — P8: `?` на Options/Planet/Players и `Help`
       мобилизации (`OPTIONS_SETUP`/`PLANET_SETUP`/`NEW_GAME_SETUP`/
       `CARGO_SETUP`, `PageDown`/`PageUp`/`Done`), `ResearchMenu` (`R`,

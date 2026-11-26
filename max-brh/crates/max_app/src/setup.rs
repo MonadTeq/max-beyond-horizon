@@ -376,6 +376,57 @@ pub const CLAN_BUTTONS: [(PixelRect, &str, usize); 4] = [
     (PixelRect::new(514, 438, 109, 40), "Done", 6),
 ];
 
+/// Clan archetype description under the cards — `Clans::GetDescription`
+/// (`SC_CLANS` `description.en-US`), drawn by
+/// `ClanSelectMenu::DrawClanUpgrades` (`clanselectmenu.cpp:214-216`).
+pub const CLAN_DESCRIPTIONS: [&str; 8] = [
+    "Better Air Units:",
+    "Better Sea Units:",
+    "Improved Espionage:",
+    "Better Missile Units:",
+    "Better Armored Vehicles:",
+    "Better Fast Units:",
+    "Better Defense:",
+    "Extra constructors and engineers (depends on budget):",
+];
+
+/// Left edge of the `clan_select_menu_screen_text` area (41,350)-(610,409).
+pub const CLAN_TEXT_X: i32 = 41;
+/// Top of the text area — `MENU_TITLE_ITEM_DEF(41, 350, 610, 409)`.
+pub const CLAN_TEXT_TOP: i32 = 350;
+/// Width of the text area: `610 - 41`.
+pub const CLAN_TEXT_WIDTH: i32 = 569;
+/// Line step — `GNW_TEXT_FONT_5` height (`Text_GetHeight`).
+pub const CLAN_TEXT_LINE: i32 = 10;
+/// How many bonus lines fit into (350,409): description at 362 and a 3-line
+/// bonus block from 374 to 404.
+pub const CLAN_BONUS_LINES: usize = 3;
+
+/// `_(7f53)` (`language.json`, en-US) — `ClanSelectMenu::SelectMenuItems` for
+/// `TEAM_CLAN_RANDOM`: no clan chosen, the computer picks one at random.
+pub const MSG_NO_CLAN_CHOSEN: &str =
+    "No clan chosen - computer will choose a clan at random.";
+
+/// `Clans::AttributeID` → displayed attribute, in `DrawClanUpgrades` order
+/// (`clanselectmenu.cpp:166-169`): the C++ array index maps to the unit
+/// attribute through `Clans::GetUnitTradeoff`, here the target `ATTRIB_*` index
+/// and its `_(…)` english name are spelled out directly.
+const CLAN_ATTRIB_DISPLAY: [(u8, &str); 13] = [
+    (max_core::unit_values::ATTRIB_TURNS, "turns"),
+    (max_core::unit_values::ATTRIB_HITS, "hits"),
+    (max_core::unit_values::ATTRIB_ARMOR, "armor"),
+    (max_core::unit_values::ATTRIB_ATTACK, "attack"),
+    (max_core::unit_values::ATTRIB_MOVE_AND_FIRE, "reload"),
+    (max_core::unit_values::ATTRIB_SPEED, "speed"),
+    (max_core::unit_values::ATTRIB_RANGE, "range"),
+    (max_core::unit_values::ATTRIB_ROUNDS, "rounds"),
+    (max_core::unit_values::ATTRIB_SCAN, "scan"),
+    (max_core::unit_values::ATTRIB_STORAGE, "storage"),
+    (max_core::unit_values::ATTRIB_AMMO, "ammo"),
+    (max_core::unit_values::ATTRIB_ATTACK_RADIUS, "area"),
+    (max_core::unit_values::ATTRIB_AGENT_ADJUST, "disable"),
+];
+
 /// `ChoosePlayerMenu::EventDone` messages.
 ///
 /// `_(bc94)` — two participants are required; `_(06ec)` — hot-seat requires two humans.
@@ -410,6 +461,66 @@ pub fn clan_name(clan: max_core::enums::TeamClan) -> &'static str {
     } else {
         CLAN_NAMES[(index - 1).min(CLAN_NAMES.len() - 1)]
     }
+}
+
+/// Archetype description of a clan — `Clans::GetDescription` (`SC_CLANS`).
+///
+/// `TeamClan::Random` has no clan entry: the oracle does not draw the upgrade
+/// text at all then (`ClanSelectMenu::SelectMenuItems` calls
+/// `DrawClanUpgrades` only `if (team_clan_selection)`), the port explains the
+/// random pick instead (`_(7f53)`).
+pub fn clan_description(clan: max_core::enums::TeamClan) -> &'static str {
+    let index = clan as usize;
+    if index == 0 {
+        MSG_NO_CLAN_CHOSEN
+    } else {
+        CLAN_DESCRIPTIONS[(index - 1).min(CLAN_DESCRIPTIONS.len() - 1)]
+    }
+}
+
+/// The clan's unit bonuses as one line — `ClanSelectMenu::DrawClanUpgrades`
+/// (`clanselectmenu.cpp:165-220`).
+///
+/// The oracle walks `UNIT_START..UNIT_END` in resource order and, for every
+/// unit, `ATTRIB_TURNS_TO_BUILD..ATTRIB_COUNT`, appending
+/// `" {+delta}\u{a0}{attribute}"` for every non-zero `Clans::GetUnitTradeoff`
+/// value, then `" {unit}: {bonuses}."`. The port has the same table
+/// (`CLAN_TRADEOFFS`, generated from `SC_CLANS`), so the text matches the
+/// original screen (a non-breaking space is a plain space here: the GNW font
+/// has no `\u{a0}` glyph and the port's text engine does not merge spaces).
+///
+/// `TeamClan::Random` — an empty string (the oracle draws nothing).
+pub fn clan_bonus_text(clan: max_core::enums::TeamClan) -> String {
+    if clan == max_core::enums::TeamClan::Random {
+        return String::new();
+    }
+
+    let mut text = String::new();
+
+    for index in 0..max_core::unit_values::UNIT_COUNT {
+        let Ok(unit) = max_core::enums::UnitType::try_from(index as u16) else {
+            continue;
+        };
+        let mut bonuses: Vec<String> = Vec::new();
+
+        for (attribute, name) in CLAN_ATTRIB_DISPLAY {
+            let value = max_core::unit_values::clan_tradeoff(clan, unit, attribute);
+
+            if value != 0 {
+                bonuses.push(format!("{value:+} {name}"));
+            }
+        }
+
+        if !bonuses.is_empty() {
+            text.push_str(&format!(
+                " {}: {}.",
+                crate::unit_names::unit_user_friendly_name(unit),
+                bonuses.join(", ")
+            ));
+        }
+    }
+
+    text.trim_start().to_string()
 }
 
 /// Hot-seat initial team types (`menu_choose_player_menu_loop`, `menu.cpp:1883`):
@@ -1660,12 +1771,14 @@ fn draw_players(
 }
 
 /// `ClanSelectMenu` screen (`clanselectmenu.cpp`): 8 clans, logos on
-/// the cards, names, Random/Cancel/?/Done.
+/// the cards, names, Random/Cancel/?/Done, and under the cards the description
+/// of the selected clan's bonuses (`ClanSelectMenu::DrawClanUpgrades`).
 ///
-/// Full clan descriptions and the bonus table from `SC_CLANS`/`clans.json` are not
-/// loaded into the Rust client yet, so here only the name of the selected
-/// clan and a hint are shown; the mechanics themselves (selection + application to `team_clans`)
-/// are implemented and affect the starting unit attributes.
+/// The description comes from `SC_CLANS` (`ClanSelectMenu::DrawClanUpgrades`,
+/// `clanselectmenu.cpp:165-220`): the archetype line in green, then the unit
+/// bonus list (`{unit}: {+N attribute}, …`) in the dim `0xA2` color. The
+/// mechanics themselves (selection + application to `team_clans`) affect the
+/// starting unit attributes.
 fn draw_clan(
     frame: &mut RgbaBuffer,
     menu: &MenuAssets,
@@ -1733,24 +1846,51 @@ fn draw_clan(
     );
     draw_text_gnw_shadowed(
         frame,
-        41,
-        350,
+        CLAN_TEXT_X,
+        CLAN_TEXT_TOP,
         font,
         &line,
         palette.rgba(GREEN),
         palette.rgba(0xA7),
         palette.rgba(0xE6),
     );
+
+    // `DrawClanUpgrades`: the archetype description (`GetDescription`) in green
+    // and, one line below, the per-unit bonus table (`GetUnitTradeoff`)
+    // in the dim `0xA2` color of the oracle call.
     draw_text_gnw_shadowed(
         frame,
-        41,
-        370,
+        CLAN_TEXT_X,
+        CLAN_TEXT_TOP + CLAN_TEXT_LINE + 2,
         font,
-        "Unit bonuses are applied to this team when the game starts.",
-        palette.rgba(TEXT),
+        clan_description(form.clan_selection),
+        palette.rgba(GREEN),
         palette.rgba(0xA7),
         palette.rgba(0xE6),
     );
+
+    let bonuses = clan_bonus_text(form.clan_selection);
+
+    if !bonuses.is_empty() {
+        let bonus_top = CLAN_TEXT_TOP + 2 * CLAN_TEXT_LINE + 4;
+
+        for (index, text) in wrap_gnw_text(&bonuses, CLAN_TEXT_WIDTH)
+            .iter()
+            .take(CLAN_BONUS_LINES)
+            .enumerate()
+        {
+            draw_text_gnw_shadowed(
+                frame,
+                CLAN_TEXT_X,
+                bonus_top + index as i32 * CLAN_TEXT_LINE,
+                font,
+                text,
+                palette.rgba(0xA2),
+                palette.rgba(0xA7),
+                palette.rgba(0xE6),
+            );
+        }
+    }
 
     for (rect, label, resource) in CLAN_BUTTONS {
         let Some(pair) = menu.mnubtn_pair(resource) else {

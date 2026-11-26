@@ -72,6 +72,7 @@ pub mod presentation;
 pub mod profile;
 pub mod qa;
 pub mod render;
+pub mod repairshopmenu;
 pub mod researchmenu;
 pub mod saveload;
 pub mod scroll;
@@ -652,6 +653,10 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// an RMB on the selected unit (`game_manager.cpp:6747-6753`).
     /// Not part of the snapshot/CRC.
     unit_stats: Option<unitstats::UnitStatsMenu>,
+    /// Open repair shop slot list (`RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`) —
+    /// the "which stored unit" selector opened by `activate`
+    /// (`units_manager.cpp:997-1009`). Not part of the snapshot/CRC.
+    repair_shop: Option<repairshopmenu::RepairShopMenu>,
     /// Open building self-destruct dialog (`UnitsManager_SelfDestructMenu`,
     /// windows `SELFDSTR`/`SLFDOPN`/`SLFDOK`). Not part of the snapshot/CRC.
     self_destruct: Option<selfdestruct::SelfDestructMenu>,
@@ -1038,6 +1043,7 @@ impl<D: Dispatcher> App<D> {
             research_menu: None,
             unit_menu: None,
             unit_stats: None,
+            repair_shop: None,
             self_destruct: None,
             sounds: Vec::new(),
             unit_sounds: Vec::new(),
@@ -1810,6 +1816,153 @@ impl<D: Dispatcher> App<D> {
     }
 
     // -----------------------------------------------------------------------
+    // Repair shop slot list (C++ `RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`)
+    // -----------------------------------------------------------------------
+
+    /// Open the slot list of the selected container; `false` — not a repair shop.
+    ///
+    /// `UnitsManager_Popup_OnClick_Activate` (`units_manager.cpp:997-1009`) →
+    /// `RepairShopMenu_Menu(unit)` (`repairshopmenu.cpp:735`). The command menu
+    /// is closed first (`GameManager_DeinitPopupButtons`), the map stays modal
+    /// until `Done`/`Esc` (`GameManager_DisableMainMenu`/`EnableMainMenu`).
+    pub fn open_repair_shop_menu(&mut self) -> bool {
+        let Some(id) = self.hud.selected else {
+            return false;
+        };
+        let Some(unit) = self.state_ref().unit(id) else {
+            return false;
+        };
+        if unit.team != self.state_ref().player_team() {
+            return false;
+        }
+
+        let Some(menu) = repairshopmenu::RepairShopMenu::new(self.state_ref(), id) else {
+            return false;
+        };
+
+        self.unit_menu = None;
+        self.repair_shop = Some(menu);
+        true
+    }
+
+    /// The open slot list, if any.
+    pub fn repair_shop(&self) -> Option<&repairshopmenu::RepairShopMenu> {
+        self.repair_shop.as_ref()
+    }
+
+    /// `RepairShopMenu_OnClick_Done` (`repairshopmenu.cpp:908-916`): the window
+    /// closes, the selection stays (`GameManager_EnableMainMenu`).
+    pub fn close_repair_shop_menu(&mut self) {
+        self.repair_shop = None;
+    }
+
+    /// Input in the open slot list ([`repairshopmenu::RepairShopMenu::input`]).
+    pub fn repair_shop_input(
+        &mut self,
+        event: InputEvent,
+    ) -> Option<repairshopmenu::RepairShopAction> {
+        let mut menu = self.repair_shop.take()?;
+        let action = menu.input(event);
+        self.repair_shop = Some(menu);
+
+        Some(action)
+    }
+
+    /// `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`) for the stored
+    /// unit the player picked in the slot list.
+    ///
+    /// The screen is closed first (C++ `Deinit()` at the top of `Activate`).
+    /// * `AIRTRANS`: the carrier releases the unit on its own cell —
+    ///   `Access_IsAccessible(cargo type, cargo team, repairshop->grid,
+    ///   SameClassBlocks)`, then `SetParent(target)` +
+    ///   `SetNewOrder(ORDER_UNLOAD, ORDER_STATE_INIT)`;
+    /// * `CLNTRANS`/`SEATRANS`/`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`: only
+    ///   `Access_FindReachableSpot` is a go/no-go; on success the stored unit is
+    ///   selected (`GameManager_EnableMainMenu(target_unit)`) and `_(755b)` asks
+    ///   for the drop cell. The next LMB next to the container is
+    ///   `CURSOR_ACTIVATE` (`game_manager.cpp:5937-5962`) and gives the container
+    ///   `ORDER_ACTIVATE`/`EXECUTING_ORDER` (`:6936-6946`);
+    ///   `UnitsManager_ActivateUnit` (`units_manager.cpp:3826`) sets the unit down
+    ///   on that cell.
+    ///
+    /// Returns the UI log line (`App::activate_unit_menu_item` contract).
+    pub fn repair_shop_activate(&mut self, cargo: max_core::unit::UnitId) -> String {
+        let Some(menu) = self.repair_shop.take() else {
+            return "activate: экран не открыт".to_string();
+        };
+        let shop = menu.shop;
+
+        let Some(transport) = self.state_ref().unit(shop).cloned() else {
+            return "activate: юнит исчез".to_string();
+        };
+        let Some(cargo_unit) = self.state_ref().unit(cargo).cloned() else {
+            return "activate: груз не найден".to_string();
+        };
+
+        if cargo_unit.parent_unit != Some(shop) {
+            return "activate: юнит не в трюме".to_string();
+        }
+
+        if transport.unit_type == max_core::enums::UnitType::AirTransport {
+            // `Access_IsAccessible(target->type, target->team, repairshop->grid,
+            // SameClassBlocks)` — the carrier must be able to drop the unit on its
+            // own cell.
+            if self.state_ref().is_accessible(
+                cargo_unit.unit_type,
+                cargo_unit.team,
+                transport.grid,
+                max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
+            ) == 0
+            {
+                self.hud.set_hint_styled(
+                    unitmenu::UNABLE_TO_ACTIVATE,
+                    crate::panels::MessageBoxStyle::Notice,
+                );
+
+                return "activate: место выгрузки недоступно".to_string();
+            }
+
+            return match unitmenu::p2_order(
+                self.state_ref(),
+                shop,
+                max_core::enums::UnitOrder::Unload,
+                max_core::enums::UnitOrderState::Init,
+                Some(cargo),
+            ) {
+                Some(command) => {
+                    self.hud.pending.push(command);
+                    format!("activate: выгрузка — ORDER_UNLOAD ({})", cargo.0)
+                }
+                None => "activate: юнит исчез".to_string(),
+            };
+        }
+
+        // `Access_FindReachableSpot(passenger type, passenger, grid = container
+        // cell, range 1, exclusion = building, mode 0)`.
+        if !self
+            .state_ref()
+            .transport_drop_possible(&transport, &cargo_unit)
+        {
+            self.hud.set_hint_styled(
+                unitmenu::UNABLE_TO_ACTIVATE,
+                crate::panels::MessageBoxStyle::Notice,
+            );
+
+            return "activate: некуда высадить — рядом с контейнером нет подходящей клетки"
+                .to_string();
+        }
+
+        // `GameManager_EnableMainMenu(target_unit)` → `MenuUnitSelect`: the stored
+        // unit becomes the selected one (portrait + reset of
+        // `cursor`/`enter_mode`/`targeting_mode` — `HudState::select`), and
+        // `_(755b)` asks for the drop cell.
+        self.select_unit(Some(cargo));
+        self.hud.set_hint(unitmenu::SELECT_DROP_SQUARE);
+
+        format!("activate: выберите клетку высадки ({})", cargo.0)
+    }
+
+    // -----------------------------------------------------------------------
     // Mine extraction allocation (C++ `AllocMenu`, window `ALLOCFRM`)
     // -----------------------------------------------------------------------
 
@@ -2382,111 +2535,37 @@ impl<D: Dispatcher> App<D> {
             }
             unitmenu::ItemId::Activate => {
                 // C++ `UnitsManager_Popup_OnClick_Activate`
-                // (`units_manager.cpp:997-1009`) → `RepairShopMenu_Menu` →
-                // `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`). The
-                // quantity/repair screen itself is not ported, so the item repeats the
-                // oracle's two branches:
+                // (`units_manager.cpp:997-1009`):
+                // * `ORDER_POWER_OFF` — power the shop on (`UnitsManager_Popup_OnClick_PowerOn`),
+                //   the caption is `_(cec1)` "start";
+                // * `MOBILE_AIR_UNIT` — `Popup_OnClick_ActivateAirUnit`;
+                // * otherwise — `Popup_OnClick_ActivateNonAirUnit`;
+                // both call `RepairShopMenu_Menu(unit)`.
                 //
-                // * `AIRTRANS`: the carrier releases one passenger on its own cell —
-                //   `repairshop->SetParent(target); SetNewOrder(ORDER_UNLOAD, INIT)`;
-                // * `CLNTRANS`/`SEATRANS` (non-air, `repairshopmenu.cpp:676-690`):
-                //   `Access_FindReachableSpot` is only a go/no-go; on success the
-                //   oracle selects the stored passenger (`GameManager_EnableMainMenu(
-                //   target_unit)`) and shows `_(755b)` "Select an open square to place
-                //   unit." The next left click on a cell next to the carrier is
-                //   `CURSOR_ACTIVATE` (`GameManager_GetAirUnitCursor`,
-                //   `game_manager.cpp:5937-5962`) and gives the carrier
-                //   `ORDER_ACTIVATE`/`ORDER_STATE_EXECUTING_ORDER`
-                //   (`game_manager.cpp:6936-6946`); `UnitsManager_ActivateUnit`
-                //   (`units_manager.cpp:3826`) sets the passenger down on that cell.
-                let Some(transport) = self.state_ref().unit(unit_id).cloned() else {
-                    return Some("activate: юнит исчез".to_string());
-                };
+                // `RepairShopMenu` is the slot list of the hold: the player picks the
+                // stored unit with the per-slot `Activate` button, so the port opens
+                // the screen instead of releasing the first stored unit (the
+                // manual-run defect). [`App::repair_shop_activate`] then reproduces
+                // `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`) for the
+                // chosen unit.
+                let power_off = self
+                    .state_ref()
+                    .unit(unit_id)
+                    .is_some_and(|unit| unit.orders == max_core::enums::UnitOrder::PowerOff);
 
-                if transport.storage <= 0 {
-                    return Some("activate: трюм пуст".to_string());
-                }
-
-                // `RepairShopMenu` slot list: the stored units (`ORDER_IDLE`, parent =
-                // carrier). The popup has no slots, so the first one is taken.
-                let cargo = self.state_ref().stored_passenger(unit_id);
-
-                let Some(cargo) = cargo else {
-                    return Some("activate: груз не найден".to_string());
-                };
-
-                let Some(cargo_unit) = self.state_ref().unit(cargo).cloned() else {
-                    return Some("activate: груз не найден".to_string());
-                };
-
-                if transport.unit_type == max_core::enums::UnitType::AirTransport {
-                    // `Access_IsAccessible(target->type,
-                    //  target->team, repairshop->grid, SameClassBlocks)` — the carrier
-                    // must be able to drop the unit on its own cell.
-                    if self.state_ref().is_accessible(
-                        cargo_unit.unit_type,
-                        cargo_unit.team,
-                        transport.grid,
-                        max_core::access::ACCESS_MODIFIER_SAME_CLASS_BLOCKS,
-                    ) == 0
-                    {
-                        return Some("activate: место выгрузки недоступно".to_string());
-                    }
-
-                    return match unitmenu::p2_order(
-                        self.state_ref(),
-                        unit_id,
-                        max_core::enums::UnitOrder::Unload,
-                        max_core::enums::UnitOrderState::Init,
-                        Some(cargo),
-                    ) {
+                if power_off {
+                    match crate::hud::build_power_order(self.state_ref(), unit_id) {
                         Some(command) => {
                             self.hud.pending.push(command);
-                            Some(format!(
-                                "{caption}: выгрузка — ORDER_UNLOAD",
-                                caption = item.caption
-                            ))
+                            format!("{} — Power on", item.caption)
                         }
-                        None => Some("activate: юнит исчез".to_string()),
-                    };
+                        None => format!("{}: питание недоступно", item.caption),
+                    }
+                } else if self.open_repair_shop_menu() {
+                    format!("{} — RepairShopMenu", item.caption)
+                } else {
+                    format!("{}: список хранимых юнитов недоступен", item.caption)
                 }
-
-                if !matches!(
-                    transport.unit_type,
-                    max_core::enums::UnitType::ArmouredPersonnelCarrier
-                        | max_core::enums::UnitType::SeaTransport
-                ) {
-                    return Some(unitmenu::disabled_line(&item));
-                }
-
-                // `Access_FindReachableSpot(passenger type, passenger, grid =
-                // carrier cell, range 1, exclusion = building, mode 0)`.
-                if !self
-                    .state_ref()
-                    .transport_drop_possible(&transport, &cargo_unit)
-                {
-                    self.hud.set_hint_styled(
-                        unitmenu::UNABLE_TO_ACTIVATE,
-                        crate::panels::MessageBoxStyle::Notice,
-                    );
-
-                    return Some(format!(
-                        "{}: некуда высадить — рядом с транспортом нет подходящей клетки",
-                        item.caption
-                    ));
-                }
-
-                // `GameManager_EnableMainMenu(target_unit)` → `MenuUnitSelect`:
-                // the stored passenger becomes the selected unit (its portrait, the
-                // reset of `cursor`/`enter_mode`/`targeting_mode` — `HudState::select`),
-                // and `_(755b)` asks for the drop cell.
-                self.select_unit(Some(cargo));
-                self.hud.set_hint(unitmenu::SELECT_DROP_SQUARE);
-
-                format!(
-                    "{}: выберите клетку высадки рядом с транспортом (клик по клетке)",
-                    item.caption
-                )
             }
             unitmenu::ItemId::Transfer
             | unitmenu::ItemId::Reload

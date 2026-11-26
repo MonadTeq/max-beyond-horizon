@@ -230,8 +230,9 @@ round-trip `MXLS` после хода, загрузка V70 в локальну�
 * Кланы (`ClanSelectMenu`) реализованы: 8 карточек с логотипами, Random/
   Cancel/?/Done, выбранный клан пишется в `LocalSetup::team_clans` и
   применяется к стартовым атрибутам юнитов (`NewGameConfig::clans`).
-  Полные описания/таблица бонусов из `SC_CLANS`/`clans.json` пока не
-  загружаются — на экране имя и подсказка.
+  Под карточками выводятся описание архетипа (`description.en-US` из
+  `SC_CLANS`, таблица `CLAN_DESCRIPTIONS`) и таблица бонусов по юнитам
+  (`CLAN_TRADEOFFS`, порядок `ClanSelectMenu::DrawClanUpgrades`).
 * Полная запись V70 для hot-seat не появилась (общий пункт M-SP).
 
 ### M-NET — Сетевая игра (Horizon) — работает; доводки **реализовано (v1.3)**

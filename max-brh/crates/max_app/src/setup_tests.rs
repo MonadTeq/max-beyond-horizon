@@ -190,3 +190,74 @@ fn clan_cancel_and_random_are_mechanics() {
             "Random сбрасывает клан"
     );
 }
+
+/// `ClanSelectMenu::DrawClanUpgrades` (`clanselectmenu.cpp:165-220`): the
+/// archetype line is `Clans::GetDescription` of the `SC_CLANS` entry, and the
+/// bonus list walks `UNIT_START..UNIT_END` in resource order with the
+/// `ATTRIB_TURNS_TO_BUILD..ATTRIB_COUNT` attributes.
+#[test]
+fn clan_bonuses_are_the_sc_clans_tradeoffs_in_oracle_order() {
+    use max_core::enums::TeamClan;
+
+    assert_eq!(clan_description(TeamClan::TheChosen), "Better Air Units:");
+    assert_eq!(clan_description(TeamClan::CrimsonPath), "Better Sea Units:");
+    assert_eq!(clan_description(TeamClan::VonGriffin), "Improved Espionage:");
+    assert_eq!(
+        clan_description(TeamClan::AyersHand),
+        "Better Missile Units:"
+    );
+    assert_eq!(
+        clan_description(TeamClan::Musashi),
+        "Better Armored Vehicles:"
+    );
+    assert_eq!(clan_description(TeamClan::SacredEight), "Better Fast Units:");
+    assert_eq!(clan_description(TeamClan::SevenKnights), "Better Defense:");
+    assert_eq!(
+        clan_description(TeamClan::AxisInc),
+        "Extra constructors and engineers (depends on budget):"
+    );
+
+    // `TeamClan::Random` has no `SC_CLANS` entry: the oracle draws no upgrade
+    // text; the port explains the random pick instead.
+    assert_eq!(clan_description(TeamClan::Random), MSG_NO_CLAN_CHOSEN);
+    assert!(clan_bonus_text(TeamClan::Random).is_empty());
+
+    // The Chosen: `AIRPLT` (0x1B) first, then the aircraft (`FIGHTER` 0x4C …).
+    // The attribute order is `Clans::ATTRIB_TURNS_TO_BUILD..ATTRIB_COUNT`
+    // (`clanselectmenu.cpp:179`), i.e. turns before range/attack.
+    assert_eq!(
+        clan_bonus_text(TeamClan::TheChosen),
+        "Air Units Plant: -5 turns. \
+         Fighter: -1 turns, +1 range. \
+         Ground Attack Plane: -1 turns, +4 attack. \
+         Air Transport: +4 speed. \
+         AWAC: +2 scan."
+    );
+
+    // Axis Inc. — production plants only.
+    assert_eq!(
+        clan_bonus_text(TeamClan::AxisInc),
+        "Light Vehicle Plant: -2 turns. Heavy Vehicle Plant: -4 turns."
+    );
+
+    // Musashi — heavy armour: `GUNTURRT` (0x22), `TANK` (0x33),
+    // `CLNTRANS` (0x41), `BATTLSHP` (0x46); hits → armor → attack (the
+    // `Clans::ATTRIB_*` order), speed and range last.
+    let musashi = clan_bonus_text(TeamClan::Musashi);
+    assert_eq!(
+        musashi,
+        "Gun Turret: +4 hits, +2 armor, +4 attack. \
+         Tank: +4 hits, +2 armor, +4 attack, +1 speed. \
+         Armoured Personnel Carrier: +4 hits, +2 armor, +1 speed. \
+         Gunboat: +8 hits, +2 armor, +4 attack, +1 range."
+    );
+
+    // Every bonus line fits the three-line block of the screen area.
+    let lines = crate::menu::wrap_gnw_text(&clan_bonus_text(TeamClan::VonGriffin), CLAN_TEXT_WIDTH);
+    assert!(!lines.is_empty());
+    assert!(
+        lines.iter().all(|line| line.len() > 1),
+        "no empty wrap lines: {lines:?}"
+    );
+}
+

@@ -590,13 +590,14 @@ fn auto_item_enables_auto_survey_and_leaves_sentry() {
     );
 }
 
-/// `activate` on an air transport releases one stored passenger.
+/// `activate` on an air transport releases the stored passenger chosen in the
+/// `RepairShopMenu` slot list.
 ///
 /// Oracle `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:910-921`) →
-/// `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-678`): for an `AIRTRANS`
-/// the carrier gets `ORDER_UNLOAD/INIT` with the passenger as its parent. The
-/// port previously left the item disabled ("RepairShopMenu не портирован") and
-/// the cargo could not be activated at all.
+/// `UnitsManager_Popup_OnClick_Activate` → `RepairShopMenu_Menu` (the slot list)
+/// → `RepairShopSlot_OnClick_Activate` → `RepairShopMenu::Activate`
+/// (`repairshopmenu.cpp:661-678`): for an `AIRTRANS` the carrier gets
+/// `ORDER_UNLOAD/INIT` with the chosen passenger as its parent.
 #[test]
 fn air_transport_activate_unloads_the_cargo() {
     let (mut app, team) = local_app();
@@ -656,8 +657,22 @@ fn air_transport_activate_unloads_the_cargo() {
         "activate must be live for an air transport with cargo"
     );
 
+    // `UnitsManager_Popup_OnClick_Activate` opens the slot list of the hold.
     let line = app.activate_unit_menu_item(index).expect("activate runs");
+    assert!(line.contains("RepairShopMenu"), "log: {line}");
+
+    let menu = app.repair_shop().expect("RepairShopMenu is open");
+    assert_eq!(menu.shop, transport, "the list belongs to the carrier");
+    assert_eq!(menu.units, vec![tank], "one stored unit in the hold");
+
+    // `RepairShopSlot_OnClick_Activate` → `RepairShopMenu::Activate` (the AIRTRANS
+    // branch): `ORDER_UNLOAD`/`INIT` for the carrier with the chosen passenger.
+    let line = app.repair_shop_activate(tank);
     assert!(line.contains("ORDER_UNLOAD"), "log: {line}");
+    assert!(
+        app.repair_shop().is_none(),
+        "`Activate` deinitializes the screen (`repairshopmenu.cpp:662`)"
+    );
 
     let pending = &app.hud().pending;
     assert_eq!(pending.len(), 1, "one order queued");

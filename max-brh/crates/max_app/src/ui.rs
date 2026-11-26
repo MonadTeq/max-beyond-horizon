@@ -2343,6 +2343,13 @@ where
         return session_unit_menu_input(app, event);
     }
 
+    // Repair shop slot list (C++ `RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`) — a
+    // full-screen modal opened by `activate`: the map/panels receive no input
+    // (`GameManager_DisableMainMenu` around `Run`).
+    if app.repair_shop().is_some() {
+        return session_repair_shop_input(app, event);
+    }
+
     // While the computer moves/a transition runs, orders and selection are impossible:
     // in C++ the map is not redrawn at this time (`game_manager.cpp:1179`),
     // and orders are discarded by `GameManager_ActiveTurnTeam`.
@@ -2643,6 +2650,41 @@ where
         }
         crate::unitstats::UnitStatsAction::Close => {
             app.close_unit_stats();
+        }
+    }
+
+    Transition::None
+}
+
+/// Input in the open repair shop slot list (C++ `RepairShopMenu::Run`).
+///
+/// The screen is a full-screen modal (`DEPOTFRM`/`HANGRFRM`,
+/// `GameManager_DisableMainMenu`): the map/panels receive no input. A click on a
+/// slot's `Activate` button (or the `1..6` hotkeys) calls
+/// `RepairShopMenu::Activate` for **that** stored unit and closes the window
+/// (`RepairShopSlot_OnClick_Activate` → `Deinit()`); `Done`/`Esc`/`Enter` close
+/// it without an order (`RepairShopMenu_OnClick_Done`); `?` opens
+/// `HelpMenu_Menu("TRANSFER_SETUP")` over it (the `default` branch of
+/// `RepairShopMenu_OnClick_Help`, `repairshopmenu.cpp:944-970`).
+fn session_repair_shop_input<D: Dispatcher>(app: &mut App<D>, event: InputEvent) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let Some(action) = app.repair_shop_input(event) else {
+        return Transition::None;
+    };
+
+    match action {
+        crate::repairshopmenu::RepairShopAction::None => {}
+        crate::repairshopmenu::RepairShopAction::Done => {
+            app.close_repair_shop_menu();
+        }
+        crate::repairshopmenu::RepairShopAction::Help => {
+            app.open_help(HelpSection::Transfer);
+        }
+        crate::repairshopmenu::RepairShopAction::Activate(cargo) => {
+            let line = app.repair_shop_activate(cargo);
+            app.hud_mut().push_log(line);
         }
     }
 
@@ -4013,9 +4055,9 @@ where
 }
 
 /// Right click on the map: statistics of the selected unit, select/inspect a
-/// unit, otherwise cancel the order modes.
+/// unit, otherwise drop the focus and cancel the order modes.
 ///
-/// Oracle `game_manager.cpp:6747-6778` (`MOUSE_RELEASE_RIGHT` on `WINDOW_MAIN_MAP`):
+/// Oracle `game_manager.cpp:6747-6776` (`MOUSE_RELEASE_RIGHT` on `WINDOW_MAIN_MAP`):
 ///
 /// * `GameManager_SelectedUnit == unit || == unit2` — `UnitStats_Menu`
 ///   (`STATS`, [`crate::unitstats::UnitStatsMenu`]) — the full statistics window
@@ -4023,8 +4065,11 @@ where
 /// * otherwise an own unit — `GameManager_UnitSelect` (select **without** opening
 ///   the command menu; the repeated LMB opens it, `GameManager_ClickUnit`);
 /// * otherwise a visible enemy — `GameManager_UnitSelectOther` (inspection);
-/// * otherwise — `targeting_mode`/`enter_mode`/`cursor` reset (`CURSOR_HIDDEN`).
-///   The selection itself stays: C++ has no "right click deselects".
+/// * otherwise — `targeting_mode`/`enter_mode`/`cursor` reset (`CURSOR_HIDDEN`)
+///   plus `GameManager_MenuUnitSelect(nullptr)` (`game_manager.cpp:7247-7253`):
+///   `GameManager_SelectedUnit = nullptr`, the corner FLC/portrait and the
+///   information display go back to black. An empty cell under the right button
+///   therefore releases the focus (manual-run defect: RMB did not deselect).
 fn session_map_right_click<D: Dispatcher>(
     app: &mut App<D>,
     viewport: &Viewport,
@@ -4104,9 +4149,16 @@ where
         return Transition::None;
     }
 
-    // `GameManager_ManagePlayerAction` + `targeting_mode = 0`, `enter_mode = 0`,
-    // `cursor = CURSOR_HIDDEN` (`:6764-6770`).
-    app.hud_mut().cancel_order_modes();
+    // `GameManager_ManagePlayerAction` + the empty-cell branch
+    // (`game_manager.cpp:6747-6776`): `targeting_mode = 0`, `enter_mode = 0`,
+    // `cursor = CURSOR_HIDDEN`. The focus is then released exactly like
+    // `GameManager_MenuUnitSelect(nullptr)` (`game_manager.cpp:7247-7253`):
+    // `GameManager_SelectedUnit = nullptr`, the corner FLC/portrait and the
+    // statistics window are restored to black. Without a target the right button
+    // is the original's "no unit selected" action (manual-run defect — RMB on an
+    // empty cell did not drop the selection).
+    app.select_unit(None);
+    app.hud_mut().clear_interaction();
     app.hud_mut().push_log("Cancelled");
 
     Transition::None

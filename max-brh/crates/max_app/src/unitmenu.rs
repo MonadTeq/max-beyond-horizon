@@ -71,10 +71,11 @@
 //! [`UnitMenuItem::note`]. Since 2026-11-20 (B1) `attack` (targeting_mode),
 //! `load` (cursor mode 7), `disable`/`steal` (modes 9/8), bulldozer
 //! (`ORDER_CLEAR`), `remove` (`UnitsManager_SelfDestructMenu`) and `Upg. All` are enabled.
-//! `activate` is enabled for the transports (`AIRTRANS`/`CLNTRANS`/`SEATRANS`) — the
-//! port reproduces `RepairShopMenu::Activate` without its slot screen; the repair-shop
-//! buildings (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) keep it disabled (`RepairShopMenu`
-//! is not ported). The master builder does not register the item
+//! `activate` is enabled for every repair shop (`AIRTRANS`/`CLNTRANS`/`SEATRANS`
+//! and `BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`): it opens the slot list of the hold
+//! (`crate::repairshopmenu`, C++ `RepairShopMenu`) where the player chooses the
+//! stored unit to release, exactly like `RepairShopMenu::Activate`
+//! (`repairshopmenu.cpp:661-690`). The master builder does not register the item
 //! (`FindValidPowerGeneratorPosition`). The list of reasons and
 //! references — `max-brh-docs/analysis/visual-1to1-status.md` §33.
 //!
@@ -275,7 +276,9 @@ impl UnitMenuItem {
         }
     }
 
-    fn disabled(mut self, note: &'static str) -> Self {
+    /// Marks the item as not triggering and records the reason (C++: a button
+    /// without a handler). Public so that a caller can build such an item too.
+    pub fn disabled(mut self, note: &'static str) -> Self {
         self.enabled = false;
         self.note = note;
         self
@@ -662,34 +665,13 @@ fn init_for_kind(kind: InitKind, unit: &UnitInfo, items: &mut Vec<UnitMenuItem>)
                 "activate"
             };
             // `UnitsManager_Popup_InitRepairShops` (`units_manager.cpp:1022-1033`):
-            // `activate` opens `RepairShopMenu`. The port has no slot screen, so the
-            // item reproduces `RepairShopMenu::Activate` (`repairshopmenu.cpp:661-690`):
-            // for `AIRTRANS` the carrier releases one passenger on its own cell
-            // (`ORDER_UNLOAD`/`INIT`), for `CLNTRANS`/`SEATRANS` it selects the stored
-            // passenger and the player clicks the drop cell (`ORDER_ACTIVATE`, see
-            // [`crate::App::activate_unit_menu_item`]). The other repair shops
-            // (`BARRACKS`/`DEPOT`/`HANGAR`/`DOCK`) still need the unported screen and
-            // stay disabled.
-            let activate = UnitMenuItem::new(ItemId::Activate, caption, '1', false);
-
-            items.push(
-                if matches!(
-                    unit.unit_type,
-                    UnitType::AirTransport
-                        | UnitType::ArmouredPersonnelCarrier
-                        | UnitType::SeaTransport
-                ) {
-                    if unit.storage > 0 {
-                        activate
-                    } else {
-                        activate.disabled("пустой трюм: нечего выгружать")
-                    }
-                } else {
-                    activate.disabled(
-                        "RepairShopMenu_Menu не портирован: экран repairshopmenu.cpp:144-1141",
-                    )
-                },
-            );
+            // the item is registered unconditionally (`RegisterButton(..., false, ...)`),
+            // for `ORDER_POWER_OFF` it powers the shop on and otherwise opens
+            // `RepairShopMenu` — the slot list where the player picks the stored unit
+            // to release ([`crate::repairshopmenu`], the manual-run defect "Activate
+            // unloads the first one"). The release itself is
+            // [`crate::App::repair_shop_activate`] (`repairshopmenu.cpp:661-690`).
+            items.push(UnitMenuItem::new(ItemId::Activate, caption, '1', false));
             // `UnitsManager_Popup_OnClick_Load` (`units_manager.cpp:1011`):
             // mode 7 toggle; boarding — `GameManager_ProcessMouse`
             // (CURSOR_LOAD, `game_manager.cpp:6807-6842`).

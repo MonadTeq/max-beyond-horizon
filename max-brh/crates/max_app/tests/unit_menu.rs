@@ -238,9 +238,9 @@ fn menu_items_follow_unit_type() {
     assert!(menu.items[0].enabled);
     let _ = key(&mut app, Key::Escape);
 
-    // Transport: `load` (cursor mode 7) and `activate`; the latter is live as
-    // soon as the hold is not empty (`RepairShopMenu::Activate`,
-    // `repairshopmenu.cpp:661-690`) — the freshly spawned carrier is empty.
+    // Transport: `load` (cursor mode 7) and `activate`; the latter is registered
+    // unconditionally (`UnitsManager_Popup_InitRepairShops`,
+    // `units_manager.cpp:1022-1033`) and opens the `RepairShopMenu` slot list.
     let transport = spawn(&mut app, UnitType::ArmouredPersonnelCarrier);
     open_menu(&mut app, transport);
     let menu = app.unit_menu().expect("меню транспорта");
@@ -254,10 +254,9 @@ fn menu_items_follow_unit_type() {
         .map(|index| &menu.items[index])
         .expect("activate у транспорта");
     assert!(
-        !activate.enabled,
-        "пустой трюм: выгружать нечего (пункт остаётся в списке, как в C++)"
+        activate.enabled,
+        "activate у транспорта всегда зарегистрирован, как в C++"
     );
-    assert!(activate.note.contains("трюм"), "причина в note: {}", activate.note);
 }
 
 #[test]
@@ -356,9 +355,10 @@ fn build_item_opens_build_menu() {
 fn disabled_item_does_not_act() {
     let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
 
-    // The remaining disabled `activate` — a repair-shop **building** (`DEPOT`):
-    // the port reproduces `RepairShopMenu::Activate` only for the transports,
-    // the slot screen itself is not ported.
+    // The `enabled` guard of `activate_unit_menu_item` (C++: a button without a
+    // handler). The oracle registers no item in that state any more (every
+    // repair shop opens the `RepairShopMenu`), so the guard is covered by
+    // disabling an item by hand.
     let depot = spawn(&mut app, UnitType::Depot);
     app.hud_mut().select(Some(depot));
     assert!(app.open_unit_menu(), "меню депо открывается");
@@ -367,10 +367,11 @@ fn disabled_item_does_not_act() {
         .unit_menu()
         .and_then(|menu| menu.index_of(ItemId::Activate))
         .expect("activate в меню");
-    assert!(
-        !app.unit_menu().expect("меню").items[index].enabled,
-        "activate депо отключён"
-    );
+    {
+        let menu = app.unit_menu_mut().expect("меню");
+        menu.items[index].enabled = false;
+        menu.items[index].note = "disabled for the test";
+    }
     let rect = app.unit_menu().expect("меню").button_rect(index);
     let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
 
@@ -378,6 +379,41 @@ fn disabled_item_does_not_act() {
         app.unit_menu().is_some(),
         "отключённый пункт не закрывает меню и не срабатывает"
     );
+    assert!(app.repair_shop().is_none(), "экран не открылся");
+    assert!(app.hud().pending.is_empty());
+}
+
+/// A repair-shop **building** (`DEPOT`) opens the same slot list; the item is
+/// live (`UnitsManager_Popup_InitRepairShops`) and an empty hold gives an empty
+/// list (the oracle opens `RepairShopMenu` regardless of the slot count).
+#[test]
+fn depot_activate_opens_the_repair_shop_list() {
+    let mut app = game_app().expect(concat!("test fixture is missing: ", stringify!(game_app())));
+
+    let depot = spawn(&mut app, UnitType::Depot);
+    open_menu(&mut app, depot);
+
+    let index = app
+        .unit_menu()
+        .and_then(|menu| menu.index_of(ItemId::Activate))
+        .expect("activate в меню депо");
+    assert!(app.unit_menu().expect("меню").items[index].enabled);
+
+    let rect = app.unit_menu().expect("меню").button_rect(index);
+    let _ = click(&mut app, (rect.ulx + 1, rect.uly + 1));
+
+    assert!(app.unit_menu().is_none(), "меню команд закрылось");
+    let menu = app.repair_shop().expect("RepairShopMenu депо");
+    assert_eq!(menu.shop, depot);
+    assert!(menu.units.is_empty(), "пустой склад — пустой список слотов");
+    assert_eq!(
+        menu.slots_per_screen,
+        max_app::repairshopmenu::SLOTS_PER_SCREEN
+    );
+
+    // `Done`/`Esc` close the screen without an order.
+    let _ = key(&mut app, Key::Escape);
+    assert!(app.repair_shop().is_none());
     assert!(app.hud().pending.is_empty());
 }
 
