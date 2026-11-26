@@ -4059,6 +4059,22 @@ where
         }
     }
 
+    // An aircraft in focus over a **foreign** unit: C++ `GameManager_GetWindowCursor`
+    // has no own `SELECTABLE` unit in the cell (`team_unit == nullptr`, otherwise
+    // the own-unit branch above took the click), so its `MOBILE_AIR_UNIT` branch
+    // (`game_manager.cpp:4441-4465`) yields `CURSOR_UNIT_GO` and LMB is
+    // `ORDER_MOVE`/`INIT` (`:6892-6898`) — the aircraft hovers above the unit.
+    // `Access_IsAccessible` blocks an aircraft only with another **air** unit
+    // (`access.cpp:131-137`), and the air path never avoids units (`paths.cpp:97`).
+    // The `targeting_mode`/`enter_mode` branches (`:4384`/`:4416`) keep priority;
+    // a valid attack target stays an attack (the block below).
+    if !app.hud().targeting_mode
+        && !app.hud().enter_mode
+        && hud::air_move_over_foreign_unit(app.state_ref(), selected, id)
+    {
+        return session_map_order_click(app, viewport, x, y);
+    }
+
     // `GameManager_GetMilitaryCursor` (`game_manager.cpp:6150`): the click is an
     // attack (`CURSOR_ENEMY`/`CURSOR_FAR_TARGET`) only when the selected unit can
     // actually attack the target. On `CURSOR_UNIT_NO_GO` C++ selects the visible

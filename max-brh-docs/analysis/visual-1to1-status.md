@@ -5978,4 +5978,54 @@ disabled_item_does_not_act}`, `unitmenu::tests` (пункт включён).
   0 пикселей расхождения;
 * оракулы `max-cpp-port/` и `max-original/` не изменялись.
 
+## 52. Ручной прогон 2026-11-26 (третий): самолёт в фокусе занимает клетку с юнитом — **сделано**
+
+### 52.1 Самолёт в фокусе не мог занять клетку с наземным/водным юнитом
+
+**Оракул.** `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): при выбранном
+воздушном юните ветка `case MOBILE_AIR_UNIT` возвращает `CURSOR_UNIT_GO`, если в клетке
+нет **своего** `SELECTABLE` юнита (`team_unit == nullptr`; иначе `CURSOR_FRIEND` —
+`Access_GetTeamUnit`, `access.cpp:1804`, требует `GetOrder() != ORDER_IDLE`) и клик не
+стал `CURSOR_ENEMY`/`CURSOR_FAR_TARGET` (`:4366-4382` — только при
+`Access_IsValidAttackTarget`, `access.cpp:1968-1993`: у летящего самолёта цель по типу
+оружия, у севшего целей нет вовсе). Левая кнопка с `CURSOR_UNIT_GO` отдаёт
+`ORDER_MOVE`/`ORDER_STATE_INIT` (`:6892-6898`), а `Access_IsAccessible` не блокирует
+самолёт наземным/морским юнитом: проверка класса сравнивает «воздух с воздухом»
+(`access.cpp:131-137`, `AccessModifier_SameClassBlocks`), и `Paths_GetAirPath`
+(`paths.cpp:97`) — прямая без обхода препятствий. Итог оракула: самолёт зависает над
+клеткой с юнитом (стек «воздух над землёй/водой» в `Hash_MapHash`).
+
+**Корень.** В порте клик по иностранному юниту всегда уходил в ветку «атака/осмотр»
+(`session_map_left_click`): у видимой, но невалидной для оружия цели
+(`attack_cursor_active == false`) фокус перескакивал на чужого юнита
+(`session_select_enemy`), приказа движения не было. Своего юнита порт вёл по оракулу
+(`clicks_through_unit_to_move`: `GROUND_COVER`/`LANDPAD` → `CURSOR_UNIT_GO`, иначе
+выделение).
+
+**Исправление.** `hud::air_move_over_foreign_unit` (предикат по оракулу) + ветка в
+`session_map_left_click` до «атака/осмотр»: самолёт в фокусе (`is_air`, не
+`ORDER_IDLE` — иначе `GameManager_GetAirUnitCursor`, `:5937-5962`) над видимым чужим
+юнитом, который не является допустимой целью (`is_valid_attack_target`), получает
+приказ движения (`Move (air)`), фокус остаётся на самолёте. `targeting_mode`/
+`enter_mode` (`:4384`/`:4416`) сохраняют приоритет; туманный (невидимый) чужой юнит
+оставлен на прежней ветке атаки — задокументированное упрощение порта (C++
+`Access_GetEnemyUnit` его не видит).
+
+**Тесты.** `max_app/src/hud_tests.rs::aircraft_moves_over_a_foreign_ground_unit_only`
+(правила предиката), `max_app/tests/mouse_input_regressions.rs::
+aircraft_left_click_hovers_over_a_foreign_ground_unit` (мышиный путь: `Move (air)`,
+`move_to`, полёт и общий стек с танком),
+`aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving` (контроль:
+`CURSOR_FRIEND` на своём юните).
+
+**CRC.** Исправление только в слое ввода: симуляция (`is_accessible`, `AirPath`)
+движение уже разрешала, `snapshot_bytes`/CRC не меняются; golden `move-input` — без
+дрейфа (0.184 % на `game-turn2`, ниже порога 1 %).
+
+### 52.2 Валидация (2026-11-26)
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run -p max_core -p max_app --no-default-features` — 1910/1910;
+* `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %;
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.
 

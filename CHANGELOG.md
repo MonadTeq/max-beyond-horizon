@@ -239,6 +239,31 @@
 
 ### Исправлено
 
+- **Самолёт в фокусе занимает клетку с наземным/водным юнитом (зависает над ним).**
+  Оракул: `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`) — ветка
+  `case MOBILE_AIR_UNIT` даёт `CURSOR_UNIT_GO`, когда в клетке нет **своего**
+  `SELECTABLE` юнита (`team_unit == nullptr`; иначе `CURSOR_FRIEND`,
+  `Access_GetTeamUnit`, `access.cpp:1804`, требует `GetOrder() != ORDER_IDLE`) и клик
+  не стал `CURSOR_ENEMY`/`CURSOR_FAR_TARGET` (`:4366-4382` — только при
+  `Access_IsValidAttackTarget`, `access.cpp:1968-1993`); LMB с `CURSOR_UNIT_GO` →
+  `ORDER_MOVE`/`INIT` (`:6892-6898`). `Access_IsAccessible` не блокирует самолёт
+  наземным/морским юнитом — проверка класса сравнивает «воздух с воздухом»
+  (`access.cpp:131-137`, `AccessModifier_SameClassBlocks`), а `Paths_GetAirPath` —
+  прямая без обхода препятствий. Корень: в порте клик по иностранному юниту всегда
+  уходил в ветку «атака/осмотр», и у видимой, но невалидной для оружия цели фокус
+  перескакивал на чужого юнита вместо приказа движения. Исправление:
+  `hud::air_move_over_foreign_unit` + ветка в `session_map_left_click` до
+  «атака/осмотр» — самолёт в фокусе над видимым чужим юнитом, который не является
+  допустимой целью, получает `ORDER_MOVE` (`Move (air)`), фокус остаётся на нём;
+  `targeting_mode`/`enter_mode` и допустимые цели атаки сохраняют приоритет, туманный
+  (невидимый) чужой юнит остаётся на прежней ветке (упрощение порта). CRC не
+  меняется — правка только в слое ввода. Тесты:
+  `max_app/src/hud_tests.rs::aircraft_moves_over_a_foreign_ground_unit_only`,
+  `max_app/tests/mouse_input_regressions.rs::
+  aircraft_left_click_hovers_over_a_foreign_ground_unit`/`..._on_an_own_unit_...`.
+  QA `move-input.qa` + golden — PASS. Подробности —
+  `max-brh-docs/analysis/visual-1to1-status.md` §52.
+
 - **Ход ИИ в реальном времени закрывается по таймеру `endturn`, а не по счётчику
   (1:1 оракул).** Оракул: `GameManager_HandleTurnTimer` (`game_manager.cpp:893-916` —
   `settings["endturn"]`, не меньше 15 с для незакрытого хода компьютера),

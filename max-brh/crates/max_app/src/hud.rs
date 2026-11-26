@@ -1125,6 +1125,51 @@ pub fn build_air_move_order(
     }))
 }
 
+/// Whether an LMB on the **foreign** unit `clicked` moves the aircraft
+/// `selected` onto that unit's cell — the aircraft hovers above it.
+///
+/// Oracle `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): the
+/// `MOBILE_AIR_UNIT` branch is reached with `team_unit == nullptr` (there is no
+/// own `SELECTABLE` unit in the cell — otherwise the cursor is `CURSOR_FRIEND`
+/// and the caller selects that unit) and after the military-cursor block
+/// (`:4366-4382`) took every valid attack target away. The air branch then
+/// yields `CURSOR_UNIT_GO`, and LMB gives `GameManager_SetUnitOrder(ORDER_MOVE,
+/// ORDER_STATE_INIT, …)` (`:6892-6898`). `Access_IsAccessible` never blocks an
+/// aircraft with a ground/sea unit: the class check compares air vs air only
+/// (`access.cpp:131-137`, `AccessModifier_SameClassBlocks`), and `Paths_GetAirPath`
+/// is a straight segment without obstacle avoidance (`paths.cpp:97`) — so the
+/// air/ground stack of a hovering aircraft above a unit is legal.
+///
+/// `ORDER_IDLE` — the aircraft sits in a container and
+/// `GameManager_GetAirUnitCursor` (`:4362`, `:5937-5962`) handles the click
+/// (`CURSOR_ACTIVATE`/`CURSOR_FRIEND`, never a move). A fogged foreign unit
+/// keeps the port's documented attack simplification: C++ `Access_GetEnemyUnit`
+/// does not see it, while [`unit_at_screen`] does — the caller's attack branch
+/// stays in charge there.
+pub fn air_move_over_foreign_unit(state: StateRef<'_>, selected: UnitId, clicked: UnitId) -> bool {
+    let (Some(aircraft), Some(other)) = (state.unit(selected), state.unit(clicked)) else {
+        return false;
+    };
+
+    if !aircraft.is_air()
+        || aircraft.team == other.team
+        || aircraft.hits == 0
+        || other.hits == 0
+        || aircraft.orders == UnitOrder::Idle
+    {
+        return false;
+    }
+
+    if !other.is_visible_to_team(aircraft.team) {
+        return false;
+    }
+
+    // `Access_IsValidAttackTarget(SelectedUnit, enemy)` (`access.cpp:1968-1993`):
+    // a hovering aircraft can only target what its `SC_ATTRI` weapon covers (air
+    // for FIGHTER/SP_FLAK/ANTIAIR, …), and a landed one targets nothing at all.
+    !state.is_valid_attack_target(aircraft, other)
+}
+
 /// Builds a power on/off order (the `Power On`/`Power Off` popup
 /// in C++, packet **08**, processor `P1`).
 ///

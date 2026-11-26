@@ -926,3 +926,94 @@ fn escape_cancels_chat_without_leaving_the_session() {
         Transition::LeaveSession
     );
 }
+
+/// [`air_move_over_foreign_unit`] — the `MOBILE_AIR_UNIT` branch of
+/// `GameManager_GetWindowCursor` (`game_manager.cpp:4456-4464`): an aircraft in
+/// focus moves over a foreign ground/sea unit (the plane hovers above it), while
+/// an own unit (`CURSOR_FRIEND`), a unit the aircraft can attack (`CURSOR_ENEMY`)
+/// and a fogged unit (`Access_GetEnemyUnit` needs `IsVisibleToTeam`) are not move
+/// targets. An `ORDER_IDLE` aircraft sits in a container:
+/// `GameManager_GetAirUnitCursor` (`:5937-5962`) handles that click instead.
+#[test]
+fn aircraft_moves_over_a_foreign_ground_unit_only() {
+    let mut app = App::new(AppConfig::default().with_screen(512, 384));
+    let universe = &mut app.universe;
+    universe.set_player_team(TeamId::RED);
+    *universe.team_units_mut(TeamId::RED).expect("RED economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+    *universe.team_units_mut(TeamId::BLUE).expect("BLUE economy") =
+        TeamUnits::with_clan(TeamClan::Random);
+
+    let fighter = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(10, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("fighter");
+    let ground = universe
+        .spawn_unit(UnitType::Tank, TeamId::BLUE, Point::new(11, 10), 0)
+        .expect("foreign tank");
+    let own = universe
+        .spawn_unit(UnitType::Tank, TeamId::RED, Point::new(12, 10), 0)
+        .expect("own tank");
+    let enemy_air = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::BLUE,
+            Point::new(13, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("foreign fighter");
+    let fogged = universe
+        .spawn_unit(UnitType::Tank, TeamId::BLUE, Point::new(14, 10), 0)
+        .expect("fogged tank");
+    let stored = universe
+        .spawn_unit(
+            UnitType::Fighter,
+            TeamId::RED,
+            Point::new(15, 10),
+            unit_flags::HOVERING,
+        )
+        .expect("stored fighter");
+
+    for id in [ground, enemy_air] {
+        universe
+            .unit_mut(id)
+            .expect("unit")
+            .set_visible_to_team(TeamId::RED, true);
+    }
+    {
+        let unit = universe.unit_mut(stored).expect("stored fighter");
+        unit.orders = UnitOrder::Idle;
+        unit.state = UnitOrderState::Store;
+    }
+
+    let state = app.state_ref();
+
+    assert!(
+        air_move_over_foreign_unit(state, fighter, ground),
+        "an aircraft in focus moves over a foreign ground unit"
+    );
+    assert!(
+        !air_move_over_foreign_unit(state, fighter, own),
+        "an own unit is CURSOR_FRIEND: the click selects it"
+    );
+    assert!(
+        !air_move_over_foreign_unit(state, fighter, enemy_air),
+        "a valid attack target is CURSOR_ENEMY, not a move"
+    );
+    assert!(
+        !air_move_over_foreign_unit(state, fighter, fogged),
+        "a fogged unit is invisible to the C++ cursor"
+    );
+    assert!(
+        !air_move_over_foreign_unit(state, fighter, stored),
+        "an ORDER_IDLE aircraft goes through GameManager_GetAirUnitCursor"
+    );
+    assert!(
+        !air_move_over_foreign_unit(state, own, ground),
+        "a ground unit has no air move cursor"
+    );
+}

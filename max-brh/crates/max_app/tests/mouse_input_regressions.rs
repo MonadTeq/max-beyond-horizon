@@ -381,6 +381,199 @@ fn right_click_on_selected_enemy_opens_its_stats() {
     });
 }
 
+/// #4: with an aircraft in focus, LMB on a cell holding a **foreign** ground
+/// unit is a move — the aircraft hovers above the unit (an air/ground stack).
+///
+/// Oracle `GameManager_GetWindowCursor` (`game_manager.cpp:4434-4465`): with no
+/// own `SELECTABLE` unit in the cell (`team_unit == nullptr`) the
+/// `MOBILE_AIR_UNIT` branch returns `CURSOR_UNIT_GO`, and LMB gives
+/// `ORDER_MOVE`/`ORDER_STATE_INIT` (`:6892-6898`). `Access_IsAccessible` blocks
+/// an aircraft only with another **air** unit (`access.cpp:131-137`: the
+/// `SameClassBlocks` check compares air vs air), so a ground/sea unit never
+/// blocks the destination cell. Before the fix the enemy branch of the click
+/// treated the foreign unit as an inspection target: the focus jumped to it and
+/// no order was given.
+#[test]
+fn aircraft_left_click_hovers_over_a_foreign_ground_unit() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        {
+            // A flying aircraft — the reported symptom is a plane above units.
+            let unit = app.universe_mut().unit_mut(aircraft).expect("fighter");
+            unit.flags |= max_core::enums::unit_flags::HOVERING;
+        }
+
+        let ground_grid = free_point(&app, Point::new(aircraft_grid.x + 3, aircraft_grid.y));
+        let ground = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Tank,
+                TeamId(1),
+                ground_grid,
+                max_core::access::unit_type_flags(UnitType::Tank),
+            )
+            .expect("foreign tank");
+        {
+            let unit = app.universe_mut().unit_mut(ground).expect("tank");
+            unit.set_visible_to_team(team, true);
+            unit.orders = UnitOrder::Await;
+            unit.state = UnitOrderState::ExecutingOrder;
+        }
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+
+        // Focus the aircraft with a click on its own cell.
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        // LMB on the foreign tank's cell: the aircraft flies there, the focus
+        // stays on the aircraft (no inspection selection).
+        let (gx, gy) = screen_point(&app, ground_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(gx, gy));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(aircraft),
+            "the click must not move the focus to the foreign unit"
+        );
+        assert!(
+            app.hud()
+                .log
+                .lines()
+                .iter()
+                .any(|line| line.contains("Move (air)")),
+            "LMB on a cell with a foreign ground unit must be an air move, log: {:?}",
+            app.hud().log.lines()
+        );
+
+        let unit = app.state_ref().unit(aircraft).expect("fighter");
+        assert_eq!(unit.orders, UnitOrder::Move, "ORDER_MOVE was given");
+        assert_eq!(
+            app.state_ref().order_data(aircraft).move_to,
+            ground_grid,
+            "move_to is the foreign unit's cell"
+        );
+
+        // The air path is a straight segment: the aircraft reaches the cell and
+        // shares it with the ground unit (`MapHash` keeps both, air above ground).
+        for _ in 0..240 {
+            if app.state_ref().unit(aircraft).map(|unit| unit.grid) == Some(ground_grid) {
+                break;
+            }
+            app.tick();
+        }
+        assert_eq!(
+            app.state_ref().unit(aircraft).map(|unit| unit.grid),
+            Some(ground_grid),
+            "the aircraft must hover above the ground unit"
+        );
+        let cell = app.state_ref().units_at(ground_grid);
+        assert!(
+            cell.contains(&aircraft) && cell.contains(&ground),
+            "the cell must hold both the aircraft and the ground unit, got {cell:?}"
+        );
+    });
+}
+
+/// #4 (oracle contrast): the same click on an **own** unit still selects it —
+/// C++ `GameManager_GetWindowCursor` returns `CURSOR_FRIEND` for an own
+/// `SELECTABLE` unit (`game_manager.cpp:4456-4458`), and `CURSOR_FRIEND` →
+/// `GameManager_ClickUnit` (`:6844-6852`). Only an own unit in `ORDER_IDLE` is
+/// not found by `Access_GetTeamUnit` (`access.cpp:1813`: `GetOrder() !=
+/// ORDER_IDLE`) and becomes a move target.
+#[test]
+fn aircraft_left_click_on_an_own_unit_selects_it_instead_of_moving() {
+    with_big_stack(|| {
+        let Some(mut app) = local_game() else {
+            return;
+        };
+        let team = app.player_team();
+        let center = Point::new(
+            app.state_ref().map().size.width / 2,
+            app.state_ref().map().size.height / 2,
+        );
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let point = Point::new(center.x + dx, center.y + dy);
+                app.universe_mut()
+                    .map_mut()
+                    .surface
+                    .set(point.x, point.y, max_core::Surface::LAND);
+            }
+        }
+
+        let aircraft_grid = free_point(&app, center);
+        let aircraft = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Fighter,
+                team,
+                aircraft_grid,
+                max_core::access::unit_type_flags(UnitType::Fighter),
+            )
+            .expect("fighter");
+        let own_grid = free_point(&app, Point::new(aircraft_grid.x + 2, aircraft_grid.y));
+        let own = app
+            .universe_mut()
+            .spawn_unit(
+                UnitType::Tank,
+                team,
+                own_grid,
+                max_core::access::unit_type_flags(UnitType::Tank),
+            )
+            .expect("own tank");
+
+        app.viewport_mut()
+            .center_on_grid(aircraft_grid.x, aircraft_grid.y);
+        let (ax, ay) = screen_point(&app, aircraft_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ax, ay));
+        assert_eq!(app.hud().selected, Some(aircraft));
+
+        let (ox, oy) = screen_point(&app, own_grid);
+        handle_session_input(&mut app, InputEvent::MouseClick(ox, oy));
+
+        assert_eq!(
+            app.hud().selected,
+            Some(own),
+            "CURSOR_FRIEND over an own unit selects it"
+        );
+        assert_eq!(
+            app.state_ref().unit(aircraft).map(|unit| unit.orders),
+            Some(UnitOrder::Await),
+            "no move order is given to the aircraft"
+        );
+    });
+}
+
 /// #3: RMB on the minimap gives the selected unit a move order.
 #[test]
 fn minimap_right_click_orders_the_selected_unit_to_move() {
