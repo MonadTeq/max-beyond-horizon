@@ -1510,17 +1510,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 }
             }
 
-            // Combat sounds (`UnitInfo::PrepareFire` → `SFX_TYPE_FIRE`,
-            // `UnitsManager_StartExplosion` → `SFX_TYPE_HIT`/`SFX_TYPE_EXPLOAD`):
-            // the tag and volume — from `SC_UNITS` (`max_app::sfx`), the switch —
-            // `disable_fx` (`Preferences::sound_enabled`).
-            for sound in app.take_unit_sounds() {
-                if app.sound_enabled() {
-                    let _ =
-                        ctx.audio
-                            .play_gain(sound.tag, max_app::audio::PlayMode::Once, sound.gain);
-                }
-            }
+            // Combat sounds are **not** drained here: they belong to the frame of
+            // the shot, not to an input event — see the frame-level
+            // `App::present_combat_audio` call after the simulation steps below.
 
             match transition {
                 Transition::None => {}
@@ -1890,6 +1882,19 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // the audio layer in the same frame in which it was changed in Preferences.
         ctx.audio.set_enabled(app.sound_enabled());
         ctx.audio.set_volume(app.preferences().sound_volume());
+
+        // Combat sounds of this frame (`UnitInfo::PrepareFire` → `SFX_TYPE_FIRE`,
+        // `UnitsManager_StartExplosion` → `SFX_TYPE_HIT`/`SFX_TYPE_EXPLOAD`; the
+        // tag and volume come from `SC_UNITS`, the switch from `disable_fx`).
+        //
+        // The drain is frame-level, right after the fixed-step ticks and before the
+        // frame is drawn, because that is when C++ plays the shot: `PlaySfx` runs
+        // synchronously inside `PrepareFire` (`unitinfo.cpp:4725`) just before the
+        // firing frame is set, and `process_bk`/`ProcessJobs` started the job on the
+        // same frame (`sound_manager.cpp:646`). Draining the queue from the
+        // input-event loop above delayed every shot until the next mouse/key event
+        // and turned everything queued meanwhile into one late volley.
+        app.present_combat_audio(&mut ctx.audio);
 
         // D2: the background music follows the screen (`MAIN_MSC` in the menu, the planet
         // shuffle track in a match) and the facade event stream (win/lose). The director

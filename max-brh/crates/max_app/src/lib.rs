@@ -2932,8 +2932,9 @@ impl<D: Dispatcher> App<D> {
     /// Called right after `GameState::tick` (in [`App::tick`] and
     /// `App::local_update`): the simulation accumulates `max_core::UnitSound`
     /// (`PrepareFire`/`StartExplosion`), while the resource and volume are chosen by the
-    /// `SC_UNITS` table ([`sfx::combat_sound`]). The queue is read by `main.rs` and played
-    /// via `AudioPlayer` (a mock player in tests).
+    /// `SC_UNITS` table ([`sfx::combat_sound`]). The queue is played once per frame by
+    /// [`App::present_combat_audio`] (`main.rs`), which is what keeps a shot's sound
+    /// in the frame of its flash; a mock player is used in tests.
     pub fn collect_combat_sounds(&mut self) -> usize {
         // The frame queue: `main.rs` takes it every frame. QA/headless runs
         // do not play sound, so old events are trimmed so that the queue
@@ -3023,6 +3024,10 @@ impl<D: Dispatcher> App<D> {
     }
 
     /// Takes the combat sounds accumulated since the previous call.
+    ///
+    /// The frame loop must drain the queue once per **frame** through
+    /// [`Self::present_combat_audio`]: draining it from an input-event loop (as
+    /// the UI once did) defers every shot to the next mouse/key event.
     pub fn take_unit_sounds(&mut self) -> Vec<sfx::CombatSfx> {
         std::mem::take(&mut self.unit_sounds)
     }
@@ -3030,6 +3035,35 @@ impl<D: Dispatcher> App<D> {
     /// Current combat sound queue (for tests/QA).
     pub fn unit_sounds(&self) -> &[sfx::CombatSfx] {
         &self.unit_sounds
+    }
+
+    /// Plays the combat sounds of the frame that has just been simulated.
+    ///
+    /// Oracle: `UnitInfo::PrepareFire` (`unitinfo.cpp:4725`) calls
+    /// `PlaySfx(this, Unit::SFX_TYPE_FIRE)` **synchronously**, a few lines before it
+    /// draws the firing frame (`DrawSpriteFrame(unit_angle + firing_image_base)`,
+    /// `unitinfo.cpp:4730-4745`), so the gunshot and the flash belong to one frame.
+    /// `PlaySfx` only queues a `SoundJob`, which the background process starts on
+    /// the same frame's message pump (`process_bk`, `input.cpp:326`/`gnw.c:909` →
+    /// `SoundManager::ProcessJobs`, `sound_manager.cpp:646/680`) and never on a
+    /// game input event.
+    ///
+    /// The port keeps the simulation free of the audio device (DESIGN §6.1): the
+    /// tick accumulates [`max_core::game::UnitSound`]s, and the driver hands them
+    /// to the device here — once per frame, after the fixed-step ticks of the frame
+    /// and before that frame is drawn, so the shot is heard with its flash.
+    /// Returns the number of clips submitted to the device.
+    pub fn present_combat_audio(&mut self, audio: &mut crate::audio::AudioPlayer) -> usize {
+        let enabled = self.sound_enabled();
+        let mut submitted = 0;
+
+        for sound in self.take_unit_sounds() {
+            if enabled && audio.play_gain(sound.tag, crate::audio::PlayMode::Once, sound.gain) {
+                submitted += 1;
+            }
+        }
+
+        submitted
     }
 
     // -----------------------------------------------------------------------

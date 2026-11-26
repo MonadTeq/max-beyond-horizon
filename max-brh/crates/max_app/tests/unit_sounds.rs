@@ -234,9 +234,9 @@ fn disabled_sound_does_not_reach_the_backend() {
 
 #[test]
 fn app_collects_combat_sounds_into_the_frame_queue() {
-    // `App::tick` → `collect_combat_sounds`: the frame queue is filled with SC_UNITS
-    // tags, `take_unit_sounds` returns it (`main.rs` plays via
-    // `AudioPlayer::play_gain`).
+    // `App::tick` → `collect_facade_sounds`: the frame queue is filled with SC_UNITS
+    // tags, `take_unit_sounds` returns it (`main.rs` drains it once per frame through
+    // `App::present_combat_audio`; see `shot_sound_timing.rs` for the timing).
     let mut app = App::new(AppConfig::default());
 
     // Tank attributes are taken from the team `current_values`, and firing happens on
