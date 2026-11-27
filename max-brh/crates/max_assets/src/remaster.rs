@@ -79,6 +79,39 @@ pub fn sprite_shadow_tag(resource: &str, frame: u16, scale: u32) -> String {
     format!("unit_shadow_{resource}_{frame:03}_x{scale}")
 }
 
+/// Manifest tag of an HD window-chrome / UI image (`remaster-hd.md` §R5).
+///
+/// The 1:1 window chrome is `FRAMEPIC` — a 640×480 `BigImage` with its **own**
+/// palette — plus `PANELTOP`/`PANELBTM` (the `SimpleImage` halves of the left
+/// panel drawn over the window palette) and every other `MAX.RES` interface
+/// image a screen paints: menu backgrounds, buttons, fields, lists, dialogs.
+/// Chrome carries no team colours, no brightness levels and no palette cycles
+/// (`FRAMEPIC`'s palette is baked into its pixels, the rest use the window
+/// palette), so — exactly like an R3 terrain tile — one pre-baked RGBA8 texture
+/// is enough per image; the window palette of `FRAMEPIC` itself is unaffected.
+///
+/// The tag reuses the `MAX.RES` resource name verbatim (upper case in the
+/// archive), e.g. `chrome_FRAMEPIC_x2`, `chrome_PANELTOP_x2`,
+/// `chrome_ENDTRN_U_x4`. The scale is part of the tag because a ×2 and a ×4
+/// texture are separate manifest entries. The name is a manifest key and part
+/// of the `.ktx2` file name, so it must contain only ASCII letters, digits and
+/// underscores.
+pub fn chrome_image_tag(resource: &str, scale: u32) -> String {
+    format!("chrome_{resource}_x{scale}")
+}
+
+/// Manifest tag of an HD skin of a procedural UI widget (`remaster-hd.md` §R5).
+///
+/// `max_render::ui::render_ui` draws its boxes procedurally (a theme fill and a
+/// 1 px border); the HD remaster can substitute pre-baked RGBA8 art for them,
+/// stretched to the widget rectangle. `part` is the stable slot name of
+/// `max_render::ui::UiBox` (`background`, `panel`, `button`, `button_hover`,
+/// `button_disabled`, `selection`), e.g. `ui_button_x2`. The scale is part of
+/// the tag because a ×2 and a ×4 skin are separate manifest entries.
+pub fn ui_skin_tag(part: &str, scale: u32) -> String {
+    format!("ui_{part}_x{scale}")
+}
+
 /// Remaster asset error, returned as a value (never a panic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemasterError {

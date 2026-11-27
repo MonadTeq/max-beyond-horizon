@@ -65,9 +65,9 @@ pub use mve::{
     PALETTE_SIZE as MVE_PALETTE_SIZE, VIDEO_HEADER_SIZE,
 };
 pub use remaster::{
-    sprite_frame_tag, sprite_shadow_tag, terrain_tile_tag, RemasterCache, RemasterEntry,
-    RemasterError, RemasterManifest, RemasterTexture, MANIFEST_FILE, MANIFEST_VERSION,
-    RGBA_BYTES_PER_PIXEL,
+    chrome_image_tag, sprite_frame_tag, sprite_shadow_tag, terrain_tile_tag, ui_skin_tag,
+    RemasterCache, RemasterEntry, RemasterError, RemasterManifest, RemasterTexture, MANIFEST_FILE,
+    MANIFEST_VERSION, RGBA_BYTES_PER_PIXEL,
 };
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,

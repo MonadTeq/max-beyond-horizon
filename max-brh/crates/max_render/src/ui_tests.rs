@@ -159,3 +159,163 @@ fn transparent_theme_keeps_the_underlying_frame() {
 
     assert_eq!(buffer.get(0, 0), Some(Rgba::rgb(1, 2, 3)));
 }
+
+/// A stand-in for `max_render::hd_chrome::HdUiSkin`: fills the handled boxes
+/// with one marker color. Proves that `render_ui_with_skin` asks the skin part
+/// by part and keeps the procedural drawing for the rest.
+struct MarkerSkin {
+    color: Rgba,
+    handled: &'static [UiBox],
+}
+
+impl UiBoxPainter for MarkerSkin {
+    fn paint_box(&self, dst: &mut RgbaBuffer, rect: Rect, part: UiBox) -> bool {
+        if !self.handled.contains(&part) {
+            return false;
+        }
+
+        dst.fill_rect(rect.into(), self.color);
+        true
+    }
+}
+
+/// A screen that exercises every widget kind and every box slot.
+fn mixed_screen() -> UiState {
+    let mut list = ListBox::with_items(
+        Rect::new(0, 60, 120, 42),
+        vec!["one".to_string(), "two".to_string(), "three".to_string()],
+    );
+    list.select(0);
+
+    UiState::new(vec![
+        Widget::Label(Label::new("title", Rect::new(0, 0, 120, 12))),
+        Widget::Button(Button::new("OK", Rect::new(0, 12, 120, 20))),
+        Widget::Button(Button::new("OFF", Rect::new(0, 34, 120, 20)).with_enabled(false)),
+        Widget::TextBox(TextBox::with_value(
+            "Name",
+            "game",
+            "hint",
+            Rect::new(0, 120, 120, 20),
+        )),
+        Widget::ListBox(list),
+    ])
+}
+
+#[test]
+fn a_skin_without_parts_is_byte_identical_to_render_ui() {
+    let ui = mixed_screen();
+    let mut plain = RgbaBuffer::new(160, 160);
+    let mut skinned = RgbaBuffer::new(160, 160);
+
+    render_ui(&mut plain, &ui);
+    render_ui_with_skin(
+        &mut skinned,
+        &ui,
+        Some(&MarkerSkin {
+            color: Rgba::rgb(200, 100, 50),
+            handled: &[],
+        }),
+    );
+
+    assert_eq!(
+        plain, skinned,
+        "a skin that handles nothing changes nothing"
+    );
+}
+
+#[test]
+fn a_skin_replaces_only_the_boxes_it_handles_and_keeps_hit_testing() {
+    let ui = mixed_screen();
+    let widgets_before = ui.widgets.clone();
+    let marker = Rgba::rgb(200, 100, 50);
+    let mut buffer = RgbaBuffer::new(160, 160);
+
+    render_ui_with_skin(
+        &mut buffer,
+        &ui,
+        Some(&MarkerSkin {
+            color: marker,
+            handled: &[UiBox::Button],
+        }),
+    );
+
+    // The normal button is the last-but-one "button" widget (index 1); its box
+    // is painted by the skin, including where the procedural border was.
+    assert_eq!(buffer.get(0, 12), Some(marker));
+    assert_eq!(buffer.get(119, 31), Some(marker));
+    // The disabled button (index 2) did not request `UiBox::Button` from the
+    // fake skin and keeps the theme drawing.
+    assert_eq!(buffer.get(1, 35), Some(ui.theme.button_disabled));
+    assert_eq!(buffer.get(0, 35), Some(ui.theme.border));
+    // The field and the list keep the theme panel; text is drawn either way.
+    assert_eq!(buffer.get(1, 121), Some(ui.theme.panel));
+    assert_eq!(buffer.get(5, 62), Some(ui.theme.selection));
+
+    assert_eq!(ui.widgets, widgets_before, "geometry is read-only");
+    for (point, expected) in [
+        (Point::new(5, 20), Some(1)),
+        (Point::new(5, 40), None),
+        (Point::new(5, 130), Some(3)),
+        (Point::new(5, 70), Some(4)),
+    ] {
+        assert_eq!(hit_test(&ui, point), expected, "{point:?}");
+    }
+}
+
+#[test]
+fn a_skin_can_paint_every_box_including_selection() {
+    let ui = mixed_screen();
+    let marker = Rgba::rgb(10, 200, 30);
+    let mut buffer = RgbaBuffer::new(160, 160);
+
+    render_ui_with_skin(
+        &mut buffer,
+        &ui,
+        Some(&MarkerSkin {
+            color: marker,
+            handled: &UiBox::ALL,
+        }),
+    );
+
+    assert_eq!(buffer.get(0, 0), Some(marker), "background skin");
+    assert_eq!(buffer.get(1, 121), Some(marker), "field skin");
+    assert_eq!(buffer.get(5, 62), Some(marker), "selection skin");
+    assert_eq!(buffer.get(1, 35), Some(marker), "disabled button skin");
+}
+
+#[test]
+fn a_transparent_theme_background_is_not_covered_by_the_skin() {
+    let mut buffer = RgbaBuffer::filled(20, 10, Rgba::rgb(1, 2, 3));
+    let mut ui = UiState::new(Vec::new());
+    ui.theme.background = Rgba::TRANSPARENT;
+
+    render_ui_with_skin(
+        &mut buffer,
+        &ui,
+        Some(&MarkerSkin {
+            color: Rgba::rgb(200, 100, 50),
+            handled: &[UiBox::Background],
+        }),
+    );
+
+    assert_eq!(
+        buffer.get(0, 0),
+        Some(Rgba::rgb(1, 2, 3)),
+        "the transparent-background rule wins over the skin"
+    );
+}
+
+#[test]
+fn ui_box_slots_have_stable_manifest_names() {
+    assert_eq!(
+        UiBox::ALL.map(UiBox::name),
+        [
+            "background",
+            "panel",
+            "button",
+            "button_hover",
+            "button_disabled",
+            "selection",
+        ]
+    );
+}

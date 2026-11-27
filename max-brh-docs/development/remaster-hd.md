@@ -74,6 +74,32 @@ HD-текстуры. Нет записи в манифесте, файла ил�
 Модуль: `max_render::hd_sprites` (`HdSpriteBank`, `HdSpriteRenderer`,
 `HdSpriteCache`, `HdIndexMap`/`HdIndexFrame`/`HdShadowFrame`, `IndexPaletteLut`).
 
+Хром UI (R5): `FRAMEPIC` (640×480, собственная палитра), `PANELTOP`/`PANELBTM`,
+кнопки/меню/поля/списки — картинки `MAX.RES`; командные цвета, яркость и циклы к
+ним не применяются, поэтому HD-ассет — предзапечённый RGBA8, один на картинку.
+Теги: `chrome_<RES>_x<S>` (`chrome_FRAMEPIC_x2`, `chrome_PANELTOP_x4`,
+`chrome_ENDTRN_U_x2` — имя ресурса `MAX.RES` дословно; так же адресуются кнопки
+и фоны меню) и `ui_<SLOT>_x<S>` (`ui_button_x2`, `ui_button_hover_x2`,
+`ui_panel_x2`, …) для процедурных рамок `max_render::ui`; строители —
+`max_assets::remaster::chrome_image_tag`/`ui_skin_tag`. Альфа — прозрачность
+исходной картинки: индекс прозрачности `SimpleImage` запекается как `A = 0`,
+такие тексели не пишутся, поэтому кнопка/панель компонуется поверх хрома.
+Раскладка — константы `max_render::layout` (640×480); `S` входит только на
+выводе (`HdChrome::render_rect`/`scaled_rect`), а hit-test и клики остаются в
+логических координатах (цепочка `ScreenGeometry::window_to_frame` делит на `S`).
+Fallback по-ассетный: `draw_frame`/`draw_panel`/`draw_image` возвращают `None`,
+и вызывающий рисует исходную палитровую картинку; вариант
+`draw_*_with_fallback` делает это сам по `ChromeSource` — исходным
+`BigImage`/`SimpleImage` из `MAX.RES` поверх оконной палитры `FRAMEPIC` (на
+`S=1` — байт-в-байт картинка `max_app::chrome`/`panels`, на `S>1` — её
+nearest-апскейл `×S`). Слот `UiBox` без HD-скина рисуется процедурно темой
+(hover/disabled откатываются на базовый `ui_button`, чтобы одна текстура
+держала кнопки HD). `S=1` (`RenderScale::PixelPerfect`) в слой не заходит:
+`load` ничего не грузит, а рендер байт-в-байт прежний.
+Модуль: `max_render::hd_chrome` (`HdChrome`, `ChromeSource`, `HdImage`,
+`HdUiSkin`, `ChromePanel`, `stretch_into`); точка подмены UI-рамок —
+`max_render::ui::render_ui_with_skin` (`UiBox`, `UiBoxPainter`).
+
 ## Пошаговое ТЗ (R0–R7)
 
 - **R0** — измерения (VRAM, объём HD, выбор транскодера) + решения развилок.

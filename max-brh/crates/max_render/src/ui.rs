@@ -630,6 +630,69 @@ pub fn hit_test(ui: &UiState, point: Point) -> Option<usize> {
     ui.hit_test(point)
 }
 
+/// Box part of a widget that a pre-baked skin can supply (`remaster-hd.md` §R5).
+///
+/// [`render_ui`] paints these parts procedurally from [`UiTheme`] (a fill and a
+/// 1 px border). The HD remaster may substitute pre-baked RGBA8 art for any
+/// part through [`UiBoxPainter`]; a part without a skin keeps the procedural
+/// drawing, so the fallback is per part (guardrail 4 of the remaster plan).
+///
+/// The names are stable manifest slots (`max_assets::remaster::ui_skin_tag`),
+/// not display strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UiBox {
+    /// The themed screen background ([`UiTheme::background`]).
+    Background,
+    /// Background of input fields and lists (also inside the list box).
+    Panel,
+    /// A normal button.
+    Button,
+    /// A button under the cursor or in focus.
+    ButtonHover,
+    /// A disabled button.
+    ButtonDisabled,
+    /// The selected list row.
+    Selection,
+}
+
+impl UiBox {
+    /// Every slot, in drawing order (the order the remaster manifest lists them).
+    pub const ALL: [Self; 6] = [
+        Self::Background,
+        Self::Panel,
+        Self::Button,
+        Self::ButtonHover,
+        Self::ButtonDisabled,
+        Self::Selection,
+    ];
+
+    /// Stable slot name used in the manifest tag (`button_hover`, ...).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Panel => "panel",
+            Self::Button => "button",
+            Self::ButtonHover => "button_hover",
+            Self::ButtonDisabled => "button_disabled",
+            Self::Selection => "selection",
+        }
+    }
+}
+
+/// A source of pre-baked widget box art (`remaster-hd.md` §R5).
+///
+/// Implemented by `max_render::hd_chrome::HdUiSkin`. [`render_ui_with_skin`]
+/// asks the painter for each box; `false` means "no HD art for this part", and
+/// the procedural theme drawing of [`render_ui`] is used instead.
+///
+/// A painter never changes widget geometry: the rectangles it receives are the
+/// logical widget rectangles, so layout and [`UiState::hit_test`] are untouched.
+pub trait UiBoxPainter {
+    /// Paints the box `part` of `rect` into `dst`; `true` when it handled the
+    /// box (the procedural fill and border are then skipped).
+    fn paint_box(&self, dst: &mut RgbaBuffer, rect: Rect, part: UiBox) -> bool;
+}
+
 /// Vertical layout: rectangles top to bottom inside `area`.
 ///
 /// `heights` are the element heights, `gap` is the spacing between them. Returns as many
@@ -669,11 +732,33 @@ impl UiState {
 ///
 /// First fills the background (if the theme is not transparent), then draws in order
 /// the labels, fields, lists and buttons: background → frame → selection → text.
+///
+/// This is the pixel-perfect (no HD skin) path; [`render_ui_with_skin`] is the
+/// same renderer with a source of pre-baked box art.
 pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
+    render_ui_with_skin(buffer, ui, None);
+}
+
+/// Draws the UI with an optional HD box skin (`remaster-hd.md` §R5).
+///
+/// The geometry is exactly that of [`render_ui`]: `ui` is read-only, widget
+/// rectangles, layout and [`UiState::hit_test`] are never touched, and the
+/// caller keeps the 640×480 logical coordinates. For each box the painter is
+/// asked first; a part it does not handle is drawn procedurally by the theme,
+/// so a partial HD skin (or `None`) renders every widget as before.
+///
+/// `skin` is `None` for the byte-for-byte 1:1 path; a skin that reports
+/// "no HD" for every part (e.g. a `PixelPerfect` `HdUiSkin`) is byte-identical
+/// to `None`.
+pub fn render_ui_with_skin(buffer: &mut RgbaBuffer, ui: &UiState, skin: Option<&dyn UiBoxPainter>) {
     let theme = ui.theme;
 
     if !theme.background.is_transparent() {
-        buffer.fill(theme.background);
+        let bounds = Rect::new(0, 0, buffer.width() as i32, buffer.height() as i32);
+
+        if !paint_box(buffer, skin, bounds, UiBox::Background) {
+            buffer.fill(theme.background);
+        }
     }
 
     for (index, widget) in ui.widgets.iter().enumerate() {
@@ -698,9 +783,18 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
                     theme.button
                 };
                 let border = if focused { theme.accent } else { theme.border };
+                let part = if !button.enabled {
+                    UiBox::ButtonDisabled
+                } else if focused || hovered {
+                    UiBox::ButtonHover
+                } else {
+                    UiBox::Button
+                };
 
-                buffer.fill_rect(button.rect.into(), fill);
-                stroke_rect(buffer, button.rect, border);
+                if !paint_box(buffer, skin, button.rect, part) {
+                    buffer.fill_rect(button.rect.into(), fill);
+                    stroke_rect(buffer, button.rect, border);
+                }
 
                 let color = if button.enabled {
                     theme.text
@@ -722,8 +816,10 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
             Widget::TextBox(text_box) => {
                 let border = if focused { theme.accent } else { theme.border };
 
-                buffer.fill_rect(text_box.rect.into(), theme.panel);
-                stroke_rect(buffer, text_box.rect, border);
+                if !paint_box(buffer, skin, text_box.rect, UiBox::Panel) {
+                    buffer.fill_rect(text_box.rect.into(), theme.panel);
+                    stroke_rect(buffer, text_box.rect, border);
+                }
 
                 let empty = text_box.text.is_empty();
                 let value = if empty {
@@ -759,8 +855,10 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
                     theme.border
                 };
 
-                buffer.fill_rect(list.rect.into(), theme.panel);
-                stroke_rect(buffer, list.rect, border);
+                if !paint_box(buffer, skin, list.rect, UiBox::Panel) {
+                    buffer.fill_rect(list.rect.into(), theme.panel);
+                    stroke_rect(buffer, list.rect, border);
+                }
 
                 if list.items.is_empty() {
                     draw_text_line(
@@ -787,7 +885,9 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
                         row_height,
                     );
 
-                    if list.selected == Some(index) {
+                    if list.selected == Some(index)
+                        && !paint_box(buffer, skin, row_rect, UiBox::Selection)
+                    {
                         buffer.fill_rect(row_rect.into(), theme.selection);
                     }
 
@@ -805,6 +905,16 @@ pub fn render_ui(buffer: &mut RgbaBuffer, ui: &UiState) {
             }
         }
     }
+}
+
+/// Asks the skin to paint one box; `false` — the procedural theme drawing is used.
+fn paint_box(
+    buffer: &mut RgbaBuffer,
+    skin: Option<&dyn UiBoxPainter>,
+    rect: Rect,
+    part: UiBox,
+) -> bool {
+    skin.is_some_and(|skin| skin.paint_box(buffer, rect, part))
 }
 
 /// Draws a 1 px frame along the edges of the rectangle.

@@ -4,13 +4,18 @@
 //!
 //! * **pure** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
 //!   [`viewport`], [`text`], [`ui`], [`terrain`], [`hd_terrain`], [`hd_sprites`],
-//!   [`render_scale`]: only data and integer arithmetic, no SDL. Everything is
-//!   tested without a window — this is the main, always buildable layer.
+//!   [`hd_chrome`], [`render_scale`]: only data and integer arithmetic, no SDL.
+//!   Everything is tested without a window — this is the main, always buildable
+//!   layer.
 //!   [`hd_terrain`] is the R3 presentation adapter: it reads decoded RGBA8
 //!   textures through `max_assets::remaster` and never touches `max_core`.
 //!   [`hd_sprites`] is the R4 adapter: HD index maps recolored on the CPU by a
 //!   palette LUT (`ColorLut`/`BrightnessLut`/`ColorCycles`), with per-asset
 //!   fallback to [`SpriteRenderer`].
+//!   [`hd_chrome`] is the R5 adapter: pre-baked RGBA8 window chrome
+//!   (`FRAMEPIC`/`PANELTOP`/`PANELBTM`, buttons and menus by `MAX.RES` name)
+//!   and UI box skins, drawn at the presentation scale with per-asset fallback
+//!   to the original palette images and the procedural [`ui`] theme.
 //! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
 //!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
 //!   and the `sdl3` dependency is not pulled in.
@@ -40,6 +45,7 @@
 
 pub mod buffer;
 pub mod frame_scale;
+pub mod hd_chrome;
 pub mod hd_sprites;
 pub mod hd_terrain;
 pub mod layout;
@@ -58,6 +64,11 @@ pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use hd_chrome::{
+    scaled_pixel_rect, scaled_rect, stretch_into, ChromePanel, ChromeSource, HdChrome, HdImage,
+    HdUiSkin, CHROME_FRAME, CHROME_PANEL_BOTTOM, CHROME_PANEL_TOP, PANEL_BOTTOM_RECT,
+    PANEL_TOP_RECT,
+};
 pub use hd_sprites::{
     is_silhouette_zoom, scaled_offset, HdIndexFrame, HdIndexMap, HdRecolorState, HdShadowFrame,
     HdSpriteBank, HdSpriteCache, HdSpriteKey, HdSpriteRenderer, HdSpriteTexture, IndexPaletteLut,
@@ -94,8 +105,8 @@ pub use text::{
     FALLBACK_GLYPH, FONT_8X8, GLYPH_HEIGHT, GLYPH_WIDTH,
 };
 pub use ui::{
-    hit_test, layout, layout_uniform, render_ui, Button, Label, ListBox, Point, Rect, TextBox,
-    UiState, UiTheme, Widget,
+    hit_test, layout, layout_uniform, render_ui, render_ui_with_skin, Button, Label, ListBox,
+    Point, Rect, TextBox, UiBox, UiBoxPainter, UiState, UiTheme, Widget,
 };
 pub use viewport::{
     draw_order, GridLines, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS, MAX_ZOOM, MIN_ZOOM,

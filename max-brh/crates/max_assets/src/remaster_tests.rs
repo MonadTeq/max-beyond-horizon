@@ -167,6 +167,66 @@ fn resolve_missing_entry_and_missing_file_are_none() {
 }
 
 #[test]
+fn chrome_image_tags_are_stable_and_scale_specific() {
+    // The R5 contract: `max_render::hd_chrome` resolves exactly these strings,
+    // so a ×2 and a ×4 chrome texture must not collide.
+    assert_eq!(chrome_image_tag("FRAMEPIC", 2), "chrome_FRAMEPIC_x2");
+    assert_eq!(chrome_image_tag("PANELTOP", 4), "chrome_PANELTOP_x4");
+    assert_eq!(
+        chrome_image_tag("ENDTURN_U", 2),
+        "chrome_ENDTURN_U_x2",
+        "buttons and menu images use the MAX.RES name verbatim"
+    );
+    assert_ne!(
+        chrome_image_tag("FRAMEPIC", 2),
+        chrome_image_tag("FRAMEPIC", 4),
+        "a ×2 and a ×4 chrome texture must be different manifest entries"
+    );
+    assert_ne!(
+        chrome_image_tag("PANELTOP", 2),
+        chrome_image_tag("PANELBTM", 2),
+        "the two panel halves are separate images"
+    );
+}
+
+#[test]
+fn ui_skin_tags_are_stable_and_scale_specific() {
+    // The R5 contract: every `UiBox::name()` maps to `ui_<part>_x<S>`.
+    assert_eq!(ui_skin_tag("button", 2), "ui_button_x2");
+    assert_eq!(ui_skin_tag("button_hover", 4), "ui_button_hover_x4");
+    assert_ne!(
+        ui_skin_tag("button", 2),
+        ui_skin_tag("button", 4),
+        "a ×2 and a ×4 skin must be different manifest entries"
+    );
+    assert_ne!(
+        ui_skin_tag("button", 2),
+        ui_skin_tag("button_hover", 2),
+        "the button states are separate skins"
+    );
+}
+
+#[test]
+fn chrome_and_ui_tags_are_usable_as_manifest_keys_and_file_stems() {
+    for tag in [
+        chrome_image_tag("FRAMEPIC", 2),
+        chrome_image_tag("PANELBTM", 4),
+        ui_skin_tag("panel", 2),
+    ] {
+        assert!(
+            tag.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "the tag becomes a manifest key and a file name: {tag}"
+        );
+
+        let manifest = manifest(&format!(
+            r#"{{"assets":{{"{tag}":{{"path":"{tag}.uastc.ktx2","scale":2}}}}}}"#
+        ));
+        assert_eq!(manifest.get(&tag).map(|entry| entry.scale), Some(2));
+    }
+}
+
+#[test]
 fn sprite_tags_are_stable_and_scale_and_frame_specific() {
     // The R4 contract: `max_render::hd_sprites` resolves exactly these strings,
     // so a ×2 and a ×4 bank must not collide, and neither must two frames.
