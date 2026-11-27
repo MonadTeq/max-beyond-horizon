@@ -77,3 +77,19 @@ fn focus_minimize_and_occlusion_change_drawing_only() {
     // No pause/state methods exist on the presentation state: it cannot
     // reset a match by construction.
 }
+
+/// The automatic window scale (`--scale 0`/no flag) fits the **render frame** of
+/// the selected resolution into the desktop: this is the rule `reopen_with_render_scale`
+/// re-applies when the user picks another resolution in the window menu.
+#[test]
+fn the_automatic_window_scale_fits_the_render_frame_into_the_desktop() {
+    // No usable bounds: the window is at least as large as the render frame.
+    assert_eq!(auto_window_scale(None, 640, 496), 1);
+    // A 1920x1080 desktop fits 640x496 twice, but 1280x992 only once.
+    assert_eq!(auto_window_scale(Some((1920, 1080)), 640, 496), 2);
+    assert_eq!(auto_window_scale(Some((1920, 1080)), 1280, 992), 1);
+    // The automatic scale is capped at 4 (the historical default, item F).
+    assert_eq!(auto_window_scale(Some((7680, 4320)), 640, 496), 4);
+    // A desktop smaller than the render frame still gets a 1x window.
+    assert_eq!(auto_window_scale(Some((320, 240)), 640, 496), 1);
+}

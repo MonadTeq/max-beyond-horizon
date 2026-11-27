@@ -229,6 +229,28 @@ pub struct SdlWindow {
     _sdl: sdl3::Sdl,
 }
 
+/// Usable desktop bounds in points, if the primary display reports them.
+fn usable_bounds(video: &sdl3::VideoSubsystem) -> Option<(u32, u32)> {
+    video
+        .get_primary_display()
+        .ok()
+        .and_then(|display| display.get_usable_bounds().ok())
+        .map(|rect| (rect.width(), rect.height()))
+}
+
+/// Integer window scale that fits a `render_w × render_h` frame into `bounds`.
+///
+/// Without usable bounds the conservative `1` is returned (the window is at least
+/// as large as the render frame); the automatic choice stays in `1..=4`, while an
+/// explicit window scale is clamped to [`crate::frame_scale::MAX_SCALE`].
+fn auto_window_scale(bounds: Option<(u32, u32)>, render_width: u32, render_height: u32) -> u32 {
+    let auto = bounds
+        .map(|(width, height)| (width / render_width).min(height / render_height))
+        .unwrap_or(1);
+
+    auto.clamp(1, 4)
+}
+
 impl SdlWindow {
     /// Creates a `width Р“вЂ” height` window with the title `title`.
     pub fn new(title: &str, width: u32, height: u32) -> Result<Self, WindowError> {
@@ -284,17 +306,7 @@ impl SdlWindow {
             .map_err(|error| WindowError::new("video", error))?;
         let scale = match scale {
             Some(scale) => scale.clamp(1, crate::frame_scale::MAX_SCALE),
-            None => {
-                let bounds = video
-                    .get_primary_display()
-                    .ok()
-                    .and_then(|display| display.get_usable_bounds().ok());
-                let auto = bounds
-                    .map(|rect| (rect.width() / render_width).min(rect.height() / render_height))
-                    .unwrap_or(1);
-
-                auto.clamp(1, 4)
-            }
+            None => auto_window_scale(usable_bounds(&video), render_width, render_height),
         };
         let (window_width, window_height) =
             crate::presentation::window_points_for(width, height, render_scale, scale);
@@ -345,6 +357,103 @@ impl SdlWindow {
             active_cursor: None,
             _sdl: sdl,
         })
+    }
+
+    /// Re-opens the window at another render scale **in place**.
+    ///
+    /// Presentation only: the logical [`Self::base_size`] frame, the SDL context and
+    /// the single [`EventPump`] are kept; the OS window is rebuilt at the render
+    /// frame of `render_scale` — [`crate::presentation::window_points_for`] gives
+    /// `width·S·scale` points, the same rule as [`Self::new_with_render_scale`] —
+    /// and the geometry, the letterbox and the mouse transform follow.
+    ///
+    /// SDL3 allows only **one** `EventPump` alive at a time, so a second
+    /// [`SdlWindow`] cannot be constructed next to a live one: rebuilding the
+    /// presentation through the constructor failed with "an `EventPump` instance is
+    /// already alive" and the resolution chosen in the window menu silently did
+    /// nothing. This method is the supported way to change the presentation scale
+    /// of a running window.
+    ///
+    /// The new window is created first and swapped in, so a failure leaves the
+    /// current window, its render scale and its buffers untouched.
+    pub fn reopen_with_render_scale(
+        &mut self,
+        render_scale: RenderScale,
+        scale: Option<u32>,
+    ) -> Result<(), WindowError> {
+        if render_scale == self.render_scale {
+            return Ok(());
+        }
+
+        let (width, height) = self.base_size;
+        let factor = render_scale.scale().max(1);
+        let render_width = width.saturating_mul(factor);
+        let render_height = height.saturating_mul(factor);
+        let video = self
+            ._sdl
+            .video()
+            .map_err(|error| WindowError::new("video", error))?;
+        let scale = match scale {
+            Some(scale) => scale.clamp(1, crate::frame_scale::MAX_SCALE),
+            None => auto_window_scale(usable_bounds(&video), render_width, render_height),
+        };
+        let (window_width, window_height) =
+            crate::presentation::window_points_for(width, height, render_scale, scale);
+        let was_fullscreen = self.fullscreen;
+        let window = video
+            .window(&self.title, window_width, window_height)
+            .resizable()
+            .high_pixel_density()
+            .position_centered()
+            .build()
+            .map_err(|error| WindowError::new("window", error))?;
+        let mut canvas: Canvas<Window> = window.into_canvas();
+
+        if was_fullscreen {
+            // `Svga_ToggleFullscreen` sizes the window to the display first; the
+            // fresh window starts in the windowed state.
+            if let Some(bounds) = canvas
+                .window()
+                .get_display()
+                .ok()
+                .and_then(|display| display.get_bounds().ok())
+            {
+                canvas
+                    .window_mut()
+                    .set_size(bounds.width(), bounds.height())
+                    .map_err(|error| WindowError::new("fullscreen_size", error))?;
+            }
+
+            canvas
+                .window_mut()
+                .set_fullscreen(true)
+                .map_err(|error| WindowError::new("fullscreen", error))?;
+        }
+
+        let creator = canvas.texture_creator();
+        let display_scale = canvas.window().display_scale();
+        let display_refresh_rate = canvas
+            .window()
+            .get_display()
+            .ok()
+            .and_then(|display| display.get_mode().ok())
+            .map(|mode| mode.refresh_rate)
+            .unwrap_or(0.0);
+
+        // The old canvas/window is destroyed only here: the new one is already
+        // built, so every failure above keeps the running presentation unchanged.
+        self.creator = creator;
+        self.canvas = canvas;
+        self.render_scale = render_scale;
+        self.fullscreen = was_fullscreen;
+        self.display_scale = display_scale;
+        self.display_refresh_rate = display_refresh_rate;
+        // SDL cursors belong to the replaced window: the next frame installs the
+        // cursor of the current screen again.
+        self.active_cursor = None;
+        self.refresh_layout();
+
+        Ok(())
     }
 
     /// Window size in screen coordinates (points): what SDL mouse events carry.

@@ -1115,8 +1115,6 @@ struct WindowPresentation {
     window_scale: Option<u32>,
     /// HD asset root, reused when a resolution change reloads the HD layers.
     remaster_root: PathBuf,
-    /// Window title, reused when the window is recreated.
-    title: String,
 }
 
 #[cfg(feature = "sdl")]
@@ -1171,7 +1169,6 @@ impl WindowPresentation {
             base_size,
             window_scale,
             remaster_root,
-            title: title.to_owned(),
         })
     }
 
@@ -1245,10 +1242,16 @@ impl WindowPresentation {
     /// Rebuilds the window and the render target at `scale`.
     ///
     /// Presentation only: the logical 640×480 coordinates, the [`App`] state,
-    /// the session and the screen machine are untouched. The window is recreated
+    /// the session and the screen machine are untouched. The window is reopened
     /// at the render frame of the new scale (same `--scale` rule), the HD layers
     /// are reloaded for it and the HD frame buffer is resized. A failure leaves
     /// the current window in place.
+    ///
+    /// The OS window is swapped through [`max_render::SdlWindow::reopen_with_render_scale`]
+    /// and **not** through the constructor: SDL3 allows only one `EventPump` alive
+    /// at a time, so building a second `SdlWindow` next to the running one fails
+    /// with "an `EventPump` instance is already alive" and leaves the old mode on
+    /// screen (the menu choice used to be lost exactly there).
     fn apply_resolution(
         &mut self,
         scale: max_render::RenderScale,
@@ -1259,25 +1262,12 @@ impl WindowPresentation {
         }
 
         let frame_size = presentation_size(self.base_size);
-        let was_fullscreen = self.window.is_fullscreen();
-        let mut window = max_render::SdlWindow::new_with_render_scale(
-            &self.title,
-            frame_size.0,
-            frame_size.1,
-            scale,
-            self.window_scale,
-        )
-        .map_err(|error| anyhow!("{error}"))?;
-
-        if was_fullscreen {
-            window
-                .set_fullscreen(true)
-                .map_err(|error| anyhow!("{error}"))?;
-        }
+        self.window
+            .reopen_with_render_scale(scale, self.window_scale)
+            .map_err(|error| anyhow!("{error}"))?;
 
         let factor = scale.scale();
 
-        self.window = window;
         self.render_scale = scale;
         self.hd = load_hd_presenter(assets, scale, &self.remaster_root);
         self.hd_buffer = max_render::buffer::RgbaBuffer::new(
