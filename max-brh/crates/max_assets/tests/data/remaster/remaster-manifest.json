@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "assets": {
+    "terrain_tile_etc1s": {
+      "path": "terrain_tile_ETC1S.ktx2",
+      "scale": 2,
+      "palette": "GREEN_1",
+      "recolor": null,
+      "shadow": null,
+      "hash": "sha256:91f236ccff7d0c8ec75853cc56e05d8319ec933776fa343a723a2569d1866f5e"
+    },
+    "terrain_tile_uastc": {
+      "path": "terrain_tile_UASTC.ktx2",
+      "scale": 2,
+      "palette": "GREEN_1",
+      "recolor": null,
+      "shadow": null,
+      "hash": "sha256:9b7ced54e007df30a071a3b35312a4d9478ca234e85ee60c5a17b6c8df0b3f24"
+    },
+    "missing_file": {
+      "path": "does_not_exist.ktx2",
+      "scale": 2,
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

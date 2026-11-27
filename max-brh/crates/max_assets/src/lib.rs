@@ -21,7 +21,10 @@
 //! - SCE/MPS — missions; FON — fonts; MSC — music, ordinary PCM16 WAV
 //!   (module [`wav`], `D2` of the client);
 //! - mission descriptors — `PATCHES.RES` `SC_*` (XOR-obfuscated JSON),
-//!   the mission registry and mission-file resolution — module [`mission`].
+//!   the mission registry and mission-file resolution — module [`mission`];
+//! - HD remaster assets — `remaster-manifest.json` + KTX2/Basis transcoded to
+//!   RGBA8 (presentation-only, per-asset fallback to `MAX.RES`) — module
+//!   [`remaster`].
 //!
 //! The crate parses bytes into structured data; it contains no render specifics.
 //! Format errors are returned as values ([`ResError`], [`WrlError`],
@@ -35,6 +38,7 @@ pub mod image;
 pub mod markers;
 pub mod mission;
 pub mod mve;
+pub mod remaster;
 pub mod res;
 pub mod sprite;
 pub mod wav;
@@ -59,6 +63,10 @@ pub use mve::{
     AUDIO_TRACKS, DEFAULT_AUDIO_FORMAT, DEFAULT_FRAME_DELAY_US, FILE_HEADER_SIZE,
     MAX_PENDING_AUDIO_CHUNKS, MVE_SIGNATURE, OPCODE_HEADER_SIZE,
     PALETTE_SIZE as MVE_PALETTE_SIZE, VIDEO_HEADER_SIZE,
+};
+pub use remaster::{
+    RemasterCache, RemasterEntry, RemasterError, RemasterManifest, RemasterTexture,
+    MANIFEST_FILE, MANIFEST_VERSION, RGBA_BYTES_PER_PIXEL,
 };
 pub use res::{
     parse_file_ref, ResArchive, ResEntry, ResError, ENTRY_SIZE, FIRST_DATA_OFFSET, HEADER_SIZE,

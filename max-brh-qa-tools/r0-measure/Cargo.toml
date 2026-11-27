@@ -1,0 +1,27 @@
+[package]
+name = "r0-measure"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "R0 (HD remaster) measurements: render memory, asset inventory/HD volume, KTX2 transcoder benchmark"
+
+# A separate Cargo project (its own Cargo.lock), not part of the max-brh workspace.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+max_assets = { path = "../../max-brh/crates/max_assets" }
+max_render = { path = "../../max-brh/crates/max_render" }
+# The classifier of MAX.RES records (kind/category/frame sizes) is reused as is,
+# so the inventory cannot drift from the export tool.
+max-resources-viewer = { path = "../max-resources-viewer", default-features = false }
+# The application's asset loader: the working set is measured exactly as the
+# game loads it (headless, no SDL, no audio).
+max_app = { path = "../../max-brh/crates/max_app", default-features = false }
+
+# Transcoder candidates (see README): both are pure Rust on this machine.
+basisu = "0.1"
+ktx-rs = { version = "4.4.4", default-features = false }
+
+[profile.release]
+debug = false

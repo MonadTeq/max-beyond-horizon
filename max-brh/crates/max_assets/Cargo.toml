@@ -12,6 +12,10 @@ sha2 = "0.10"
 # Infrastructure types (Surface/SurfaceMap/MapSize/ResourceKind) — from the lower
 # layer; max_assets no longer has a dependency on `max_core` (Application) (phase 5.2).
 max_types = { path = "../max_types" }
+# HD remaster (R0): the pure-Rust KTX2 → RGBA8 transcoder, pinned exactly per
+# `max-brh-docs/development/r0-measurements.md` §3.4. Presentation-only; it
+# never touches `max_core`.
+basisu = "=0.1.0"
 
 [dev-dependencies]
 # Mission-registry descriptor tests (`tests/mission_registry.rs`): `rstest`

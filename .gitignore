@@ -134,3 +134,5 @@ __pycache__/
 
 .tmp/
 
+# R0 measurement tool (separate Cargo project, owns its own target/).
+max-brh-qa-tools/r0-measure/target/
