@@ -2331,7 +2331,19 @@ impl<D: Dispatcher> App<D> {
             // only the draw zones, the port keeps this in pixel `x/y`.
             let (world_x, world_y) = effect_pixel_anchor(unit)
                 .or_else(|| missile_pixel_anchor(unit))
-                .or_else(|| explosion_pixel_anchor(unit))
+                .or_else(|| {
+                    // `explosion->OffsetDrawZones(unit->x - explosion->x,
+                    // unit->y - explosion->y)` (`units_manager.cpp:3991-3994`): the
+                    // blast sits on the dying unit's pixel, i.e. on the sprite the
+                    // original draws. The port's sprite is the interpolated frame
+                    // position, so the frame keeps the offset of the corpse
+                    // (`App::explosion_draw_offset`, frozen when the effect releases
+                    // its parent) instead of leaving the blast ahead of the corpse.
+                    explosion_pixel_anchor(unit).map(|(x, y)| {
+                        let (dx, dy) = self.explosion_draw_offset(visible[index]).unwrap_or((0, 0));
+                        (x + dx, y + dy)
+                    })
+                })
                 .or_else(|| air_pixel_anchor(unit, (grid_x, grid_y)))
                 .unwrap_or_else(|| unit_anchor_world(unit, (grid_x, grid_y)));
             // Flight bob (`UnitInfo::ShakeAir`, `unitinfo.cpp:4636-4678`): a

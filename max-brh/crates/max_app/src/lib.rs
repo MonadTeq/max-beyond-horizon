@@ -719,6 +719,19 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// it paid for, so the panel's `Speed` row reaches 0 when the sprite arrives,
     /// not when the fast simulation does. Frame-only, not part of the snapshot/CRC.
     visual_speeds: std::collections::HashMap<UnitId, u16>,
+    /// Frame-side offset in **pixels** of an explosion effect against the pixel the
+    /// simulation stored for it (`UnitsManager_StartExplosion`,
+    /// `units_manager.cpp:3991-3994`).
+    ///
+    /// The oracle deploys the blast on the dying unit's cell and then aligns it with
+    /// the unit's `x/y` — the pixel the sprite is drawn at. The port's sprite is the
+    /// interpolated **frame** position, which may lag the cell-per-tick simulation,
+    /// so the blast is drawn at the corpse instead of jumping to the death cell.
+    /// The offset (`frame pixel - simulation pixel`) is frozen once the explosion
+    /// releases its parent in the middle of the animation
+    /// (`unit_order::progress_explosion`), so the blast does not jump back while it
+    /// plays. Frame-only, not part of the snapshot/CRC.
+    effect_offsets: std::collections::HashMap<UnitId, (i32, i32)>,
     /// Frame-side vision of the local player's team — the live scan coverage
     /// computed from the **visual** anchors, so the radar (the minimap fog and the
     /// unit dots) moves on arrival, not earlier
@@ -983,6 +996,41 @@ fn visual_target(unit: &UnitInfo) -> (f32, f32) {
     }
 }
 
+/// Pixel point the frame draws a unit's sprite at — the C++ `UnitInfo::x/y` of the
+/// sprite ([`render::unit_anchor_world`]/[`render::air_pixel_anchor`] without the
+/// hover bob and the construction-tape shift).
+///
+/// Ground/sea: the center of the visual cell (`UnitInfo::SetPosition`,
+/// `unitinfo.cpp:1301`; the 2×2 layout center is `+31`). Aircraft: the interpolated
+/// air-path pixel — `AirPath::Execute` draws the plane at `unit->x/y`
+/// (`airpath.cpp:219-242`) and [`App::visual_position`] already stores that pixel in
+/// cells (64 px per cell).
+///
+/// Used by the frame to align effects with the sprite without touching the
+/// simulation: `UnitsManager_StartExplosion` aligns the blast with `unit->x/y`
+/// (`units_manager.cpp:3991-3994`), which in the port is this frame point.
+fn frame_pixel_anchor(unit: &UnitInfo, visual: (f32, f32)) -> (f32, f32) {
+    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
+        (
+            (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round(),
+            (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round(),
+        )
+    } else {
+        let mut x = (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32 + 32.0).round();
+        let mut y = (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32 + 32.0).round();
+
+        // `UnitInfo::SetPosition` (`unitinfo.cpp:1301-1311`): a 2×2 building is
+        // centered on its footprint (`+31`), exactly as `update_grid_position` sets
+        // the simulation pixel.
+        if unit.is_quad() {
+            x += crate::render::BUILDING_ANCHOR_OFFSET as f32;
+            y += crate::render::BUILDING_ANCHOR_OFFSET as f32;
+        }
+
+        (x, y)
+    }
+}
+
 /// One step of a unit visual route: the point in cells and the movement direction
 /// to it (`Paths_GetAngle`, 0..7).
 ///
@@ -1089,6 +1137,7 @@ impl<D: Dispatcher> App<D> {
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
             visual_speeds: std::collections::HashMap::new(),
+            effect_offsets: std::collections::HashMap::new(),
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             hover_anims: std::collections::HashMap::new(),
@@ -3710,6 +3759,7 @@ impl<D: Dispatcher> App<D> {
         self.visual_goals.clear();
         self.visual_paths.clear();
         self.visual_speeds.clear();
+        self.effect_offsets.clear();
         self.hover_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
@@ -4207,7 +4257,7 @@ impl<D: Dispatcher> App<D> {
 
         let budget = VISUAL_CELLS_PER_SECOND * speed_scale * dt;
 
-        for id in ids {
+        for &id in &ids {
             let Some(unit) = state.unit(id) else {
                 continue;
             };
@@ -4217,19 +4267,25 @@ impl<D: Dispatcher> App<D> {
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
 
-            // A dead unit does not keep walking the route the frame still has queued:
-            // the turn-close drain moves a whole route in one simulation step, so a
-            // unit stopped by an intercept (and killed there) would otherwise be
-            // drawn several cells behind its simulation cell while its explosion
-            // plays at the death cell. The corpse, its death animation and the
-            // explosion must sit on the cell where the unit really died
-            // (`UnitsManager_StartExplosion`, `units_manager.cpp:3991`).
+            // A dead unit stops **where the frame caught it** — it is not pulled to
+            // its simulation cell.
+            //
+            // Oracle: the sprite is drawn at `UnitInfo::x/y`, and an emergency stop
+            // (`UnitInfo::StopMovement`, `unitinfo.cpp:3222` → `BlockedOnPathRequest`,
+            // `:3628`) only clears the path — it never rewrites the pixel position.
+            // A unit caught mid-cell therefore freezes on the pixel it had reached,
+            // not on the cell center. The port's pixel is the interpolated frame
+            // position, so the corpse keeps `current`; only the route ahead is
+            // dropped (a corpse does not walk). Its blast is drawn at the corpse
+            // (see `effect_offsets` below): `UnitsManager_StartExplosion` aligns the
+            // effect with `unit->x - explosion->x` (`units_manager.cpp:3991-3994`),
+            // so a teleport of the sprite to the death cell must not happen here —
+            // that was the "the unit jumps forward and explodes" playtest defect.
             if unit.hits == 0 {
                 queue.clear();
-                *current = target;
                 *goal = target;
                 *last_speed = unit.speed;
-                anchors.insert(id, (target.0.round() as i16, target.1.round() as i16));
+                anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
                 continue;
             }
 
@@ -4336,11 +4392,71 @@ impl<D: Dispatcher> App<D> {
             anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
         }
 
+        // Frame-side anchor of the explosion effects — the port of the
+        // `OffsetDrawZones(unit->x - explosion->x, unit->y - explosion->y)` call of
+        // `UnitsManager_StartExplosion` (`units_manager.cpp:3991-3994`): the blast is
+        // drawn at the **dying unit's pixel**, i.e. at the sprite the original draws.
+        //
+        // The oracle's `unit->x/y` and its sprite are the same point; the port's
+        // sprite is the interpolated frame position, which lags the cell-per-tick
+        // simulation. For an intercepted unit killed on its halt cell that lag is
+        // several cells, so drawing the blast at the simulation pixel would leave the
+        // corpse behind an explosion that "happened elsewhere" (the previous
+        // playtest defect). The frame therefore keeps the blast on the corpse: the
+        // stored offset is `frame pixel - simulation pixel` of the dead unit.
+        //
+        // While the effect still references its parent the offset follows the
+        // corpse; the explosion releases the parent in the middle of the animation
+        // (`unit_order::progress_explosion`), after which the frozen value keeps the
+        // blast in place — it never jumps back to the death cell mid-animation.
+        self.effect_offsets
+            .retain(|id, _| state.unit(*id).is_some());
+        for id in &ids {
+            let Some(unit) = state.unit(*id) else {
+                continue;
+            };
+
+            if unit.flags & unit_flags::EXPLODING == 0 {
+                continue;
+            }
+
+            let Some(parent_id) = unit.parent_unit else {
+                continue;
+            };
+            let Some(parent) = state.unit(parent_id) else {
+                continue;
+            };
+            let Some(&(visual_x, visual_y)) = visual.get(&parent_id) else {
+                continue;
+            };
+
+            let (frame_x, frame_y) = frame_pixel_anchor(parent, (visual_x, visual_y));
+            self.effect_offsets.insert(
+                *id,
+                (
+                    (frame_x - f32::from(parent.x)).round() as i32,
+                    (frame_y - f32::from(parent.y)).round() as i32,
+                ),
+            );
+        }
+
         // Rebuild the player's scan from the visual anchors: the radar and the
         // minimap fog move together with the sprite, not with the simulation cell
         // (`Access_UpdateMapStatus` is called on the cell crossing in
         // `UnitInfo::Move`, `unitinfo.cpp:1787-1816`).
         self.vision.rebuild(state, &anchors);
+    }
+
+    /// Drawn pixel offset of an explosion effect (`UnitsManager_StartExplosion`,
+    /// `units_manager.cpp:3991-3994`): `frame pixel - simulation pixel` of the dead
+    /// unit whose blast this is. `None` when the effect is unknown to the frame (or
+    /// is not an explosion).
+    ///
+    /// The renderer adds it to the effect's pixel anchor, so the blast is drawn on
+    /// the corpse (`App::update_visual_units`). Read-only frame state — for the
+    /// renderer and the frame tests.
+    pub fn explosion_draw_offset(&self, id: UnitId) -> Option<(i32, i32)> {
+        self.effect_offsets.get(&id).copied()
     }
 
     /// Canonical state digest.

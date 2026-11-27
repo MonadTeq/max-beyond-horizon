@@ -1,5 +1,7 @@
 //! Playtest defect: the explosion of a unit stopped by an intercept is shown on
-//! the **halt cell**, not on the destination of the interrupted route.
+//! the **halt cell**, not on the destination of the interrupted route. The same
+//! intercept must not make the sprite **jump**: it freezes where the frame caught
+//! it and the blast is drawn there.
 //!
 //! # Oracle
 //!
@@ -12,16 +14,36 @@
 //! * `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`) → `BlockedOnPathRequest`
 //!   (`unitinfo.cpp:3628`) stops the mover on the cell where it entered the enemy's
 //!   weapon range; the reaction fire and the blast happen there.
+//! * The sprite is drawn at `UnitInfo::x/y`. `UnitInfo::Move` (`unitinfo.cpp:1730`)
+//!   advances that pixel; an emergency stop (`UnitInfo::StopMovement`, `:3222`)
+//!   only clears the path — **it never rewrites `x/y`**. A unit caught mid-cell
+//!   therefore freezes on the pixel it had reached, and the blast is aligned with
+//!   that same pixel.
 //!
-//! # Defect
+//! # Defects
 //!
-//! The simulation already spawns the blast on the halt cell, but the **frame** kept
-//! walking the dying unit's queued visual route (the turn-close drain executes the
-//! whole route in one simulation step, the sprite follows at
-//! `VISUAL_CELLS_PER_SECOND`). For ~1 s the player saw the sprite several cells
-//! behind its blast — "the unit stops and is fired at on the halt cell, but the
-//! explosion is shown on the destination". A dead unit must be drawn on the cell
-//! where it died.
+//! 1. The simulation spawns the blast on the halt cell, but the **frame** kept
+//!    walking the dying unit's queued visual route (the turn-close drain executes
+//!    the whole route in one simulation step, the sprite follows at
+//!    `VISUAL_CELLS_PER_SECOND`). The player saw the sprite several cells behind its
+//!    blast — "the unit stops and is fired at on the halt cell, but the explosion is
+//!    shown on the destination".
+//! 2. The first fix pulled the corpse to the simulation cell on the death frame
+//!    (`App::update_visual_units`: `*current = target`). Because the frame is much
+//!    slower than the cell-per-tick simulation, the corpse was usually still several
+//!    cells behind when the reaction fire killed it: the sprite **teleported** to the
+//!    halt cell — "the unit jumps into the stop cell".
+//!
+//! # Fix
+//!
+//! * A dead unit freezes on its frame position; only the route ahead is dropped (a
+//!   corpse does not walk) — the oracle's `x/y` is not rewritten by the stop.
+//! * The blast is drawn at the corpse: `App::explosion_draw_offset` keeps
+//!   `frame pixel - simulation pixel` of the dying unit — the port of
+//!   `explosion->OffsetDrawZones(unit->x - explosion->x, ...)` with the port's
+//!   interpolated `unit->x/y`.
+//!
+//! The simulation (the blast cell, the damage, the CRC) is untouched.
 
 use std::path::{Path, PathBuf};
 
@@ -115,27 +137,37 @@ fn explosion_of(app: &App) -> Option<UnitId> {
     })
 }
 
-#[test]
-fn an_intercepted_unit_is_drawn_and_explodes_on_the_halt_cell() {
-    let Some(mut app) = game_app() else {
-        return;
-    };
+/// `UnitInfo::SetPosition` pixel of a frame position — the sprite anchor of a
+/// ground unit (`unitinfo.cpp:1301`).
+fn cell_pixel(position: (f32, f32)) -> (i32, i32) {
+    (
+        (position.0 * 64.0 + 32.0).round() as i32,
+        (position.1 * 64.0 + 32.0).round() as i32,
+    )
+}
 
+/// The intercept scenario: a RED tank walks 8 cells along a free row toward a GREEN
+/// tank standing 10 cells away, so the emergency stop and the reaction fire catch it
+/// before the destination. Returns the mover and the destination.
+///
+/// The caller prepares the match: the application is large, and a second copy on the
+/// test stack overflows it (the helper only borrows it).
+fn intercept_scenario(app: &mut App) -> Option<(UnitId, Point)> {
     // Only the scenario units on the map.
     for id in app.state_ref().unit_ids_in_order() {
         app.universe_mut().destroy_unit(id);
     }
 
-    let Some(start) = free_row(&app, 14) else {
+    let Some(start) = free_row(app, 14) else {
         eprintln!("intercept_explosion: no free land row");
-        return;
+        return None;
     };
 
     app.universe_mut().set_enemy_halt(true);
 
-    let mover = spawn(&mut app, UnitType::Tank, TeamId::RED, start);
+    let mover = spawn(app, UnitType::Tank, TeamId::RED, start);
     let enemy = spawn(
-        &mut app,
+        app,
         UnitType::Tank,
         TeamId::GREEN,
         Point::new(start.x + 10, start.y),
@@ -165,6 +197,8 @@ fn an_intercepted_unit_is_drawn_and_explodes_on_the_halt_cell() {
     app.universe_mut().spot_by_team(enemy, TeamId::RED);
     app.universe_mut().update_visibility_status(false);
 
+    app.update_visual_units(0.0);
+
     // A few frames at the start cell: the frame now has a visual position that lags
     // the route the turn-close drain executes in one step.
     for _ in 0..5 {
@@ -174,50 +208,137 @@ fn an_intercepted_unit_is_drawn_and_explodes_on_the_halt_cell() {
 
     app.universe_mut().end_local_turn(TeamId::RED);
 
-    let mut checked = false;
+    Some((mover, destination))
+}
+
+/// The largest sprite step a frame may take: the visual speed times the frame time.
+///
+/// `fast_movement` ("Double Unit Steps") doubles the visual speed
+/// (`App::update_visual_units`; C++ `UnitInfo::Move` `velocity += 2`).
+fn max_frame_step(app: &App) -> f32 {
+    let scale = if app.preferences().fast_movement {
+        2.0
+    } else {
+        1.0
+    };
+
+    max_app::VISUAL_CELLS_PER_SECOND * scale * (1.0 / 60.0) + 1e-3
+}
+
+#[test]
+fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+    let Some((mover, destination)) = intercept_scenario(&mut app) else {
+        return;
+    };
+
+    // The sprite may move at most the visual speed of one frame; a bigger step is a
+    // teleport (the defect under test).
+    let max_frame_step = max_frame_step(&app);
+    let mut previous = app.visual_position(mover);
+    let mut frozen_position: Option<(f32, f32)> = None;
+    let mut frozen_offset: Option<(i32, i32)> = None;
+    let mut frames_after_death = 0usize;
+    let mut corpse_released = false;
 
     for _ in 0..120 {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
 
-        let Some(unit) = app.state_ref().unit(mover).cloned() else {
-            break;
-        };
+        let now = app.visual_position(mover);
+
+        if let (Some(previous), Some(now)) = (previous, now) {
+            let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
+            assert!(
+                step <= max_frame_step,
+                "the sprite of the intercepted unit teleports: {previous:?} -> {now:?}"
+            );
+        }
+        previous = now;
+
+        let corpse = app.state_ref().unit(mover).cloned();
         let Some(explosion) = explosion_of(&app) else {
+            if corpse.is_none() {
+                break;
+            }
             continue;
         };
+
+        let current = app
+            .explosion_draw_offset(explosion)
+            .expect("the blast keeps the dying unit's frame offset");
+
+        let Some(unit) = corpse else {
+            // The explosion released the dead unit in the middle of the animation
+            // (`unit_order::progress_explosion`): the frozen offset keeps the blast
+            // where it was drawn — it does not jump back to the death cell.
+            corpse_released = true;
+            assert_eq!(
+                Some(current),
+                frozen_offset,
+                "the blast jumps back to the death cell after the corpse is released"
+            );
+            frames_after_death += 1;
+            continue;
+        };
+
         let blast = app
             .state_ref()
             .unit(explosion)
             .cloned()
             .expect("explosion unit");
 
-        // The intercept stopped the mover before its destination.
+        // The intercept stopped the mover before its destination; the simulation
+        // spawns the blast on the cell where the unit really died — the destination
+        // of the interrupted route is not a position source.
         assert_ne!(unit.grid, destination, "the route was interrupted");
         assert_eq!(
-            blast.grid,
-            unit.grid,
+            blast.grid, unit.grid,
             "the explosion is spawned on the cell where the unit died"
         );
 
-        // Frame position: the corpse (death animation) and the blast are drawn on
-        // the death cell together — the sprite must not keep walking the route.
+        // Frame position: the corpse freezes where the frame caught it — the stop
+        // does not rewrite the pixel (`UnitInfo::x/y` survives `StopMovement`).
         let corpse_position = app.visual_position(mover).expect("corpse position");
-        let blast_position = app.visual_position(explosion).expect("blast position");
-        let death_cell = (f32::from(unit.grid.x), f32::from(unit.grid.y));
-
+        let frozen = *frozen_position.get_or_insert(corpse_position);
         assert_eq!(
-            corpse_position, death_cell,
-            "the dead unit is drawn on the death cell, not on the route"
-        );
-        assert_eq!(
-            blast_position, death_cell,
-            "the explosion is drawn on the death cell"
+            corpse_position, frozen,
+            "the dead unit must not move: it froze on the pixel where it was killed"
         );
 
-        checked = true;
-        break;
+        // `UnitsManager_StartExplosion` (`units_manager.cpp:3991-3994`): the blast is
+        // drawn at the dying unit's pixel — the corpse and its explosion are one
+        // point, on neither the halt cell nor the destination.
+        let frozen = *frozen_offset.get_or_insert(current);
+        assert_eq!(
+            current, frozen,
+            "the blast must stay on the corpse while its animation plays"
+        );
+        assert_eq!(
+            (
+                i32::from(blast.x) + current.0,
+                i32::from(blast.y) + current.1
+            ),
+            cell_pixel(corpse_position),
+            "the explosion is drawn on the corpse, not on the halt cell"
+        );
+
+        frames_after_death += 1;
     }
 
-    assert!(checked, "the intercept killed the mover and spawned a blast");
+    assert!(frozen_position.is_some(), "the intercept killed the mover");
+    assert!(
+        frozen_offset.is_some(),
+        "the intercept spawned a blast on the dead unit"
+    );
+    assert!(
+        frames_after_death > 0,
+        "the explosion was observed while its animation played"
+    );
+    assert!(
+        corpse_released,
+        "the explosion must release the dead unit before it ends"
+    );
 }
