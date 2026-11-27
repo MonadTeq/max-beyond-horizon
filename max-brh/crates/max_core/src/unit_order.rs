@@ -438,6 +438,31 @@ pub fn clear_movement_wait(unit: &mut UnitInfo) {
     unit.movement_wait_count = 0;
 }
 
+/// `UnitInfo::SetPosition` (`unitinfo.cpp:1301-1311`) for a grid change: the
+/// pixel position is the **center of the cell** (`+31` for a `BUILDING`, the
+/// 2×2 layout goes to the center of the footprint).
+///
+/// The pixel position is not presentation: the oracle spawns the explosion effect
+/// at the dying unit's `grid` and then aligns it with the unit's `x/y`
+/// (`UnitsManager_StartExplosion`, `units_manager.cpp:3991-3994`), and an air
+/// unit's `x/y` is its route position in the air path (`AirPath::Execute`,
+/// `airpath.cpp:219-242`). A grid change that leaves `x/y` at the previous cell
+/// would put a later explosion on the wrong cell — the defect "the explosion is
+/// shown at the destination, not where the unit stopped".
+pub fn update_grid_position(unit: &mut UnitInfo) {
+    let mut x = i32::from(unit.grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+    let mut y = i32::from(unit.grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+
+    if unit.is_quad() {
+        x += GFX_MAP_TILE_SIZE / 2 - 1;
+        y += GFX_MAP_TILE_SIZE / 2 - 1;
+    }
+
+    // The C++ fields are `int16_t`; the port stores `u16` with the same bits.
+    unit.x = x.clamp(0, i32::from(u16::MAX)) as u16;
+    unit.y = y.clamp(0, i32::from(u16::MAX)) as u16;
+}
+
 /// `UnitInfo::CheckIfDestroyed` (`unitinfo.cpp:4988`).
 pub fn check_if_destroyed(unit: &mut UnitInfo) {
     if unit.hits == 0 {
@@ -1614,9 +1639,28 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
     }
 }
 
-/// `AirPath::Execute` (`airpath.cpp`) вЂ” a step toward the end cell by `m_angle`;
-/// the pixel interpolation of the segment (`m_delta_*`) is replaced in the lockstep
-/// model by a one-cell-per-tick transition (divergence 1 in the module header).
+/// `AirPath::Execute` (`airpath.cpp:175-295`) вЂ” an aircraft flies **in pixels**
+/// along the straight segment built by `Paths_GetAirPath`: `m_step_x += m_delta_x`,
+/// `position = (m_step >> 16) + m_start`, `unit->x/y` is the sprite position and
+/// `grid_x/grid_y` are only recomputed from it (`>> 6`). The angle is `m_angle`
+/// (`UnitsManager_GetTargetAngle` of the segment), so a diagonal route is a
+/// straight line in the air, not the 8-direction cell stair of the ground path.
+///
+/// The port's movement model advances one **cell of the route** per order tick
+/// (divergence 1 in the module header, [`unit_move`]): `unit->max_velocity` pixel
+/// steps make one cell (`Paths_GetAirPath` sets `max_velocity = 4`,
+/// `paths.cpp:97`), and `Paths_TakeStep(unit, 1)` is called on exactly the C++
+/// condition `m_length % unit->max_velocity == 0` вЂ” one movement point per cell.
+/// The per-turn range is therefore unchanged; only the **trajectory** (and the
+/// pixel position in the snapshot) changes, which legitimately changes the CRC of
+/// a scenario with air movement.
+///
+/// The C++ `do { вЂ¦ } while (unit invisible)` loop only batches steps for an
+/// invisible unit; `GameManager_PlayerTeam` is a local UI field, so the port takes
+/// the single per-tick step (DESIGN В§6.1).
+///
+/// Returns `false` always: the cell is not completed by [`unit_move`] вЂ” the pixel
+/// position is the state, so `InTransition` is not entered for aircraft.
 fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     ctx.data.move_to = Point::new(path.end_x, path.end_y);
     ctx.unit.target_grid = ctx.data.move_to;
@@ -1625,19 +1669,10 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
     let dx = i32::from(path.end_x) - i32::from(grid.x);
     let dy = i32::from(path.end_y) - i32::from(grid.y);
 
-    if dx == 0 && dy == 0 {
-        if ctx.unit.flags & MISSILE_UNIT != 0 {
-            if let Some(parent_id) = ctx.unit.parent_unit {
-                let position = ctx.unit.grid;
-                ctx.world.end_attack(ctx.id);
-                combat::attack(ctx.world, parent_id, position);
-                ctx.world.destroy_unit(ctx.id);
-            }
-        } else {
-            // `AirPath::Execute` (`airpath.cpp:281-283`): the last pixel step calls
-            // `Paths_FinishMove` вЂ” the arrival is not a plain "blocked" end of move.
-            paths_finish_move(ctx);
-        }
+    if dx == 0 && dy == 0 && path.length <= 0 {
+        // `AirPath::Execute` (`airpath.cpp:281-283`): the last pixel step calls
+        // `Paths_FinishMove` вЂ” the arrival is not a plain "blocked" end of move.
+        paths_finish_move(ctx);
         return false;
     }
 
@@ -1660,22 +1695,85 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
         }
     }
 
-    if paths_update_angle(&mut ctx.unit, paths_get_angle(dx, dy)) {
+    if paths_update_angle(&mut ctx.unit, i32::from(path.angle)) {
         return false;
     }
 
-    if ctx.unit.is_air() {
+    let mut path = *path;
+    let max_velocity = i32::from(ctx.unit.max_velocity).max(1);
+    let steps = if ctx.unit.is_air() { max_velocity } else { 1 };
+    let mut stepped = false;
+
+    for _ in 0..steps {
+        if path.length <= 0 {
+            break;
+        }
+
+        if ctx.unit.is_air() && path.length == 1 {
+            // `airpath.cpp:272-278`: the last pixel step halves the deltas (and
+            // re-extends the length when the half step still moves a pixel) so the
+            // unit lands on the segment end instead of overshooting it.
+            let dx = (path.delta_x >> 16).abs() >> 1;
+            let dy = (path.delta_y >> 16).abs() >> 1;
+
+            if dx != 0 || dy != 0 {
+                path.length += 1;
+            }
+
+            path.delta_x >>= 1;
+            path.delta_y >>= 1;
+        }
+
+        path.step_x = path.step_x.wrapping_add(path.delta_x);
+        path.step_y = path.step_y.wrapping_add(path.delta_y);
+
+        let position_x = (path.step_x >> 16) + i32::from(path.start_x);
+        let position_y = (path.step_y >> 16) + i32::from(path.start_y);
+
+        // `UnitInfo::OffsetDrawZones` + `grid_x = x >> 6` (`airpath.cpp:238-242`).
+        ctx.unit.x = position_x.clamp(0, i32::from(u16::MAX)) as u16;
+        ctx.unit.y = position_y.clamp(0, i32::from(u16::MAX)) as u16;
+        ctx.unit.grid = Point::new(
+            (position_x >> 6).clamp(0, i32::from(crate::geo::MAP_WIDTH) - 1) as i16,
+            (position_y >> 6).clamp(0, i32::from(crate::geo::MAP_HEIGHT) - 1) as i16,
+        );
+
+        path.length -= 1;
+        stepped = true;
+
         // `Paths_TakeStep(unit, 1)` (`airpath.cpp:272-278`): one `speed` point per
-        // crossed cell. Without it an aircraft flew its whole `speed` allowance on
-        // every order and never ran out of it within a turn (defect 3 of the
-        // manual 1.2 run).
-        paths_take_step(&mut ctx.unit, 1, ctx.world.real_time);
+        // `max_velocity` pixel steps, i.e. one point per crossed cell. Without it
+        // an aircraft flew its whole `speed` allowance on every order and never ran
+        // out of it within a turn (defect 3 of the manual 1.2 run).
+        if ctx.unit.is_air() && i32::from(path.length) % max_velocity == 0 {
+            paths_take_step(&mut ctx.unit, 1, ctx.world.real_time);
+        }
     }
 
-    ctx.unit.state = UnitOrderState::InTransition;
-    ctx.unit.in_transit = true;
-    ctx.unit.moved = 0;
-    true
+    if let Some(UnitPath::Air(stored)) = ctx.unit.path.as_mut() {
+        *stored = path;
+    }
+
+    if path.length <= 0 {
+        // `m_length == 0` (`airpath.cpp:281-283`) в†’ `Paths_FinishMove`: on the end
+        // cell the route is over; short of it the route was clamped by `speed`
+        // (`Paths_GetAirPath`), and the oracle re-requests the rest of the segment
+        // and finishes the move for this turn (`airpath.cpp:437-444`).
+        if ctx.unit.grid == Point::new(path.end_x, path.end_y) {
+            paths_finish_move(ctx);
+        } else {
+            ctx.unit.state = UnitOrderState::ExecutingOrder;
+            let target = Point::new(path.end_x, path.end_y);
+            ctx.unit.path =
+                pathfinding::paths_get_air_path(ctx.world, &mut ctx.unit, target).map(UnitPath::Air);
+            ctx.move_finished(true);
+        }
+    } else if stepped {
+        // The order stays `ORDER_STATE_IN_PROGRESS`, like the C++ `Execute`.
+        ctx.unit.state = UnitOrderState::InProgress;
+    }
+
+    false
 }
 
 /// `Paths_FinishMove` (`airpath.cpp:408-456`) вЂ” the air path is exhausted
@@ -1687,10 +1785,10 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
 /// it was sent to load stayed in `ORDER_AWAIT` with `parent = passenger` and the
 /// passenger was never taken aboard.
 ///
-/// Divergence from C++: the `path->GetEndX() != grid_x` branch (re-requesting an air path
-/// for the rest of a speed-limited route) is not reachable here вЂ” [`air_path_execute`]
-/// reaches its end cell along `path.end_x/end_y` or stops earlier on `speed == 0`, so
-/// "at the path end" always means "at the order destination".
+/// The `path->GetEndX() != grid_x` branch of C++ (an air route clamped by `speed`:
+/// the rest of the segment is re-requested and `MoveFinished` runs) is handled by
+/// the caller [`air_path_execute`], which checks the end cell before calling this
+/// function — so here "at the path end" always means "at the order destination".
 fn paths_finish_move(ctx: &mut OrderContext<'_>) {
     // `unit->Redraw()` вЂ” the shadow of a hovering aircraft; the presentation layer
     // recomputes it from `HOVERING` (`air_shadow_offset`).
@@ -1977,6 +2075,12 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     }
 
     ctx.unit.grid = target;
+    // `UnitInfo::Move` (`unitinfo.cpp:1801-1803`) recomputes `grid_x/grid_y` from
+    // the new pixel position; the port's cell-per-tick model enters the whole cell,
+    // so the pixel position is the cell center (`UnitInfo::SetPosition`). The pixel
+    // position must follow the cell: `UnitsManager_StartExplosion` aligns the
+    // explosion with the dead unit's `x/y` (see [`update_grid_position`]).
+    update_grid_position(&mut ctx.unit);
     ctx.unit.moved = 0;
     ctx.unit.in_transit = false;
 
@@ -3258,6 +3362,12 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
         MISSILE_UNIT
     };
 
+    // The effect is spawned on the cell where the unit **really is** at death вЂ”
+    // `UnitsManager_StartExplosion` (`units_manager.cpp:3991`):
+    // `UnitsManager_DeployUnit(unit_type, unit->team, nullptr, unit->grid_x, unit->grid_y, 0, true)`.
+    // The order data (`move_to`) and `target_grid` are the interrupted route's
+    // **destination** and are never a position source here: a unit stopped by an
+    // intercept explodes on the halt cell, not on the cell it was walking to.
     let explosion = ctx.world.spawn_unit(
         explosion_type,
         ctx.unit.team,
@@ -3265,15 +3375,30 @@ fn start_explosion(ctx: &mut OrderContext<'_>) {
         explosion_flags,
     );
 
-    // The explosion is a unit of the dead unit's team, but those who saw
-    // the target itself must see it (`UnitInfo::InitStealthStatus` leaves the effect visible only
-    // to its own team, and `Access_UpdateMapStatus` is skipped for it in C++:
-    // `DeployUnit(..., skip_map_status_update = true)`). We transfer the target's
-    // visibility to the effect вЂ” otherwise the hit animation is not drawn for the attacker.
+    // `if (unit_type != BLDEXPLD) explosion->OffsetDrawZones(unit->x - explosion->x,
+    // unit->y - explosion->y)` (`units_manager.cpp:3991-3994`): the effect is aligned
+    // with the dying unit's **pixel** position. For a unit stopped on a cell that is
+    // the cell center; for an aircraft shot down mid-flight it is the air-path pixel
+    // (`airpath.cpp:219-242`), so the blast is drawn exactly where the aircraft was.
+    // `BLDEXPLD` keeps the cell anchor, as C++ skips the offset for it.
     if let Some(explosion_id) = explosion {
         let visible = ctx.unit.visible_to_team;
+        let explosion_pixel = (explosion_type != UnitType::BuildingExplosion)
+            .then_some((ctx.unit.x, ctx.unit.y));
+
         if let Some(mut effect) = ctx.world.unit(explosion_id).cloned() {
+            // The explosion is a unit of the dead unit's team, but those who saw
+            // the target itself must see it (`UnitInfo::InitStealthStatus` leaves the effect visible only
+            // to its own team, and `Access_UpdateMapStatus` is skipped for it in C++:
+            // `DeployUnit(..., skip_map_status_update = true)`). We transfer the target's
+            // visibility to the effect вЂ” otherwise the hit animation is not drawn for the attacker.
             effect.visible_to_team = visible;
+
+            if let Some((x, y)) = explosion_pixel {
+                effect.x = x;
+                effect.y = y;
+            }
+
             ctx.world.write_unit(explosion_id, effect);
         }
     }
@@ -3415,8 +3540,7 @@ fn progress_unloading(ctx: &mut OrderContext<'_>) {
 
     client.grid = landing_grid;
     client.target_grid = landing_grid;
-    client.x = (i32::from(landing_grid.x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
-    client.y = (i32::from(landing_grid.y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2) as u16;
+    update_grid_position(&mut client);
 
     if !cell_changed {
         ctx.world

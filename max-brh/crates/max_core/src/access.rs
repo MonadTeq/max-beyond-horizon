@@ -1397,6 +1397,10 @@ fn attempt_side_step(state: &mut GameState, id: UnitId, grid: Point, angle: i32)
     state.map_hash_add(id, best_site, flags);
 
     unit.grid = best_site;
+    // The sidestep changes the cell, so the pixel position follows it
+    // (`UnitInfo::SetPosition`, `unitinfo.cpp:1301`): a unit destroyed right after
+    // the sidestep must explode on the new cell, not on the old one.
+    crate::unit_order::update_grid_position(&mut unit);
     unit.path = Some(crate::unit::UnitPath::Ground(crate::unit::GroundPath {
         end_x: best_site.x,
         end_y: best_site.y,

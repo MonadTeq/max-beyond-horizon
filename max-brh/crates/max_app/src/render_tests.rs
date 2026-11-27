@@ -74,6 +74,50 @@ fn the_flight_bob_follows_shake_air() {
     );
 }
 
+/// `AirPath::Execute` (`airpath.cpp:219-242`) and `UnitsManager_StartExplosion`
+/// (`units_manager.cpp:3991-3994`): both are drawn at the stored **pixel**
+/// position, not at the cell anchor — the air path is a straight pixel segment and
+/// the blast takes the dying unit's `x/y`.
+#[test]
+fn aircraft_and_explosions_are_drawn_on_their_pixel() {
+    use max_core::enums::{unit_flags, UnitType};
+    use max_core::geo::Point;
+    use max_core::team::TeamId;
+    use max_core::unit::{UnitId, UnitInfo};
+
+    let mut fighter = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(1));
+    fighter.flags |= unit_flags::MOBILE_AIR_UNIT;
+    fighter.grid = Point::new(10, 10);
+    // Twelve pixels right and three down of the cell center: a point of the air
+    // path between two cells.
+    fighter.x = (10 * 64 + 32 + 12) as u16;
+    fighter.y = (10 * 64 + 32 + 3) as u16;
+
+    let visual = (f32::from(fighter.x) / 64.0, f32::from(fighter.y) / 64.0);
+    assert_eq!(
+        air_pixel_anchor(&fighter, visual),
+        Some((i32::from(fighter.x), i32::from(fighter.y))),
+        "the frame point (cells) × 64 is the air-path pixel, without the +32 center"
+    );
+
+    let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
+    tank.flags |= unit_flags::MOBILE_LAND_UNIT;
+    tank.grid = Point::new(10, 10);
+    assert_eq!(air_pixel_anchor(&tank, (10.0, 10.0)), None);
+    assert_eq!(
+        unit_anchor_world(&tank, (10.0, 10.0)),
+        (10 * 64 + 32, 10 * 64 + 32),
+        "a ground unit stays on the cell-center anchor"
+    );
+
+    let mut blast = UnitInfo::new(UnitType::LandExplosion, TeamId::RED, UnitId(3));
+    blast.flags |= unit_flags::EXPLODING;
+    blast.x = 700;
+    blast.y = 690;
+    assert_eq!(explosion_pixel_anchor(&blast), Some((700, 690)));
+    assert_eq!(explosion_pixel_anchor(&tank), None);
+}
+
 #[test]
 fn frame_index_uses_the_given_body_angle_and_power_on_offset() {
     use max_core::enums::UnitType;

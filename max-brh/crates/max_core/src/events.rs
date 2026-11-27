@@ -467,6 +467,9 @@ fn apply_packet_38(state: &mut GameState, packet: &crate::input::Packet38Move) -
     // so only an actual discrepancy is applied.
     if unit.grid != packet.grid {
         unit.grid = packet.grid;
+        // The pixel position follows the relocated cell (`UnitInfo::SetPosition`,
+        // `unitinfo.cpp:1301`), so a later explosion is drawn on the new cell.
+        unit_order::update_grid_position(&mut unit);
     }
 
     match &packet.path {

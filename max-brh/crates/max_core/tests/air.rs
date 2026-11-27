@@ -129,6 +129,162 @@ fn the_shadow_shift_is_not_part_of_the_state_digest() {
     assert_eq!(shadow_offset(&state, fighter), Point::new(-64, -64));
 }
 
+/// Pixel position of the unit (`UnitInfo::x/y`).
+fn pixel(state: &max_core::universe::GameUniverse, id: max_core::UnitId) -> (i32, i32) {
+    let unit = state.snapshot().unit(id).expect("unit").clone();
+
+    (i32::from(unit.x), i32::from(unit.y))
+}
+
+/// Perpendicular distance from `point` to the line `start`вЂ“`end` in pixels.
+fn distance_to_line(point: (i32, i32), start: (i32, i32), end: (i32, i32)) -> f32 {
+    let dx = (end.0 - start.0) as f32;
+    let dy = (end.1 - start.1) as f32;
+    let px = (point.0 - start.0) as f32;
+    let py = (point.1 - start.1) as f32;
+
+    if dx == 0.0 && dy == 0.0 {
+        return (px * px + py * py).sqrt();
+    }
+
+    (px * dy - py * dx).abs() / (dx * dx + dy * dy).sqrt()
+}
+
+/// `AirPath::Execute` (`airpath.cpp:219-242`): an aircraft flies the **straight
+/// pixel segment** between the start and the target cell centers —
+/// `m_step_x += m_delta_x`, `position = (m_step >> 16) + m_start`, `unit->x/y` and
+/// `grid_x = x >> 6`. It is not the 8-direction cell stair of the ground path
+/// (`UnitInfo::Move`): a non-45° route (`dx = 10`, `dy = 4`) would bend there.
+///
+/// The previous port moved the aircraft cell by cell toward `path.end_x/end_y`
+/// and never touched `x/y`, so every sample stayed at the starting cell center.
+#[test]
+fn an_aircraft_flies_the_straight_pixel_segment() {
+    let mut state = game();
+    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+
+    if let Some(unit) = state.unit_mut(fighter) {
+        unit.flags |= unit_flags::HOVERING;
+    }
+
+    let target = Point::new(20, 14);
+    order_move(&mut state, fighter, target);
+
+    let start = (10 * 64 + 32, 10 * 64 + 32);
+    let end = (20 * 64 + 32, 14 * 64 + 32);
+    let mut samples = Vec::new();
+
+    for _ in 0..120 {
+        state.tick();
+
+        let unit = state.snapshot().unit(fighter).expect("fighter").clone();
+        samples.push(pixel(&state, fighter));
+
+        // The path is over when `Paths_FinishMove` cleared it
+        // (`m_length == 0`, `airpath.cpp:281-283`).
+        if unit.path.is_none() {
+            break;
+        }
+    }
+
+    assert!(samples.len() > 4, "the aircraft flies for several ticks");
+
+    for sample in &samples {
+        let distance = distance_to_line(*sample, start, end);
+
+        assert!(
+            distance <= 1.5,
+            "sample {sample:?} is {distance:.2} px off the air path line"
+        );
+    }
+
+    // The pixel position really moves between ticks (the old port left it at the
+    // spawn cell) and passes through points that are not cell centers.
+    assert!(
+        samples.iter().any(|sample| *sample != start),
+        "`AirPath::Execute` moves `unit->x/y`, not just the grid"
+    );
+    assert!(
+        samples
+            .iter()
+            .any(|sample| (sample.0 - 32) % 64 != 0 || (sample.1 - 32) % 64 != 0),
+        "the aircraft is drawn on the straight segment, not on cell centers"
+    );
+
+    // The pixel walk lands on the segment end up to the integer truncation of the
+    // last halved step (`m_length == 1`, `airpath.cpp:272-278`), and the grid is
+    // recomputed from the pixel (`grid_x = x >> 6`).
+    let last = *samples.last().expect("samples");
+    assert!(
+        (last.0 - end.0).abs() <= 2 && (last.1 - end.1).abs() <= 2,
+        "the aircraft arrives at the target cell center: {last:?} vs {end:?}"
+    );
+    assert_eq!(grid(&state, fighter), target, "the grid follows the pixel");
+}
+
+/// `UnitsManager_StartExplosion` (`units_manager.cpp:3991-3994`): an aircraft shot
+/// down **between two cells** explodes on its own pixel position
+/// (`explosion->OffsetDrawZones(unit->x - explosion->x, unit->y - explosion->y)`),
+/// not on the center of the cell it happened to be over.
+#[test]
+fn an_aircraft_killed_mid_flight_explodes_on_its_pixel() {
+    let mut state = game();
+    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+
+    if let Some(unit) = state.unit_mut(fighter) {
+        unit.flags |= unit_flags::HOVERING;
+    }
+
+    order_move(&mut state, fighter, Point::new(20, 14));
+
+    // A few pixels into the segment: `x/y` is no longer a cell center.
+    let mut pixel = (0, 0);
+    let mut cell = Point::ZERO;
+
+    for _ in 0..6 {
+        state.tick();
+        let unit = state.snapshot().unit(fighter).expect("fighter").clone();
+        pixel = (i32::from(unit.x), i32::from(unit.y));
+        cell = unit.grid;
+
+        if pixel != (10 * 64 + 32, 10 * 64 + 32) {
+            break;
+        }
+    }
+
+    assert!(
+        (pixel.0 - 32) % 64 != 0 || (pixel.1 - 32) % 64 != 0,
+        "the aircraft is mid-cell: {pixel:?}"
+    );
+
+    // Kill it right there (`ORDER_EXPLODE`/`INIT` → `UnitsManager_StartExplosion`).
+    {
+        let unit = state.unit_mut(fighter).expect("fighter");
+        unit.hits = 0;
+        unit.orders = UnitOrder::Explode;
+        unit.state = UnitOrderState::Init;
+        unit.angle = 0;
+    }
+
+    state.tick();
+
+    let blast = state
+        .snapshot()
+        .unit_ids_in_order()
+        .into_iter()
+        .filter_map(|id| state.snapshot().unit(id).cloned())
+        .find(|unit| unit.unit_type == UnitType::AirExplosion)
+        .expect("an aircraft explodes with `AIREXPLD`");
+
+    assert_eq!(
+        (i32::from(blast.x), i32::from(blast.y)),
+        pixel,
+        "`OffsetDrawZones(unit->x - explosion->x, ...)`: the blast is drawn on the \
+         aircraft pixel, not on the cell center"
+    );
+    assert_eq!(blast.grid, cell, "the effect is spawned on the aircraft cell");
+}
+
 /// `AirPath::Execute` + `Paths_GetAirPath`: an aircraft flies exactly `speed`
 /// cells and spends one `speed` point per cell (`airpath.cpp:272-278`); the next
 /// order in the same turn does not move it.

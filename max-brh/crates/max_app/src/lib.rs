@@ -701,9 +701,11 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// the actual route cell by cell with real time
     /// ([`App::update_visual_units`]). These values are not part of the CRC/snapshot.
     visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
-    /// Last known simulation cell of a unit: from its changes
-    /// the visual route is built. UI state, not part of the snapshot.
-    visual_goals: std::collections::HashMap<UnitId, (i16, i16)>,
+    /// Last known frame target of a unit in cells (fractional): the simulation cell
+    /// of a ground/sea unit, the **pixel** position (`unit->x/y / 64`) of an
+    /// aircraft — from its changes the visual route is built. UI state, not part of
+    /// the snapshot.
+    visual_goals: std::collections::HashMap<UnitId, (f32, f32)>,
     /// Queue of route cells the frame still has to pass. The simulation
     /// executes the order in ticks (fast), while the frame passes the same cells at
     /// the real original speed (`UnitInfo::Move`: 8 px/tick ~ 3.75 cells/s).
@@ -962,6 +964,24 @@ pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 /// A jump larger than this number of cells is not a route but a teleport/state
 /// synchronization: the visual position is set to the target without animation.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
+
+/// Frame target of a unit in fractional cells — where the sprite has to be drawn.
+///
+/// * Ground/sea units: the simulation cell. The simulation moves a whole cell per
+///   tick and the frame walks the route at [`VISUAL_CELLS_PER_SECOND`].
+/// * Aircraft: the **pixel** position from `AirPath::Execute` (`airpath.cpp:219-242`,
+///   `unit->x/y`, one cell = 64 px). The air path is a straight line in pixels, so
+///   the frame interpolates that line (`render::air_pixel_anchor` draws at
+///   `fraction * 64`), not a cell stair.
+fn visual_target(unit: &UnitInfo) -> (f32, f32) {
+    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
+        let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
+
+        (f32::from(unit.x) / tile, f32::from(unit.y) / tile)
+    } else {
+        (f32::from(unit.grid.x), f32::from(unit.grid.y))
+    }
+}
 
 /// One step of a unit visual route: the point in cells and the movement direction
 /// to it (`Paths_GetAngle`, 0..7).
@@ -4173,9 +4193,9 @@ impl<D: Dispatcher> App<D> {
                 let Some(unit) = state.unit(id) else {
                     continue;
                 };
-                let target = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+                let target = visual_target(unit);
                 visual.insert(id, target);
-                goals.insert(id, (unit.grid.x, unit.grid.y));
+                goals.insert(id, target);
                 paths.remove(&id);
                 speeds.insert(id, unit.speed);
             }
@@ -4191,19 +4211,34 @@ impl<D: Dispatcher> App<D> {
             let Some(unit) = state.unit(id) else {
                 continue;
             };
-            let grid = (unit.grid.x, unit.grid.y);
-            let target = (f32::from(grid.0), f32::from(grid.1));
+            let target = visual_target(unit);
             let current = visual.entry(id).or_insert(target);
-            let goal = goals.entry(id).or_insert(grid);
+            let goal = goals.entry(id).or_insert(target);
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
+
+            // A dead unit does not keep walking the route the frame still has queued:
+            // the turn-close drain moves a whole route in one simulation step, so a
+            // unit stopped by an intercept (and killed there) would otherwise be
+            // drawn several cells behind its simulation cell while its explosion
+            // plays at the death cell. The corpse, its death animation and the
+            // explosion must sit on the cell where the unit really died
+            // (`UnitsManager_StartExplosion`, `units_manager.cpp:3991`).
+            if unit.hits == 0 {
+                queue.clear();
+                *current = target;
+                *goal = target;
+                *last_speed = unit.speed;
+                anchors.insert(id, (target.0.round() as i16, target.1.round() as i16));
+                continue;
+            }
 
             // The simulation moved the unit (usually one cell per tick).
             // We append the actual route cells so that the frame walks them,
             // not cutting the path in a straight line; a big jump — a teleport/sync.
-            if *goal != grid {
-                let dx = i32::from(grid.0) - i32::from(goal.0);
-                let dy = i32::from(grid.1) - i32::from(goal.1);
+            if *goal != target {
+                let dx = target.0 - goal.0;
+                let dy = target.1 - goal.1;
                 let distance = dx.abs().max(dy.abs());
                 // Movement points the simulation spent on these cells since the
                 // previous frame (`Paths_CalculateStep` decrements `speed`), split
@@ -4211,33 +4246,53 @@ impl<D: Dispatcher> App<D> {
                 // when the sprite enters the cell, exactly like the C++ pixel walk.
                 let spent = last_speed.saturating_sub(unit.speed);
 
-                if distance > VISUAL_TELEPORT_CELLS {
+                if distance > VISUAL_TELEPORT_CELLS as f32 {
                     queue.clear();
                     *current = target;
                 } else {
-                    let divisor = distance.max(1);
-                    let per_step = spent / divisor as u16;
-                    let remainder = spent % divisor as u16;
+                    // Whole-cell route steps are split so the sprite walks the cells;
+                    // an aircraft's sub-cell pixel step is one waypoint.
+                    let divisor = distance.ceil().max(1.0) as u16;
+                    let per_step = spent / divisor;
+                    let remainder = spent % divisor;
                     let mut previous = *goal;
 
                     for step in 1..=divisor {
-                        let x = goal.0 + (dx * step / divisor) as i16;
-                        let y = goal.1 + (dy * step / divisor) as i16;
-                        let step_dx = i32::from(x) - i32::from(previous.0);
-                        let step_dy = i32::from(y) - i32::from(previous.1);
-                        // The segment direction — from the actual cell displacement,
+                        let fraction = f32::from(step) / f32::from(divisor);
+                        let x = goal.0 + dx * fraction;
+                        let y = goal.1 + dy * fraction;
+                        let step_dx = x - previous.0;
+                        let step_dy = y - previous.1;
+                        // The segment direction — from the actual displacement,
                         // not from the current `unit.angle`: by the frame moment
                         // the simulation may have already turned toward the next step
                         // (`GroundPath::UpdateUnitAngle`) or gone further.
-                        let angle = if step_dx == 0 && step_dy == 0 {
+                        // `f32::signum` returns 1.0 for +0.0, so the sign is taken
+                        // by comparison: an axial segment must not turn diagonal.
+                        let sign_x = if step_dx > 0.0 {
+                            1
+                        } else if step_dx < 0.0 {
+                            -1
+                        } else {
+                            0
+                        };
+                        let sign_y = if step_dy > 0.0 {
+                            1
+                        } else if step_dy < 0.0 {
+                            -1
+                        } else {
+                            0
+                        };
+
+                        let angle = if sign_x == 0 && sign_y == 0 {
                             unit.angle
                         } else {
-                            max_core::unit_order::paths_get_angle(step_dx, step_dy) as u8
+                            max_core::unit_order::paths_get_angle(sign_x, sign_y) as u8
                         };
 
                         queue.push_back(VisualStep {
-                            x: f32::from(x),
-                            y: f32::from(y),
+                            x,
+                            y,
                             angle,
                             speed: per_step + if step == divisor { remainder } else { 0 },
                         });
@@ -4245,7 +4300,7 @@ impl<D: Dispatcher> App<D> {
                     }
                 }
 
-                *goal = grid;
+                *goal = target;
             }
 
             // Speed may also change without a cell move (a blocked step, the turn

@@ -731,6 +731,37 @@ pub fn effect_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)
     .then(|| (i32::from(unit.x), i32::from(unit.y)))
 }
 
+/// Pixel anchor of an explosion effect (`UnitsManager_StartExplosion`,
+/// `units_manager.cpp:3991-3994`).
+///
+/// C++ deploys the effect on the dying unit's cell and then
+/// `explosion->OffsetDrawZones(unit->x - explosion->x, unit->y - explosion->y)`:
+/// the blast is drawn at the **unit's own pixel**, not at the cell anchor. The
+/// port stores the result in the effect's `x/y`, so a unit shot down between two
+/// cells (an aircraft on its air path) explodes exactly where it was, and a unit
+/// stopped by an intercept explodes on the halt cell's center.
+pub fn explosion_pixel_anchor(unit: &max_core::unit::UnitInfo) -> Option<(i32, i32)> {
+    (unit.flags & unit_flags::EXPLODING != 0).then(|| (i32::from(unit.x), i32::from(unit.y)))
+}
+
+/// Pixel anchor of a flying aircraft.
+///
+/// `AirPath::Execute` (`airpath.cpp:219-242`) moves the aircraft **pixel by pixel**
+/// along the straight segment (`m_step_x += m_delta_x`, `OffsetDrawZones`), and
+/// `UnitInfo::Render` draws it exactly at `unit->x/y`. The port keeps the straight
+/// line in the simulation (`unit_order::air_path_execute`) and interpolates the
+/// frame-side point in cells (`App::update_visual_units`): the anchor is that point
+/// in world pixels, 64 px per cell — no cell-center offset, unlike
+/// [`unit_anchor_world`].
+pub fn air_pixel_anchor(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) -> Option<(i32, i32)> {
+    (unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0).then(|| {
+        (
+            (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+            (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+        )
+    })
+}
+
 /// Unit frame taking the builder frame-by-frame animation into account (`build_step`).
 ///
 /// `build_step` РІР‚вЂќ number of the constructor working cycle frame (0, 1, 2) from
@@ -2300,6 +2331,8 @@ impl<D: Dispatcher> App<D> {
             // only the draw zones, the port keeps this in pixel `x/y`.
             let (world_x, world_y) = effect_pixel_anchor(unit)
                 .or_else(|| missile_pixel_anchor(unit))
+                .or_else(|| explosion_pixel_anchor(unit))
+                .or_else(|| air_pixel_anchor(unit, (grid_x, grid_y)))
                 .unwrap_or_else(|| unit_anchor_world(unit, (grid_x, grid_y)));
             // Flight bob (`UnitInfo::ShakeAir`, `unitinfo.cpp:4636-4678`): a
             // hovering aircraft sways by up to two pixels along a rotating

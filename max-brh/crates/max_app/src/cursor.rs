@@ -266,13 +266,190 @@ pub fn cursor_image(
     id: CursorId,
     frame: usize,
 ) -> Option<CursorImage> {
+    cursor_image_with_attack_power(cursors, palette, id, frame, None)
+}
+
+/// Width of the attack-power bar interior (`buf_fill(..., 35, 3, ...)`,
+/// `cursor.cpp:220-235`).
+pub const ATTACK_POWER_BAR_WIDTH: u32 = 35;
+
+/// Expected damage of one shot — the two segments of the attack-power bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttackPower {
+    /// Remaining hits after the shot, in bar pixels (palette index 2).
+    pub remaining: u32,
+    /// Hits the shot takes, in bar pixels (palette index 1).
+    pub damage: u32,
+}
+
+/// `Cursor_DrawAttackPowerCursorHelper` (`cursor.cpp:202-237`) without the blit:
+/// the widths of the "remaining" and "damage" segments of the 35 px bar.
+///
+/// C++:
+/// ```text
+/// if (attacker_damage > target_current_hits) attacker_damage = target_current_hits;
+/// target_current_hits -= attacker_damage;
+/// attacker_damage = (attacker_damage + target_current_hits) * 35 / target_base_hits;
+/// target_current_hits = target_current_hits * 35 / target_base_hits;
+/// attacker_damage -= target_current_hits;
+/// ```
+/// `None` — the target has no `ATTRIB_HITS`: C++ clears the bar area instead of
+/// drawing segments.
+pub fn attack_power_segments(
+    current_hits: i32,
+    attack_damage: i32,
+    base_hits: i32,
+) -> Option<AttackPower> {
+    if base_hits <= 0 {
+        return None;
+    }
+
+    let mut damage = attack_damage.max(0);
+    let mut remaining = current_hits.max(0);
+
+    if damage > remaining {
+        damage = remaining;
+    }
+
+    remaining -= damage;
+
+    let mut bar_damage = (damage + remaining) * ATTACK_POWER_BAR_WIDTH as i32 / base_hits;
+    let bar_remaining = remaining * ATTACK_POWER_BAR_WIDTH as i32 / base_hits;
+    bar_damage -= bar_remaining;
+
+    Some(AttackPower {
+        remaining: bar_remaining.max(0) as u32,
+        damage: bar_damage.max(0) as u32,
+    })
+}
+
+/// `Cursor_DrawAttackPowerCursor` (`cursor.cpp:520-531`): the damage preview of
+/// `selected` against `target` (`UnitsManager_GetAttackDamage(selected, target, 0)`).
+pub fn attack_power(selected: &UnitInfo, target: &UnitInfo) -> Option<AttackPower> {
+    attack_power_segments(
+        i32::from(target.hits),
+        max_core::combat::get_attack_damage(selected, target, 0),
+        i32::from(
+            target
+                .base_values
+                .get_attribute(max_core::unit_values::ATTRIB_HITS),
+        ),
+    )
+}
+
+/// The bar for the unit under the cursor — `GameManager_GetMilitaryCursor`
+/// (`game_manager.cpp:6150-6220`) calls `Cursor_DrawAttackPowerCursor` with the
+/// `Access_GetAttackTarget` result whenever the military cursor is
+/// `CURSOR_ENEMY`/`CURSOR_FAR_TARGET`.
+pub fn attack_power_under_cursor(app: &crate::App, grid: Point) -> Option<AttackPower> {
+    let state = app.state_ref();
+    let selected = state.unit(app.hud().selected?)?;
+    let target = state.get_attack_target(selected, grid, false)?;
+
+    attack_power(selected, state.unit(target)?)
+}
+
+/// `Cursor_DrawAttackPowerCursorHelper` drawing part (`cursor.cpp:220-235`): the
+/// 37×5 black frame and the 35×3 interior at `(ulx - 18, uly + 15)` of the cursor.
+///
+/// The colors are palette **indices** of the system (`FRAMEPIC`) palette, exactly
+/// as C++ writes them into the cursor's indexed data: `COLOR_BLACK` (0) for the
+/// frame, `2` for the remaining hits, `1` for the damage and the cursor's own
+/// transparent index for the untouched rest.
+fn draw_attack_power_bar(
+    indices: &mut [u8],
+    width: i32,
+    height: i32,
+    hot_x: i32,
+    hot_y: i32,
+    transparent: u8,
+    power: AttackPower,
+) {
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let lrx = hot_x - 18;
+    let lry = hot_y + 15;
+
+    let mut put = |x: i32, y: i32, index: u8| {
+        if x < 0 || y < 0 || x >= width || y >= height {
+            return;
+        }
+
+        let offset = y as usize * width as usize + x as usize;
+
+        if let Some(pixel) = indices.get_mut(offset) {
+            *pixel = index;
+        }
+    };
+
+    // `draw_box(data, cursor->width, 0, 0, 36, 4, COLOR_BLACK)` вЂ” the frame is
+    // inclusive: 37 pixels wide, 5 rows tall.
+    for x in 0..=36 {
+        put(lrx + x, lry, 0);
+        put(lrx + x, lry + 4, 0);
+    }
+
+    for y in 0..=4 {
+        put(lrx, lry + y, 0);
+        put(lrx + 36, lry + y, 0);
+    }
+
+    let remaining = power.remaining.min(ATTACK_POWER_BAR_WIDTH);
+    let damage = power
+        .damage
+        .min(ATTACK_POWER_BAR_WIDTH.saturating_sub(remaining));
+
+    for row in 1..=3 {
+        for column in 0..ATTACK_POWER_BAR_WIDTH {
+            let index = if column < remaining {
+                2
+            } else if column < remaining + damage {
+                1
+            } else {
+                transparent
+            };
+
+            put(lrx + 1 + column as i32, lry + row, index);
+        }
+    }
+}
+
+/// [`cursor_image`] plus the attack-power bar of `Cursor_DrawAttackPowerCursor`
+/// (`cursor.cpp:520`).
+///
+/// `power` is painted into the **indexed** frame before the palette lookup, so the
+/// bar uses the same system-palette colors as the original (indices 0/1/2) and the
+/// result is interchangeable with a plain [`cursor_image`] when `power` is `None`.
+pub fn cursor_image_with_attack_power(
+    cursors: &CursorSet,
+    palette: &PaletteRgba,
+    id: CursorId,
+    frame: usize,
+    power: Option<AttackPower>,
+) -> Option<CursorImage> {
     let cursor = cursors.get(id.index())?;
     let pixels = cursor.frame(frame)?;
+    let mut indices = pixels.to_vec();
+
+    if let Some(power) = power {
+        draw_attack_power_bar(
+            &mut indices,
+            cursor.width,
+            cursor.height,
+            cursor.hot_x,
+            cursor.hot_y,
+            cursor.transparent,
+            power,
+        );
+    }
+
     let width = cursor.width as u32;
     let height = cursor.height as u32;
     let mut rgba = vec![0u8; width as usize * height as usize * 4];
 
-    for (index, &color_index) in pixels.iter().enumerate() {
+    for (index, &color_index) in indices.iter().enumerate() {
         let offset = index * 4;
 
         if color_index == cursor.transparent {
@@ -1100,6 +1277,22 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
     CursorId::UnitNoGo
 }
 
+/// Grid of the map under a window point of the match — the conversion of
+/// `GameManager_ProcessInput` (`game_manager.cpp:6359-6468`, `screen_to_map` +
+/// `WindowManager_ScreenToMap`), shared by [`session_cursor`] and the
+/// attack-power bar ([`attack_power_under_cursor`]).
+///
+/// `None` — the point is not on the map (`screen_to_map` fails: panels, chrome,
+/// outside the map window).
+pub fn cursor_grid(app: &crate::App, mouse: Option<(i32, i32)>) -> Option<Point> {
+    let (x, y) = mouse?;
+    let (map_x, map_y) = crate::panels::screen_to_map(x, y)?;
+    let viewport = crate::panels::map_viewport(app.viewport());
+    let (grid_x, grid_y) = viewport.screen_to_grid(map_x, map_y);
+
+    Some(Point::new(grid_x, grid_y))
+}
+
 /// Cursor for a window point in the match — `GameManager_ProcessInput`
 /// (`game_manager.cpp:6359-6468`): menu/panel/minimap — `HANDPTR`
 /// (`Cursor_GetDefaultWindowCursor`), map — [`window_cursor`].
@@ -1138,31 +1331,23 @@ pub fn session_cursor(app: &crate::App, mouse: Option<(i32, i32)>) -> (CursorId,
         return (CursorId::Hand, 0);
     }
 
-    let Some((map_x, map_y)) = crate::panels::screen_to_map(x, y) else {
+    let Some(grid) = cursor_grid(app, mouse) else {
         // Not the map and not a control: a non-interactive window element
         // (statistics, log, coordinates, turn counter, frame) — the "forbidden"
         // cursor, as the playtest defect asks.
-        if app.chrome_active() {
-            return (CursorId::UnitNoGo, 0);
-        }
-
         return (CursorId::UnitNoGo, 0);
     };
-
-    let viewport = crate::panels::map_viewport(app.viewport());
-    let (grid_x, grid_y) = viewport.screen_to_grid(map_x, map_y);
 
     // The build site selection mode is more important than hovering over units:
     // `GameManager_GetBuilderUnitCursor` returns `CURSOR_MAP2`/`UNIT_NO_GO`.
     if let Some(site) = app.build_site() {
-        let hovered = Point::new(grid_x, grid_y);
-        let anchor = site.anchor_at(app.state_ref(), hovered);
-        let valid = site.is_valid_at(app.state_ref(), anchor, hovered);
+        let anchor = site.anchor_at(app.state_ref(), grid);
+        let valid = site.is_valid_at(app.state_ref(), anchor, grid);
 
         return (cursor_for_context(CursorContext::BuildSite { valid }), 0);
     }
 
-    (window_cursor(app, Point::new(grid_x, grid_y)), 0)
+    (window_cursor(app, grid), 0)
 }
 
 /// Cursor over an open UI window — `Cursor_GetDefaultWindowCursor`

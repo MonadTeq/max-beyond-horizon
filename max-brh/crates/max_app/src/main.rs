@@ -2599,10 +2599,30 @@ fn update_window_cursor(
         }
     };
     let palette = max_app::render::window_palette(assets);
-    let Some(image) = max_app::cursor::cursor_image(cursors, &palette, cursor, frame) else {
+    // `Cursor_DrawAttackPowerCursor` (`cursor.cpp:520-531`): the attack cursor
+    // carries the expected damage bar of the shot at the unit under the cursor.
+    // `GameManager_GetMilitaryCursor` (`game_manager.cpp:6216-6218`) draws it for
+    // every `CURSOR_ENEMY`/`CURSOR_FAR_TARGET` result of `Access_GetAttackTarget`.
+    let power = match cursor {
+        max_app::CursorId::Enemy | max_app::CursorId::FarTarget => {
+            max_app::cursor::cursor_grid(app, mouse)
+                .and_then(|grid| max_app::cursor::attack_power_under_cursor(app, grid))
+        }
+        _ => None,
+    };
+    let Some(image) =
+        max_app::cursor::cursor_image_with_attack_power(cursors, &palette, cursor, frame, power)
+    else {
         return;
     };
-    let key = cursor.index() as u32 | ((frame as u32) << 8);
+    // The cache key carries the bar segments: the damage preview changes the image
+    // even when the cursor id and its frame do not (`Cursor_RegenerateHardwareCursor`,
+    // `cursor.cpp:486-518`, regenerates the SDL cursor after the indexed edit).
+    let key = cursor.index() as u32
+        | ((frame as u32) << 8)
+        | power.map_or(0, |power| {
+            1 << 16 | (power.remaining & 0x3F) << 17 | (power.damage & 0x3F) << 23
+        });
 
     if let Err(error) = window.set_cursor_rgba(
         key,

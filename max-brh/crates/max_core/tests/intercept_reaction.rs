@@ -258,3 +258,80 @@ fn enemy_halt_off_lets_the_mover_reach_the_destination() {
         "the destination shot leaves the unit waiting there"
     );
 }
+
+/// The explosion of a unit killed by the intercept is spawned on the **halt cell**,
+/// not on the destination of the interrupted route.
+///
+/// Oracle: `UnitsManager_StartExplosion` (`units_manager.cpp:3991`) deploys the
+/// effect at `unit->grid_x, unit->grid_y` — the cell the dead unit **occupies** at
+/// death — and then aligns it with the unit's pixel position
+/// (`explosion->OffsetDrawZones(unit->x - explosion->x, unit->y - explosion->y)`,
+/// `:3991-3994`). The order data (`move_to`, the route destination) is never a
+/// position source: the old manual-run symptom was "the unit is stopped and shot at
+/// on the halt cell, but the blast is shown on the destination".
+#[test]
+fn a_killed_intercepted_unit_explodes_on_the_halt_cell() {
+    let mut scenario = scenario(true, false);
+    let range = enemy_range(&scenario.universe, scenario.enemy);
+    let halt_cell = Point::new(20 - range, 10);
+
+    {
+        let mover = scenario.universe.unit_mut(scenario.mover).expect("mover");
+        mover.hits = 1;
+    }
+
+    scenario.universe.end_local_turn(TeamId::RED);
+
+    let mut explosion = None;
+    for _ in 0..60 {
+        scenario.universe.tick();
+
+        explosion = scenario
+            .universe
+            .snapshot()
+            .unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| scenario.universe.snapshot().unit(id).cloned())
+            .find(|unit| {
+                matches!(
+                    unit.unit_type,
+                    UnitType::HitExplosion
+                        | UnitType::LandExplosion
+                        | UnitType::BuildingExplosion
+                        | UnitType::AirExplosion
+                        | UnitType::SeaExplosion
+                )
+            });
+
+        if explosion.is_some() {
+            break;
+        }
+    }
+
+    let explosion = explosion.expect("the killed unit spawns an explosion effect");
+    let dead = scenario
+        .universe
+        .snapshot()
+        .unit(scenario.mover)
+        .cloned()
+        .expect("the corpse stays until the blast clears it");
+
+    assert_eq!(dead.grid, halt_cell, "the unit died on the halt cell");
+    assert_eq!(
+        explosion.grid, halt_cell,
+        "`StartExplosion` uses the dying unit's cell, not `move_to`"
+    );
+    assert_ne!(
+        explosion.grid, scenario.destination,
+        "the destination of the interrupted route is not a position source"
+    );
+    assert_eq!(
+        (explosion.x, explosion.y),
+        (
+            (halt_cell.x as i32 * 64 + 32) as u16,
+            (halt_cell.y as i32 * 64 + 32) as u16
+        ),
+        "`OffsetDrawZones(unit->x - explosion->x, ...)`: the blast is drawn at the \
+         dying unit's pixel, which for a stopped unit is the halt cell center"
+    );
+}
