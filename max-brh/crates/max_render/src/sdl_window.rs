@@ -56,6 +56,7 @@ use sdl3::EventPump;
 use crate::buffer::RgbaBuffer;
 use crate::frame_scale::FrameScale;
 use crate::presentation::{PresentationState, ScreenGeometry};
+use crate::render_scale::{FilterMode, RenderScale};
 
 /// A window key in UI terms: `max_app` does not depend on SDL types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +207,8 @@ pub struct SdlWindow {
     title: String,
     /// Logical frame size (640Р“вЂ”480 in UI mode).
     base_size: (u32, u32),
+    /// Presentation scale of the render frame (`PixelPerfect` = 640×480).
+    render_scale: RenderScale,
     /// Window points / drawable pixels / frame layout in pixels.
     geometry: ScreenGeometry,
     /// Focus/minimize/occlusion РІР‚вЂќ drawing decisions only.
@@ -298,6 +301,7 @@ impl SdlWindow {
             events,
             title: title.to_owned(),
             base_size: (width, height),
+            render_scale: RenderScale::PixelPerfect,
             geometry: ScreenGeometry::fit(window_points, output_pixels, width, height),
             presentation: PresentationState::new(),
             fullscreen: false,
@@ -324,6 +328,32 @@ impl SdlWindow {
     /// Logical frame size.
     pub fn base_size(&self) -> (u32, u32) {
         self.base_size
+    }
+
+    /// Presentation scale of the render frame (`max-brh-docs/development/remaster-hd.md` §2.2).
+    pub fn render_scale(&self) -> RenderScale {
+        self.render_scale
+    }
+
+    /// Render frame size in pixels (`640·S × 480·S`).
+    pub fn render_frame_size(&self) -> (u32, u32) {
+        self.geometry.render_frame_size()
+    }
+
+    /// Switches between the pixel-perfect (`S = 1`) and HD (`S = 2/4`) presentation.
+    ///
+    /// Presentation only: the window layout is recomputed, the logical 640×480
+    /// frame, the camera and the simulation are untouched. In HD mode the caller
+    /// hands [`Self::present`] a render frame of [`Self::render_frame_size`] and
+    /// the frame is uploaded with linear filtering; `PixelPerfect` keeps nearest
+    /// neighbour and the historical 640×480 frame.
+    pub fn set_render_scale(&mut self, render_scale: RenderScale) {
+        if self.render_scale == render_scale {
+            return;
+        }
+
+        self.render_scale = render_scale;
+        self.refresh_layout();
     }
 
     /// Current integer frame scale (in drawable pixels).
@@ -419,7 +449,11 @@ impl SdlWindow {
         Ok(self.fullscreen)
     }
 
-    /// Recomputes the layout for the current window size and frame size.
+    /// Recomputes the layout for the current window size and **logical** frame size.
+    ///
+    /// The render frame follows from [`Self::render_scale`]; in HD mode the
+    /// renderer must hand [`Self::present`] a buffer of
+    /// [`Self::render_frame_size`].
     pub fn update_frame_scale(&mut self, frame_width: u32, frame_height: u32) -> FrameScale {
         let (window_width, window_height) = self.size();
         let output = self.output_size();
@@ -429,11 +463,12 @@ impl SdlWindow {
             || output != self.geometry.output_pixels()
         {
             self.base_size = (frame_width, frame_height);
-            self.geometry = ScreenGeometry::fit(
+            self.geometry = ScreenGeometry::fit_with_render_scale(
                 (window_width, window_height),
                 output,
                 frame_width,
                 frame_height,
+                self.render_scale,
             );
         }
 
@@ -445,7 +480,13 @@ impl SdlWindow {
         let (width, height) = self.base_size;
 
         self.display_scale = self.canvas.window().display_scale();
-        self.geometry = ScreenGeometry::fit(self.size(), self.output_size(), width, height);
+        self.geometry = ScreenGeometry::fit_with_render_scale(
+            self.size(),
+            self.output_size(),
+            width,
+            height,
+            self.render_scale,
+        );
     }
 
     /// Window point (points) РІвЂ вЂ™ frame coordinates (for clicks at scale РІвЂ°В  1).
@@ -538,12 +579,25 @@ impl SdlWindow {
     ///
     /// The upload is skipped while the window is minimized/occluded: a hidden
     /// window is not drawn, but the caller's loop keeps running (no state reset).
+    ///
+    /// With [`RenderScale::Hd2`]/[`RenderScale::Hd4`] the buffer is the
+    /// `640·S × 480·S` render frame, the content rectangle is `640·S × 480·S`
+    /// (centred, letterboxed on the same rule) and the upload is linear; the
+    /// mouse transform still returns logical 640×480 coordinates.
     pub fn present(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
         if buffer.is_empty() {
             return Ok(());
         }
 
-        let scale = self.update_frame_scale(buffer.width(), buffer.height());
+        if self.render_scale.is_hd() {
+            // HD: the buffer is the render frame (640·S × 480·S) of the logical
+            // 640×480 frame; its size does not change the geometry.
+            self.refresh_layout();
+        } else {
+            // PixelPerfect keeps the historical behavior: the presented buffer
+            // is the logical frame, so a different buffer size re-lays out it.
+            let _ = self.update_frame_scale(buffer.width(), buffer.height());
+        }
 
         if !self.should_present() {
             return Ok(());
@@ -554,7 +608,11 @@ impl SdlWindow {
             .create_texture_streaming(PixelFormat::RGBA32, buffer.width(), buffer.height())
             .map_err(|error| WindowError::new("texture", error))?;
 
-        texture.set_scale_mode(ScaleMode::Nearest);
+        // Guardrail 5: the filter is global per mode, never per asset.
+        texture.set_scale_mode(match self.render_scale.filter() {
+            FilterMode::Nearest => ScaleMode::Nearest,
+            FilterMode::Linear => ScaleMode::Linear,
+        });
         texture
             .update(None, buffer.pixels(), buffer.stride())
             .map_err(|error| WindowError::new("texture_update", error))?;
@@ -563,7 +621,7 @@ impl SdlWindow {
             .set_draw_color(sdl3::pixels::Color::RGBA(0, 0, 0, 255));
         self.canvas.clear();
 
-        let content = scale.content_rect();
+        let content = self.geometry.content_rect();
         let destination = SdlRect::new(
             content.ulx,
             content.uly,

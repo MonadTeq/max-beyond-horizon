@@ -3,9 +3,11 @@
 //! The crate is split into two parts:
 //!
 //! * **pure** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
-//!   [`viewport`], [`text`], [`ui`]: only data and integer arithmetic,
-//!   no SDL and no file I/O (except loading `COLOR.PAL`). Everything is
+//!   [`viewport`], [`text`], [`ui`], [`terrain`], [`hd_terrain`],
+//!   [`render_scale`]: only data and integer arithmetic, no SDL. Everything is
 //!   tested without a window — this is the main, always buildable layer.
+//!   [`hd_terrain`] is the R3 presentation adapter: it reads decoded RGBA8
+//!   textures through `max_assets::remaster` and never touches `max_core`.
 //! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
 //!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
 //!   and the `sdl3` dependency is not pulled in.
@@ -35,10 +37,12 @@
 
 pub mod buffer;
 pub mod frame_scale;
+pub mod hd_terrain;
 pub mod layout;
 pub mod map_render;
 pub mod palette;
 pub mod presentation;
+pub mod render_scale;
 pub mod sprite_atlas;
 pub mod terrain;
 pub mod text;
@@ -50,7 +54,7 @@ pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
-pub use presentation::{PresentationState, ScreenGeometry};
+pub use hd_terrain::{HdTerrainAtlas, HdTile};
 pub use layout::{
     AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,
     HITS_BUTTON, MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON,
@@ -67,6 +71,10 @@ pub use palette::{
     BRIGHTNESS_LEVELS, COLOR_PAL_FILE_SIZE, COMMAND_SLOT_COUNT, FULL_BRIGHTNESS_LEVEL,
     PALETTE_BYTES, PALETTE_SIZE, SHADOW_BRIGHTNESS_LEVEL, TEAM_BLUE_COLORS, TEAM_DERELICT_COLORS,
     TEAM_GRAY_COLORS, TEAM_GREEN_COLORS, TEAM_RED_COLORS,
+};
+pub use presentation::{PresentationState, ScreenGeometry};
+pub use render_scale::{
+    FilterMode, RenderScale, HD_SCALES, HD_SCALE_X2, HD_SCALE_X4, PIXEL_PERFECT_SCALE,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};

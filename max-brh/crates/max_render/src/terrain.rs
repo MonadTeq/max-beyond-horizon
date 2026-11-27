@@ -236,13 +236,35 @@ impl TerrainAtlas {
 ///
 /// `size == 1` — the single tile pixel (C++ would divide by zero).
 pub fn cpp_tile_sample_offsets(size: i32) -> Vec<usize> {
+    cpp_tile_sample_offsets_for(TILE_SIZE, size)
+}
+
+/// The same `Gfx_DecodeMapTile` sampling for a source of `source` pixels.
+///
+/// The original tile is `64×64`; R3 feeds this function the dimensions of a
+/// pre-baked HD tile (`64·S`, [`crate::hd_terrain::HdTerrainAtlas`]) so the
+/// coordinate mapping is identical to [`cpp_tile_sample_offsets`] at the HD
+/// resolution.
+///
+/// ```text
+/// factor = ((source - 1) << 16) / (size - 1) + 8;
+/// offset = (i * factor) >> 16;
+/// ```
+///
+/// `size == source` yields the identity offsets, so a 1:1 HD tile keeps every
+/// texel.
+pub fn cpp_tile_sample_offsets_for(source: usize, size: i32) -> Vec<usize> {
     let size = size.max(1) as usize;
 
     if size == 1 {
         return vec![0];
     }
 
-    let factor = (((TILE_SIZE as i32 - 1) << 16) / (size as i32 - 1) + 8) as u32;
+    if source == 0 {
+        return Vec::new();
+    }
+
+    let factor = (((source as i32 - 1) << 16) / (size as i32 - 1) + 8) as u32;
 
     (0..size)
         .map(|index| ((index as u32 * factor) >> 16) as usize)

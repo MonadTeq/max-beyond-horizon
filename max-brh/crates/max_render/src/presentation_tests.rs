@@ -106,3 +106,77 @@ fn zero_sized_window_is_handled_without_panicking() {
     assert_eq!(geometry.scale(), 1);
     assert_eq!(geometry.window_to_frame(0, 0), None);
 }
+
+#[test]
+fn hd2_renders_a_1280x960_frame_but_keeps_the_logical_frame() {
+    // A 1280x960 point window with a 1280x960 drawable: the render frame is
+    // exactly 1280x960, so the window-level integer scale is 1 and no letterbox
+    // remains.
+    let geometry =
+        ScreenGeometry::native_with_render_scale((1280, 960), (1280, 960), RenderScale::Hd2);
+
+    assert_eq!(geometry.render_scale(), RenderScale::Hd2);
+    assert_eq!(geometry.frame_size(), (640, 480), "UI stays logical");
+    assert_eq!(geometry.render_frame_size(), (1280, 960));
+    assert_eq!(geometry.scale(), 1);
+    assert_eq!(geometry.content_rect(), PixelRect::new(0, 0, 1280, 960));
+    assert!(geometry.fills_output());
+
+    // A point maps through the render frame and is divided by S.
+    assert_eq!(geometry.window_to_frame(0, 0), Some((0, 0)));
+    assert_eq!(geometry.window_to_frame(1279, 959), Some((639, 479)));
+    // Every 2x2 render block belongs to the same logical pixel.
+    assert_eq!(geometry.window_to_frame(11, 11), Some((5, 5)));
+    assert_eq!(geometry.window_to_frame(13, 13), Some((6, 6)));
+}
+
+#[test]
+fn hd4_renders_a_2560x1920_frame() {
+    let geometry =
+        ScreenGeometry::native_with_render_scale((2560, 1920), (2560, 1920), RenderScale::Hd4);
+
+    assert_eq!(geometry.render_frame_size(), (2560, 1920));
+    assert_eq!(geometry.scale(), 1);
+    assert_eq!(geometry.content_rect(), PixelRect::new(0, 0, 2560, 1920));
+    assert_eq!(geometry.window_to_frame(0, 0), Some((0, 0)));
+    assert_eq!(geometry.window_to_frame(2559, 1919), Some((639, 479)));
+    assert_eq!(
+        geometry.window_to_frame(4095, 4095),
+        None,
+        "outside the frame"
+    );
+}
+
+#[test]
+fn hd_letterbox_still_rejects_clicks() {
+    // A 1920x1080 drawable fits the 1280x960 render frame at scale 1, centred:
+    // 320 px bars left/right and 60 px top/bottom.
+    let geometry =
+        ScreenGeometry::native_with_render_scale((1920, 1080), (1920, 1080), RenderScale::Hd2);
+
+    assert_eq!(geometry.scale(), 1);
+    assert_eq!(geometry.content_rect(), PixelRect::new(320, 60, 1280, 960));
+    assert!(!geometry.fills_output());
+    assert_eq!(geometry.window_to_frame(319, 60), None, "left bar");
+    assert_eq!(geometry.window_to_frame(320, 60), Some((0, 0)));
+    assert_eq!(geometry.window_to_frame(1599, 1019), Some((639, 479)));
+    assert_eq!(geometry.window_to_frame(1600, 60), None, "right bar");
+}
+
+#[test]
+fn pixel_perfect_geometry_is_the_same_through_either_constructor() {
+    for (points, pixels) in [
+        ((640, 480), (640, 480)),
+        ((1920, 1080), (1920, 1080)),
+        ((640, 480), (960, 720)),
+        ((2560, 1440), (2560, 1440)),
+    ] {
+        let legacy = ScreenGeometry::native(points, pixels);
+        let explicit =
+            ScreenGeometry::native_with_render_scale(points, pixels, RenderScale::PixelPerfect);
+
+        assert_eq!(legacy, explicit, "{points:?} / {pixels:?}");
+        assert_eq!(explicit.render_frame_size(), (640, 480));
+        assert_eq!(explicit.scale(), legacy.scale());
+    }
+}

@@ -26,6 +26,24 @@ pub const MANIFEST_VERSION: u32 = 1;
 /// Bytes per RGBA8 texel — the only target the SDL3 `Canvas` backend consumes (R0).
 pub const RGBA_BYTES_PER_PIXEL: usize = 4;
 
+/// Manifest tag of a pre-baked HD terrain tile (`remaster-hd.md` §R3).
+///
+/// Terrain tiles are the one asset class with no team colours, no brightness
+/// levels and no palette cycles: the `.WRL` palette is baked into the pixels, so
+/// exactly one RGBA texture is needed per `(map, tile_id)` pair. R3 derives the
+/// tag from the map name (`GREEN_1`), the tile identifier and the presentation
+/// scale, e.g. `terrain_tile_GREEN_1_000_x2`.
+///
+/// The scale is part of the tag because one tag maps to one asset in the
+/// manifest (R2: `tile@4x.png` → tag `tile`, `scale = 4`): a ×2 and a ×4 bank
+/// for the same tile must be separate entries.
+///
+/// The tag is a plain manifest key and part of the `.ktx2` file name, so it
+/// contains only ASCII letters, digits and underscores.
+pub fn terrain_tile_tag(world: &str, tile_id: u16, scale: u32) -> String {
+    format!("terrain_tile_{world}_{tile_id:03}_x{scale}")
+}
+
 /// Remaster asset error, returned as a value (never a panic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemasterError {

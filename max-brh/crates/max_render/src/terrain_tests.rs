@@ -97,6 +97,39 @@ fn cpp_tile_render_samples_tile_corners() {
 }
 
 #[test]
+fn cpp_sampling_for_hd_sources_matches_the_same_formula() {
+    // The R3 HD path uses the source dimensions in the very same formula:
+    // a 128x128 HD tile sampled at 128 screen pixels is the identity, and a
+    // 4x4 landing-screen sample reaches both corners.
+    assert_eq!(
+        cpp_tile_sample_offsets_for(128, 128),
+        (0..128).collect::<Vec<_>>(),
+        "a 1:1 HD tile keeps every texel"
+    );
+    assert_eq!(
+        cpp_tile_sample_offsets_for(256, 4),
+        vec![0, 85, 170, 255],
+        "corners of a 256x256 HD tile"
+    );
+    let half = cpp_tile_sample_offsets_for(128, 64);
+    assert_eq!(half.len(), 64);
+    assert_eq!(half[0], 0);
+    assert_eq!(half[1], 2);
+    assert_eq!(
+        half[63], 127,
+        "the last screen pixel reaches the last texel"
+    );
+    // The 64x64 helper is the source=64 case of the generalized one.
+    for size in [1, 4, 8, 64] {
+        assert_eq!(
+            cpp_tile_sample_offsets(size),
+            cpp_tile_sample_offsets_for(TILE_SIZE, size),
+            "size {size}"
+        );
+    }
+}
+
+#[test]
 fn empty_atlas_draws_nothing() {
     let atlas = TerrainAtlas {
         palette: [[0u8, 0, 0, 255]; PALETTE_COLORS],

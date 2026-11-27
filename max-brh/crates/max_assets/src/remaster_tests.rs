@@ -111,6 +111,47 @@ fn open_on_missing_root_yields_empty_cache() {
 }
 
 #[test]
+fn terrain_tile_tag_is_stable_and_scale_specific() {
+    // The R3 contract: the renderer resolves exactly this string from the
+    // manifest, and a ×2 and a ×4 bank cannot collide.
+    assert_eq!(
+        terrain_tile_tag("GREEN_1", 0, 2),
+        "terrain_tile_GREEN_1_000_x2"
+    );
+    assert_eq!(
+        terrain_tile_tag("GREEN_1", 411, 4),
+        "terrain_tile_GREEN_1_411_x4"
+    );
+    assert_ne!(
+        terrain_tile_tag("GREEN_1", 7, 2),
+        terrain_tile_tag("GREEN_1", 7, 4),
+        "a ×2 and a ×4 asset must be different manifest entries"
+    );
+    // Two maps with the same tile bank are different palettes, hence different
+    // textures (R0 §2: the unit is the `(palette, tile pixels)` pair).
+    assert_ne!(
+        terrain_tile_tag("GREEN_1", 7, 2),
+        terrain_tile_tag("SNOW_1", 7, 2)
+    );
+}
+
+#[test]
+fn terrain_tile_tag_is_usable_as_a_manifest_key_and_file_stem() {
+    let tag = terrain_tile_tag("SNOW_1", 337, 4);
+
+    assert!(
+        tag.chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+        "the tag becomes a manifest key and a file name: {tag}"
+    );
+
+    let manifest = manifest(&format!(
+        r#"{{"assets":{{"{tag}":{{"path":"{tag}.etc1s.ktx2","scale":4}}}}}}"#
+    ));
+    assert_eq!(manifest.get(&tag).map(|entry| entry.scale), Some(4));
+}
+
+#[test]
 fn resolve_missing_entry_and_missing_file_are_none() {
     let root = std::path::Path::new("__no_such_remaster_root__");
     let manifest = RemasterManifest::parse(

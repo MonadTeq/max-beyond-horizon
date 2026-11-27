@@ -18,50 +18,101 @@
 
 use crate::buffer::PixelRect;
 use crate::frame_scale::{FrameScale, FRAME_HEIGHT, FRAME_WIDTH};
+use crate::render_scale::RenderScale;
 
 /// Window size in points, drawable size in pixels and the frame layout in pixels.
 ///
 /// `window_points` is what SDL reports for `SDL_GetWindowSize` and what mouse
 /// events carry; `output_pixels` is `SDL_GetRenderOutputSize` (the drawable).
 /// On a 100% display both are equal.
+///
+/// `render_scale` (`remaster-hd.md` §2.2) adds one link to the chain:
+/// the drawable holds a **render frame** of `640·S × 480·S` (`S = 1` in
+/// [`RenderScale::PixelPerfect`]), while every public frame coordinate — the
+/// camera, UI hit tests, clicks — stays in the logical 640×480 space. The
+/// integer window fit is computed for the render frame, and
+/// [`Self::window_to_frame`] divides by `S` after the reverse transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenGeometry {
     window_points: (u32, u32),
     output_pixels: (u32, u32),
     frame_width: u32,
     frame_height: u32,
+    render_scale: RenderScale,
     frame_scale: FrameScale,
 }
 
 impl ScreenGeometry {
     /// Geometry of a `frame_w × frame_h` frame in a window of `window_points`
     /// points with an `output_pixels` drawable.
+    ///
+    /// This is the pixel-perfect constructor (`S = 1`); use
+    /// [`Self::fit_with_render_scale`] for an HD render target.
     pub fn fit(
         window_points: (u32, u32),
         output_pixels: (u32, u32),
         frame_w: u32,
         frame_h: u32,
     ) -> Self {
+        Self::fit_with_render_scale(
+            window_points,
+            output_pixels,
+            frame_w,
+            frame_h,
+            RenderScale::PixelPerfect,
+        )
+    }
+
+    /// Geometry of a `frame_w × frame_h` logical frame rendered at `render_scale`
+    /// into a window of `window_points` points with an `output_pixels` drawable.
+    ///
+    /// The frame fit and the content rectangle are computed from the render
+    /// frame (`frame_w·S × frame_h·S`); the logical frame size is unchanged.
+    pub fn fit_with_render_scale(
+        window_points: (u32, u32),
+        output_pixels: (u32, u32),
+        frame_w: u32,
+        frame_h: u32,
+        render_scale: RenderScale,
+    ) -> Self {
         let frame_width = frame_w.max(1);
         let frame_height = frame_h.max(1);
+        let render_width = frame_width * render_scale.scale();
+        let render_height = frame_height * render_scale.scale();
 
         Self {
             window_points,
             output_pixels,
             frame_width,
             frame_height,
+            render_scale,
             frame_scale: FrameScale::fit(
                 output_pixels.0,
                 output_pixels.1,
-                frame_width,
-                frame_height,
+                render_width,
+                render_height,
             ),
         }
     }
 
-    /// Geometry of the 640×480 logical frame.
+    /// Geometry of the 640×480 logical frame (pixel-perfect).
     pub fn native(window_points: (u32, u32), output_pixels: (u32, u32)) -> Self {
         Self::fit(window_points, output_pixels, FRAME_WIDTH, FRAME_HEIGHT)
+    }
+
+    /// Geometry of the 640×480 logical frame rendered at `render_scale`.
+    pub fn native_with_render_scale(
+        window_points: (u32, u32),
+        output_pixels: (u32, u32),
+        render_scale: RenderScale,
+    ) -> Self {
+        Self::fit_with_render_scale(
+            window_points,
+            output_pixels,
+            FRAME_WIDTH,
+            FRAME_HEIGHT,
+            render_scale,
+        )
     }
 
     /// Window size in points.
@@ -79,12 +130,31 @@ impl ScreenGeometry {
         (self.frame_width, self.frame_height)
     }
 
-    /// Integer nearest-neighbour scale of the frame in the drawable.
+    /// Render frame size in pixels (`640·S × 480·S`).
+    ///
+    /// This is the buffer the renderer draws into in HD mode; in
+    /// [`RenderScale::PixelPerfect`] it equals [`Self::frame_size`].
+    pub fn render_frame_size(&self) -> (u32, u32) {
+        (
+            self.frame_width * self.render_scale.scale(),
+            self.frame_height * self.render_scale.scale(),
+        )
+    }
+
+    /// Presentation scale of the render target.
+    pub fn render_scale(&self) -> RenderScale {
+        self.render_scale
+    }
+
+    /// Integer nearest-neighbour scale of the render frame in the drawable.
+    ///
+    /// This is the window-level factor on top of [`Self::render_scale`]: the
+    /// displayed size is `frame_size · S · scale()`.
     pub fn scale(&self) -> u32 {
         self.frame_scale.scale()
     }
 
-    /// The frame layout in pixels: integer scale, centred, letterbox bars.
+    /// The render frame layout in pixels: integer scale, centred, letterbox bars.
     pub fn frame_scale(&self) -> FrameScale {
         self.frame_scale
     }
@@ -122,14 +192,20 @@ impl ScreenGeometry {
     }
 
     /// Window point (points) → logical frame point; `None` for a bar or outside.
+    ///
+    /// The chain is points → output pixels → render frame → `/ S` → logical
+    /// frame. In [`RenderScale::PixelPerfect`] the last step is the identity,
+    /// so the historical behavior is unchanged.
     pub fn window_to_frame(&self, x: i32, y: i32) -> Option<(i32, i32)> {
         if x < 0 || y < 0 || x >= self.window_points.0 as i32 || y >= self.window_points.1 as i32 {
             return None;
         }
 
         let (pixel_x, pixel_y) = self.point_to_output(x, y);
+        let (render_x, render_y) = self.frame_scale.window_to_frame(pixel_x, pixel_y)?;
+        let scale = self.render_scale.scale() as i32;
 
-        self.frame_scale.window_to_frame(pixel_x, pixel_y)
+        Some((render_x / scale, render_y / scale))
     }
 
     /// Whether the frame fills the drawable exactly (no letterbox bars).
