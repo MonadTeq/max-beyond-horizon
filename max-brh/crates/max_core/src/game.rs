@@ -160,6 +160,55 @@ pub struct UnitSound {
     pub kind: UnitSoundKind,
 }
 
+/// One waypoint of a route walked by the end-of-turn drain.
+///
+/// The report is **presentation only** (like [`UnitSound`]): it is not part of
+/// the snapshot/CRC and does not affect the simulation. Both positions are kept
+/// raw — the cell **and** the pixel — because the frame picks the one its
+/// `visual_target` uses: the cell for a ground/sea unit, the `x/y` pixel for an
+/// aircraft (`airpath.cpp:219-242`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrainedStep {
+    /// Cell the unit entered (`UnitInfo::grid`).
+    pub grid_x: i16,
+    /// Cell the unit entered (`UnitInfo::grid`).
+    pub grid_y: i16,
+    /// Pixel position after the pass (`UnitInfo::x`).
+    pub x: u16,
+    /// Pixel position after the pass (`UnitInfo::y`).
+    pub y: u16,
+    /// Movement points the pass spent entering this waypoint
+    /// (`Paths_CalculateStep`/`Paths_TakeStep`): the frame attaches them to the
+    /// visual step so the panel's `Speed` row falls together with the sprite.
+    pub speed: u16,
+}
+
+/// The route one unit walked during [`GameState::finish_end_turn_movement`].
+///
+/// # Why the frame needs it
+///
+/// The turn close drains a pending route **inside one call**
+/// (`while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`,
+/// `game_manager.cpp:488-490`): the simulation can advance a whole `speed`
+/// allowance (14+ cells for an aircraft, 17+ for a tank) between two frames.
+/// The frame cannot see the intermediate cells from the state alone — it only
+/// sees the start and the halt cell — so
+/// `App::update_visual_units` used to treat a jump over
+/// `VISUAL_TELEPORT_CELLS` as a save/load synchronization and snapped the
+/// sprite. This report carries the actual walked waypoints, so the frame can
+/// rebuild its queue and walk the sprite to the halt cell instead.
+///
+/// A genuine teleport (save/load, transport/state synchronization) has no such
+/// report, so it keeps the immediate snap: the route is **unknown** there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrainedRoute {
+    /// The unit that walked the route.
+    pub unit: UnitId,
+    /// Waypoints in traversal order, ending exactly on the halt
+    /// cell/pixel.
+    pub steps: Vec<DrainedStep>,
+}
+
 // ---------------------------------------------------------------------------
 // Team-turn machine
 // ---------------------------------------------------------------------------
@@ -323,6 +372,16 @@ pub(crate) struct GameState {
     /// A UI/QA report (like `unit_sounds`), **not** part of the snapshot/CRC:
     /// the client drains it into [`crate::universe::GameEvent::EnemySpotted`].
     pub(crate) spotted_reports: Vec<UnitId>,
+    /// Routes walked by the last [`Self::finish_end_turn_movement`] drain.
+    ///
+    /// A **presentation report** (like `unit_sounds`/`spotted_reports`), not part
+    /// of the snapshot/CRC: the frame rebuilds its visual queue from it, because
+    /// the turn close walks a whole route inside one call and the state only
+    /// keeps the halt cell. Taken once by the client
+    /// ([`crate::universe::GameUniverse::take_drained_routes`]); a save/load or a
+    /// transport synchronization — a route the simulation does **not** know —
+    /// leaves it empty, so the frame still snaps there.
+    pub(crate) drained_routes: Vec<DrainedRoute>,
     /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
     /// barrier counters so that the state is self-contained.
     pub(crate) turn_indices: [u8; TEAM_SLOTS],
@@ -417,6 +476,23 @@ fn pending_task_order(unit: &UnitInfo) -> bool {
         || (unit.has_move_order() && unit.state != UnitOrderState::ExecutingOrder)
 }
 
+/// Position and movement points of a unit at a drain pass boundary — what
+/// [`GameState::finish_end_turn_movement`] compares between two
+/// `UnitsManager_ProcessOrders` passes to report a [`DrainedStep`].
+#[derive(Debug, Clone, Copy)]
+struct DrainSnapshot {
+    /// Unit id.
+    unit: UnitId,
+    /// Map cell.
+    grid: Point,
+    /// Pixel position X.
+    x: u16,
+    /// Pixel position Y.
+    y: u16,
+    /// Remaining movement points.
+    speed: u16,
+}
+
 impl Default for GameState {
     fn default() -> Self {
         Self::new()
@@ -480,6 +556,7 @@ impl GameState {
             industry_message: None,
             unit_sounds: Vec::new(),
             spotted_reports: Vec::new(),
+            drained_routes: Vec::new(),
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -2055,10 +2132,20 @@ impl GameState {
     /// stopped unit is queued for reaction fire (`MoveFinished(true)`); the enemy
     /// then opens fire at the halt cell on the next order pass.
     ///
+    /// The drained cells/pixels are reported in [`Self::drained_routes`]
+    /// ([`DrainedRoute`]): the presentation cannot reconstruct them from the
+    /// state (it keeps only the halt cell), and without them the frame treats the
+    /// drained jump as a save/load synchronization and snaps the sprite.
+    ///
     /// Returns the number of completed cell transitions of the closing team.
     pub(crate) fn finish_end_turn_movement(&mut self, team: TeamId) -> usize {
         let mut transitions = 0usize;
         let mut fingerprint: Option<Vec<u32>> = None;
+
+        // The frame rebuilds its route from [`Self::drained_routes`]; only the
+        // routes walked by **this** turn close are reported. A stale report must
+        // not animate a later, genuinely unknown position (save/load, sync).
+        self.drained_routes.clear();
 
         // `GameManager_ProgressTurn` is one `ProcessTick`; the pass cap mirrors
         // the oracle's own bound on a pinned unit (`UnitInfo::RegisterMovementWait`
@@ -2068,32 +2155,28 @@ impl GameState {
                 break;
             }
 
-            let before: Vec<(UnitId, Point)> = self
-                .unit_ids_in_order()
-                .into_iter()
-                .filter_map(|id| self.unit(id).map(|unit| (id, unit.team, unit.grid)))
-                .filter(|(_, owner, _)| *owner == team)
-                .map(|(id, _, grid)| (id, grid))
-                .collect();
+            let before = self.drain_snapshot(team);
 
             self.process_orders();
 
-            let after: Vec<(UnitId, Point)> = self
-                .unit_ids_in_order()
-                .into_iter()
-                .filter_map(|id| self.unit(id).map(|unit| (id, unit.team, unit.grid)))
-                .filter(|(_, owner, _)| *owner == team)
-                .map(|(id, _, grid)| (id, grid))
-                .collect();
+            let after = self.drain_snapshot(team);
 
-            for (id, grid) in &before {
-                if after
-                    .iter()
-                    .find(|(other, _)| other == id)
-                    .is_some_and(|(_, now)| now != grid)
-                {
+            for was in &before {
+                let Some(now) = after.iter().find(|now| now.unit == was.unit) else {
+                    // The unit was destroyed during the pass: the frame's corpse
+                    // branch keeps it at the caught pixel, a route is meaningless.
+                    continue;
+                };
+
+                if now.grid == was.grid && now.x == was.x && now.y == was.y {
+                    continue;
+                }
+
+                if now.grid != was.grid {
                     transitions += 1;
                 }
+
+                self.record_drained_step(was, now);
             }
 
             // A pass always advances one of the pending task events. If the
@@ -2107,6 +2190,59 @@ impl GameState {
         }
 
         transitions
+    }
+
+    /// The closing team's units and their movement state at a drain pass
+    /// boundary — the input of [`Self::record_drained_step`].
+    fn drain_snapshot(&self, team: TeamId) -> Vec<DrainSnapshot> {
+        self.unit_ids_in_order()
+            .into_iter()
+            .filter_map(|id| self.unit(id).map(|unit| (id, unit)))
+            .filter(|(_, unit)| unit.team == team)
+            .map(|(id, unit)| DrainSnapshot {
+                unit: id,
+                grid: unit.grid,
+                x: unit.x,
+                y: unit.y,
+                speed: unit.speed,
+            })
+            .collect()
+    }
+
+    /// Appends the waypoint one drain pass walked to the unit's
+    /// [`DrainedRoute`].
+    ///
+    /// The report keeps the raw cell **and** pixel position (the presentation
+    /// picks the one its frame target uses) and the movement points the pass
+    /// spent, so the panel's `Speed` row can follow the sprite instead of the
+    /// fast simulation.
+    fn record_drained_step(&mut self, before: &DrainSnapshot, after: &DrainSnapshot) {
+        let step = DrainedStep {
+            grid_x: after.grid.x,
+            grid_y: after.grid.y,
+            x: after.x,
+            y: after.y,
+            speed: before.speed.saturating_sub(after.speed),
+        };
+
+        if let Some(route) = self
+            .drained_routes
+            .iter_mut()
+            .find(|route| route.unit == after.unit)
+        {
+            route.steps.push(step);
+        } else {
+            self.drained_routes.push(DrainedRoute {
+                unit: after.unit,
+                steps: vec![step],
+            });
+        }
+    }
+
+    /// Takes the routes the last turn-close drain walked (a presentation report,
+    /// see [`DrainedRoute`]). Not part of the snapshot/CRC.
+    pub(crate) fn take_drained_routes(&mut self) -> Vec<DrainedRoute> {
+        std::mem::take(&mut self.drained_routes)
     }
 
     /// `Access_AreTaskEventsPending` (`access.cpp:2269`) — the predicate of the

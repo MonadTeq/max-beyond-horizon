@@ -158,3 +158,56 @@ fn the_end_of_turn_walk_is_deterministic() {
     assert_eq!(first.1, Point::new(13, 10), "three cells for three points");
     assert_eq!(first.2, 0);
 }
+
+/// The turn close reports the route it walked ([`max_core::DrainedRoute`]): the
+/// presentation cannot reconstruct the intermediate cells from the state — it
+/// keeps only the halt cell — so without the report the sprite snaps there (the
+/// `VISUAL_TELEPORT_CELLS` branch of `App::update_visual_units`).
+#[test]
+fn the_turn_end_reports_the_walked_route() {
+    let mut universe = support::game();
+    universe.begin_local_round();
+
+    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+    give_route(&mut universe, id, 4, 2);
+
+    universe.end_local_turn(TeamId::RED);
+
+    let routes = universe.take_drained_routes();
+    let route = routes
+        .iter()
+        .find(|route| route.unit == id)
+        .expect("the walked route is reported");
+
+    assert_eq!(
+        route
+            .steps
+            .iter()
+            .map(|step| (step.grid_x, step.grid_y))
+            .collect::<Vec<_>>(),
+        vec![(11, 10), (12, 10)],
+        "one waypoint per entered cell, in traversal order"
+    );
+    assert!(
+        route.steps.iter().all(|step| step.speed == 1),
+        "one movement point per entered cell"
+    );
+
+    let unit = universe.snapshot().unit(id).cloned().expect("unit");
+    let last = route.steps.last().expect("last waypoint");
+    assert_eq!(
+        (last.grid_x, last.grid_y),
+        (unit.grid.x, unit.grid.y),
+        "the report ends on the halt cell"
+    );
+    assert_eq!(
+        (last.x, last.y),
+        (unit.x, unit.y),
+        "and on the halt pixel"
+    );
+
+    assert!(
+        universe.take_drained_routes().is_empty(),
+        "the report is taken once"
+    );
+}

@@ -111,7 +111,9 @@ use crate::enums::{
     RESEARCH_TOPIC_COUNT,
 };
 use crate::events::{self, ApplyOutcome, CommandQueue, StateSyncPacket, UnitEvent};
-use crate::game::{GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS};
+use crate::game::{
+    DrainedRoute, GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS,
+};
 use crate::geo::Point;
 use crate::input::{Command, Packet12MissionSupply};
 use crate::pathfinding::PathRequest;
@@ -2324,6 +2326,18 @@ impl<D: Dispatcher> GameUniverse<D> {
         // facade version once per atomic facade operation.
         self.seq += 1;
         over
+    }
+
+    /// Takes the routes the last turn-close drain walked — the presentation
+    /// report of [`GameState::finish_end_turn_movement`]
+    /// ([`crate::game::DrainedRoute`]).
+    ///
+    /// **Channel:** presentation pull, not simulation: the frame
+    /// (`App::update_visual_units`) rebuilds its visual queue from the report so
+    /// the sprite walks to the halt cell instead of snapping when the turn close
+    /// drained more than `VISUAL_TELEPORT_CELLS`. Not part of the snapshot/CRC.
+    pub fn take_drained_routes(&mut self) -> Vec<DrainedRoute> {
+        self.state.take_drained_routes()
     }
 
     /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or

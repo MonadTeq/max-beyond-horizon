@@ -976,6 +976,14 @@ pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 
 /// A jump larger than this number of cells is not a route but a teleport/state
 /// synchronization: the visual position is set to the target without animation.
+///
+/// Exception: the end-of-turn route drain
+/// (`GameState::finish_end_turn_movement`) walks the whole pending route inside
+/// one call and reports the actual waypoints ([`max_core::DrainedRoute`]); the
+/// frame rebuilds its queue from that report and walks the sprite to the halt
+/// cell instead of snapping (see [`App::update_visual_units`]). A real
+/// save/load or transport synchronization has no such report — the route is
+/// unknown — and keeps the snap.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
 
 /// Frame target of a unit in fractional cells — where the sprite has to be drawn.
@@ -994,6 +1002,98 @@ fn visual_target(unit: &UnitInfo) -> (f32, f32) {
     } else {
         (f32::from(unit.grid.x), f32::from(unit.grid.y))
     }
+}
+
+/// The frame point of a waypoint the end-of-turn drain walked
+/// ([`max_core::DrainedStep`]) — the same coordinate space as [`visual_target`]:
+/// the cell center for a ground/sea unit, the `x/y` pixel over 64 for an
+/// aircraft.
+///
+/// The core keeps both raw positions: which one the frame draws is a
+/// presentation decision and must stay here, next to [`visual_target`].
+fn drained_step_point(unit: &UnitInfo, step: &max_core::DrainedStep) -> (f32, f32) {
+    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
+        let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
+
+        (f32::from(step.x) / tile, f32::from(step.y) / tile)
+    } else {
+        (f32::from(step.grid_x), f32::from(step.grid_y))
+    }
+}
+
+/// Whether a drained route ends exactly on the unit's new simulation target.
+///
+/// The guard keeps a report that no longer matches the state (the simulation
+/// moved again after the drain, or the route belongs to an earlier position)
+/// from animating the sprite to the wrong point: only a route that ends on the
+/// current target may replace the snap.
+fn drained_route_ends_at(
+    unit: &UnitInfo,
+    route: &max_core::DrainedRoute,
+    target: (f32, f32),
+) -> bool {
+    route.steps.last().is_some_and(|step| {
+        let point = drained_step_point(unit, step);
+
+        (point.0 - target.0).abs() < 1e-3 && (point.1 - target.1).abs() < 1e-3
+    })
+}
+
+/// Rebuilds the visual queue of a unit from the route the end-of-turn drain
+/// walked ([`max_core::DrainedRoute`]).
+///
+/// The drain (`GameState::finish_end_turn_movement`) runs the whole pending
+/// route inside one `end_local_turn`, so the simulation target lands far ahead of
+/// the sprite and the state keeps only the halt cell. The report carries the
+/// cells/pixels the unit actually entered; [`App::update_visual_units`] moves the
+/// sprite by no more than the frame budget per frame, so even one long segment is
+/// walked, not jumped. The direction of every segment comes from its displacement
+/// (as in the per-tick branch), so the sprite turns on the actual turn cell.
+fn drained_visual_steps(
+    unit: &UnitInfo,
+    from: (f32, f32),
+    route: &max_core::DrainedRoute,
+) -> std::collections::VecDeque<VisualStep> {
+    let mut queue = std::collections::VecDeque::with_capacity(route.steps.len());
+    let mut previous = from;
+
+    for step in &route.steps {
+        let point = drained_step_point(unit, step);
+        let dx = point.0 - previous.0;
+        let dy = point.1 - previous.1;
+        // `f32::signum` returns 1.0 for +0.0, so the sign is taken by comparison:
+        // an axial segment must not turn diagonal (the same rule as the per-tick
+        // branch below).
+        let sign_x = if dx > 0.0 {
+            1
+        } else if dx < 0.0 {
+            -1
+        } else {
+            0
+        };
+        let sign_y = if dy > 0.0 {
+            1
+        } else if dy < 0.0 {
+            -1
+        } else {
+            0
+        };
+        let angle = if sign_x == 0 && sign_y == 0 {
+            unit.angle
+        } else {
+            max_core::unit_order::paths_get_angle(sign_x, sign_y) as u8
+        };
+
+        queue.push_back(VisualStep {
+            x: point.0,
+            y: point.1,
+            angle,
+            speed: step.speed,
+        });
+        previous = point;
+    }
+
+    queue
 }
 
 /// Pixel point the frame draws a unit's sprite at — the C++ `UnitInfo::x/y` of the
@@ -4187,6 +4287,15 @@ impl<D: Dispatcher> App<D> {
     /// visual animation clock: the builder shows the working pose `+16`, and
     /// a "growing" unit — full size.
     ///
+    /// The end-of-turn route drain is the one simulation step that moves a unit
+    /// farther than one cell: `GameState::finish_end_turn_movement` walks the
+    /// whole remaining route inside `end_local_turn`. It reports the walked
+    /// waypoints ([`max_core::DrainedRoute`]); the frame rebuilds the queue from
+    /// that report and walks the sprite to the halt cell, so no jump happens for
+    /// any drain length (air and ground alike). A position change without such a
+    /// report — save/load, transport/state synchronization — is still a snap
+    /// (`VISUAL_TELEPORT_CELLS`), because its route is unknown.
+    ///
     /// P4: the map is updated in place (`retain` + `insert`), not rebuilt
     /// every frame. This removes the `HashMap` allocation of `ids.len()`
     /// cells per 60 Hz frame; the values/traversal order are not used
@@ -4204,6 +4313,13 @@ impl<D: Dispatcher> App<D> {
         self.update_color_cycles(dt);
         // `SLFDOPN1..6` frames of the self-destruct dialog (`TIMER_FPS_TO_MS(48)`).
         self.advance_self_destruct(dt);
+
+        // The routes the last turn close walked (`GameState::finish_end_turn_movement`):
+        // the frame rebuilds its queue from them when the drain moved the
+        // simulation farther than `VISUAL_TELEPORT_CELLS` (see the branch below).
+        // A presentation report, taken once here; `dt <= 0` (headless/QA) is a
+        // pure snapshot, so the report is simply dropped there.
+        let drained = self.universe.take_drained_routes();
 
         let ids = self.state_ref().unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
@@ -4303,8 +4419,27 @@ impl<D: Dispatcher> App<D> {
                 let spent = last_speed.saturating_sub(unit.speed);
 
                 if distance > VISUAL_TELEPORT_CELLS as f32 {
+                    // The turn close (`GameState::finish_end_turn_movement`)
+                    // walks the whole pending route inside one `end_local_turn`:
+                    // the simulation target lands far ahead of the sprite and the
+                    // state keeps only the halt cell. The drain reports the
+                    // cells/pixels it actually walked; when that report ends
+                    // exactly on the new target the frame rebuilds the queue from
+                    // it, so the sprite walks to the halt cell instead of jumping
+                    // there. A genuine teleport (save/load, transport/state
+                    // synchronization) has no such report — the route is unknown
+                    // — and keeps the immediate snap.
+                    let drained_route = drained.iter().find(|route| {
+                        route.unit == id && drained_route_ends_at(unit, route, target)
+                    });
+
                     queue.clear();
-                    *current = target;
+
+                    if let Some(route) = drained_route {
+                        queue.extend(drained_visual_steps(unit, *goal, route));
+                    } else {
+                        *current = target;
+                    }
                 } else {
                     // Whole-cell route steps are split so the sprite walks the cells;
                     // an aircraft's sub-cell pixel step is one waypoint.
