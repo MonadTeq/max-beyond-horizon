@@ -1022,16 +1022,16 @@ impl Screen {
         // The action is computed from the current screen, applied already without borrow.
         let action = match &mut flow.stage {
             PreGameStage::Mobilize(_) => match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {
-                    PreGameInput::None
-                }
+                InputEvent::MouseMove(..)
+                | InputEvent::RightClick(..)
+                | InputEvent::MouseRelease(..) => PreGameInput::None,
                 InputEvent::MouseClick(x, y) => PreGameInput::MobilizeClick(x, y),
                 InputEvent::Key(key) => PreGameInput::MobilizeKey(key),
             },
             PreGameStage::Landing(_) => match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {
-                    PreGameInput::None
-                }
+                InputEvent::MouseMove(..)
+                | InputEvent::RightClick(..)
+                | InputEvent::MouseRelease(..) => PreGameInput::None,
                 InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
                 InputEvent::Key(Key::Enter) => PreGameInput::LandingConfirm,
                 InputEvent::Key(Key::Left) => PreGameInput::LandingStep(-1, 0),
@@ -1227,7 +1227,9 @@ impl Screen {
 
         if let Self::NewGameMenu { tips } = self {
             match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {}
+                InputEvent::MouseMove(..)
+                | InputEvent::RightClick(..)
+                | InputEvent::MouseRelease(..) => {}
                 InputEvent::MouseClick(x, y) => {
                     if tips.is_some() {
                         scroll = newgame::tips_scroll_at(x, y);
@@ -1367,7 +1369,9 @@ impl Screen {
             let registry = ctx.missions.as_deref();
 
             match event {
-                InputEvent::MouseMove(..) | InputEvent::RightClick(..) | InputEvent::MouseRelease(..) => {}
+                InputEvent::MouseMove(..)
+                | InputEvent::RightClick(..)
+                | InputEvent::MouseRelease(..) => {}
                 InputEvent::MouseClick(x, y) if native_frame => {
                     action = gamesetupmenu::mission_select_at(x, y);
 
@@ -2661,9 +2665,9 @@ where
             // popup modal for the map, see [`session_unit_menu_input`]).
             let cycle = match event {
                 InputEvent::MouseClick(x, y) => popup_click_cell(app, x, y).filter(|cell| {
-                    app.hud().selected.is_some_and(|selected| {
-                        app.state_ref().units_at(*cell).contains(&selected)
-                    })
+                    app.hud()
+                        .selected
+                        .is_some_and(|selected| app.state_ref().units_at(*cell).contains(&selected))
                 }),
                 _ => None,
             };
@@ -4906,18 +4910,16 @@ where
 /// sprites from the remaster layers, the window background from the HD
 /// `FRAMEPIC`. The 1:1 overlays `render_session` adds on top — the HUD when
 /// there is no window chrome, the hot-seat turn notice — are drawn into an
-/// empty buffer and composited as the nearest `×S·aa` upscale, the per-asset
+/// empty buffer and composited as the nearest `×S` upscale, the per-asset
 /// fallback of the plan.
 ///
-/// `aa` is the SSAA multiplier (`ssaa-design.md`): the buffer is
-/// `640·S·aa × 480·S·aa`, the HUD/notice overlay is composited at the same
-/// factor, and the caller resolves it with [`max_render::downscale_box`].
-/// `aa = Off` keeps the historical `640·S × 480·S` frame byte-for-byte.
+/// The buffer is `640·S × 480·S`, the same frame whatever the anti-aliasing
+/// mode is: `aa` belongs to the output layer (`gpu-aa-design.md`) and is
+/// applied to the finished frame by the window.
 pub fn render_session_hd<D: Dispatcher>(
     buffer: &mut RgbaBuffer,
     view: ScreenView<'_, D>,
     hd: &mut crate::hd::HdPresenter,
-    aa: max_render::render_scale::AaMode,
 ) where
     App<D>: SessionLocal,
 {
@@ -4926,8 +4928,8 @@ pub fn render_session_hd<D: Dispatcher>(
 
         return;
     };
-    let factor = hd.scale().scale().max(1) * aa.factor();
-    let frame = app.render_frame_hd(hd, aa);
+    let factor = hd.scale().scale().max(1);
+    let frame = app.render_frame_hd(hd);
 
     blit(buffer, &frame);
 

@@ -47,7 +47,8 @@ pub const RESOLUTIONS: [RenderScale; 3] = [
     RenderScale::Hd4,
 ];
 
-/// The SSAA rows of the `Antialiasing` flyout, in menu order (`Off`, `2x`, `4x`).
+/// The anti-aliasing rows of the `Antialiasing` flyout, in menu order
+/// (`Off`, `FXAA`, `SMAA` — `gpu-aa-design.md`).
 pub const AA_MODES: [AaMode; 3] = AaMode::ALL;
 
 /// Opaque bar background.
@@ -487,7 +488,7 @@ pub fn resolution_label(scale: RenderScale) -> String {
     format!("{width}x{height} ({tag})")
 }
 
-/// The caption of one antialiasing row (`Off`, `2x`, `4x`).
+/// The caption of one antialiasing row (`Off`, `FXAA`, `SMAA`).
 pub fn aa_label(aa: AaMode) -> &'static str {
     aa.menu_label()
 }

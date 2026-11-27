@@ -55,8 +55,9 @@ use sdl3::EventPump;
 
 use crate::buffer::RgbaBuffer;
 use crate::frame_scale::FrameScale;
+use crate::gpu_present::{GpuPresentError, GpuPresenter};
 use crate::presentation::{PresentationState, ScreenGeometry};
-use crate::render_scale::{FilterMode, RenderScale};
+use crate::render_scale::{AaMode, FilterMode, RenderScale};
 
 /// A window key in UI terms: `max_app` does not depend on SDL types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +194,32 @@ impl std::fmt::Display for WindowError {
 
 impl std::error::Error for WindowError {}
 
+/// Which backend currently owns the window (and its swapchain).
+///
+/// SDL allows **one** swapchain per native window: the SDL renderer used by the
+/// Canvas path claims the window when it is created, and `SDL_ClaimWindowForGPUDevice`
+/// then fails with `VK_ERROR_NATIVE_WINDOW_IN_USE_KHR`. The two paths are therefore
+/// never alive together — switching the anti-aliasing mode drops the backend that
+/// will not be used and the next frame builds the other one (`gpu-aa-design.md`).
+enum WindowOutput {
+    /// The historical Canvas path (`aa = Off`): renderer + its texture creator.
+    Canvas(Canvas<Window>),
+    /// The GPU FXAA path (`aa != Off`): the window is claimed by the device.
+    ///
+    /// The presenter is declared first so that the device (and with it the
+    /// claimed window) is released **before** the window is destroyed.
+    Gpu {
+        presenter: GpuPresenter,
+        window: Window,
+    },
+    /// No backend right now: only the OS window exists (between two switches, or
+    /// while a texture/device is being rebuilt). The next present creates one.
+    Idle(Window),
+    /// The window was taken out for a backend switch; the invariant is restored
+    /// before the method returns. Never observable outside this module.
+    Taken,
+}
+
 /// SDL3 window with a streaming texture for an RGBA8 frame.
 ///
 /// The texture is created on every [`SdlWindow::present`] РІР‚вЂќ the `sdl3` crate yields a
@@ -201,8 +228,11 @@ impl std::error::Error for WindowError {}
 /// the client this does not matter: SDL reuses the driver buffer, and the frame is
 /// redrawn entirely anyway.
 pub struct SdlWindow {
-    canvas: Canvas<Window>,
-    creator: TextureCreator<WindowContext>,
+    /// The backend that currently presents the window.
+    output: WindowOutput,
+    /// Texture creator of the Canvas backend; `None` while the GPU backend is in
+    /// use (it borrows the renderer's context and must not outlive it).
+    creator: Option<TextureCreator<WindowContext>>,
     events: EventPump,
     title: String,
     /// Logical frame size (640Р“вЂ”480 in UI mode).
@@ -213,6 +243,8 @@ pub struct SdlWindow {
     geometry: ScreenGeometry,
     /// Focus/minimize/occlusion РІР‚вЂќ drawing decisions only.
     presentation: PresentationState,
+    /// Anti-aliasing of the presentation (effective: `Off` after a GPU fallback).
+    aa: AaMode,
     /// The window is in (borderless desktop) fullscreen.
     fullscreen: bool,
     /// Display scale reported by SDL at the last layout refresh.
@@ -336,8 +368,8 @@ impl SdlWindow {
             .unwrap_or(0.0);
 
         Ok(Self {
-            canvas,
-            creator,
+            output: WindowOutput::Canvas(canvas),
+            creator: Some(creator),
             events,
             title: title.to_owned(),
             base_size: (width, height),
@@ -350,6 +382,7 @@ impl SdlWindow {
                 render_scale,
             ),
             presentation: PresentationState::new(),
+            aa: AaMode::Off,
             fullscreen: false,
             display_scale,
             display_refresh_rate,
@@ -357,6 +390,86 @@ impl SdlWindow {
             active_cursor: None,
             _sdl: sdl,
         })
+    }
+
+    /// The OS window, whichever backend currently owns it.
+    fn window(&self) -> &Window {
+        match &self.output {
+            WindowOutput::Canvas(canvas) => canvas.window(),
+            WindowOutput::Gpu { window, .. } | WindowOutput::Idle(window) => window,
+            WindowOutput::Taken => panic!("the window was taken out of the presentation"),
+        }
+    }
+
+    /// The OS window, mutably.
+    fn window_mut(&mut self) -> &mut Window {
+        match &mut self.output {
+            WindowOutput::Canvas(canvas) => canvas.window_mut(),
+            WindowOutput::Gpu { window, .. } | WindowOutput::Idle(window) => window,
+            WindowOutput::Taken => panic!("the window was taken out of the presentation"),
+        }
+    }
+
+    /// Drawable size in pixels (`SDL_GetRenderOutputSize`, or the window itself
+    /// while the Canvas backend is not built).
+    fn drawable_size(&self) -> (u32, u32) {
+        match &self.output {
+            WindowOutput::Canvas(canvas) => canvas
+                .output_size()
+                .unwrap_or_else(|_| canvas.window().size_in_pixels()),
+            WindowOutput::Gpu { window, .. } | WindowOutput::Idle(window) => {
+                window.size_in_pixels()
+            }
+            WindowOutput::Taken => panic!("the window was taken out of the presentation"),
+        }
+    }
+
+    /// Takes the OS window out, releasing whichever backend owned it.
+    ///
+    /// The renderer (Canvas) or the GPU device is dropped **before** the window
+    /// changes hands: both hold a swapchain for it, and SDL allows one swapchain
+    /// per window.
+    fn take_window(&mut self) -> Window {
+        let output = std::mem::replace(&mut self.output, WindowOutput::Taken);
+
+        // The texture creator shares the renderer's context: it must go first or
+        // the renderer survives `into_window`.
+        self.creator = None;
+
+        match output {
+            WindowOutput::Canvas(canvas) => canvas.into_window(),
+            WindowOutput::Gpu { presenter, window } => {
+                drop(presenter);
+
+                window
+            }
+            WindowOutput::Idle(window) => window,
+            WindowOutput::Taken => panic!("the window was taken out twice"),
+        }
+    }
+
+    /// Builds the Canvas backend (`aa = Off`) if it is not the current one.
+    fn ensure_canvas(&mut self) -> Result<(), WindowError> {
+        if matches!(self.output, WindowOutput::Canvas(_)) {
+            return Ok(());
+        }
+
+        let window = self.take_window();
+        let canvas: Canvas<Window> = window.into_canvas();
+        self.creator = Some(canvas.texture_creator());
+        self.output = WindowOutput::Canvas(canvas);
+
+        Ok(())
+    }
+
+    /// Drops the current backend, keeping the OS window (mode switch).
+    fn release_backend(&mut self) {
+        if matches!(self.output, WindowOutput::Idle(_)) {
+            return;
+        }
+
+        let window = self.take_window();
+        self.output = WindowOutput::Idle(window);
     }
 
     /// Re-opens the window at another render scale **in place**.
@@ -400,50 +513,46 @@ impl SdlWindow {
         let (window_width, window_height) =
             crate::presentation::window_points_for(width, height, render_scale, scale);
         let was_fullscreen = self.fullscreen;
-        let window = video
+        let mut window = video
             .window(&self.title, window_width, window_height)
             .resizable()
             .high_pixel_density()
             .position_centered()
             .build()
             .map_err(|error| WindowError::new("window", error))?;
-        let mut canvas: Canvas<Window> = window.into_canvas();
 
         if was_fullscreen {
             // `Svga_ToggleFullscreen` sizes the window to the display first; the
             // fresh window starts in the windowed state.
-            if let Some(bounds) = canvas
-                .window()
+            if let Some(bounds) = window
                 .get_display()
                 .ok()
                 .and_then(|display| display.get_bounds().ok())
             {
-                canvas
-                    .window_mut()
+                window
                     .set_size(bounds.width(), bounds.height())
                     .map_err(|error| WindowError::new("fullscreen_size", error))?;
             }
 
-            canvas
-                .window_mut()
+            window
                 .set_fullscreen(true)
                 .map_err(|error| WindowError::new("fullscreen", error))?;
         }
 
-        let creator = canvas.texture_creator();
-        let display_scale = canvas.window().display_scale();
-        let display_refresh_rate = canvas
-            .window()
+        let display_scale = window.display_scale();
+        let display_refresh_rate = window
             .get_display()
             .ok()
             .and_then(|display| display.get_mode().ok())
             .map(|mode| mode.refresh_rate)
             .unwrap_or(0.0);
 
-        // The old canvas/window is destroyed only here: the new one is already
-        // built, so every failure above keeps the running presentation unchanged.
-        self.creator = creator;
-        self.canvas = canvas;
+        // The old window and its backend are destroyed only here: the new one is
+        // already built, so every failure above keeps the running presentation
+        // unchanged. The new window starts without a backend — the next present
+        // builds the Canvas or the GPU device for it (`aa` is kept).
+        let _ = self.take_window();
+        self.output = WindowOutput::Idle(window);
         self.render_scale = render_scale;
         self.fullscreen = was_fullscreen;
         self.display_scale = display_scale;
@@ -458,14 +567,12 @@ impl SdlWindow {
 
     /// Window size in screen coordinates (points): what SDL mouse events carry.
     pub fn size(&self) -> (u32, u32) {
-        self.canvas.window().size()
+        self.window().size()
     }
 
     /// Drawable size in pixels (`SDL_GetRenderOutputSize`).
     pub fn output_size(&self) -> (u32, u32) {
-        self.canvas
-            .output_size()
-            .unwrap_or_else(|_| self.canvas.window().size_in_pixels())
+        self.drawable_size()
     }
 
     /// Logical frame size.
@@ -506,6 +613,41 @@ impl SdlWindow {
     /// Current integer frame scale (in drawable pixels).
     pub fn frame_scale(&self) -> FrameScale {
         self.geometry.frame_scale()
+    }
+
+    /// Anti-aliasing of the presentation, as actually applied.
+    ///
+    /// This is the requested mode until a GPU failure downgrades it: a missing
+    /// device, an unclaimable window or a rejected shader turns the mode into
+    /// [`AaMode::Off`] (one log line), so the caller/menu reports what the
+    /// window really does instead of what was asked for.
+    pub fn aa(&self) -> AaMode {
+        self.aa
+    }
+
+    /// Requests the anti-aliasing mode of the presentation
+    /// (`max-brh-docs/development/gpu-aa-design.md`).
+    ///
+    /// Presentation only: the frame, the simulation and the snapshot/CRC are
+    /// untouched. [`AaMode::Off`] drops the GPU device (the frame goes through
+    /// the Canvas path and stays byte-for-byte); an active mode creates the
+    /// device lazily on the next [`Self::present`].
+    ///
+    /// [`AaMode::Smaa`] is accepted and currently presented as FXAA (phase 2 of
+    /// the plan): the mode is kept as requested, so the log and the menu name
+    /// what the owner picked, while [`Self::aa`] reports the pass in use.
+    pub fn set_aa(&mut self, aa: AaMode) {
+        if aa == self.aa {
+            return;
+        }
+
+        self.aa = aa;
+
+        // SDL keeps one swapchain per window: the backend of the other mode is
+        // released now, and the next frame builds the one this mode needs. `Off`
+        // is the Canvas path (its renderer is rebuilt on the next present), any
+        // other mode is the GPU path.
+        self.release_backend();
     }
 
     /// Current geometry: window points, drawable pixels, frame layout.
@@ -559,22 +701,19 @@ impl SdlWindow {
 
         if fullscreen {
             let bounds = self
-                .canvas
                 .window()
                 .get_display()
                 .ok()
                 .and_then(|display| display.get_bounds().ok());
 
             if let Some(bounds) = bounds {
-                self.canvas
-                    .window_mut()
+                self.window_mut()
                     .set_size(bounds.width(), bounds.height())
                     .map_err(|error| WindowError::new("fullscreen_size", error))?;
             }
         }
 
-        self.canvas
-            .window_mut()
+        self.window_mut()
             .set_fullscreen(fullscreen)
             .map_err(|error| WindowError::new("fullscreen", error))?;
         self.fullscreen = fullscreen;
@@ -626,7 +765,7 @@ impl SdlWindow {
     fn refresh_layout(&mut self) {
         let (width, height) = self.base_size;
 
-        self.display_scale = self.canvas.window().display_scale();
+        self.display_scale = self.window().display_scale();
         self.geometry = ScreenGeometry::fit_with_render_scale(
             self.size(),
             self.output_size(),
@@ -649,7 +788,7 @@ impl SdlWindow {
     /// Changes the window title.
     pub fn set_title(&mut self, title: &str) {
         self.title = title.to_owned();
-        self.canvas.window_mut().set_title(title).ok();
+        self.window_mut().set_title(title).ok();
     }
 
     /// Sets the cursor from an RGBA8 frame with a hotspot (`SDL_CreateColorCursor`).
@@ -731,6 +870,17 @@ impl SdlWindow {
     /// `640·S × 480·S` render frame, the content rectangle is `640·S × 480·S`
     /// (centred, letterboxed on the same rule) and the upload is linear; the
     /// mouse transform still returns logical 640×480 coordinates.
+    ///
+    /// # Anti-aliasing
+    ///
+    /// [`AaMode::Off`] is the historical Canvas path — upload + `copy` + present,
+    /// byte-for-byte what the renderer produced. Any other mode goes through the
+    /// SDL3 GPU FXAA pass ([`GpuPresenter`]): the frame is smoothed at render
+    /// resolution and the result is blitted into the same content rectangle. If
+    /// the GPU path cannot be set up or fails mid-frame, the mode falls back to
+    /// [`AaMode::Off`] **with a log line** and the frame is presented through
+    /// the Canvas path, so a window always shows something
+    /// (`gpu-aa-design.md`, the fallback gate).
     pub fn present(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
         if buffer.is_empty() {
             return Ok(());
@@ -757,13 +907,76 @@ impl SdlWindow {
             return Ok(());
         }
 
-        let mut texture = self
-            .creator
+        if self.aa.is_off() {
+            return self.present_canvas(buffer);
+        }
+
+        match self.present_gpu(buffer) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                eprintln!(
+                    "SDL: GPU-сглаживание недоступно ({error}) — сглаживание переключено на off, \
+                     кадр выводится через Canvas"
+                );
+                self.aa = AaMode::Off;
+                // Drops the device: a command buffer a mid-frame failure left
+                // unsubmitted is destroyed with it, and the GPU path is never
+                // used again for this window.
+                self.release_backend();
+
+                self.present_canvas(buffer)
+            }
+        }
+    }
+
+    /// Presents `buffer` through the SDL3 GPU FXAA pass.
+    fn present_gpu(&mut self, buffer: &RgbaBuffer) -> Result<(), GpuPresentError> {
+        let geometry = self.geometry;
+        let filter = self.render_scale.filter();
+
+        if !matches!(self.output, WindowOutput::Gpu { .. }) {
+            let window = self.take_window();
+
+            match GpuPresenter::new(&window) {
+                Ok(presenter) => self.output = WindowOutput::Gpu { presenter, window },
+                Err(error) => {
+                    self.output = WindowOutput::Idle(window);
+
+                    return Err(error);
+                }
+            }
+        }
+
+        match &mut self.output {
+            WindowOutput::Gpu { presenter, window } => {
+                presenter.present(window, buffer, geometry, filter)
+            }
+            _ => unreachable!("the GPU backend was created above"),
+        }
+    }
+
+    /// Uploads the frame into a streaming texture and copies it into the window
+    /// (the historical Canvas path: `aa = Off`).
+    fn present_canvas(&mut self, buffer: &RgbaBuffer) -> Result<(), WindowError> {
+        self.ensure_canvas()?;
+
+        let geometry = self.geometry;
+        let filter = self.render_scale.filter();
+
+        let (WindowOutput::Canvas(canvas), Some(creator)) = (&mut self.output, &self.creator)
+        else {
+            return Err(WindowError::new(
+                "canvas",
+                "the Canvas backend was not created",
+            ));
+        };
+
+        let mut texture = creator
             .create_texture_streaming(PixelFormat::RGBA32, buffer.width(), buffer.height())
             .map_err(|error| WindowError::new("texture", error))?;
 
         // Guardrail 5: the filter is global per mode, never per asset.
-        texture.set_scale_mode(match self.render_scale.filter() {
+        texture.set_scale_mode(match filter {
             FilterMode::Nearest => ScaleMode::Nearest,
             FilterMode::Linear => ScaleMode::Linear,
         });
@@ -771,11 +984,10 @@ impl SdlWindow {
             .update(None, buffer.pixels(), buffer.stride())
             .map_err(|error| WindowError::new("texture_update", error))?;
 
-        self.canvas
-            .set_draw_color(sdl3::pixels::Color::RGBA(0, 0, 0, 255));
-        self.canvas.clear();
+        canvas.set_draw_color(sdl3::pixels::Color::RGBA(0, 0, 0, 255));
+        canvas.clear();
 
-        let content = self.geometry.content_rect();
+        let content = geometry.content_rect();
         let destination = SdlRect::new(
             content.ulx,
             content.uly,
@@ -783,20 +995,25 @@ impl SdlWindow {
             content.height.max(1) as u32,
         );
 
-        self.canvas
+        canvas
             .copy(&texture, None, destination)
             .map_err(|error| WindowError::new("copy", error))?;
-        let _ = self.canvas.present();
+        let _ = canvas.present();
 
         Ok(())
     }
 
     /// Fills the window with a color (e.g. before the first frame).
+    ///
+    /// Only the Canvas backend can fill the window: with the GPU pass the first
+    /// presented frame clears the swapchain anyway, so this is a no-op there.
     pub fn clear(&mut self, color: crate::buffer::Rgba) {
-        self.canvas.set_draw_color(sdl3::pixels::Color::RGBA(
-            color.r, color.g, color.b, color.a,
-        ));
-        self.canvas.clear();
+        if let WindowOutput::Canvas(canvas) = &mut self.output {
+            canvas.set_draw_color(sdl3::pixels::Color::RGBA(
+                color.r, color.g, color.b, color.a,
+            ));
+            canvas.clear();
+        }
     }
 
     /// Polls the event queue and returns the events to the UI layer.

@@ -9,17 +9,20 @@
 //!
 //! ```sh
 //! cargo run -p max_app --no-default-features --release --example hd_frame_bench -- \
-//!     --scale 2 --frames 30 --steps 120 [--aa 2]
+//!     --scale 2 --frames 30 --steps 120
 //! ```
 //!
 //! Output (stdout):
 //!
-//! * `frame=…` — one line per measured frame (`render_us`, `bytes`; with
-//!   `--aa` also `resolve_ms`, the box downsample of `ssaa-design.md`);
+//! * `frame=…` — one line per measured frame (`render_ms`, `bytes`);
 //! * `HD-BENCH …` — the summary: median/mean frame time, the implied fps, the
 //!   ratio to the 60 Hz budget (16.67 ms) and the VRAM accounting;
 //! * `HD-BENCH VRAM … ok|OVER` — the quota gate of the scale (R0 §2.1);
-//! * `HD-BENCH SSAA …` — the SSAA multiplier and the render frame it implies.
+//! * `HD-BENCH frame …` — the render frame of the scale.
+//!
+//! Anti-aliasing is **not** measured here: it is a GPU pass of the output layer
+//! (`gpu-aa-design.md`), and this benchmark is headless. The frame it times is
+//! the same whatever `aa` is.
 //!
 //! The measurement machine of R0 is a release build; a debug build is roughly
 //! an order of magnitude slower and is only useful for the VRAM part.
@@ -33,13 +36,12 @@ use max_app::local::{LocalPhase, LocalSetup};
 use max_app::{App, AppConfig, AppMode};
 use max_core::enums::{PlayMode, TeamClan, VictoryType};
 use max_core::team::TeamKind;
-use max_render::render_scale::{AaMode, RenderScale};
+use max_render::render_scale::RenderScale;
 
 const USAGE: &str = "\
 Использование: hd_frame_bench [опции]
 
   --scale 2|4          кратность HD (по умолчанию 2)
-  --aa 0|off|1|2|4     SSAA-множитель кадра: 0/1/off — выкл., 2 или 4 (по умолчанию 0)
   --frames N           измеряемых кадров (по умолчанию 30)
   --steps N            тиков симуляции перед первым кадром (по умолчанию 120)
   --data-dir DIR       каталог MAX.RES/COLOR.PAL/.WRL (по умолчанию <repo>/max-original)
@@ -50,7 +52,6 @@ const USAGE: &str = "\
 /// Parsed arguments.
 struct Options {
     scale: RenderScale,
-    aa: AaMode,
     frames: u32,
     steps: u32,
     data_dir: PathBuf,
@@ -67,7 +68,6 @@ impl Default for Options {
 
         Self {
             scale: RenderScale::Hd2,
-            aa: AaMode::Off,
             frames: 30,
             steps: 120,
             remaster_dir: max_app::default_remaster_root(root.as_deref()),
@@ -109,11 +109,7 @@ fn parse_args() -> Result<Option<Options>, String> {
                     .filter(|scale| scale.is_hd())
                     .ok_or_else(|| format!("--scale: ожидалось 2 или 4, получено {value}"))?;
             }
-            "--aa" => {
-                let value = args.next().ok_or("--aa требует значение")?;
-                options.aa = AaMode::parse_flag(&value)
-                    .map_err(|_| format!("--aa: ожидалось 0|off|1|2|4, получено {value}"))?;
-            }
+
             "--frames" => {
                 options.frames = args
                     .next()
@@ -249,14 +245,10 @@ fn main() -> ExitCode {
     let mut hd = HdPresenter::load(assets, options.scale, &options.remaster_dir);
     let stats = hd.stats();
     let scale_factor = options.scale.scale();
-    let factor = scale_factor * options.aa.factor();
 
     println!(
-        "hd_frame_bench: scale={} aa={} frame={}x{} resolved={}x{} frames={} steps={} data={} remaster={}",
+        "hd_frame_bench: scale={} frame={}x{} frames={} steps={} data={} remaster={}",
         options.scale.label(),
-        options.aa.label(),
-        640 * factor,
-        480 * factor,
         640 * scale_factor,
         480 * scale_factor,
         options.frames,
@@ -279,57 +271,30 @@ fn main() -> ExitCode {
     }
 
     // Warm-up frame: the first frame pays for the buffers/palette LUTs.
-    let warm = app.render_frame_hd(&mut hd, options.aa);
+    let warm = app.render_frame_hd(&mut hd);
     println!(
         "hd_frame_bench: warmup {}x{} bytes={}",
         warm.width(),
         warm.height(),
         warm.pixels().len()
     );
-
-    // The box resolve returns the `xS` frame; verify the geometry once, then
-    // time it per frame (`ssaa-design.md`).
-    if options.aa.is_on() {
-        let resolved = max_render::downscale_box(&warm, options.aa.factor());
-
-        assert_eq!(
-            (resolved.width(), resolved.height()),
-            (640 * scale_factor, 480 * scale_factor),
-            "the SSAA resolve must return the xS frame"
-        );
-    }
+    assert_eq!(
+        (warm.width(), warm.height()),
+        (640 * scale_factor, 480 * scale_factor),
+        "the HD frame is the logical frame times S"
+    );
 
     let mut samples = Vec::with_capacity(options.frames as usize);
-    let mut resolve_samples = Vec::with_capacity(options.frames as usize);
     let mut last_bytes = 0usize;
 
     for frame in 0..options.frames {
         let started = Instant::now();
-        let buffer = app.render_frame_hd(&mut hd, options.aa);
+        let buffer = app.render_frame_hd(&mut hd);
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-
-        // The SSAA resolve is part of the presented frame: measure the box
-        // downsample separately, it is pure integer CPU work on the game frame.
-        let resolve_ms = if options.aa.is_on() {
-            let resolve_started = Instant::now();
-            let resolved = max_render::downscale_box(&buffer, options.aa.factor());
-            let elapsed = resolve_started.elapsed().as_secs_f64() * 1000.0;
-
-            // Keep the optimizer from dropping the resolve of a buffer nobody
-            // reads: the timing must cover the real box filter.
-            std::hint::black_box(&resolved);
-            resolve_samples.push(elapsed);
-
-            elapsed
-        } else {
-            0.0
-        };
 
         last_bytes = buffer.pixels().len();
         samples.push(elapsed);
-        println!(
-            "frame={frame} render_ms={elapsed:.2} resolve_ms={resolve_ms:.2} bytes={last_bytes}"
-        );
+        println!("frame={frame} render_ms={elapsed:.2} bytes={last_bytes}");
     }
 
     let median_ms = median(samples.clone());
@@ -338,7 +303,6 @@ fn main() -> ExitCode {
     } else {
         samples.iter().sum::<f64>() / samples.len() as f64
     };
-    let resolve_ms = median(resolve_samples);
     let budget_ms = 1000.0 / 60.0;
     let fps = if median_ms > 0.0 {
         1000.0 / median_ms
@@ -352,14 +316,9 @@ fn main() -> ExitCode {
         median_ms / budget_ms * 100.0
     );
     println!(
-        "HD-BENCH SSAA aa={} render={}x{} resolved={}x{} resolve_median_ms={resolve_ms:.2} \
-         total_median_ms={:.2}",
-        options.aa.label(),
-        640 * factor,
-        480 * factor,
+        "HD-BENCH frame={}x{} render_median_ms={median_ms:.2}",
         640 * scale_factor,
-        480 * scale_factor,
-        median_ms + resolve_ms
+        480 * scale_factor
     );
 
     let stats = hd.stats();

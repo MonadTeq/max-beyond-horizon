@@ -199,7 +199,10 @@ fn started_app() -> Option<App> {
 
 #[test]
 fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
-    let mut reference = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+    let mut reference = started_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(started_app())
+    ));
 
     let start_bytes = reference.state_ref().snapshot_bytes();
 
@@ -212,7 +215,10 @@ fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
     let expected_digest = reference.digest();
 
     for profile in PROFILES {
-        let mut app = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut app = started_app().expect(concat!(
+            "test fixture is missing: ",
+            stringify!(started_app())
+        ));
 
         assert_same_snapshot(
             &app.state_ref().snapshot_bytes(),
@@ -269,7 +275,10 @@ fn snapshot_bytes_and_digest_do_not_depend_on_the_presentation_profile() {
 
 #[test]
 fn alt_tab_does_not_reset_or_unpause_the_match() {
-    let mut app = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+    let mut app = started_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(started_app())
+    ));
 
     let mut presentation = PresentationState::new();
     assert!(presentation.should_draw());
@@ -367,8 +376,14 @@ impl<D: Dispatcher> SessionFrame<D> for FocusFrame {
 
 #[test]
 fn session_step_is_not_gated_on_focus() {
-    let mut focused = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
-    let mut unfocused = started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+    let mut focused = started_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(started_app())
+    ));
+    let mut unfocused = started_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(started_app())
+    ));
 
     // The network session step is the same skeleton for a lockstep match: a
     // hidden window must not stop the loop (barrier timeouts keep their own
@@ -496,23 +511,24 @@ fn hd_presentation_does_not_change_the_snapshot_or_digest() {
 
 fn hd_presentation_gate_body() {
     let (expected_bytes, expected_digest) = {
-        let mut reference =
-            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut reference = started_app().expect(concat!(
+            "test fixture is missing: ",
+            stringify!(started_app())
+        ));
 
         // Reference: plain fixed steps, no rendering at all.
         for _ in 0..STEP_BUDGET {
             reference.local_update(SIMULATION_DT);
         }
 
-        (
-            reference.state_ref().snapshot_bytes(),
-            reference.digest(),
-        )
+        (reference.state_ref().snapshot_bytes(), reference.digest())
     };
 
     for scale in [RenderScale::Hd2, RenderScale::Hd4] {
-        let mut app =
-            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut app = started_app().expect(concat!(
+            "test fixture is missing: ",
+            stringify!(started_app())
+        ));
         // No remaster assets: every HD layer falls back, which is exactly the
         // state of a checkout without `target/remaster`.
         let mut hd = HdPresenter::empty(scale);
@@ -521,7 +537,7 @@ fn hd_presentation_gate_body() {
             app.local_update(SIMULATION_DT);
         }
 
-        let frame = app.render_frame_hd(&mut hd, AaMode::Off);
+        let frame = app.render_frame_hd(&mut hd);
 
         assert_eq!(
             frame.width(),
@@ -587,27 +603,30 @@ fn hd_geometry_keeps_the_logical_frame_and_the_mouse_transform() {
     }
 }
 
-/// The SSAA multiplier is presentation only (`ssaa-design.md`): rendering the
-/// same fixed 60 Hz steps at `S ∈ {2, 4}` with `aa ∈ {2, 4}` must produce the
-/// byte-identical `snapshot_bytes` and `state_digest` of the plain run.
+/// Anti-aliasing is an output-layer parameter (`gpu-aa-design.md`): it never
+/// enters the render frame, so the same fixed 60 Hz steps at `S ∈ {2, 4}` give
+/// the byte-identical `snapshot_bytes` and `state_digest` of the plain run for
+/// every mode (`off`, `fxaa`, `smaa`).
 ///
 /// The frame is rendered at the end of the run rather than on every step (a
-/// debug-build `S·aa = 16` frame costs seconds); the anti-aliasing itself is
-/// covered by `hd_presentation.rs`.
+/// debug-build HD frame costs seconds); the frame itself is checked by
+/// `hd_presentation.rs`, the GPU pass by the `gpu_aa` example.
 #[test]
-fn ssaa_does_not_change_the_snapshot_or_digest() {
+fn antialiasing_does_not_change_the_snapshot_or_digest() {
     std::thread::Builder::new()
         .stack_size(64 << 20)
-        .spawn(ssaa_gate_body)
+        .spawn(antialiasing_gate_body)
         .expect("test thread")
         .join()
         .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
 }
 
-fn ssaa_gate_body() {
+fn antialiasing_gate_body() {
     let (expected_bytes, expected_digest) = {
-        let mut reference =
-            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut reference = started_app().expect(concat!(
+            "test fixture is missing: ",
+            stringify!(started_app())
+        ));
 
         for _ in 0..STEP_BUDGET {
             reference.local_update(SIMULATION_DT);
@@ -617,24 +636,28 @@ fn ssaa_gate_body() {
     };
 
     for (scale, aa) in [
-        (RenderScale::Hd2, AaMode::X2),
-        (RenderScale::Hd2, AaMode::X4),
+        (RenderScale::Hd2, AaMode::Off),
+        (RenderScale::Hd2, AaMode::Fxaa),
+        (RenderScale::Hd2, AaMode::Smaa),
+        (RenderScale::Hd4, AaMode::Fxaa),
     ] {
-        let mut app =
-            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut app = started_app().expect(concat!(
+            "test fixture is missing: ",
+            stringify!(started_app())
+        ));
         let mut hd = HdPresenter::empty(scale);
 
         for _ in 0..STEP_BUDGET {
             app.local_update(SIMULATION_DT);
         }
 
-        let factor = scale.scale() * aa.factor();
-        let frame = app.render_frame_hd(&mut hd, aa);
+        let factor = scale.scale();
+        let frame = app.render_frame_hd(&mut hd);
 
         assert_eq!(
             (frame.width(), frame.height()),
             (FRAME_WIDTH * factor, FRAME_HEIGHT * factor),
-            "[{} {}] the SSAA frame size",
+            "[{} {}] the frame stays at S: aa is not a render factor",
             scale.label(),
             aa.label()
         );
@@ -642,15 +665,16 @@ fn ssaa_gate_body() {
             &app.state_ref().snapshot_bytes(),
             &expected_bytes,
             &format!(
-                "[{} {}] {STEP_BUDGET} steps with SSAA rendering",
+                "[{} {}] {STEP_BUDGET} steps with HD rendering and aa={}",
                 scale.label(),
+                aa.label(),
                 aa.label()
             ),
         );
         assert_eq!(
             app.digest(),
             expected_digest,
-            "[{} {}] state_digest changed with the SSAA multiplier",
+            "[{} {}] state_digest changed with the anti-aliasing mode",
             scale.label(),
             aa.label()
         );

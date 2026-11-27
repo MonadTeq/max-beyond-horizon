@@ -15,11 +15,11 @@
 //! * `display` — the presentation resolution of the SDL window:
 //!   `scale` (`1`/`2`/`4`) and/or `resolution` (`"640x480"`, `"1280x960"`,
 //!   `"2560x1920"`). The two are aliases; naming both with different values is
-//!   an error. `aa` (`0`/`1`/`2`/`4`, `ssaa-design.md`) is the super-sampling
-//!   multiplier of the HD presentation: the frame is rendered at `S·aa` and
-//!   resolved by an integer box filter; `0`/`1` are "off" (the default), `3`,
-//!   `8` and any other value are an error. At `S = 1` the multiplier is forced
-//!   to `Off` — the pixel-perfect frame stays byte-for-byte.
+//!   an error. `aa` (`"off"`, `"fxaa"`, `"smaa"`, `gpu-aa-design.md`) selects
+//!   the GPU anti-aliasing pass of the output layer — it is not a render
+//!   multiplier, the frame stays `640·S`; `"off"` is the default, and any other
+//!   value (including the retired SSAA numbers `2`/`4`) is an error. At `S = 1`
+//!   the mode is forced to `Off` — the pixel-perfect frame stays byte-for-byte.
 //! * `window` — the window presentation: `scale` (`0` — fit the desktop,
 //!   otherwise `1..=8`) and `fullscreen` (`true`/`false`).
 //!
@@ -69,7 +69,7 @@ pub struct DisplaySettings {
     pub scale: Option<RenderScale>,
     /// `display.resolution` — the render-frame size (`"1280x960"` → `S = 2`).
     pub resolution: Option<RenderScale>,
-    /// `display.aa` — the SSAA multiplier (`0`/`1` off, `2`, `4`).
+    /// `display.aa` — the GPU anti-aliasing mode (`off`/`fxaa`/`smaa`).
     pub aa: Option<AaMode>,
 }
 
@@ -159,7 +159,7 @@ pub struct CliPresentation {
     pub hd: bool,
     /// `--hd-scale N`.
     pub hd_scale: Option<u32>,
-    /// `--aa 0|off|1|2|4`.
+    /// `--aa off|fxaa|smaa`.
     pub aa: Option<AaMode>,
     /// `--scale N` (`0` — fit the desktop).
     pub window_scale: Option<u32>,
@@ -174,7 +174,7 @@ pub struct PresentationSettings {
     pub mode: PresentationMode,
     /// The render scale `S` (`1`/`2`/`4`).
     pub render_scale: RenderScale,
-    /// The SSAA multiplier `aa` of the HD frame (`Off` at `S = 1`).
+    /// The GPU anti-aliasing mode of the output layer (`Off` at `S = 1`).
     pub aa: AaMode,
     /// Window scale; `None` — fit the desktop.
     pub window_scale: Option<u32>,
@@ -187,22 +187,14 @@ impl PresentationSettings {
     pub const fn is_hd(self) -> bool {
         self.mode.is_hd()
     }
-
-    /// The render factor of one frame: `S·aa`.
-    ///
-    /// `S = 1` is forced to [`AaMode::Off`], so the pixel-perfect path always
-    /// reports `1` and the historical frame stays byte-for-byte.
-    pub const fn render_factor(self) -> u32 {
-        self.render_scale.scale() * self.aa.factor()
-    }
 }
 
 /// The effective presentation: `CLI > settings.jsonc > default`.
 ///
 /// * a CLI presentation flag (`--hd`, `--hd-scale`) wins over `display`;
-/// * `--aa` wins over `display.aa`; the SSAA multiplier is forced to
-///   [`AaMode::Off`] when the resolved scale is `S = 1` — the pixel-perfect
-///   frame and its golden stay byte-for-byte (`ssaa-design.md`);
+/// * `--aa` wins over `display.aa`; the mode is forced to [`AaMode::Off`] when
+///   the resolved scale is `S = 1` — the pixel-perfect frame and its golden
+///   stay byte-for-byte (`gpu-aa-design.md`);
 /// * `--scale` wins over `window.scale` (`--scale 0` is "fit the desktop");
 /// * `--fullscreen` wins over `window.fullscreen` (a bare `false` in the file is
 ///   the default and can only be turned on by the flag).
@@ -220,8 +212,8 @@ pub fn resolve(
     } else {
         PresentationMode::PixelPerfect
     };
-    // `S = 1` forces the SSAA off: a pixel-perfect frame has no HD geometry to
-    // super-sample and must stay byte-for-byte.
+    // `S = 1` forces anti-aliasing off: a pixel-perfect frame has no HD geometry
+    // to smooth and must stay byte-for-byte.
     let aa = if render_scale.is_hd() {
         cli.aa.or(settings.display.aa).unwrap_or(AaMode::Off)
     } else {
@@ -261,7 +253,25 @@ struct DisplayFile {
     #[serde(default)]
     resolution: Option<String>,
     #[serde(default)]
-    aa: Option<u32>,
+    aa: Option<AaFileValue>,
+}
+
+/// `display.aa` as written in the file: a mode name, or a number from the
+/// retired SSAA syntax (which is reported as an error, not accepted).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum AaFileValue {
+    Name(String),
+    Number(u32),
+}
+
+impl std::fmt::Display for AaFileValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Name(value) => write!(f, "{value}"),
+            Self::Number(value) => write!(f, "{value}"),
+        }
+    }
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -289,7 +299,11 @@ impl SettingsFile {
         let aa = self
             .display
             .aa
-            .map(|value| AaMode::from_factor(value).ok_or(SettingsError::UnsupportedAa { value }))
+            .map(|value| {
+                AaMode::parse_flag(&value.to_string()).map_err(|_| SettingsError::UnsupportedAa {
+                    value: value.to_string(),
+                })
+            })
             .transpose()?;
 
         if let (Some(scale), Some(resolution)) = (scale, resolution) {
@@ -413,14 +427,14 @@ pub enum SettingsError {
         /// The raw value of `display.resolution`.
         resolution: String,
     },
-    /// `display.aa` names an unsupported SSAA multiplier.
+    /// `display.aa` names an unsupported anti-aliasing mode.
     #[error(
-        "display.aa: unsupported antialiasing multiplier {value}; supported values are \
-         0/1 (off), 2 and 4 (the SSAA box filter ships with ×2 and ×4)"
+        "display.aa: unsupported antialiasing mode {value}; supported values are \"off\", \
+         \"fxaa\" and \"smaa\" (the SSAA multipliers 2 and 4 are retired)"
     )]
     UnsupportedAa {
         /// The rejected value.
-        value: u32,
+        value: String,
     },
     /// `window.scale` is outside `0..=MAX_SCALE`.
     #[error("window.scale: expected 1..={max} (or 0 to fit the desktop), got {value}")]

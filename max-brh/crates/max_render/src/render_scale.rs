@@ -28,14 +28,15 @@
 //! coordinate mapping; the filter belongs to the final texture upload in the
 //! SDL layer.
 //!
-//! # Super-sampling (`AaMode`)
+//! # Anti-aliasing (`AaMode`)
 //!
-//! [`AaMode`] is an orthogonal presentation axis on top of `S`
-//! (`max-brh-docs/development/ssaa-design.md`): the HD frame is rendered at
-//! `640·S·aa × 480·S·aa` and resolved back to `640·S × 480·S` by the integer
-//! box filter [`crate::frame_scale::downscale_box`]. `aa = 1` is
-//! [`AaMode::Off`] — the exact historical HD frame — and `S = 1` forces it off,
-//! so the pixel-perfect frame and its golden stay byte-for-byte.
+//! [`AaMode`] is an **output-layer** parameter, not a render factor of `S`
+//! (`max-brh-docs/development/gpu-aa-design.md`, owner decision of 2026-11-27):
+//! the frame is always rendered at `640·S × 480·S`, and the presenter — the
+//! SDL3 GPU FXAA pass ([`crate::gpu_present`]) or the Canvas fallback — decides
+//! what happens on the way to the window. [`AaMode::Off`] is the exact
+//! historical frame, `S = 1` forces it off, so the pixel-perfect frame and its
+//! golden stay byte-for-byte.
 
 use crate::frame_scale::{FRAME_HEIGHT, FRAME_WIDTH};
 
@@ -50,47 +51,40 @@ pub const HD_SCALE_X4: u32 = 4;
 /// [`RenderScale::from_scale`]).
 pub const HD_SCALES: [u32; 2] = [HD_SCALE_X2, HD_SCALE_X4];
 
-/// SSAA multiplier of [`AaMode::Off`] (`aa = 1`, no super-sampling).
-pub const AA_OFF_FACTOR: u32 = 1;
-/// First SSAA multiplier (`aa = 2`, a 2×2 box filter).
-pub const AA_X2_FACTOR: u32 = 2;
-/// Second SSAA multiplier (`aa = 4`, a 4×4 box filter).
-pub const AA_X4_FACTOR: u32 = 4;
-/// Every SSAA multiplier the remaster ships — `×2` and `×4` only (owner
-/// decision of 2026-11-27: an integer box, `×3`/non-integers are launch
-/// errors).
-pub const AA_FACTORS: [u32; 2] = [AA_X2_FACTOR, AA_X4_FACTOR];
-
-/// Anti-aliasing mode: the super-sampling multiplier `aa` of the presentation.
+/// Anti-aliasing of the presentation (owner decision of 2026-11-27).
 ///
-/// SSAA is an **orthogonal axis on top of** [`RenderScale`], not another scale:
-/// the HD frame is rendered at `640·S·aa × 480·S·aa` and then resolved to
-/// `640·S × 480·S` by the integer box filter
-/// [`crate::frame_scale::downscale_box`]. The window size does not depend on
-/// `aa`, the simulation, the snapshot/CRC and the golden 1:1 frame do not
-/// either (presentation only, `ssaa-design.md`).
+/// Anti-aliasing moved out of the render factor into the **output layer**
+/// (`max-brh-docs/development/gpu-aa-design.md`): `render_frame_hd` always draws
+/// `640·S × 480·S` — `S` is the only render scale — and the window decides how
+/// that frame reaches the screen:
 ///
-/// `S = 1` forces [`Self::Off`]: the pixel-perfect frame is byte-for-byte and
-/// an `S = 1` frame has no HD geometry that could be super-sampled.
+/// * [`Self::Off`] — the frame is uploaded as it is (the historical path, and
+///   the only path of `S = 1`);
+/// * [`Self::Fxaa`] — the SDL3 GPU FXAA pass smooths the frame at render
+///   resolution before the blit ([`crate::gpu_present`]);
+/// * [`Self::Smaa`] — reserved for the SMAA phase of the plan; until that
+///   pass exists the presenter runs FXAA and says so in the log.
+///
+/// The window size, the simulation, the snapshot/CRC and the golden 1:1 frame
+/// do not depend on it (presentation only). `S = 1` forces [`Self::Off`]: the
+/// pixel-perfect frame has no HD geometry to anti-alias and stays byte-for-byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AaMode {
-    /// `aa = 1`: no super-sampling (default; the historical HD frame).
+    /// No anti-aliasing (default; the historical frame).
     #[default]
     Off,
-    /// `aa = 2`: a 2×2 box filter.
-    X2,
-    /// `aa = 4`: a 4×4 box filter.
-    X4,
+    /// One FXAA pass at render resolution (GPU).
+    Fxaa,
+    /// SMAA (phase 2 of `gpu-aa-design.md`); the presenter falls back to FXAA
+    /// until the SMAA passes exist.
+    Smaa,
 }
 
-/// Why an `--aa` / `display.aa` value was rejected
-/// ([`AaMode::parse_flag`]/[`AaMode::from_factor`]).
+/// Why an `--aa` / `display.aa` value was rejected ([`AaMode::parse_flag`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AaModeError {
-    /// The flag is neither `off` nor an integer multiplier.
+    /// The flag is not one of `off`, `fxaa`, `smaa`.
     InvalidFlag(String),
-    /// The multiplier is neither 0/1 (off) nor a shipped box size.
-    UnsupportedFactor(u32),
 }
 
 impl std::fmt::Display for AaModeError {
@@ -98,12 +92,7 @@ impl std::fmt::Display for AaModeError {
         match self {
             Self::InvalidFlag(value) => write!(
                 f,
-                "antialiasing: expected 0, 1, 2, 4 or \"off\", got \"{value}\""
-            ),
-            Self::UnsupportedFactor(factor) => write!(
-                f,
-                "unsupported antialiasing multiplier {factor}: the SSAA box filter \
-                 ships with ×2 and ×4 (0, 1 and \"off\" disable it)"
+                "antialiasing: expected \"off\", \"fxaa\" or \"smaa\", got \"{value}\""
             ),
         }
     }
@@ -113,48 +102,24 @@ impl std::error::Error for AaModeError {}
 
 impl AaMode {
     /// Every mode, in menu order.
-    pub const ALL: [Self; 3] = [Self::Off, Self::X2, Self::X4];
+    pub const ALL: [Self; 3] = [Self::Off, Self::Fxaa, Self::Smaa];
 
-    /// The super-sampling multiplier `aa` (`1`, `2` or `4`).
-    pub const fn factor(self) -> u32 {
-        match self {
-            Self::Off => AA_OFF_FACTOR,
-            Self::X2 => AA_X2_FACTOR,
-            Self::X4 => AA_X4_FACTOR,
-        }
-    }
-
-    /// No super-sampling (`aa = 1`).
+    /// No anti-aliasing.
     pub const fn is_off(self) -> bool {
         matches!(self, Self::Off)
     }
 
-    /// Super-sampling is active (`aa > 1`).
+    /// Anti-aliasing is active.
     pub const fn is_on(self) -> bool {
         !self.is_off()
     }
 
-    /// Side of the box filter (`aa × aa` texels per resolved pixel).
-    pub const fn box_size(self) -> u32 {
-        self.factor()
-    }
-
-    /// Mode from a raw multiplier: `0` and `1` are [`Self::Off`]; `None` for an
-    /// unsupported value (`3`, `5`, `8`, …).
-    pub const fn from_factor(factor: u32) -> Option<Self> {
-        match factor {
-            0 | AA_OFF_FACTOR => Some(Self::Off),
-            AA_X2_FACTOR => Some(Self::X2),
-            AA_X4_FACTOR => Some(Self::X4),
-            _ => None,
-        }
-    }
-
-    /// Mode from a CLI/jsonc value: `off`, `0`, `1`, `2` or `4`.
+    /// Mode from a CLI/jsonc value: `off`, `fxaa` or `smaa`
+    /// (case-insensitive).
     ///
-    /// `off` is case-insensitive; everything else is parsed as the integer
-    /// multiplier and validated by [`Self::from_factor`], so `3`, `8` or a word
-    /// are launch errors instead of a silent fallback.
+    /// The integer multipliers of the retired SSAA path (`0`, `1`, `2`, `4`) are
+    /// **not** accepted: `--aa` is a clean break (owner decision), so `2`/`4` is
+    /// a launch error instead of a silent alias.
     pub fn parse_flag(value: &str) -> Result<Self, AaModeError> {
         let value = value.trim();
 
@@ -162,28 +127,32 @@ impl AaMode {
             return Ok(Self::Off);
         }
 
-        let factor: u32 = value
-            .parse()
-            .map_err(|_| AaModeError::InvalidFlag(value.to_string()))?;
+        if value.eq_ignore_ascii_case("fxaa") {
+            return Ok(Self::Fxaa);
+        }
 
-        Self::from_factor(factor).ok_or(AaModeError::UnsupportedFactor(factor))
+        if value.eq_ignore_ascii_case("smaa") {
+            return Ok(Self::Smaa);
+        }
+
+        Err(AaModeError::InvalidFlag(value.to_string()))
     }
 
     /// Name of the mode for logs/diagnostics.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Off => "off",
-            Self::X2 => "aa-2x",
-            Self::X4 => "aa-4x",
+            Self::Fxaa => "fxaa",
+            Self::Smaa => "smaa",
         }
     }
 
-    /// Caption of the GUI menu row (`Off`, `2x`, `4x`).
+    /// Caption of the GUI menu row (`Off`, `FXAA`, `SMAA`).
     pub const fn menu_label(self) -> &'static str {
         match self {
             Self::Off => "Off",
-            Self::X2 => "2x",
-            Self::X4 => "4x",
+            Self::Fxaa => "FXAA",
+            Self::Smaa => "SMAA",
         }
     }
 }

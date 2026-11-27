@@ -19,8 +19,11 @@
 //!   [`hd_text`] is the R6 adapter: HD **raster** GNW font atlases (no TTF),
 //!   metrics and the `Text_TextLine` relief scaled exactly by `S`, with
 //!   per-font fallback to the original GNW bitmap (nearest `×S`).
-//! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
-//!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
+//!   [`gpu_aa`] is the pure part of the GPU anti-aliasing layer: the swapchain
+//!   blit regions and the FXAA pass parameters (`gpu-aa-design.md`).
+//! * **SDL layer** — [`sdl_window`] and [`gpu_present`] behind the `sdl` feature:
+//!   window, output of [`RgbaBuffer`] to the screen (Canvas, or the GPU FXAA
+//!   pass) and the event queue. Without the feature the modules do not build
 //!   and the `sdl3` dependency is not pulled in.
 //!
 //! Correspondence with the original (`max-original-dasm/formats/spw.md`):
@@ -48,6 +51,7 @@
 
 pub mod buffer;
 pub mod frame_scale;
+pub mod gpu_aa;
 pub mod hd_chrome;
 pub mod hd_sprites;
 pub mod hd_terrain;
@@ -64,13 +68,14 @@ pub mod ui;
 pub mod viewport;
 
 #[cfg(feature = "sdl")]
+pub mod gpu_present;
+
+#[cfg(feature = "sdl")]
 pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
-pub use frame_scale::{
-    downscale_box, downscale_box_into, upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH,
-    MAX_SCALE,
-};
+pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use gpu_aa::{blit_regions, BlitRegions, FxaaParams, FXAA_LUMA_THRESHOLD};
 pub use hd_chrome::{
     scaled_pixel_rect, scaled_pixel_rect_by, scaled_rect, scaled_rect_by, stretch_into,
     ChromePanel, ChromeSource, HdChrome, HdImage, HdUiSkin, CHROME_FRAME, CHROME_PANEL_BOTTOM,
@@ -107,8 +112,7 @@ pub use palette::{
 pub use presentation::{window_points_for, PresentationState, ScreenGeometry};
 pub use render_scale::{
     AaMode, AaModeError, FilterMode, PresentationMode, PresentationModeError, RenderScale,
-    AA_FACTORS, AA_OFF_FACTOR, AA_X2_FACTOR, AA_X4_FACTOR, HD_SCALES, HD_SCALE_X2, HD_SCALE_X4,
-    PIXEL_PERFECT_SCALE,
+    HD_SCALES, HD_SCALE_X2, HD_SCALE_X4, PIXEL_PERFECT_SCALE,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};
@@ -127,6 +131,8 @@ pub use viewport::{
     ZOOM_STEP,
 };
 
+#[cfg(feature = "sdl")]
+pub use gpu_present::{GpuPresentError, GpuPresenter};
 #[cfg(feature = "sdl")]
 pub use sdl_window::{SdlWindow, WindowError, WindowInput, WindowKey};
 

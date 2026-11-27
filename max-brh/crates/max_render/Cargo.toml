@@ -30,3 +30,9 @@ sdl-vcpkg = ["sdl", "sdl3/use-vcpkg"]
 [[example]]
 name = "window"
 required-features = ["sdl"]
+
+# Manual gate of the GPU anti-aliasing pass (`gpu-aa-design.md`): the synthetic
+# frame + FXAA toggle that `nextest` cannot run headless.
+[[example]]
+name = "gpu_aa"
+required-features = ["sdl"]

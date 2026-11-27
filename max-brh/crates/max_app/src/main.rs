@@ -149,8 +149,8 @@ struct Cli {
     hd: bool,
     /// `--hd-scale N`: HD multiplier (`2`/`4`); implies `--hd`.
     hd_scale: Option<u32>,
-    /// `--aa 0|off|1|2|4`: SSAA multiplier of the HD frame (`ssaa-design.md`);
-    /// `0`/`off`/`1` disable it, `2`/`4` are the shipped box filters.
+    /// `--aa off|fxaa|smaa`: GPU anti-aliasing of the output layer
+    /// (`gpu-aa-design.md`).
     aa: Option<AaMode>,
     /// `--remaster-dir DIR`: HD asset root (default `<workspace>/max-brh/target/remaster`).
     remaster_dir: Option<PathBuf>,
@@ -371,14 +371,14 @@ impl Cli {
                     }
                     cli.hd_scale = Some(value);
                 }
-                // SSAA of the HD frame (`ssaa-design.md`): the frame is rendered
-                // at `S·aa` and box-resolved back to `S`. Presentation only.
+                // GPU anti-aliasing of the output layer (`gpu-aa-design.md`):
+                // `off`, `fxaa` or `smaa`; the frame itself stays at `S`.
                 "--aa" => {
                     let value = args.next().context("--aa требует значение")?;
                     cli.aa = Some(AaMode::parse_flag(&value).map_err(|_| {
                         anyhow!(
-                            "--aa: ожидалось 0, off, 1, 2 или 4 (целочисленный box-фильтр \
-                             SSAA; 3/8/… не поддерживаются), получено {value}"
+                            "--aa: ожидалось off, fxaa или smaa (GPU-сглаживание выходного слоя; \
+                             числа 2/4 из прежнего SSAA не поддерживаются), получено {value}"
                         )
                     })?);
                 }
@@ -1120,30 +1120,24 @@ fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
 /// Preferences, End Turn, counters) therefore stays visible and clickable, and
 /// the pixel-perfect frame is byte-for-byte what `Screen::render` produced.
 ///
-/// `aa` is the SSAA axis of `max-brh-docs/development/ssaa-design.md`: the HD
-/// frame is built at `R = S·aa` ([`Self::hd_buffer`]), the whole presentation
-/// (game frame + menu bar) is composed into the super-sampled
-/// [`Self::ss_buffer`] and resolved by the integer box filter into
-/// [`Self::present_buffer`] at `S`. `aa = Off` composites straight into
-/// `present_buffer` — the historical path — and the window itself never
-/// reopens for an `aa` change.
+/// `aa` is the **output-layer** anti-aliasing mode of the window
+/// (`max-brh-docs/development/gpu-aa-design.md`), not a render factor: the HD
+/// frame is always built at `R = S` ([`Self::hd_buffer`]), the whole presentation
+/// (game frame + menu bar) is composed into [`Self::present_buffer`] at `S`, and
+/// [`max_render::SdlWindow`] applies FXAA (or the Canvas fallback) on the way to
+/// the screen.
 #[cfg(feature = "sdl")]
 struct WindowPresentation {
     /// SDL window; recreated on a resolution change, never on a state change.
     window: max_render::SdlWindow,
     /// The running render scale (`S = 1` for [`max_render::RenderScale::PixelPerfect`]).
     render_scale: max_render::RenderScale,
-    /// SSAA multiplier of the HD frame (always `Off` in pixel-perfect).
-    aa: AaMode,
     /// HD layers of the current scale; `None` in pixel-perfect (nothing loaded).
     hd: Option<max_app::HdPresenter>,
-    /// `640·R × 480·R` game frame built for the HD presentation (`R = S·aa`).
+    /// `640·S × 480·S` game frame built for the HD presentation.
     hd_buffer: max_render::buffer::RgbaBuffer,
     /// What the window actually shows at `S`: menu bar + game frame, `640·S × 496·S`.
     present_buffer: max_render::buffer::RgbaBuffer,
-    /// Super-sampled `640·R × 496·R` presentation frame; `None` when `aa` is off
-    /// (the historical path composites straight into [`Self::present_buffer`]).
-    ss_buffer: Option<max_render::buffer::RgbaBuffer>,
     /// The in-window `File`/`Settings` menu bar (`window_menu`).
     menu: WindowMenu,
     /// Transparent `640 × 496` overlay the menu is drawn into.
@@ -1171,8 +1165,8 @@ impl WindowPresentation {
         assets: Option<&max_app::Assets>,
     ) -> Result<Self> {
         let frame_size = presentation_size(base_size);
-        // `S = 1` has no HD geometry to super-sample: the multiplier is forced
-        // off so the pixel-perfect frame stays byte-for-byte.
+        // `S = 1` has no HD geometry to anti-alias: the mode is forced off so
+        // the pixel-perfect frame stays byte-for-byte.
         let aa = if render_scale.is_hd() {
             aa
         } else {
@@ -1195,6 +1189,8 @@ impl WindowPresentation {
             }
         }
 
+        window.set_aa(aa);
+
         let hd = load_hd_presenter(assets, render_scale, &remaster_root);
         log_hd_mode(render_scale, &window, &remaster_root, hd.as_ref());
         log_aa_mode(render_scale, aa);
@@ -1202,11 +1198,9 @@ impl WindowPresentation {
         let mut presentation = Self {
             window,
             render_scale,
-            aa,
             hd,
             hd_buffer: max_render::buffer::RgbaBuffer::new(1, 1),
             present_buffer: max_render::buffer::RgbaBuffer::new(1, 1),
-            ss_buffer: None,
             menu: WindowMenu::new(),
             menu_overlay: max_render::buffer::RgbaBuffer::new(frame_size.0, frame_size.1),
             base_size,
@@ -1224,64 +1218,51 @@ impl WindowPresentation {
         self.render_scale.is_hd()
     }
 
-    /// The render factor of one frame: `R = S·aa` (`S = 1` ⇒ `1`).
-    fn render_factor(&self) -> u32 {
-        self.render_scale.scale() * self.aa.factor()
-    }
-
-    /// (Re)allocates the frame buffers for the current `S` and `aa`.
+    /// (Re)allocates the frame buffers for the current `S`.
     ///
-    /// A resolution change and an `aa` change both land here; neither reopens
-    /// the OS window. `present_buffer` stays at `S` (what the window uploads),
-    /// `hd_buffer`/`ss_buffer` are at `R = S·aa`.
+    /// A resolution change lands here; it reopens neither the OS window nor the
+    /// GPU device (the latter only when the window is recreated). Both buffers
+    /// are at `S`: anti-aliasing changes neither of them.
     fn resize_buffers(&mut self) {
         let frame_size = presentation_size(self.base_size);
         let scale = self.render_scale.scale();
-        let factor = self.render_factor();
 
-        self.hd_buffer = max_render::buffer::RgbaBuffer::new(
-            self.base_size.0 * factor,
-            self.base_size.1 * factor,
-        );
+        self.hd_buffer =
+            max_render::buffer::RgbaBuffer::new(self.base_size.0 * scale, self.base_size.1 * scale);
         self.present_buffer =
             max_render::buffer::RgbaBuffer::new(frame_size.0 * scale, frame_size.1 * scale);
-        self.ss_buffer = self.aa.is_on().then(|| {
-            max_render::buffer::RgbaBuffer::new(frame_size.0 * factor, frame_size.1 * factor)
-        });
     }
 
-    /// Switches the SSAA multiplier without reopening the window
+    /// Switches the anti-aliasing mode without reopening the window
     /// (`Settings → Antialiasing`).
     ///
-    /// Presentation only: the [`App`]/session/screen state is untouched. In
-    /// pixel-perfect the multiplier is forced to [`AaMode::Off`] — `S = 1` has
-    /// no HD frame to super-sample.
+    /// Presentation only: the [`App`]/session/screen state is untouched and no
+    /// buffer is reallocated — `aa` is applied by the output layer, so the frame
+    /// is the same bytes whatever the mode is. In pixel-perfect the mode is
+    /// forced to [`AaMode::Off`] — `S = 1` has no HD frame to smooth.
     fn set_aa(&mut self, requested: AaMode) {
         if !self.is_hd() {
-            // `S = 1` has no HD frame to super-sample.
             if !requested.is_off() {
-                println!("UI: SSAA доступно только в HD-режиме (S > 1) — сглаживание остаётся off");
+                println!("UI: сглаживание доступно только в HD-режиме (S > 1) — остаётся off");
             }
 
             return;
         }
 
-        if requested == self.aa {
-            return;
-        }
-
-        self.aa = requested;
-        self.resize_buffers();
-        log_aa_mode(self.render_scale, requested);
+        self.window.set_aa(requested);
+        log_aa_mode(self.render_scale, self.window.aa());
     }
 
     /// Builds the HD frame of `screen` into [`Self::hd_buffer`] (no-op in the
     /// pixel-perfect mode).
     ///
-    /// A match frame is rendered natively at `640·R × 480·R`
+    /// A match frame is rendered natively at `640·S × 480·S`
     /// ([`max_app::ui::render_session_hd`]); every other screen — the menu, a
-    /// dialog, the "connecting" frame — is the nearest `×R` upscale of its 1:1
+    /// dialog, the "connecting" frame — is the nearest `×S` upscale of its 1:1
     /// picture, the per-asset fallback of `remaster-hd.md` §R5.
+    ///
+    /// The frame does not depend on the anti-aliasing mode: that is the output
+    /// layer's job (`gpu-aa-design.md`).
     fn render_hd<D: Dispatcher>(
         &mut self,
         screen: &Screen,
@@ -1290,14 +1271,13 @@ impl WindowPresentation {
     ) where
         App<D>: SessionLocal,
     {
-        let factor = self.render_factor();
-        let aa = self.aa;
+        let factor = self.render_scale.scale();
         let Some(presenter) = self.hd.as_mut() else {
             return;
         };
 
         if matches!(screen, Screen::InSession { .. }) && view.app.is_some() {
-            max_app::ui::render_session_hd(&mut self.hd_buffer, view, presenter, aa);
+            max_app::ui::render_session_hd(&mut self.hd_buffer, view, presenter);
         } else if self.hd_buffer.width() == frame.width() * factor
             && self.hd_buffer.height() == frame.height() * factor
         {
@@ -1312,21 +1292,18 @@ impl WindowPresentation {
 
     /// Places the game frame below the menu bar and presents the result.
     ///
-    /// The game frame (`frame`, 640×480 at `S = 1`, `640·R × 480·R` in HD, where
-    /// `R = S·aa`) is copied **unchanged** under a
-    /// [`max_app::window_menu::BAR_HEIGHT`] band; the menu overlay is then
-    /// composited into that band (and, when a dropdown is open, over the top of
-    /// the game area — the menu is on top while open).
+    /// The game frame (`frame`, 640×480 at `S = 1`, `640·S × 480·S` in HD) is
+    /// copied **unchanged** under a [`max_app::window_menu::BAR_HEIGHT`] band;
+    /// the menu overlay is then composited into that band (and, when a dropdown
+    /// is open, over the top of the game area — the menu is on top while open).
     ///
-    /// `aa = Off` is the historical path: compose at `S` and upload. At `aa > 1`
-    /// the whole presentation — game frame, menu bar and the open dropdown — is
-    /// composed at `R` into [`Self::ss_buffer`] and resolved to `S` by the
-    /// integer box filter (`ssaa-design.md`), so the anti-aliasing is uniform
-    /// over the whole frame (the owner decision) and the upload stays `S`.
+    /// The composed presentation is `640·S × 496·S` and is handed to the window
+    /// as it is: the anti-aliasing (`Settings → Antialiasing`) belongs to
+    /// [`max_render::SdlWindow`] and is applied to exactly these bytes, so the
+    /// whole frame — game, bars and open dropdown — is smoothed uniformly and
+    /// `aa = Off` stays the historical upload.
     fn present(&mut self, frame: &max_render::buffer::RgbaBuffer) -> Result<()> {
         let scale = self.render_scale.scale();
-        let factor = self.render_factor();
-        let aa = self.aa;
         // The HD frame is built in `hd_buffer`; in pixel-perfect it is `frame`.
         let game_frame = match self.hd.as_ref() {
             Some(_) => &self.hd_buffer,
@@ -1334,31 +1311,16 @@ impl WindowPresentation {
         };
 
         self.menu
-            .render_overlay(&mut self.menu_overlay, self.render_scale, self.aa);
+            .render_overlay(&mut self.menu_overlay, self.render_scale, self.window.aa());
 
-        if aa.is_on() {
-            let aa_box = aa.factor();
-            let bar_pixels = max_app::window_menu::BAR_HEIGHT as u32 * factor;
-            let ss = self
-                .ss_buffer
-                .as_mut()
-                .expect("the SSAA buffer is allocated whenever aa > 1");
+        let bar_pixels = max_app::window_menu::BAR_HEIGHT as u32 * scale;
 
-            copy_buffer_at(game_frame, ss, 0, bar_pixels);
-            max_app::window_menu::composite_overlay(&self.menu_overlay, ss, factor);
-            // Uniform whole-frame resolve (`ssaa-design.md`): one box filter over
-            // the composed presentation, not per layer.
-            max_render::downscale_box_into(ss, aa_box, &mut self.present_buffer);
-        } else {
-            let bar_pixels = max_app::window_menu::BAR_HEIGHT as u32 * scale;
-
-            copy_buffer_at(game_frame, &mut self.present_buffer, 0, bar_pixels);
-            max_app::window_menu::composite_overlay(
-                &self.menu_overlay,
-                &mut self.present_buffer,
-                scale,
-            );
-        }
+        copy_buffer_at(game_frame, &mut self.present_buffer, 0, bar_pixels);
+        max_app::window_menu::composite_overlay(
+            &self.menu_overlay,
+            &mut self.present_buffer,
+            scale,
+        );
 
         self.window
             .present(&self.present_buffer)
@@ -1370,8 +1332,8 @@ impl WindowPresentation {
     /// Presentation only: the logical 640×480 coordinates, the [`App`] state,
     /// the session and the screen machine are untouched. The window is reopened
     /// at the render frame of the new scale (same `--scale` rule), the HD layers
-    /// are reloaded for it, the SSAA multiplier is dropped when the new scale is
-    /// `S = 1` and the frame buffers are resized. A failure leaves the current
+    /// are reloaded for it, the anti-aliasing mode is dropped when the new scale
+    /// is `S = 1` and the frame buffers are resized. A failure leaves the current
     /// window in place.
     ///
     /// The OS window is swapped through [`max_render::SdlWindow::reopen_with_render_scale`]
@@ -1393,10 +1355,10 @@ impl WindowPresentation {
             .map_err(|error| anyhow!("{error}"))?;
 
         self.render_scale = scale;
-        // `S = 1` has no HD geometry to super-sample: the pixel-perfect frame
-        // stays byte-for-byte, so the multiplier is dropped with the HD layers.
+        // `S = 1` has no HD geometry to smooth: the pixel-perfect frame stays
+        // byte-for-byte, so the mode is dropped with the HD layers.
         if !scale.is_hd() {
-            self.aa = AaMode::Off;
+            self.window.set_aa(AaMode::Off);
         }
         self.hd = load_hd_presenter(assets, scale, &self.remaster_root);
         self.resize_buffers();
@@ -1409,7 +1371,7 @@ impl WindowPresentation {
             scale.label()
         );
         log_hd_mode(scale, &self.window, &self.remaster_root, self.hd.as_ref());
-        log_aa_mode(scale, self.aa);
+        log_aa_mode(scale, self.window.aa());
 
         Ok(())
     }
@@ -1505,33 +1467,26 @@ fn log_hd_mode(
     );
 }
 
-/// One line with the resolved SSAA multiplier and the render frame it implies
-/// (diagnostics, `ssaa-design.md`).
+/// One line with the resolved anti-aliasing mode of the output layer
+/// (diagnostics, `gpu-aa-design.md`).
 #[cfg(feature = "sdl")]
 fn log_aa_mode(scale: max_render::RenderScale, aa: AaMode) {
     if !scale.is_hd() {
         return;
     }
 
-    let factor = scale.scale() * aa.factor();
+    let (width, height) = scale.render_size();
 
-    if aa.is_off() {
-        println!(
-            "UI: сглаживание off — SSAA-кадр {factor}× (без downsample), окно {}x{} точек",
-            max_render::FRAME_WIDTH * scale.scale(),
-            max_render::FRAME_HEIGHT * scale.scale()
-        );
-    } else {
-        println!(
-            "UI: сглаживание {} — SSAA-кадр {}x{}, box {}x{} → {}x{} (CPU RAM, окно не меняется)",
-            aa.label(),
-            max_render::FRAME_WIDTH * factor,
-            max_render::FRAME_HEIGHT * factor,
-            aa.factor(),
-            aa.factor(),
-            max_render::FRAME_WIDTH * scale.scale(),
-            max_render::FRAME_HEIGHT * scale.scale()
-        );
+    match aa {
+        AaMode::Off => println!(
+            "UI: сглаживание off — кадр {width}x{height} выводится через Canvas (1:1 по пикселям)"
+        ),
+        AaMode::Fxaa => println!(
+            "UI: сглаживание fxaa — один проход FXAA на кадре {width}x{height}, затем blit в окно (GPU, Vulkan/SPIR-V)"
+        ),
+        AaMode::Smaa => println!(
+            "UI: сглаживание smaa — проходов SMAA пока нет (фаза 2 плана), выводится FXAA на кадре {width}x{height}"
+        ),
     }
 }
 
@@ -1717,12 +1672,14 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let resolved = cli.presentation_settings(&settings)?;
     let render_scale = resolved.render_scale;
 
-    // The SSAA multiplier is forced off at `S = 1` (`resolve`): a file/CLI value
-    // must not silently look applied, so the reason is printed.
+    // Anti-aliasing is forced off at `S = 1` (`resolve`): a file/CLI value must
+    // not silently look applied, so the reason is printed.
     if render_scale == max_render::RenderScale::PixelPerfect
         && (cli.aa.is_some_and(|aa| aa.is_on()) || settings.display.aa.is_some_and(|aa| aa.is_on()))
     {
-        println!("UI: сглаживание off — при разрешении 1:1 (S=1) SSAA принудительно отключено");
+        println!(
+            "UI: сглаживание off — при разрешении 1:1 (S=1) GPU-сглаживание принудительно отключено"
+        );
     }
 
     // Presentation switch (`remaster-hd.md` §R7). The window is sized on the
@@ -3056,8 +3013,9 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     Settings → Resolutions → 640x480 (1:1) / 1280x960 (x2) / 2560x1920 (x4)
                          смена разрешения на лету (презентация only: состояние
                          партии, симуляция и сессия не меняются)
-    Settings → Antialiasing → Off / 2x / 4x
-                         SSAA на лету (без переоткрытия окна; при S=1 — Off)
+    Settings → Antialiasing → Off / FXAA / SMAA
+                         GPU-сглаживание кадра на лету (без переоткрытия окна;
+                         при S=1 — Off; SMAA — фаза 2, пока выводится FXAA)
 
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect и --host
@@ -3078,10 +3036,11 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          презентация only — симуляция, snapshot/CRC и golden 1:1
                          не меняются, без ассетов — по-ассетный fallback
     --hd-scale N         кратность HD: 2 или 4 (включает --hd; 1 — pixel-perfect)
-    --aa 0|off|1|2|4     сглаживание SSAA HD-кадра: 0/off/1 — выключено
-                         (дефолт), 2 или 4 — box-фильтр aa×aa (кадр
-                         рисуется в S·aa и сводится в S; только GUI, только
-                         при S>1; snapshot/CRC и golden 1:1 не меняются)
+    --aa off|fxaa|smaa   GPU-сглаживание кадра (FXAA — один проход в разрешении
+                         кадра, затем blit; Vulkan/SPIR-V): off — без
+                         сглаживания (дефолт), smaa — фаза 2 плана (пока
+                         выводится FXAA); только GUI и только при S>1;
+                         snapshot/CRC и golden 1:1 не меняются
     --remaster-dir DIR   каталог HD-ассетов и remaster-manifest.json
                          (по умолчанию max-brh/target/remaster)
     --settings PATH      settings.jsonc с разрешением/сглаживанием/масштабом/

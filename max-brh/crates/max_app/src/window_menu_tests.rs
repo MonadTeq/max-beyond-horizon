@@ -378,7 +378,7 @@ fn composite_overlay_with_scale_one_writes_exactly() {
 }
 
 // ---------------------------------------------------------------------------
-// Settings → Antialiasing (SSAA, ssaa-design.md)
+// Settings → Antialiasing (GPU AA, gpu-aa-design.md)
 // ---------------------------------------------------------------------------
 
 /// Opens `Settings → Antialiasing` with the pointer, without picking a row.
@@ -404,7 +404,7 @@ fn settings_antialiasing_applies_every_shipped_mode() {
         assert_eq!(
             response.action,
             WindowMenuAction::SetAa(aa),
-            "row {aa:?} must select exactly that SSAA mode"
+            "row {aa:?} must select exactly that anti-aliasing mode"
         );
         assert!(response.consumed);
         assert!(!menu.is_open());
@@ -413,10 +413,10 @@ fn settings_antialiasing_applies_every_shipped_mode() {
 }
 
 #[test]
-fn the_aa_rows_are_off_2x_4x_and_stacked() {
+fn the_aa_rows_are_off_fxaa_smaa_and_stacked() {
     assert_eq!(aa_label(AaMode::Off), "Off");
-    assert_eq!(aa_label(AaMode::X2), "2x");
-    assert_eq!(aa_label(AaMode::X4), "4x");
+    assert_eq!(aa_label(AaMode::Fxaa), "FXAA");
+    assert_eq!(aa_label(AaMode::Smaa), "SMAA");
 
     let rows: Vec<PixelRect> = AA_MODES
         .into_iter()

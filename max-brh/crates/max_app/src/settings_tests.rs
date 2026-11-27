@@ -331,7 +331,7 @@ fn invalid_cli_scale_is_reported_by_the_presentation_switch() {
 }
 
 // ---------------------------------------------------------------------------
-// display.aa — SSAA (ssaa-design.md)
+// display.aa — GPU anti-aliasing (gpu-aa-design.md)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -346,12 +346,12 @@ fn the_display_aa_value_is_parsed_and_defaults_to_off() {
     );
 
     for (value, expected) in [
-        (0, AaMode::Off),
-        (1, AaMode::Off),
-        (2, AaMode::X2),
-        (4, AaMode::X4),
+        ("off", AaMode::Off),
+        ("fxaa", AaMode::Fxaa),
+        ("smaa", AaMode::Smaa),
+        ("FXAA", AaMode::Fxaa),
     ] {
-        let settings = parse(&format!(r#"{{ "display": {{ "aa": {value} }} }}"#));
+        let settings = parse(&format!(r#"{{ "display": {{ "aa": "{value}" }} }}"#));
 
         assert_eq!(settings.display.aa, Some(expected), "display.aa = {value}");
     }
@@ -359,39 +359,44 @@ fn the_display_aa_value_is_parsed_and_defaults_to_off() {
 
 #[test]
 fn unsupported_display_aa_values_are_rejected() {
-    for value in [3, 5, 8, 16] {
-        let error = Settings::parse(&format!(r#"{{ "display": {{ "aa": {value} }} }}"#))
-            .expect_err("an unsupported SSAA multiplier is an error");
+    // The retired SSAA multipliers and unknown words are launch errors: `--aa`
+    // is a clean break, so a number must not silently mean something else.
+    for value in ["2", "4", "0", "1", "fast", "aa-2x"] {
+        let text = if value.chars().all(|c| c.is_ascii_digit()) {
+            format!(r#"{{ "display": {{ "aa": {value} }} }}"#)
+        } else {
+            format!(r#"{{ "display": {{ "aa": "{value}" }} }}"#)
+        };
+        let error = Settings::parse(&text).expect_err("an unsupported aa mode is an error");
 
         assert!(
-            matches!(error, SettingsError::UnsupportedAa { value: got } if got == value),
-            "{error}"
+            matches!(&error, SettingsError::UnsupportedAa { value: got } if *got == value),
+            "{value}: {error}"
         );
-        assert!(error.to_string().contains("×2"), "{error}");
+        assert!(error.to_string().contains("fxaa"), "{error}");
     }
 }
 
 #[test]
-fn ssaa_follows_cli_then_the_file() {
+fn antialiasing_follows_cli_then_the_file() {
     use max_render::render_scale::{AaMode, RenderScale};
 
-    // The file at S=2 with aa=2.
-    let file = parse(r#"{ "display": { "scale": 2, "aa": 2 } }"#);
+    // The file at S=2 with aa=fxaa.
+    let file = parse(r#"{ "display": { "scale": 2, "aa": "fxaa" } }"#);
     let resolved = resolve(CliPresentation::default(), &file).expect("resolve");
     assert_eq!(resolved.render_scale, RenderScale::Hd2);
-    assert_eq!(resolved.aa, AaMode::X2);
-    assert_eq!(resolved.render_factor(), 4, "the frame is S*aa");
+    assert_eq!(resolved.aa, AaMode::Fxaa);
 
-    // `--aa 4` wins over the file, `--aa off` disables it.
+    // `--aa smaa` wins over the file, `--aa off` disables it.
     let resolved = resolve(
         CliPresentation {
-            aa: Some(AaMode::X4),
+            aa: Some(AaMode::Smaa),
             ..CliPresentation::default()
         },
         &file,
     )
     .expect("resolve");
-    assert_eq!(resolved.aa, AaMode::X4);
+    assert_eq!(resolved.aa, AaMode::Smaa);
 
     let resolved = resolve(
         CliPresentation {
@@ -410,31 +415,54 @@ fn ssaa_follows_cli_then_the_file() {
     )
     .expect("resolve");
     assert_eq!(resolved.aa, AaMode::Off);
-    assert_eq!(resolved.render_factor(), 4);
 }
 
-/// `S = 1` forces the SSAA off, whatever the CLI or the file says: the
+/// `S = 1` forces the anti-aliasing off, whatever the CLI or the file says: the
 /// pixel-perfect frame and its golden stay byte-for-byte.
 #[test]
-fn pixel_perfect_forces_ssaa_off() {
+fn pixel_perfect_forces_antialiasing_off() {
     use max_render::render_scale::AaMode;
 
-    let file = parse(r#"{ "display": { "scale": 1, "aa": 4 } }"#);
+    let file = parse(r#"{ "display": { "scale": 1, "aa": "fxaa" } }"#);
     let resolved = resolve(CliPresentation::default(), &file).expect("resolve");
 
     assert_eq!(resolved.render_scale, RenderScale::PixelPerfect);
-    assert_eq!(resolved.aa, AaMode::Off, "S=1 must ignore display.aa=4");
-    assert_eq!(resolved.render_factor(), 1);
+    assert_eq!(resolved.aa, AaMode::Off, "S=1 must ignore display.aa");
+    assert_eq!(resolved.render_scale.scale(), 1);
 
-    // A CLI `--aa 2` cannot turn it on either.
+    // A CLI `--aa fxaa` cannot turn it on either.
     let resolved = resolve(
         CliPresentation {
-            aa: Some(AaMode::X2),
+            aa: Some(AaMode::Fxaa),
             ..CliPresentation::default()
         },
         &Settings::default(),
     )
     .expect("resolve");
     assert_eq!(resolved.aa, AaMode::Off);
-    assert_eq!(resolved.render_factor(), 1);
+}
+
+/// Anti-aliasing is an output-layer parameter: it never multiplies the render
+/// frame, so the frame size of a presentation setting is only `S`.
+#[test]
+fn antialiasing_never_changes_the_render_scale() {
+    use max_render::render_scale::AaMode;
+
+    for (aa, expected) in [
+        (AaMode::Off, (1280, 960)),
+        (AaMode::Fxaa, (1280, 960)),
+        (AaMode::Smaa, (1280, 960)),
+    ] {
+        let resolved = resolve(
+            CliPresentation {
+                hd: true,
+                aa: Some(aa),
+                ..CliPresentation::default()
+            },
+            &Settings::default(),
+        )
+        .expect("resolve");
+
+        assert_eq!(resolved.render_scale.render_size(), expected, "{aa:?}");
+    }
 }

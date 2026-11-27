@@ -138,7 +138,7 @@ fn unsupported_cli_scales_are_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// AaMode (SSAA, ssaa-design.md)
+// AaMode (GPU anti-aliasing, gpu-aa-design.md)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -148,73 +148,70 @@ fn antialiasing_is_off_by_default() {
     assert_eq!(aa, AaMode::Off);
     assert!(aa.is_off());
     assert!(!aa.is_on());
-    assert_eq!(aa.factor(), 1);
-    assert_eq!(aa.box_size(), 1);
     assert_eq!(aa.label(), "off");
     assert_eq!(aa.menu_label(), "Off");
 }
 
 #[test]
-fn shipped_antialiasing_multipliers_are_the_owner_decision() {
-    // Owner decision 2026-11-27: the SSAA box is ×2 or ×4 only.
-    assert_eq!(AA_FACTORS, [2, 4]);
-    assert_eq!(AaMode::X2.factor(), 2);
-    assert_eq!(AaMode::X4.factor(), 4);
-    assert!(AaMode::X2.is_on());
-    assert!(AaMode::X4.is_on());
-    assert_eq!(AaMode::X2.box_size(), 2);
-    assert_eq!(AaMode::X4.box_size(), 4);
-    assert_eq!(AaMode::X2.label(), "aa-2x");
-    assert_eq!(AaMode::X4.label(), "aa-4x");
-    // The menu order is Off → 2x → 4x.
-    assert_eq!(AaMode::ALL, [AaMode::Off, AaMode::X2, AaMode::X4]);
+fn the_owner_decision_modes_are_off_fxaa_smaa() {
+    // Owner decision 2026-11-27: SSAA is replaced by a GPU AA mode, and the
+    // flag is a clean break (`off`/`fxaa`/`smaa`).
+    assert_eq!(AaMode::ALL, [AaMode::Off, AaMode::Fxaa, AaMode::Smaa]);
+    assert!(AaMode::Fxaa.is_on());
+    assert!(AaMode::Smaa.is_on());
+    assert_eq!(AaMode::Fxaa.label(), "fxaa");
+    assert_eq!(AaMode::Smaa.label(), "smaa");
+    assert_eq!(AaMode::Fxaa.menu_label(), "FXAA");
+    assert_eq!(AaMode::Smaa.menu_label(), "SMAA");
 }
 
 #[test]
-fn zero_and_one_mean_off_and_an_unsupported_factor_is_rejected() {
-    assert_eq!(AaMode::from_factor(0), Some(AaMode::Off));
-    assert_eq!(AaMode::from_factor(1), Some(AaMode::Off));
-    assert_eq!(AaMode::from_factor(2), Some(AaMode::X2));
-    assert_eq!(AaMode::from_factor(4), Some(AaMode::X4));
-
-    // A non-integer box is not an anti-aliasing filter we ship (3/8/…).
-    for factor in [3, 5, 6, 8, u32::MAX] {
-        assert_eq!(AaMode::from_factor(factor), None, "aa={factor}");
-    }
-}
-
-#[test]
-fn the_cli_flag_accepts_off_and_the_four_numbers() {
-    for value in ["off", "OFF", " Off "] {
-        assert_eq!(AaMode::parse_flag(value), Ok(AaMode::Off), "{value:?}");
-    }
-
+fn the_cli_flag_accepts_the_three_names_case_insensitively() {
     for (value, expected) in [
-        ("0", AaMode::Off),
-        ("1", AaMode::Off),
-        ("2", AaMode::X2),
-        ("4", AaMode::X4),
+        ("off", AaMode::Off),
+        ("OFF", AaMode::Off),
+        (" Off ", AaMode::Off),
+        ("fxaa", AaMode::Fxaa),
+        ("FXAA", AaMode::Fxaa),
+        ("Fxaa", AaMode::Fxaa),
+        ("smaa", AaMode::Smaa),
+        ("SMAA", AaMode::Smaa),
     ] {
         assert_eq!(AaMode::parse_flag(value), Ok(expected), "{value:?}");
     }
 }
 
 #[test]
-fn the_cli_flag_rejects_unsupported_multipliers_and_words() {
-    for value in ["3", "5", "8", "16"] {
-        let error = AaMode::parse_flag(value).expect_err("unsupported box");
+fn the_cli_flag_rejects_the_retired_multipliers() {
+    // The SSAA multipliers are a clean break, not a silent alias.
+    for value in ["0", "1", "2", "4", "3", "8", "16"] {
+        let error = AaMode::parse_flag(value).expect_err("a retired multiplier");
 
         assert_eq!(
             error,
-            AaModeError::UnsupportedFactor(value.parse().expect("a number")),
+            AaModeError::InvalidFlag(value.to_string()),
             "{value}"
         );
         assert!(!error.to_string().is_empty());
     }
+}
 
-    for value in ["", "two", "x2", "-2", "2x"] {
-        let error = AaMode::parse_flag(value).expect_err("not a value");
+#[test]
+fn the_cli_flag_rejects_unknown_words() {
+    for value in ["", " ", "two", "aa-2x", "x2", "-2", "2x", "fxaa2"] {
+        let error = AaMode::parse_flag(value).expect_err("not a mode");
 
         assert!(matches!(error, AaModeError::InvalidFlag(_)), "{value:?}");
     }
+}
+
+#[test]
+fn the_flag_error_names_the_three_modes() {
+    let message = AaMode::parse_flag("2")
+        .expect_err("a retired multiplier")
+        .to_string();
+
+    assert!(message.contains("off"), "{message}");
+    assert!(message.contains("fxaa"), "{message}");
+    assert!(message.contains("smaa"), "{message}");
 }

@@ -1060,8 +1060,7 @@ impl Panels {
         for (index, button) in PanelButton::TOGGLES.into_iter().enumerate() {
             let pair = &self.toggles[index];
             let active = panel.get(button);
-            let pressed =
-                self.draw_pair(frame, palette, pair, button.rect(), active, &mut painted);
+            let pressed = self.draw_pair(frame, palette, pair, button.rect(), active, &mut painted);
             draw_panel_caption(frame, palette, button, pressed);
         }
 
@@ -1503,8 +1502,8 @@ pub fn zoom_slider_offset(zoom: u32) -> i32 {
 /// `zoom = 64 - (mouse_x * 60) / (lrx - ulx - 30)` — 99 px of travel over the
 /// 60 zoom steps. The result is clamped to the port's viewport range (8…64).
 pub fn zoom_from_slider_x(x: i32) -> u32 {
-    let relative = (x - layout::ZOOM_SLIDER.ulx - ZOOM_SLIDER_KNOB_OFFSET)
-        .clamp(0, ZOOM_SLIDER_TRAVEL);
+    let relative =
+        (x - layout::ZOOM_SLIDER.ulx - ZOOM_SLIDER_KNOB_OFFSET).clamp(0, ZOOM_SLIDER_TRAVEL);
     let zoom = 64 - (relative * ZOOM_RANGE) / ZOOM_SLIDER_TRAVEL;
 
     (zoom as u32).clamp(max_render::viewport::MIN_ZOOM, 64)
@@ -1908,11 +1907,8 @@ pub fn draw_status_message(
 /// (`MessageManager_MessageBox_BgColorArray`), exactly like the 1:1 function:
 /// the box is transparent over the map, not an opaque fill.
 ///
-/// `aa` is the SSAA multiplier of the frame (`ssaa-design.md`): the box and the
-/// text are laid out at `S·aa` and the `×S` font atlas is drawn as the nearest
-/// `×aa` upscale, so an `aa = 2/4` frame resolves back to exactly this message
-/// box at `S` (the raster text stays crisp, the geometry around it is
-/// anti-aliased).
+/// Anti-aliasing is not a parameter here (`gpu-aa-design.md`): the box is laid
+/// out at `S` only and the output layer smooths the finished frame.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_status_message_hd(
     frame: &mut RgbaBuffer,
@@ -1922,15 +1918,13 @@ pub fn draw_status_message_hd(
     style: MessageBoxStyle,
     snow: bool,
     font: &max_render::hd_text::HdFontAtlas,
-    aa: u32,
 ) -> u32 {
     if text.is_empty() || area.width <= 0 {
         return 0;
     }
 
-    let aa = aa.max(1) as i32;
-    let factor = font.scale().scale().max(1) as i32 * aa;
-    // `MessageManager_WrapText(text, width - 20)` at `×S·aa`.
+    let factor = font.scale().scale().max(1) as i32;
+    // `MessageManager_WrapText(text, width - 20)` at `×S`.
     let max_line = (area.width - 20 * factor).max(20 * factor);
     let mut lines: Vec<String> = Vec::new();
 
@@ -1944,7 +1938,7 @@ pub fn draw_status_message_hd(
                 format!("{current} {word}")
             };
 
-            if font.text_width(&candidate) * aa > max_line && !current.is_empty() {
+            if font.text_width(&candidate) > max_line && !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
                 current.push_str(word);
             } else {
@@ -1957,7 +1951,7 @@ pub fn draw_status_message_hd(
 
     let width = (lines
         .iter()
-        .map(|line| font.text_width(line) * aa)
+        .map(|line| font.text_width(line))
         .max()
         .unwrap_or(0)
         + 20 * factor)
@@ -1994,14 +1988,13 @@ pub fn draw_status_message_hd(
             continue;
         }
 
-        // `MessageManager_DrawMessageBoxText`: the black copy at `+S·aa, +S·aa`
+        // `MessageManager_DrawMessageBoxText`: the black copy at `+S, +S`
         // first, the white fill on top.
-        let drawn = max_render::hd_text::draw_text_hd_outlined_scaled(
+        let drawn = max_render::hd_text::draw_text_hd_outlined(
             frame,
             rect.ulx + 10 * factor,
             rect.uly + 10 * factor + 10 * factor * index as i32,
             font,
-            aa as u32,
             line,
             palette.rgba(0xFF),
             palette.rgba(0),
@@ -2362,7 +2355,9 @@ fn factory_raw_usage_row(unit: &UnitInfo) -> Option<StatRow> {
         i32::from(unit.build_time),
         i32::from(i16::MAX),
     );
-    let rate = i32::from(unit.build_rate.max(1)).min(max_rate.max(1)).max(1);
+    let rate = i32::from(unit.build_rate.max(1))
+        .min(max_rate.max(1))
+        .max(1);
     let cost = cargo_raw_consumption_rate(unit.unit_type, rate);
 
     if cost <= 0 {

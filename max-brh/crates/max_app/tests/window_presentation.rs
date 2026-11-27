@@ -261,10 +261,11 @@ fn the_repository_settings_template_parses() {
         [1, 2, 4].contains(&settings.render_scale().scale()),
         "the template selects a shipped resolution"
     );
-    // The template documents the SSAA axis and ships it off (the default).
+    // The template documents the GPU anti-aliasing mode and ships it off
+    // (the default, the byte-for-byte path).
     assert_eq!(
         settings.display.aa,
         Some(AaMode::Off),
-        "the template must keep display.aa = 0 (off)"
+        "the template must keep display.aa = off"
     );
 }
