@@ -22,6 +22,28 @@
 //! `Fonts_GoldColor (165,175,199)`, like `Button::SetCaption` (in the constructor
 //! `Text_SetFont(GNW_TEXT_FONT_5)` comes before the buttons are created).
 //!
+//! # Video settings (`SETUPPIC` only)
+//!
+//! A **port-only** block in the free area of the `Setup` dialog (below
+//! `Player Name`, above the button row): `Resolution` — `640x480`, `1280x960`,
+//! `2560x1920` — and `Antialiasing` — `Off`, `FXAA`, `SMAA`. It replaces the
+//! retired SDL window menu (`File`/`Settings`), so the window chrome is gone and
+//! the game keeps exactly one place for the presentation settings.
+//!
+//! * The rows show and set the **running** presentation (`RenderScale` +
+//!   `AaMode`), the same values the driver's `apply_resolution`/`set_aa` handle.
+//!   They are not part of `preferences.ini` and never rewrite `settings.jsonc`.
+//! * At launch the value still comes from **CLI > `settings.jsonc` > default**
+//!   ([`crate::settings::resolve`]); a choice in the dialog overrides the running
+//!   window for the rest of the session (until the next launch).
+//! * The choice is applied **at once** (`PreferencesAction::Video` →
+//!   `Transition::SetVideo`): a resolution rebuilds the window, the
+//!   anti-aliasing switches the output layer. `Done`/`Cancel` only save/restore
+//!   the `preferences.ini` values, so `Cancel` does not undo a video choice —
+//!   presentation only, exactly like the removed menu.
+//! * `S = 1` keeps `aa = Off`: the anti-aliasing row is inert (and drawn dim)
+//!   while the pixel-perfect scale is selected, and the hint says so.
+//!
 //! # Layout (verbatim `OptionsMenu::Init`)
 //!
 //! `window_uly` starts at 20; each section gives `+20`, each option with
@@ -184,11 +206,13 @@ use max_core::save::IniPreferences;
 use max_core::team::{TeamId, TeamKind};
 use max_core::universe::Dispatcher;
 use max_render::buffer::{PixelRect, RgbaBuffer};
+use max_render::render_scale::{AaMode, RenderScale};
 use max_render::text::{draw_text_gnw_centered, draw_text_gnw_shadowed, GnwFontId};
 
 use crate::assets::Assets;
 use crate::menu::{blit_simple, draw_big_image_at, wrap_gnw_text, MenuButtonPair};
 use crate::panels::UiPalette;
+use crate::settings::VideoChoice;
 use crate::ui::{InputEvent, Key};
 
 /// `PREFSPIC` panel width.
@@ -235,6 +259,164 @@ const EDIT_H: i32 = 19;
 const NAME_W: i32 = 187;
 /// `PREFNAME` height.
 const NAME_H: i32 = 17;
+
+// ---------------------------------------------------------------------------
+// Video rows (the free bottom area of SETUPPIC)
+// ---------------------------------------------------------------------------
+//
+// The oracle's `SETUPPIC` ends at the `preferences` section marker, so the panel
+// has an empty block below `Player Name` (row y = 213, 20 px tall) and above the
+// `Done`/`Cancel`/`?` row (y = 383). The port puts the two presentation settings
+// there — the same values the removed SDL window menu used to switch — in the
+// dialog's own row idiom: a gold caption on the left, the alternatives on the
+// right, the chosen one boxed. This is a documented port-only addition to the
+// oracle layout (like the player-name field of the match setup screen); the
+// in-game `PREFSPIC` fills that block with its own rows and keeps no video rows.
+
+/// Top of the first video row (the free block of `SETUPPIC`).
+pub const VIDEO_TOP: i32 = 250;
+/// Vertical step between the two video rows.
+pub const VIDEO_ROW_STEP: i32 = 26;
+/// Height of one video row (the `FONT5` cell plus padding).
+pub const VIDEO_ROW_HEIGHT: i32 = 14;
+/// Left edge of a video caption (`ulx == 25`, like the C++ rows).
+pub const VIDEO_LABEL_X: i32 = 25;
+/// Left edge of the option cells (right of both captions).
+pub const VIDEO_OPTIONS_X: i32 = 130;
+/// Horizontal gap between two option cells.
+pub const VIDEO_OPTION_GAP: i32 = 8;
+/// Inner padding of an option cell around its caption.
+pub const VIDEO_CELL_PADDING: i32 = 3;
+/// Top of the hint lines under the rows.
+pub const VIDEO_HINT_TOP: i32 = VIDEO_TOP + 2 * VIDEO_ROW_STEP + 4;
+/// Height of one hint line.
+pub const VIDEO_HINT_HEIGHT: i32 = 12;
+
+/// The three shipped resolutions, in dialog order.
+pub const VIDEO_RESOLUTIONS: [RenderScale; 3] = [
+    RenderScale::PixelPerfect,
+    RenderScale::Hd2,
+    RenderScale::Hd4,
+];
+/// The three anti-aliasing modes, in dialog order (`gpu-aa-design.md`).
+pub const VIDEO_AA_MODES: [AaMode; 3] = AaMode::ALL;
+
+/// One row of the video block of the `Setup` dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VideoRow {
+    /// `Resolution`: `640x480` / `1280x960` / `2560x1920`.
+    Resolution,
+    /// `Antialiasing`: `Off` / `FXAA` / `SMAA`.
+    AntiAliasing,
+}
+
+impl VideoRow {
+    /// Both rows, top to bottom.
+    pub const ALL: [Self; 2] = [Self::Resolution, Self::AntiAliasing];
+
+    /// Row position in [`Self::ALL`] (the `y` step of the block).
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Resolution => 0,
+            Self::AntiAliasing => 1,
+        }
+    }
+
+    /// Caption on the left of the row.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Resolution => "Resolution:",
+            Self::AntiAliasing => "Antialiasing:",
+        }
+    }
+
+    /// Number of options in the row.
+    pub const fn option_count(self) -> usize {
+        3
+    }
+
+    /// Caption of option `index` (clamped into the row).
+    pub fn option_caption(self, index: usize) -> String {
+        let index = index.min(self.option_count() - 1);
+
+        match self {
+            Self::Resolution => {
+                let (width, height) = VIDEO_RESOLUTIONS[index].render_size();
+
+                format!("{width}x{height}")
+            }
+            Self::AntiAliasing => VIDEO_AA_MODES[index].menu_label().to_string(),
+        }
+    }
+
+    /// Index of the option `current` runs.
+    pub fn selected(self, current: VideoChoice) -> usize {
+        match self {
+            Self::Resolution => VIDEO_RESOLUTIONS
+                .iter()
+                .position(|scale| *scale == current.render_scale)
+                .unwrap_or(0),
+            Self::AntiAliasing => VIDEO_AA_MODES
+                .iter()
+                .position(|aa| *aa == current.aa)
+                .unwrap_or(0),
+        }
+    }
+
+    /// The choice option `index` selects, or `None` when the row cannot change
+    /// the running presentation: anti-aliasing needs HD geometry, so its options
+    /// are inert at `S = 1`.
+    pub fn apply(self, current: VideoChoice, index: usize) -> Option<VideoChoice> {
+        let index = index.min(self.option_count() - 1);
+
+        match self {
+            Self::Resolution => Some(current.with_scale(VIDEO_RESOLUTIONS[index])),
+            Self::AntiAliasing => current.with_aa(VIDEO_AA_MODES[index]),
+        }
+    }
+
+    /// The row can change the running presentation.
+    pub fn is_enabled(self, current: VideoChoice) -> bool {
+        match self {
+            Self::Resolution => true,
+            Self::AntiAliasing => current.is_hd(),
+        }
+    }
+}
+
+/// Local rectangle of a video option cell (the caption is drawn inside).
+///
+/// The cells are laid out from the real `FONT5` metrics, so a longer caption can
+/// never overlap the next one; a unit test pins the block inside the panel.
+pub fn video_option_rect(row: VideoRow, index: usize) -> PixelRect {
+    let font = LABEL_FONT.font();
+    let index = index.min(row.option_count() - 1);
+    let y = VIDEO_TOP + row.index() as i32 * VIDEO_ROW_STEP;
+    let mut x = VIDEO_OPTIONS_X;
+
+    for position in 0..row.option_count() {
+        let caption = row.option_caption(position);
+        let width = font.text_width(&caption) + VIDEO_CELL_PADDING * 2;
+
+        if position == index {
+            return PixelRect::new(x, y, width, VIDEO_ROW_HEIGHT);
+        }
+
+        x += width + VIDEO_OPTION_GAP;
+    }
+
+    PixelRect::new(VIDEO_OPTIONS_X, y, 1, VIDEO_ROW_HEIGHT)
+}
+
+/// Local rectangle of a video caption.
+pub fn video_label_rect(row: VideoRow) -> PixelRect {
+    PixelRect::new(
+        VIDEO_LABEL_X,
+        VIDEO_TOP + row.index() as i32 * VIDEO_ROW_STEP,
+        VIDEO_OPTIONS_X - VIDEO_LABEL_X - 6,
+        VIDEO_ROW_HEIGHT,
+    )
+}
 
 /// Dialog variant: `SETUPPIC` (main menu) or `PREFSPIC` (game).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1178,6 +1360,10 @@ pub enum PreferencesAction {
     Cancel,
     /// `?`: help window.
     Help,
+    /// A video row was chosen: apply it to the running presentation at once
+    /// (the same `RenderScale`/`AaMode` the driver already knows; nothing is
+    /// written to `settings.jsonc` and `Cancel` does not revert it).
+    Video(VideoChoice),
 }
 
 /// The debug section is compiled into debug builds only — C++ `#if !defined(NDEBUG)`.
@@ -1209,6 +1395,10 @@ pub struct PreferencesDialog {
     pub initial: Preferences,
     /// Values of the read-only labels.
     pub info: PreferencesInfo,
+    /// Video rows of `SETUPPIC`: the presentation the window currently runs.
+    /// Seeded by the driver ([`Self::with_video`]) and updated on every choice;
+    /// `Cancel` does not revert it (presentation only).
+    pub video: VideoChoice,
     rows: Vec<Row>,
     /// Index of the focused row (keyboard).
     pub focus: Option<usize>,
@@ -1232,12 +1422,74 @@ impl PreferencesDialog {
             draft: prefs.clone(),
             initial: prefs,
             info,
+            video: VideoChoice::default(),
             rows,
             focus: None,
             editing: None,
             edit_buffer: String::new(),
             edit_initial: String::new(),
         }
+    }
+
+    /// Seeds the video rows with the presentation the window currently runs
+    /// (the driver reads it from the SDL window: `RenderScale` + `AaMode`).
+    pub fn with_video(mut self, video: VideoChoice) -> Self {
+        self.video = video;
+
+        self
+    }
+
+    /// Updates the video rows to the presentation the window really runs (a
+    /// refused window reopen must not leave a lie on screen).
+    pub fn set_video(&mut self, video: VideoChoice) {
+        self.video = video;
+    }
+
+    /// The video rows of the dialog.
+    pub const fn video(&self) -> VideoChoice {
+        self.video
+    }
+
+    /// Whether the video rows are drawn: only `SETUPPIC` has the free block below
+    /// `Player Name` (`PREFSPIC` fills it with the `preferences` section).
+    pub const fn has_video_rows(&self) -> bool {
+        matches!(self.variant, PreferencesVariant::Setup)
+    }
+
+    /// Screen rectangle of a video option (for tests/QA clicks).
+    pub fn video_option_screen_rect(&self, row: VideoRow, index: usize) -> Option<PixelRect> {
+        if !self.has_video_rows() {
+            return None;
+        }
+        let rect = video_option_rect(row, index);
+
+        Some(PixelRect::new(
+            WINDOW_ULX + rect.ulx,
+            WINDOW_ULY + rect.uly,
+            rect.width,
+            rect.height,
+        ))
+    }
+
+    /// The choice under a local dialog point, if a video option is hit.
+    fn video_choice_at(&self, lx: i32, ly: i32) -> Option<VideoChoice> {
+        if !self.has_video_rows() {
+            return None;
+        }
+
+        for row in VideoRow::ALL {
+            if !row.is_enabled(self.video) {
+                continue;
+            }
+
+            for index in 0..row.option_count() {
+                if video_option_rect(row, index).contains(lx, ly) {
+                    return row.apply(self.video, index);
+                }
+            }
+        }
+
+        None
     }
 
     /// The debug section is part of this dialog (debug build with `settings["debug"]`).
@@ -1413,6 +1665,24 @@ impl PreferencesDialog {
             if !inside {
                 changed |= self.commit_edit();
             }
+        }
+
+        // The video rows of `SETUPPIC`: the choice applies at once (the driver
+        // rebuilds the window for a resolution or switches the anti-aliasing mode
+        // of the output layer). The rows are not part of the `Cancel` snapshot —
+        // they are presentation, not `preferences.ini` values.
+        if let Some(choice) = self.video_choice_at(lx, ly) {
+            if choice == self.video {
+                return if changed {
+                    PreferencesAction::Changed
+                } else {
+                    PreferencesAction::None
+                };
+            }
+
+            self.video = choice;
+
+            return PreferencesAction::Video(choice);
         }
 
         let Some(index) = hit else {
@@ -1702,6 +1972,11 @@ impl PreferencesDialog {
             painted += self.draw_row(frame, &palette, prefs_assets, row, index);
         }
 
+        // Video rows (`SETUPPIC` only): the free block below `Player Name`.
+        if self.has_video_rows() {
+            painted += self.draw_video_rows(frame, &palette);
+        }
+
         painted += draw_dialog_button(
             frame,
             &palette,
@@ -1882,6 +2157,75 @@ impl PreferencesDialog {
 
         painted
     }
+
+    /// Draws the video rows and their hints (`SETUPPIC` only).
+    ///
+    /// The idiom is the dialog's own: a `GOLD` caption, the alternatives in
+    /// `BRIGHT_YELLOW`, the running one inside a one-pixel box (the selector
+    /// idiom of `GameConfigMenu::DrawSelector`). The anti-aliasing row is drawn
+    /// dim while the running scale is `S = 1`: there is no HD geometry to smooth
+    /// then.
+    fn draw_video_rows(&self, frame: &mut RgbaBuffer, palette: &UiPalette) -> u32 {
+        let mut painted = 0;
+
+        for row in VideoRow::ALL {
+            let label = video_label_rect(row);
+            let caption = PixelRect::new(
+                WINDOW_ULX + label.ulx,
+                WINDOW_ULY + label.uly,
+                label.width,
+                label.height,
+            );
+            let enabled = row.is_enabled(self.video);
+            let selected = row.selected(self.video);
+
+            painted += draw_label_box(frame, palette, caption, row.label(), GOLD, false);
+
+            for index in 0..row.option_count() {
+                let local = video_option_rect(row, index);
+                let rect = PixelRect::new(
+                    WINDOW_ULX + local.ulx,
+                    WINDOW_ULY + local.uly,
+                    local.width,
+                    local.height,
+                );
+                let is_current = index == selected;
+                // The oracle's match-setup screen draws every alternative in one
+                // color and marks the chosen one with a box (`DrawSelector`); a
+                // green fill with a green outline would merge the glyphs.
+                let color = if !enabled {
+                    // Inert row: `S = 1` keeps `aa = Off`, so the options are
+                    // shown, but greyed out in the field text color.
+                    (EDIT_TEXT, EDIT_TEXT, EDIT_TEXT)
+                } else {
+                    BRIGHT_YELLOW
+                };
+
+                painted += draw_label_box(
+                    frame,
+                    palette,
+                    rect,
+                    &row.option_caption(index),
+                    color,
+                    false,
+                );
+
+                if enabled && is_current {
+                    painted += draw_option_box(frame, palette, rect);
+                }
+            }
+        }
+
+        let hint = PixelRect::new(
+            WINDOW_ULX + VIDEO_LABEL_X,
+            WINDOW_ULY + VIDEO_HINT_TOP,
+            WINDOW_WIDTH - VIDEO_LABEL_X - 25,
+            VIDEO_HINT_HEIGHT,
+        );
+        painted += draw_label_box(frame, palette, hint, "Video: applies at once", GOLD, false);
+
+        painted
+    }
 }
 
 /// `OptionsMenu::Init` layout for the variant.
@@ -2052,6 +2396,31 @@ fn draw_label_box(
     }
 
     1
+}
+
+/// One-pixel box around the chosen video option — the selector idiom of the
+/// oracle's own match-setup screen (`GameConfigMenu::DrawSelector`, color `0xFF`).
+fn draw_option_box(frame: &mut RgbaBuffer, palette: &UiPalette, rect: PixelRect) -> u32 {
+    let color = palette.rgba(0xFF);
+    let x0 = rect.ulx - 2;
+    let y0 = rect.uly - 1;
+    let x1 = rect.ulx + rect.width + 1;
+    let y1 = rect.uly + rect.height;
+    let mut painted = 0;
+
+    for x in x0..=x1 {
+        frame.set(x, y0, color);
+        frame.set(x, y1, color);
+        painted += 2;
+    }
+
+    for y in y0..=y1 {
+        frame.set(x0, y, color);
+        frame.set(x1, y, color);
+        painted += 2;
+    }
+
+    painted
 }
 
 /// Dialog button: `up` picture + `FONT5` label (`Button::SetCaption`).
@@ -2450,6 +2819,12 @@ impl<D: Dispatcher> crate::App<D> {
                 self.preferences_dialog = Some(dialog);
             }
             PreferencesAction::None | PreferencesAction::Help => {
+                self.preferences_dialog = Some(dialog);
+            }
+            // No video rows exist in `PREFSPIC` (the free block of `SETUPPIC` is
+            // filled by the `preferences` section here), so the choice can only be
+            // a no-op; the dialog state is kept as it is.
+            PreferencesAction::Video(_) => {
                 self.preferences_dialog = Some(dialog);
             }
             PreferencesAction::Done => {

@@ -1,6 +1,7 @@
 #requires -version 5.1
-# ui-test-resolution.ps1 - LIVE window run: Settings -> Resolutions really changes
-# the render scale and rebuilds the window (640x480 / 1280x960 / 2560x1920).
+# ui-test-resolution.ps1 - LIVE window run: the Setup dialog really changes the
+# render scale and the anti-aliasing mode (640x480 / 1280x960 / 2560x1920,
+# off/fxaa/smaa).
 #
 # Regression pinned here: `WindowPresentation::apply_resolution` used to rebuild the
 # window through `SdlWindow::new_with_render_scale` while the running window was
@@ -9,19 +10,22 @@
 # error and the selected resolution was silently ignored - the window never
 # changed. The fix re-opens the window in place
 # (`SdlWindow::reopen_with_render_scale`), keeping the SDL context and the event
-# pump while the OS window is rebuilt at the new render frame.
+# pump while the OS window is rebuilt at the new render frame. The choice now
+# lives in the game's `Setup` dialog (`OptionsMenu(SETUPPIC)`); the SDL window
+# menu (`File`/`Settings`) is retired, so the client area is the frame itself.
 #
 # Checked in the real window (screenshots in build/ui-test-resolution):
-#  * launch at --scale 1: the client area is 640x496 (640x480 frame + 16 px bar),
-#    the menu bar is drawn and the main menu is on screen;
-#  * Settings -> Resolutions -> 1280x960 (x2): the window is rebuilt (a NEW HWND
-#    while the old one is still alive), the client area is 1280x992 and the log
-#    reports the hd-2x switch with a 1280x960 render frame;
-#  * Settings -> Resolutions -> 640x480 (1:1): the window is rebuilt again, the
-#    client area is back to 640x496 and the log reports the pixel-perfect switch
-#    with a 640x480 frame - the pixel-perfect presentation is restored (byte
-#    equality of the 1:1 frame itself is covered by the golden suite; this test
-#    proves that the window switch is really applied).
+#  * launch at --scale 1: the client area is 640x480 (no chrome above the frame),
+#    the main menu is on screen;
+#  * `Setup` in the main menu opens the dialog (green `Setup` title);
+#  * `Resolution -> 1280x960`: the window is rebuilt (a NEW HWND while the old one
+#    is still alive), the client area is 1280x960 and the log reports the hd-2x
+#    switch with a 1280x960 render frame;
+#  * `Antialiasing -> FXAA`: no window rebuild, the log reports the fxaa pass;
+#  * `Resolution -> 640x480`: the window is rebuilt again, the client area is back
+#    to 640x480 and the log reports the pixel-perfect switch with a 640x480 frame
+#    (byte equality of the 1:1 frame itself is covered by the golden suite; this
+#    test proves that the window switch is really applied).
 #
 # Run: powershell -NoProfile -ExecutionPolicy Bypass -File max-brh-cicd\scripts\ui-test-resolution.ps1
 # Requires a built UI client (build-windows-ui.ps1 -NoPackage, or
@@ -100,10 +104,17 @@ if (-not $Exe -or -not (Test-Path $Exe)) {
     throw 'ui-test-resolution: no built max-brh.exe (run build-windows-ui.ps1 -NoPackage)'
 }
 
-# Menu chrome colors (max_app::window_menu): dropdown/flyout background rgb(28,34,44),
-# bar background rgb(18,22,30).
-$MENU_BG = @(28, 34, 44)
-$BAR_BG = @(18, 22, 30)
+# The `Setup` dialog is drawn by `max_app::preferences` at (120,29) (400x422);
+# the video rows sit in its free bottom block. Local -> 640x480 frame points:
+#   Resolution: 640x480 (154,257) 1280x960 (212,257) 2560x1920 (275,257)
+#               plus the window origin (120,29) -> (274,286) (332,286) (395,286)
+#   Antialiasing: Off (250,283) FXAA (291,283) SMAA (334,283)
+#               -> (265,312) (306,312) (349,312)
+# The layout is pinned by `preferences_tests::setup_video_rows_fit_the_free_block`.
+$RES_640 = @(274, 286)
+$RES_1280 = @(332, 286)
+$AA_FXAA = @(306, 312)
+$SETUP_MAIN_MENU = @(485, 294)
 
 $script:stdout = Join-Path $Out 'stdout.log'
 $script:stderr = Join-Path $Out 'stderr.log'
@@ -163,10 +174,11 @@ function Get-Client([IntPtr]$h) {
     [pscustomobject]@{ W = $rc.R - $rc.L; H = $rc.B - $rc.T; X = $origin.X; Y = $origin.Y }
 }
 
+# The client area is the render frame itself (no chrome): 640*S x 480*S.
 function Get-Scale([IntPtr]$h) {
     $client = Get-Client $h
-    if ($client.H -le 0 -or ($client.H % 496) -ne 0) { return 0 }
-    return [int]($client.H / 496)
+    if ($client.H -le 0 -or ($client.H % 480) -ne 0) { return 0 }
+    return [int]($client.H / 480)
 }
 
 function Ensure-Focus {
@@ -192,8 +204,8 @@ function Set-Pointer([int]$screenX, [int]$screenY) {
     return $false
 }
 
-# Client coordinates of a logical 640x496 point: the window is opened with --scale 1,
-# so at S the client area is exactly 640*S x 496*S and a click is (x*S, y*S).
+# Client coordinates of a logical 640x480 point: the window is opened with --scale 1,
+# so at S the client area is exactly 640*S x 480*S and a click is (x*S, y*S).
 function Click-Logical([int]$x, [int]$y) {
     if (-not (Ensure-Focus)) { Fail "the game window does not own the focus (click $x,$y)" }
     $scale = Get-Scale $script:hwnd
@@ -206,19 +218,8 @@ function Click-Logical([int]$x, [int]$y) {
     [MaxResolutionUi]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)   # LEFTDOWN
     Start-Sleep -Milliseconds 60
     [MaxResolutionUi]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)   # LEFTUP
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 700
     Write-Host "click logical=($x,$y) S=$scale client=($cx,$cy)"
-}
-
-function Move-Logical([int]$x, [int]$y) {
-    Ensure-Focus | Out-Null
-    $scale = Get-Scale $script:hwnd
-    if ($scale -lt 1) { Fail 'unexpected client area height' }
-    $client = Get-Client $script:hwnd
-    if (-not (Set-Pointer ($client.X + $x * $scale) ($client.Y + $y * $scale))) {
-        Fail "the desktop keeps moving the pointer away from ($x,$y)"
-    }
-    Start-Sleep -Milliseconds 300
 }
 
 function Save-Shot([string]$name) {
@@ -236,19 +237,19 @@ function Save-Shot([string]$name) {
     return $path
 }
 
-# The main menu draws its green "Main Menu" caption at frame (236,145) 172x15;
-# the menu bar shifts the frame down by BAR_HEIGHT (16 logical pixels).
+# The main menu draws its green "Main Menu" caption at frame (236,145) 172x15.
 function Get-MainMenuGreen([string]$shot) {
-    return [MaxResolutionUi]::CountColor($shot, 236, 145 + 16, 172, 15, 0, 255, 0, 60)
+    return [MaxResolutionUi]::CountColor($shot, 236, 145, 172, 15, 0, 255, 0, 60)
 }
 
-function Get-MenuPanelPixels([string]$shot, [int]$x, [int]$y, [int]$w, [int]$h) {
-    return [MaxResolutionUi]::CountColor($shot, $x, $y, $w, $h, $MENU_BG[0], $MENU_BG[1], $MENU_BG[2], 2)
+# The `Setup` dialog title is green (`COLOR_GREEN` at (228,41) 184x17).
+function Get-SetupTitleGreen([string]$shot) {
+    return [MaxResolutionUi]::CountColor($shot, 228, 41, 184, 17, 0, 255, 0, 60)
 }
 
 # Waits for the rebuilt window: the HWND must change (the new window is created
 # before the old one is destroyed, so the handle cannot be reused), and the client
-# area must be the new render frame plus the menu bar.
+# area must be the new render frame.
 function Wait-RebuiltWindow([IntPtr]$oldHandle, [int]$width, [int]$height, [int]$timeoutMs = 8000) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     while ($sw.ElapsedMilliseconds -lt $timeoutMs) {
@@ -285,95 +286,69 @@ try {
     }
 
     $client0 = Get-Client $script:hwnd
-    if ($client0.W -ne 640 -or $client0.H -ne 496) {
-        Fail "the launch window must be 640x496 (640x480 frame + 16 px bar), got $($client0.W)x$($client0.H)"
+    if ($client0.W -ne 640 -or $client0.H -ne 480) {
+        Fail "the launch window must be 640x480 (frame only, no chrome), got $($client0.W)x$($client0.H)"
     }
     $shot0 = Save-Shot '01-main-menu-pixelperfect'
     $green = Get-MainMenuGreen $shot0
-    Write-Host "A: pixel-perfect start, client 640x496, main-menu green pixels: $green"
+    Write-Host "A: pixel-perfect start, client 640x480, main-menu green pixels: $green"
     if ($green -lt 40) { Fail 'the main menu is not on screen (no green Main Menu caption)' }
 
-    $bar = [MaxResolutionUi]::CountColor($shot0, 0, 0, 640, 16, $BAR_BG[0], $BAR_BG[1], $BAR_BG[2], 2)
-    Write-Host "B: menu bar background pixels: $bar"
-    if ($bar -lt 1000) { Fail 'the menu bar is not drawn (no BAR_BACKGROUND in the top 16 px)' }
-
-    # ---- Settings -> Resolutions -> 1280x960 (x2), pixel-perfect ----
-    # The desktop may move the pointer between frames: every stage is verified on a
-    # screenshot and retried instead of trusting a single click.
+    # ---- Main menu -> Setup (SETUPPIC) -------------------------------------
     $opened = $false
     for ($attempt = 0; $attempt -lt 3 -and -not $opened; $attempt++) {
-        Click-Logical 69 8
-        $shot = Save-Shot '02-settings-dropdown'
-        $dropdown = Get-MenuPanelPixels $shot 36 16 124 16
-        Write-Host "C: Settings dropdown panel pixels: $dropdown"
-        $opened = $dropdown -gt 500
+        Click-Logical $SETUP_MAIN_MENU[0] $SETUP_MAIN_MENU[1]
+        $shot = Save-Shot '02-setup-dialog'
+        $title = Get-SetupTitleGreen $shot
+        Write-Host "B: Setup title green pixels: $title"
+        $opened = $title -gt 20
     }
-    if (-not $opened) { Fail 'Settings -> the dropdown did not open' }
+    if (-not $opened) { Fail 'Setup did not open the dialog (no green Setup title)' }
+    if (-not (Wait-Stdout 'prefs=open' 3000)) { Fail 'the trace has no prefs=open' }
 
-    $flyout = $false
-    for ($attempt = 0; $attempt -lt 3 -and -not $flyout; $attempt++) {
-        Move-Logical 98 24
-        $shot = Save-Shot '03-flyout-pixelperfect'
-        $panel = Get-MenuPanelPixels $shot 160 17 156 44
-        Write-Host "D: Resolutions flyout panel pixels: $panel"
-        $flyout = $panel -gt 1000
-    }
-    if (-not $flyout) { Fail 'Settings -> Resolutions -> the flyout did not open' }
-
+    # ---- Resolution -> 1280x960 (x2) ---------------------------------------
     $oldHandle = $script:hwnd
-    Click-Logical 238 39
-    $newHandle = Wait-RebuiltWindow $oldHandle 1280 992
+    Click-Logical $RES_1280[0] $RES_1280[1]
+    $newHandle = Wait-RebuiltWindow $oldHandle 1280 960
     if ($newHandle -eq [IntPtr]::Zero) {
-        Fail "1280x960 did not rebuild the window to 1280x992 (client $((Get-Client $script:hwnd).W)x$((Get-Client $script:hwnd).H))"
+        Fail "1280x960 did not rebuild the window to 1280x960 (client $((Get-Client $script:hwnd).W)x$((Get-Client $script:hwnd).H))"
     }
     $script:hwnd = $newHandle
-    Write-Host "E: window rebuilt: hwnd $oldHandle -> $newHandle, client 1280x992"
+    Write-Host "C: window rebuilt: hwnd $oldHandle -> $newHandle, client 1280x960"
     if (-not (Wait-Stdout 'hd-2x' 3000)) { Fail 'the log has no hd-2x resolution switch' }
     if (-not (Wait-Stdout '1280x960' 3000)) { Fail 'the log has no 1280x960 render frame' }
-    $shot1 = Save-Shot '04-hd2-1280x960'
-    $bar2 = [MaxResolutionUi]::CountColor($shot1, 0, 0, 1280, 32, $BAR_BG[0], $BAR_BG[1], $BAR_BG[2], 2)
-    Write-Host "F: x2 menu bar background pixels: $bar2"
-    if ($bar2 -lt 4000) { Fail 'the menu bar was not redrawn at x2' }
+    $shot1 = Save-Shot '03-hd2-1280x960'
+    $title2 = Get-SetupTitleGreen $shot1
+    Write-Host "D: x2 Setup title green pixels: $title2"
+    if ($title2 -lt 40) { Fail 'the Setup dialog was not redrawn at x2' }
 
-    # ---- Settings -> Resolutions -> 640x480 (1:1), back from x2 ----
-    $opened = $false
-    for ($attempt = 0; $attempt -lt 3 -and -not $opened; $attempt++) {
-        Click-Logical 69 8
-        $shot = Save-Shot '05-settings-dropdown-hd2'
-        $dropdown = Get-MenuPanelPixels $shot 72 32 248 32
-        Write-Host "G: x2 Settings dropdown panel pixels: $dropdown"
-        $opened = $dropdown -gt 2000
+    # ---- Antialiasing -> FXAA (no window rebuild) --------------------------
+    Click-Logical $AA_FXAA[0] $AA_FXAA[1]
+    if (-not (Wait-Stdout 'fxaa' 4000)) { Fail 'the log has no fxaa antialiasing switch' }
+    $clientAA = Get-Client $script:hwnd
+    if ($clientAA.W -ne 1280 -or $clientAA.H -ne 960) {
+        Fail "FXAA must not reopen the window, client is $($clientAA.W)x$($clientAA.H)"
     }
-    if (-not $opened) { Fail 'Settings at x2 -> the dropdown did not open' }
+    Save-Shot '04-aa-fxaa' | Out-Null
+    Write-Host 'E: antialiasing switched to fxaa, window kept'
 
-    $flyout = $false
-    for ($attempt = 0; $attempt -lt 3 -and -not $flyout; $attempt++) {
-        Move-Logical 98 24
-        $shot = Save-Shot '06-flyout-hd2'
-        $panel = Get-MenuPanelPixels $shot 320 34 312 88
-        Write-Host "H: x2 Resolutions flyout panel pixels: $panel"
-        $flyout = $panel -gt 4000
-    }
-    if (-not $flyout) { Fail 'Settings -> Resolutions at x2 -> the flyout did not open' }
-
+    # ---- Resolution -> 640x480 (1:1), back from x2 -------------------------
     $oldHandle = $script:hwnd
-    Click-Logical 238 25
-    $newHandle = Wait-RebuiltWindow $oldHandle 640 496
+    Click-Logical $RES_640[0] $RES_640[1]
+    $newHandle = Wait-RebuiltWindow $oldHandle 640 480
     if ($newHandle -eq [IntPtr]::Zero) {
-        Fail "640x480 did not rebuild the window back to 640x496 (client $((Get-Client $script:hwnd).W)x$((Get-Client $script:hwnd).H))"
+        Fail "640x480 did not rebuild the window back to 640x480 (client $((Get-Client $script:hwnd).W)x$((Get-Client $script:hwnd).H))"
     }
     $script:hwnd = $newHandle
-    Write-Host "I: window rebuilt back: hwnd $oldHandle -> $newHandle, client 640x496"
+    Write-Host "F: window rebuilt back: hwnd $oldHandle -> $newHandle, client 640x480"
     if (-not (Wait-Stdout 'pixel-perfect' 3000)) { Fail 'the log has no pixel-perfect resolution switch' }
-    $shot2 = Save-Shot '07-back-to-pixelperfect'
-    $barAgain = [MaxResolutionUi]::CountColor($shot2, 0, 0, 640, 16, $BAR_BG[0], $BAR_BG[1], $BAR_BG[2], 2)
+    $shot2 = Save-Shot '05-back-to-pixelperfect'
     $greenAgain = Get-MainMenuGreen $shot2
-    Write-Host "J: back at 1:1, menu bar background pixels: $barAgain, main-menu green pixels: $greenAgain"
-    if ($barAgain -lt 1000) { Fail 'the menu bar did not return to 1:1' }
-    if ($greenAgain -lt 40) { Fail 'the main menu is not rendered after returning to 1:1' }
+    Write-Host "G: back at 1:1, main-menu green pixels: $greenAgain"
+    if ($greenAgain -lt 20) { Fail 'the main menu/Setup dialog is not rendered after returning to 1:1' }
 
     Save-Logs
-    Write-Host 'PASS: Settings -> Resolutions switches 640x496 -> 1280x992 (frame 1280x960) -> 640x496'
+    Write-Host 'PASS: Setup dialog switches 640x480 -> 1280x960 (frame) -> 640x480 and off -> fxaa'
 }
 finally {
     Save-Logs

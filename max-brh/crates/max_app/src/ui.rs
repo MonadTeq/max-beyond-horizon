@@ -206,6 +206,11 @@ pub enum Transition {
     StoryFinished,
     /// Apply the settings from the `Preferences`/`Setup` dialog (main menu).
     ApplyPreferences(Box<Preferences>),
+    /// The `Setup` dialog chose a video setting (`RenderScale`/`AaMode`): the
+    /// driver applies it to the running presentation at once (window rebuild /
+    /// output-layer anti-aliasing). Presentation only — the simulation, the
+    /// session and the screen machine are untouched.
+    SetVideo(crate::settings::VideoChoice),
     /// Close the application.
     Quit,
 }
@@ -603,6 +608,9 @@ pub struct UiContext {
     pub intro_subtitles: Option<crate::subtitles::SubtitleTrack>,
     /// Current user settings (for the `Setup` dialog).
     pub preferences: Preferences,
+    /// The running presentation (`RenderScale` + `AaMode`) the `Setup` dialog's
+    /// video rows show; the driver keeps it in sync with the SDL window.
+    pub video: crate::settings::VideoChoice,
     /// Mission registry for the `GameSetupMenu` (`GameSetupMenu_Menu` reads
     /// `MissionManager::GetMissions`); built once from `PATCHES.RES` + the game
     /// data directory. `None` — the menu shows the visible fallback.
@@ -632,6 +640,7 @@ impl UiContext {
             intro_mve_path: None,
             intro_subtitles: None,
             preferences: Preferences::default(),
+            video: crate::settings::VideoChoice::default(),
             missions: None,
             campaign_clamp: None,
         }
@@ -1811,12 +1820,14 @@ impl Screen {
             Some(MAIN_SETUP) => {
                 // `menu_setup_window()` (`menu.cpp:2331`) → `OptionsMenu(SETUPPIC)`:
                 // only the `setup` section (sound/video/autosave/network/name), over
-                // the main menu, as a separate `PREFSPIC` window.
+                // the main menu, as a separate `PREFSPIC` window. The video rows get
+                // the presentation the window currently runs.
                 let dialog = PreferencesDialog::new(
                     PreferencesVariant::Setup,
                     ctx.preferences.clone(),
                     preferences::PreferencesInfo::default(),
-                );
+                )
+                .with_video(ctx.video);
                 *self = Self::Preferences(Box::new(dialog));
                 ctx.status = "Setup: Done saves, Cancel reverts".to_string();
                 Transition::None
@@ -1914,6 +1925,18 @@ impl Screen {
                 ctx.status = "Preferences cancelled".to_string();
                 *self = Self::MainMenu;
                 Transition::None
+            }
+            preferences::PreferencesAction::Video(video) => {
+                // The `Setup` dialog's video rows: presentation only, applied at
+                // once by the driver (`apply_resolution`/`set_aa`). The dialog
+                // stays open on the choice; `Done`/`Cancel` do not touch it.
+                ctx.status = format!(
+                    "Video: {} / aa {}",
+                    video.render_scale.label(),
+                    video.aa.label()
+                );
+                ctx.video = video;
+                Transition::SetVideo(video)
             }
         }
     }

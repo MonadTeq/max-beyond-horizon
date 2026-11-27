@@ -63,8 +63,6 @@ use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
     Transition, UiContext,
 };
-#[cfg(feature = "sdl")]
-use max_app::window_menu::{WindowMenu, WindowMenuAction};
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
 use max_core::setup::ResourceLevel;
@@ -1109,21 +1107,19 @@ fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
 
 /// Presentation resources of the interactive window.
 ///
-/// One owner for the SDL window, the HD layers, the in-window menu and the
-/// buffers they draw into, so a resolution chosen in the menu can rebuild
-/// exactly these resources while the [`App`], the running session and the
-/// screen state stay untouched (presentation only).
+/// One owner for the SDL window, the HD layers and the buffers they draw into,
+/// so a video setting chosen in the game's `Setup` dialog
+/// (`max_app::preferences`) can rebuild exactly these resources while the
+/// [`App`], the running session and the screen state stay untouched
+/// (presentation only).
 ///
-/// The menu bar is **window chrome above the frame**, not an overlay over it:
-/// the presented image is `640 × (480 + 16)` logical pixels — the bar on top,
-/// the untouched 640×480 game frame below it. The game's top row (Files,
-/// Preferences, End Turn, counters) therefore stays visible and clickable, and
-/// the pixel-perfect frame is byte-for-byte what `Screen::render` produced.
+/// The window shows the game frame itself — no chrome is added above it: in the
+/// pixel-perfect mode the presented image is the byte-for-byte 640×480 frame
+/// `Screen::render` produced, in HD it is the `640·S × 480·S` HD frame.
 ///
 /// `aa` is the **output-layer** anti-aliasing mode of the window
 /// (`max-brh-docs/development/gpu-aa-design.md`), not a render factor: the HD
-/// frame is always built at `R = S` ([`Self::hd_buffer`]), the whole presentation
-/// (game frame + menu bar) is composed into [`Self::present_buffer`] at `S`, and
+/// frame is always built at `R = S` ([`Self::hd_buffer`]), and
 /// [`max_render::SdlWindow`] applies FXAA (or the Canvas fallback) on the way to
 /// the screen.
 #[cfg(feature = "sdl")]
@@ -1136,12 +1132,6 @@ struct WindowPresentation {
     hd: Option<max_app::HdPresenter>,
     /// `640·S × 480·S` game frame built for the HD presentation.
     hd_buffer: max_render::buffer::RgbaBuffer,
-    /// What the window actually shows at `S`: menu bar + game frame, `640·S × 496·S`.
-    present_buffer: max_render::buffer::RgbaBuffer,
-    /// The in-window `File`/`Settings` menu bar (`window_menu`).
-    menu: WindowMenu,
-    /// Transparent `640 × 496` overlay the menu is drawn into.
-    menu_overlay: max_render::buffer::RgbaBuffer,
     /// Logical **game** frame size (640×480 in the client; `--width/--height` otherwise).
     base_size: (u32, u32),
     /// Window integer scale (`None` — fit the desktop), kept across resolutions.
@@ -1164,7 +1154,7 @@ impl WindowPresentation {
         remaster_root: PathBuf,
         assets: Option<&max_app::Assets>,
     ) -> Result<Self> {
-        let frame_size = presentation_size(base_size);
+        let frame_size = base_size;
         // `S = 1` has no HD geometry to anti-alias: the mode is forced off so
         // the pixel-perfect frame stays byte-for-byte.
         let aa = if render_scale.is_hd() {
@@ -1200,9 +1190,6 @@ impl WindowPresentation {
             render_scale,
             hd,
             hd_buffer: max_render::buffer::RgbaBuffer::new(1, 1),
-            present_buffer: max_render::buffer::RgbaBuffer::new(1, 1),
-            menu: WindowMenu::new(),
-            menu_overlay: max_render::buffer::RgbaBuffer::new(frame_size.0, frame_size.1),
             base_size,
             window_scale,
             remaster_root,
@@ -1218,23 +1205,29 @@ impl WindowPresentation {
         self.render_scale.is_hd()
     }
 
-    /// (Re)allocates the frame buffers for the current `S`.
+    /// (Re)allocates the HD frame buffer for the current `S`.
     ///
     /// A resolution change lands here; it reopens neither the OS window nor the
-    /// GPU device (the latter only when the window is recreated). Both buffers
-    /// are at `S`: anti-aliasing changes neither of them.
+    /// GPU device (the latter only when the window is recreated). The buffer is
+    /// at `S`: anti-aliasing does not change it.
     fn resize_buffers(&mut self) {
-        let frame_size = presentation_size(self.base_size);
         let scale = self.render_scale.scale();
 
         self.hd_buffer =
             max_render::buffer::RgbaBuffer::new(self.base_size.0 * scale, self.base_size.1 * scale);
-        self.present_buffer =
-            max_render::buffer::RgbaBuffer::new(frame_size.0 * scale, frame_size.1 * scale);
+    }
+
+    /// The video setting the window currently runs (rendered into the `Setup`
+    /// dialog rows).
+    fn video_choice(&self) -> max_app::settings::VideoChoice {
+        max_app::settings::VideoChoice {
+            render_scale: self.render_scale,
+            aa: self.window.aa(),
+        }
     }
 
     /// Switches the anti-aliasing mode without reopening the window
-    /// (`Settings → Antialiasing`).
+    /// (`Setup → Antialiasing`).
     ///
     /// Presentation only: the [`App`]/session/screen state is untouched and no
     /// buffer is reallocated — `aa` is applied by the output layer, so the frame
@@ -1290,40 +1283,22 @@ impl WindowPresentation {
         }
     }
 
-    /// Places the game frame below the menu bar and presents the result.
+    /// Presents the game frame.
     ///
-    /// The game frame (`frame`, 640×480 at `S = 1`, `640·S × 480·S` in HD) is
-    /// copied **unchanged** under a [`max_app::window_menu::BAR_HEIGHT`] band;
-    /// the menu overlay is then composited into that band (and, when a dropdown
-    /// is open, over the top of the game area — the menu is on top while open).
-    ///
-    /// The composed presentation is `640·S × 496·S` and is handed to the window
-    /// as it is: the anti-aliasing (`Settings → Antialiasing`) belongs to
-    /// [`max_render::SdlWindow`] and is applied to exactly these bytes, so the
-    /// whole frame — game, bars and open dropdown — is smoothed uniformly and
-    /// `aa = Off` stays the historical upload.
+    /// The frame (`frame`, 640×480 at `S = 1`, `640·S × 480·S` in HD) is handed
+    /// to the window **unchanged**: there is no window chrome and no composition,
+    /// so the presented bytes are the bytes the game drew. The anti-aliasing
+    /// (`Setup → Antialiasing`) belongs to [`max_render::SdlWindow`] and is
+    /// applied to exactly these bytes: `aa = Off` stays the historical upload.
     fn present(&mut self, frame: &max_render::buffer::RgbaBuffer) -> Result<()> {
-        let scale = self.render_scale.scale();
         // The HD frame is built in `hd_buffer`; in pixel-perfect it is `frame`.
         let game_frame = match self.hd.as_ref() {
             Some(_) => &self.hd_buffer,
             None => frame,
         };
 
-        self.menu
-            .render_overlay(&mut self.menu_overlay, self.render_scale, self.window.aa());
-
-        let bar_pixels = max_app::window_menu::BAR_HEIGHT as u32 * scale;
-
-        copy_buffer_at(game_frame, &mut self.present_buffer, 0, bar_pixels);
-        max_app::window_menu::composite_overlay(
-            &self.menu_overlay,
-            &mut self.present_buffer,
-            scale,
-        );
-
         self.window
-            .present(&self.present_buffer)
+            .present(game_frame)
             .map_err(|error| anyhow!("{error}"))
     }
 
@@ -1340,7 +1315,7 @@ impl WindowPresentation {
     /// and **not** through the constructor: SDL3 allows only one `EventPump` alive
     /// at a time, so building a second `SdlWindow` next to the running one fails
     /// with "an `EventPump` instance is already alive" and leaves the old mode on
-    /// screen (the menu choice used to be lost exactly there).
+    /// screen.
     fn apply_resolution(
         &mut self,
         scale: max_render::RenderScale,
@@ -1374,48 +1349,6 @@ impl WindowPresentation {
         log_aa_mode(scale, self.window.aa());
 
         Ok(())
-    }
-}
-
-/// Logical presentation size: the menu bar above the game frame.
-#[cfg(feature = "sdl")]
-fn presentation_size(base_size: (u32, u32)) -> (u32, u32) {
-    (
-        base_size.0,
-        base_size.1 + max_app::window_menu::BAR_HEIGHT as u32,
-    )
-}
-
-/// Copies `source` into `target` at `(x, y)`, row by row, clipped.
-///
-/// Both buffers use the same scale, so this is a plain block copy: no
-/// interpolation and no colour change — the game frame stays byte-identical.
-#[cfg(feature = "sdl")]
-fn copy_buffer_at(
-    source: &max_render::buffer::RgbaBuffer,
-    target: &mut max_render::buffer::RgbaBuffer,
-    x: u32,
-    y: u32,
-) {
-    let width = source.width().min(target.width().saturating_sub(x));
-
-    if width == 0 || y >= target.height() {
-        return;
-    }
-
-    let height = source.height().min(target.height().saturating_sub(y));
-    let source_row = source.width() as usize * max_render::BYTES_PER_PIXEL;
-    let target_row = target.width() as usize * max_render::BYTES_PER_PIXEL;
-    let copy_row = width as usize * max_render::BYTES_PER_PIXEL;
-    let target_pixels = target.pixels_mut();
-
-    for row in 0..height as usize {
-        let source_start = row * source_row;
-        let target_start =
-            (y as usize + row) * target_row + x as usize * max_render::BYTES_PER_PIXEL;
-
-        target_pixels[target_start..target_start + copy_row]
-            .copy_from_slice(&source.pixels()[source_start..source_start + copy_row]);
     }
 }
 
@@ -1688,9 +1621,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // keeps its own coordinates. The constructor takes the **logical** frame
     // size and applies S itself, so S is never applied twice.
     //
-    // The presentation owns the window, the HD layers and the in-window menu:
-    // a resolution chosen in the menu rebuilds only these resources and leaves
-    // the `App`/session untouched.
+    // The presentation owns the window and the HD layers: a video setting chosen
+    // in the game's `Setup` dialog rebuilds only these resources and leaves the
+    // `App`/session untouched.
     let mut presentation = WindowPresentation::new(
         "M.A.X. — Rust client (M4.2 HUD)",
         (config.screen_width, config.screen_height),
@@ -1714,6 +1647,9 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // `Introduction`: INTROFLC → maxint.mve next to MAX.RES (see Assets::load).
     ctx.intro_mve_path = app.assets().and_then(|assets| assets.intro_mve.clone());
     ctx.preferences = app.preferences().clone();
+    // The `Setup` dialog's video rows show the presentation the window runs:
+    // `CLI > settings.jsonc > default` at launch, then the dialog's own choice.
+    ctx.video = presentation.video_choice();
     // M6.2: menu sound. `with_default_backend` behind the `sound` feature brings up
     // rodio/cpal; without the feature (or without a device) — a silent no-op. The references to
     // files are taken from MAX.RES, the files themselves — next to MAX.RES.
@@ -1931,35 +1867,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
         for event in events {
             let input = input_event(event);
 
-            // The in-window menu bar (`File`/`Settings`) works over every
-            // screen: it consumes only its own clicks/Esc and reports the two
-            // presentation actions. A resolution switch rebuilds the window and
-            // the render target only; `App`, the session and `screen` stay as
-            // they are.
-            let menu_response = presentation.menu.handle_input(input);
-
-            match menu_response.action {
-                WindowMenuAction::None => {}
-                WindowMenuAction::Quit => {
-                    finish_recording(&mut recorder)?;
-
-                    return Ok(());
-                }
-                WindowMenuAction::SetResolution(scale) => {
-                    if let Err(error) = presentation.apply_resolution(scale, app.assets()) {
-                        eprintln!("UI: смена разрешения: {error:#}");
-                    }
-                }
-                WindowMenuAction::SetAa(aa) => presentation.set_aa(aa),
-            }
-
-            if menu_response.consumed {
-                continue;
-            }
-
-            // The window has the menu bar above the game frame; the screen
-            // machine works in the original 640×480 coordinates.
-            let input = max_app::window_menu::to_game_event(input);
+            // The window now shows the game frame itself: no menu bar is drawn
+            // above it, and an event goes to the screen in the original 640×480
+            // coordinates unchanged. The video settings live in the game's
+            // `Setup` dialog (`Transition::SetVideo`).
 
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
                 let name = match &screen {
@@ -2181,6 +2092,23 @@ fn run_ui(cli: &Cli) -> Result<()> {
                     ctx.preferences = app.preferences().clone();
                     ctx.audio.set_enabled(app.sound_enabled());
                     ctx.audio.set_volume(app.preferences().sound_volume());
+                }
+                Transition::SetVideo(video) => {
+                    // The `Setup` dialog's video rows: presentation only. The same
+                    // `apply_resolution`/`set_aa` the removed in-window menu used;
+                    // `App`, the session and `screen` are untouched.
+                    if let Err(error) =
+                        presentation.apply_resolution(video.render_scale, app.assets())
+                    {
+                        eprintln!("UI: смена разрешения: {error:#}");
+                    }
+                    presentation.set_aa(video.aa);
+                    // The dialog keeps showing what the window really runs: a
+                    // refused reopen must not leave a lie on screen.
+                    ctx.video = presentation.video_choice();
+                    if let Screen::Preferences(dialog) = &mut screen {
+                        dialog.set_video(ctx.video);
+                    }
                 }
                 Transition::StartLocal(setup) => {
                     // M-SP: start of a local match (Options → Planet → Players).
@@ -2734,12 +2662,12 @@ fn run_ui_session(
 /// happens to the orders (SDL/UI Stage C2): the network loop collects them itself
 /// (`net::flush_hud_orders`) — no `online` flag is passed.
 ///
-/// The in-window menu bar (`File`/`Settings`) is handled first, exactly as in
-/// the menu loop: it consumes only its own clicks/Esc, and a resolution switch
-/// rebuilds the presentation resources while the session keeps running.
+/// The window shows the game frame itself: there is no in-window menu bar, and
+/// the `Setup` dialog's video rows belong to the menu client, so a session only
+/// forwards input to the HUD.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
-    /// Window, HD layers and the menu bar; presentation only.
+    /// Window and HD layers; presentation only.
     presentation: &'a mut WindowPresentation,
     screen: Screen,
     buffer: max_render::buffer::RgbaBuffer,
@@ -2754,7 +2682,7 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn poll_input(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
 
-        // 1. This frame's input → menu bar, then HUD (selection, orders, buttons).
+        // 1. This frame's input → HUD (selection, orders, buttons).
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.begin_frame();
         }
@@ -2764,25 +2692,6 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
 
         for event in events {
             let input = input_event(event);
-            let menu_response = self.presentation.menu.handle_input(input);
-
-            match menu_response.action {
-                WindowMenuAction::None => {}
-                WindowMenuAction::Quit => leave = true,
-                WindowMenuAction::SetResolution(scale) => {
-                    if let Err(error) = self.presentation.apply_resolution(scale, app.assets()) {
-                        eprintln!("UI: смена разрешения: {error:#}");
-                    }
-                }
-                WindowMenuAction::SetAa(aa) => self.presentation.set_aa(aa),
-            }
-
-            if menu_response.consumed {
-                continue;
-            }
-
-            // Presentation → game frame: the menu bar is above the 640×480 frame.
-            let input = max_app::window_menu::to_game_event(input);
 
             if let Some(recorder) = self.recorder.as_deref_mut() {
                 recorder.record(
@@ -2801,6 +2710,9 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
                     app.set_preferences(*preferences);
                     app.persist_preferences();
                 }
+                // The video rows belong to the `Setup` dialog of the main menu;
+                // an in-session `Preferences` window has no room for them.
+                Transition::SetVideo(_) => {}
                 Transition::StartSession(_)
                 | Transition::StartLocal(_)
                 | Transition::StartMission(_)
@@ -3008,14 +2920,16 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          существующий файл не перезаписывается — суффикс -1;
                          без SDL запись доступна как API max_app::qa::Recorder)
 
-МЕНЮ ОКНА (работает в главном меню и в игре):
-    File → Exit          закрыть клиент
-    Settings → Resolutions → 640x480 (1:1) / 1280x960 (x2) / 2560x1920 (x4)
+НАСТРОЙКИ ГРАФИКИ (диалог Setup главного меню, кнопка Setup):
+    Resolution → 640x480 / 1280x960 (x2) / 2560x1920 (x4)
                          смена разрешения на лету (презентация only: состояние
                          партии, симуляция и сессия не меняются)
-    Settings → Antialiasing → Off / FXAA / SMAA
+    Antialiasing → Off / FXAA / SMAA
                          GPU-сглаживание кадра на лету (без переоткрытия окна;
                          при S=1 — Off; SMAA — фаза 2, пока выводится FXAA)
+    Приоритет на запуске — CLI > settings.jsonc > дефолт; выбор в диалоге
+    действует до выхода и settings.jsonc не перезаписывает. Выход из игры —
+    Esc/главное меню (пункта Exit в окне больше нет).
 
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect и --host

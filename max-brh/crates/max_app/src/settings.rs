@@ -31,9 +31,10 @@
 //! the built-in default (`RenderScale::PixelPerfect`, `AaMode::Off`, auto window
 //! scale, windowed).
 //!
-//! The file is read once at launch ([`Settings::load`]). The in-window menu
-//! (`crate::window_menu`) changes the running presentation only; it does not
-//! rewrite the file.
+//! The file is read once at launch ([`Settings::load`]). The video rows of the
+//! game's `Setup` dialog ([`crate::preferences`]) change the running presentation
+//! only; they do not rewrite the file — the next launch takes the value from the
+//! file (and the CLI) again.
 //!
 //! # Why this module is pure
 //!
@@ -47,6 +48,79 @@ use std::path::{Path, PathBuf};
 
 use max_render::frame_scale::MAX_SCALE;
 use max_render::render_scale::{AaMode, PresentationMode, PresentationModeError, RenderScale};
+
+/// One video setting as the `Setup` dialog edits it: the render scale and the
+/// output-layer anti-aliasing mode.
+///
+/// A **presentation** choice, not a saved preference: `settings.jsonc` and the
+/// CLI select the value at launch (`CLI > jsonc > default`), the dialog changes
+/// the running window only and never rewrites the file, so the next launch is
+/// back to the configured value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VideoChoice {
+    /// The render scale (`640x480`, `1280x960`, `2560x1920`).
+    pub render_scale: RenderScale,
+    /// The output-layer anti-aliasing mode; always [`AaMode::Off`] at `S = 1`
+    /// (the pixel-perfect frame has no HD geometry to smooth).
+    pub aa: AaMode,
+}
+
+impl VideoChoice {
+    /// A choice with the `S = 1` rule applied: anti-aliasing is forced off
+    /// unless the scale is HD.
+    pub const fn new(render_scale: RenderScale, aa: AaMode) -> Self {
+        Self {
+            render_scale,
+            aa: if render_scale.is_hd() {
+                aa
+            } else {
+                AaMode::Off
+            },
+        }
+    }
+
+    /// The same choice at another render scale; the anti-aliasing mode is kept
+    /// only if the new scale can carry it (`S > 1`).
+    pub const fn with_scale(self, render_scale: RenderScale) -> Self {
+        Self::new(render_scale, self.aa)
+    }
+
+    /// The same choice with another anti-aliasing mode; `None` at `S = 1`, where
+    /// the mode is forced to [`AaMode::Off`].
+    pub const fn with_aa(self, aa: AaMode) -> Option<Self> {
+        if self.render_scale.is_hd() {
+            Some(Self {
+                render_scale: self.render_scale,
+                aa,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// The presentation mode this choice resolves to (the window scale and
+    /// fullscreen are not part of the dialog).
+    pub const fn is_hd(self) -> bool {
+        self.render_scale.is_hd()
+    }
+
+    /// The [`PresentationSettings`] of this choice, with the window defaults; the
+    /// driver keeps its own window scale/fullscreen and only reads the mode, the
+    /// render scale and `aa`.
+    pub fn presentation(self) -> PresentationSettings {
+        PresentationSettings {
+            mode: if self.render_scale.is_hd() {
+                PresentationMode::Hd
+            } else {
+                PresentationMode::PixelPerfect
+            },
+            render_scale: self.render_scale,
+            aa: self.aa,
+            window_scale: None,
+            fullscreen: false,
+        }
+    }
+}
 
 /// File name of the client window settings.
 pub const SETTINGS_FILE_NAME: &str = "settings.jsonc";

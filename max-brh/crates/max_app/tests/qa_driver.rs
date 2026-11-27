@@ -608,6 +608,8 @@ impl ManualPlay {
                 | Transition::StoryFinished => {
                     panic!("ввод в сессии не меняет режим")
                 }
+                // The video rows belong to the `Setup` dialog of the main menu.
+                Transition::SetVideo(_) => {}
             }
 
             return;
@@ -641,6 +643,9 @@ impl ManualPlay {
                 panic!("стори-экраны в тесте записи не открываются")
             }
             Transition::StartSession(_) => panic!("сеть в тесте записи не поднимается"),
+            // Presentation only: the recorder has no window, the choice lives in
+            // the UI context (`ctx.video`).
+            Transition::SetVideo(video) => self.ctx.video = video,
         }
     }
 

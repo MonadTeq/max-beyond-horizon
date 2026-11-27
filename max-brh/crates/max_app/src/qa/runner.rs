@@ -2431,6 +2431,13 @@ impl QaRunner {
                     "сетевая сессия «{}» в QA-драйвере не поддерживается",
                     request.game_id
                 )),
+                // The video rows of the `Setup` dialog are presentation only: the
+                // driver has no window, so the choice is recorded in the context
+                // (`self.ctx.video`) and nothing is rebuilt.
+                Transition::SetVideo(video) => {
+                    self.ctx.video = video;
+                    Ok(Flow::Continue)
+                }
             };
         }
 
@@ -2583,6 +2590,12 @@ impl QaRunner {
                 "сетевая сессия «{}» в QA-драйвере не поддерживается",
                 request.game_id
             )),
+            // Presentation only and window-less: the QA driver records the choice
+            // in the context (`self.ctx.video`) instead of rebuilding a window.
+            Transition::SetVideo(video) => {
+                self.ctx.video = video;
+                Ok(Flow::Continue)
+            }
         }
     }
 

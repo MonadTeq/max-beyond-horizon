@@ -457,3 +457,161 @@ fn prefs_key_names_roundtrip() {
     assert_eq!(PrefKey::parse("track_unit"), Some(PrefKey::FollowUnit));
     assert_eq!(PrefKey::parse("bogus"), None);
 }
+
+/// A video option through the real dialog hit test (local -> screen).
+fn click_video(dialog: &mut PreferencesDialog, row: VideoRow, index: usize) -> PreferencesAction {
+    let rect = dialog
+        .video_option_screen_rect(row, index)
+        .expect("the Setup dialog has video rows");
+
+    dialog.input(InputEvent::MouseClick(
+        rect.ulx + 1,
+        rect.uly + rect.height / 2,
+    ))
+}
+
+/// The video block sits in the free `SETUPPIC` area: the cells do not overlap,
+/// every caption fits its cell, and the whole block is inside the panel above the
+/// `Done`/`Cancel` row.
+#[test]
+fn setup_video_rows_fit_the_free_block() {
+    let dialog = dialog(PreferencesVariant::Setup);
+    assert!(dialog.has_video_rows());
+    let font = LABEL_FONT.font();
+
+    for row in VideoRow::ALL {
+        let label = video_label_rect(row);
+        assert_eq!(label.ulx, VIDEO_LABEL_X);
+        assert!(label.ulx + label.width < VIDEO_OPTIONS_X);
+        assert!(
+            font.text_width(row.label()) <= label.width,
+            "caption {:?} is {} px wide, the label cell is {}",
+            row.label(),
+            font.text_width(row.label()),
+            label.width
+        );
+
+        let mut right = VIDEO_OPTIONS_X;
+
+        for index in 0..row.option_count() {
+            let rect = video_option_rect(row, index);
+            assert_eq!(rect.ulx, right, "cells follow each other on {row:?}");
+            assert_eq!(rect.uly, VIDEO_TOP + row.index() as i32 * VIDEO_ROW_STEP);
+            assert_eq!(rect.height, VIDEO_ROW_HEIGHT);
+            assert!(
+                font.text_width(&row.option_caption(index)) <= rect.width,
+                "option {index} of {row:?} does not fit"
+            );
+
+            right = rect.ulx + rect.width + VIDEO_OPTION_GAP;
+        }
+
+        assert!(
+            right - VIDEO_OPTION_GAP <= WINDOW_WIDTH - 25,
+            "{row:?} ends at {} (panel is {WINDOW_WIDTH} wide)",
+            right - VIDEO_OPTION_GAP
+        );
+        assert!(label.uly >= 233, "below the last C++ row");
+        assert!(label.uly + label.height <= 383, "above the button row");
+    }
+
+    assert!(
+        VIDEO_HINT_TOP >= VIDEO_TOP + 2 * VIDEO_ROW_STEP,
+        "hints below the rows"
+    );
+    assert!(VIDEO_HINT_TOP + 2 * VIDEO_HINT_HEIGHT <= 383);
+}
+
+/// A click on a resolution reports `Video` with the same scale and keeps the
+/// dialog on the applied value; clicking the running option is inert.
+#[test]
+fn choosing_a_resolution_reports_the_video_choice() {
+    let mut dialog = dialog(PreferencesVariant::Setup);
+    assert_eq!(dialog.video(), VideoChoice::default());
+
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::Resolution, 1),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd2, AaMode::Off))
+    );
+    assert_eq!(dialog.video().render_scale, RenderScale::Hd2);
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::Resolution, 1),
+        PreferencesAction::None
+    );
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::Resolution, 2),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd4, AaMode::Off))
+    );
+}
+
+/// Anti-aliasing needs HD geometry: the row is inert at `S = 1` and reports the
+/// mode in HD; going back to `S = 1` drops it.
+#[test]
+fn antialiasing_needs_hd_and_reports_the_choice() {
+    let mut dialog = dialog(PreferencesVariant::Setup);
+    assert!(!VideoRow::AntiAliasing.is_enabled(dialog.video()));
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::AntiAliasing, 1),
+        PreferencesAction::None
+    );
+    assert_eq!(dialog.video().aa, AaMode::Off);
+
+    dialog.set_video(VideoChoice::new(RenderScale::Hd2, AaMode::Off));
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::AntiAliasing, 1),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd2, AaMode::Fxaa))
+    );
+    assert_eq!(dialog.video().aa, AaMode::Fxaa);
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::AntiAliasing, 2),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd2, AaMode::Smaa))
+    );
+    assert_eq!(
+        click_video(&mut dialog, VideoRow::Resolution, 0),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::PixelPerfect, AaMode::Off))
+    );
+    assert_eq!(
+        dialog.video(),
+        VideoChoice::new(RenderScale::PixelPerfect, AaMode::Off)
+    );
+}
+
+/// The in-game `PREFSPIC` dialog has no video block (its free space is filled by
+/// the `preferences` section), and a click where `SETUPPIC` would have one never
+/// reports a video choice.
+#[test]
+fn the_in_game_dialog_has_no_video_rows() {
+    let mut dialog = dialog(PreferencesVariant::InGame);
+    assert!(!dialog.has_video_rows());
+    assert_eq!(
+        dialog.video_option_screen_rect(VideoRow::Resolution, 0),
+        None
+    );
+
+    let rect = video_option_rect(VideoRow::Resolution, 1);
+    let action = dialog.input(InputEvent::MouseClick(
+        WINDOW_ULX + rect.ulx + 1,
+        WINDOW_ULY + rect.uly + rect.height / 2,
+    ));
+    assert!(!matches!(action, PreferencesAction::Video(_)));
+}
+
+/// The option captions are exactly the shipped resolutions and modes.
+#[test]
+fn setup_video_captions_cover_the_shipped_settings() {
+    let resolutions: Vec<String> = (0..3)
+        .map(|index| VideoRow::Resolution.option_caption(index))
+        .collect();
+    assert_eq!(resolutions, ["640x480", "1280x960", "2560x1920"]);
+
+    let modes: Vec<String> = (0..3)
+        .map(|index| VideoRow::AntiAliasing.option_caption(index))
+        .collect();
+    assert_eq!(modes, ["Off", "FXAA", "SMAA"]);
+
+    // The running option is the one marked in the row.
+    let hd4 = VideoChoice::new(RenderScale::Hd4, AaMode::Smaa);
+    assert_eq!(VideoRow::Resolution.selected(hd4), 2);
+    assert_eq!(VideoRow::AntiAliasing.selected(hd4), 2);
+    assert_eq!(VideoRow::Resolution.selected(VideoChoice::default()), 0);
+}

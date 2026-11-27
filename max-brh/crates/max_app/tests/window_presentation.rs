@@ -1,54 +1,85 @@
-//! Gate of the window resolution switch (points 2 and 3 of the task):
-//! **CLI**, **`settings.jsonc`** and the **in-window menu** must select the same
-//! render scale; a menu choice is presentation only and must not touch the
-//! simulation; the menu bar must not alter the game frame it sits above.
+//! Gate of the window resolution switch: **CLI**, **`settings.jsonc`** and the
+//! game's **`Setup` dialog** (`SETUPPIC`, `max_app::preferences`) must select the
+//! same render scale; a dialog choice is presentation only and must not touch
+//! the simulation.
 //!
-//! The 1:1 golden path is not modified by any of this: the menu bar is window
-//! chrome above the final frame (`window_menu`), the game frame is copied
-//! unchanged below it, and the render scale never reaches `App::render_frame` /
-//! `Screen::render` in `RenderScale::PixelPerfect`.
+//! The 1:1 golden path is not modified by any of this: the window shows the game
+//! frame itself (the SDL window menu and its `640×496` chrome are gone), and the
+//! render scale never reaches `App::render_frame` / `Screen::render` in
+//! `RenderScale::PixelPerfect`.
 
 use std::path::Path;
 
-use max_app::settings::{resolve, CliPresentation, Settings};
-use max_app::ui::InputEvent;
-use max_app::window_menu::{
-    composite_overlay, item_rect, resolution_label, title_rect, MenuItem, MenuPage, WindowMenu,
-    WindowMenuAction, BAR_BACKGROUND, BAR_HEIGHT, RESOLUTIONS,
+use max_app::preferences::{
+    video_option_rect, Preferences, PreferencesAction, PreferencesDialog, PreferencesInfo,
+    PreferencesVariant, VideoRow, WINDOW_ULX, WINDOW_ULY,
 };
+use max_app::settings::{resolve, CliPresentation, Settings, VideoChoice};
+use max_app::ui::InputEvent;
 use max_app::{App, AppConfig};
-use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::presentation::window_points_for;
 use max_render::render_scale::{AaMode, PresentationMode, RenderScale};
 
-fn center(rect: PixelRect) -> (i32, i32) {
-    (rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
+/// The three shipped resolutions in dialog order.
+const RESOLUTIONS: [RenderScale; 3] = [
+    RenderScale::PixelPerfect,
+    RenderScale::Hd2,
+    RenderScale::Hd4,
+];
+
+/// A fresh `Setup` dialog showing the given presentation.
+fn setup_dialog(video: VideoChoice) -> PreferencesDialog {
+    PreferencesDialog::new(
+        PreferencesVariant::Setup,
+        Preferences::default(),
+        PreferencesInfo::default(),
+    )
+    .with_video(video)
 }
 
-fn click(menu: &mut WindowMenu, rect: PixelRect) -> max_app::window_menu::MenuResponse {
-    let (x, y) = center(rect);
+fn click_option(dialog: &mut PreferencesDialog, row: VideoRow, index: usize) -> PreferencesAction {
+    let rect = video_option_rect(row, index);
 
-    menu.handle_input(InputEvent::MouseClick(x, y))
+    dialog.input(InputEvent::MouseClick(
+        WINDOW_ULX + rect.ulx + rect.width / 2,
+        WINDOW_ULY + rect.uly + rect.height / 2,
+    ))
 }
 
-/// `Settings в†’ Resolutions в†’ row(scale)` through the real hit tests.
-fn choose_resolution_in_the_menu(scale: RenderScale) -> WindowMenuAction {
-    let mut menu = WindowMenu::new();
+/// `Resolution → <option>` through the real dialog hit tests.
+fn choose_resolution_in_the_setup_dialog(scale: RenderScale) -> VideoChoice {
+    let index = RESOLUTIONS
+        .iter()
+        .position(|candidate| *candidate == scale)
+        .expect("a shipped resolution");
+    // Start from another scale, so the click really changes the running value
+    // (choosing the current option is inert by design).
+    let current = if scale == RenderScale::PixelPerfect {
+        VideoChoice::new(RenderScale::Hd2, AaMode::Off)
+    } else {
+        VideoChoice::default()
+    };
+    let mut dialog = setup_dialog(current);
+    let action = click_option(&mut dialog, VideoRow::Resolution, index);
 
-    click(&mut menu, title_rect(MenuPage::Settings));
-    click(&mut menu, item_rect(MenuItem::Resolutions));
+    match action {
+        PreferencesAction::Video(choice) => {
+            assert_eq!(
+                dialog.video(),
+                choice,
+                "the dialog keeps showing the applied value"
+            );
 
-    let response = click(&mut menu, item_rect(MenuItem::Resolution(scale)));
-
-    assert!(!menu.is_open(), "choosing a resolution closes the menu");
-
-    response.action
+            choice
+        }
+        other => panic!("the dialog must report the video choice, got {other:?}"),
+    }
 }
 
-/// The three ways of naming a resolution are equivalent: the same `S`, the same
-/// render frame and the same window points for the same window scale.
+/// The four ways of naming a resolution are equivalent: the same `S`, the same
+/// render frame, the same window points and the same `PresentationSettings`.
 #[test]
-fn cli_jsonc_and_menu_select_the_same_resolution() {
+fn cli_jsonc_and_the_setup_dialog_select_the_same_resolution() {
     for scale in RESOLUTIONS {
         let cli = resolve(
             CliPresentation {
@@ -78,8 +109,9 @@ fn cli_jsonc_and_menu_select_the_same_resolution() {
         assert_eq!(from_file.render_scale, scale, "settings.jsonc {scale:?}");
         assert_eq!(from_alias.render_scale, scale, "resolution alias {scale:?}");
         assert_eq!(
-            choose_resolution_in_the_menu(scale),
-            WindowMenuAction::SetResolution(scale)
+            choose_resolution_in_the_setup_dialog(scale).render_scale,
+            scale,
+            "Setup dialog {scale:?}"
         );
 
         assert_eq!(
@@ -92,16 +124,73 @@ fn cli_jsonc_and_menu_select_the_same_resolution() {
         );
         assert_eq!(from_file.mode, cli.mode);
         assert_eq!(
-            window_points_for(640, 480 + BAR_HEIGHT as u32, from_file.render_scale, 1),
-            window_points_for(640, 480 + BAR_HEIGHT as u32, cli.render_scale, 1),
-            "the same render scale must open the same window (game frame + menu bar)"
+            window_points_for(640, 480, from_file.render_scale, 1),
+            window_points_for(640, 480, cli.render_scale, 1),
+            "the same render scale must open the same window (no extra chrome)"
         );
     }
 }
 
+/// A dialog choice is the same `PresentationSettings` pair the launch resolver
+/// produces for the same scale and mode (the window size/fullscreen are not part
+/// of the dialog).
+#[test]
+fn the_dialog_choice_matches_the_resolved_presentation() {
+    for scale in RESOLUTIONS {
+        let resolved = resolve(
+            CliPresentation {
+                hd_scale: Some(scale.scale()),
+                ..CliPresentation::default()
+            },
+            &Settings::default(),
+        )
+        .expect("resolve");
+
+        let choice = choose_resolution_in_the_setup_dialog(scale);
+        let presentation = choice.presentation();
+
+        assert_eq!(presentation.render_scale, resolved.render_scale);
+        assert_eq!(presentation.mode, resolved.mode);
+        // `S = 1` forces anti-aliasing off in both paths.
+        assert_eq!(presentation.aa, resolved.aa);
+        assert_eq!(presentation.aa, AaMode::Off);
+    }
+}
+
+/// The anti-aliasing row follows the output-layer rule: it is inert at `S = 1`
+/// and reports `Off`/`FXAA`/`SMAA` in HD.
+#[test]
+fn the_antialiasing_row_needs_hd_and_reports_the_choice() {
+    let mut pixel_perfect = setup_dialog(VideoChoice::new(RenderScale::PixelPerfect, AaMode::Off));
+    assert_eq!(
+        click_option(&mut pixel_perfect, VideoRow::AntiAliasing, 1),
+        PreferencesAction::None,
+        "S = 1 keeps aa = Off (golden 1:1 byte-for-byte)"
+    );
+
+    let mut hd = setup_dialog(VideoChoice::new(RenderScale::Hd2, AaMode::Off));
+    assert_eq!(
+        click_option(&mut hd, VideoRow::AntiAliasing, 1),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd2, AaMode::Fxaa))
+    );
+    assert_eq!(hd.video().aa, AaMode::Fxaa);
+    assert_eq!(
+        click_option(&mut hd, VideoRow::AntiAliasing, 2),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::Hd2, AaMode::Smaa))
+    );
+
+    // Back to 1:1: the mode is dropped with the HD geometry.
+    assert_eq!(
+        click_option(&mut hd, VideoRow::Resolution, 0),
+        PreferencesAction::Video(VideoChoice::new(RenderScale::PixelPerfect, AaMode::Off))
+    );
+    assert_eq!(hd.video().aa, AaMode::Off);
+}
+
 /// The precedence is enforced end to end: a CLI presentation flag replaces the
 /// file value for the same parameter; the file fills in the parameters the CLI
-/// did not name.
+/// did not name. A dialog choice is a *runtime* override, not a source for the
+/// next launch — it never rewrites `settings.jsonc`.
 #[test]
 fn cli_overrides_the_file_and_the_file_overrides_the_default() {
     let file = Settings::parse(r#"{ "display": { "scale": 4 } }"#).expect("parse");
@@ -134,17 +223,17 @@ fn cli_overrides_the_file_and_the_file_overrides_the_default() {
     assert_eq!(pixel_perfect.render_scale, RenderScale::PixelPerfect);
 }
 
-/// The menu action is pure input; applying it to the window presentation must
-/// not change the application/session state (snapshot is the determinism lock).
+/// The dialog action is pure presentation state: applying it must not change the
+/// application/session state (the snapshot is the determinism lock).
 #[test]
-fn a_menu_resolution_choice_does_not_touch_the_simulation() {
+fn a_setup_video_choice_does_not_touch_the_simulation() {
     let app = App::new(AppConfig::default());
     let before = app.state_ref().snapshot_bytes();
 
     for scale in RESOLUTIONS {
-        let action = choose_resolution_in_the_menu(scale);
+        let choice = choose_resolution_in_the_setup_dialog(scale);
 
-        assert_eq!(action, WindowMenuAction::SetResolution(scale));
+        assert_eq!(choice.render_scale, scale);
         assert_eq!(
             app.state_ref().snapshot_bytes(),
             before,
@@ -153,93 +242,55 @@ fn a_menu_resolution_choice_does_not_touch_the_simulation() {
     }
 }
 
-/// Copies the game frame into the presentation buffer below the menu bar.
-///
-/// This mirrors `WindowPresentation::present`: the game frame is written
-/// unchanged under the `BAR_HEIGHT` band, never stretched or recoloured.
-fn present_game_frame(frame: &RgbaBuffer, bar_pixels: u32) -> RgbaBuffer {
-    let mut present = RgbaBuffer::filled(frame.width(), frame.height() + bar_pixels, Rgba::BLACK);
-    let row_bytes = frame.width() as usize * 4;
-    let target_row = present.width() as usize * 4;
-    let target = present.pixels_mut();
+/// The rows name exactly the resolutions and the anti-aliasing modes the
+/// requirement names.
+#[test]
+fn the_setup_dialog_names_the_five_settings() {
+    let captions: Vec<String> = (0..3)
+        .map(|index| VideoRow::Resolution.option_caption(index))
+        .collect();
+    assert_eq!(captions, ["640x480", "1280x960", "2560x1920"]);
 
-    for row in 0..frame.height() as usize {
-        let source_start = row * row_bytes;
-        let target_start = (bar_pixels as usize + row) * target_row;
+    let aa: Vec<String> = (0..3)
+        .map(|index| VideoRow::AntiAliasing.option_caption(index))
+        .collect();
+    assert_eq!(aa, ["Off", "FXAA", "SMAA"]);
+}
 
-        target[target_start..target_start + row_bytes]
-            .copy_from_slice(&frame.pixels()[source_start..source_start + row_bytes]);
+/// The `SETUPPIC` block is pinned inside the panel: the option cells never leave
+/// the free area, and `PREFSPIC` (no room) has no video rows at all.
+#[test]
+fn the_video_rows_live_in_the_free_setuppic_block() {
+    let setup = setup_dialog(VideoChoice::new(RenderScale::Hd4, AaMode::Smaa));
+    assert!(setup.has_video_rows());
+
+    for row in VideoRow::ALL {
+        for index in 0..row.option_count() {
+            let rect = video_option_rect(row, index);
+
+            assert!(rect.ulx >= 25, "left margin: {rect:?}");
+            assert!(
+                rect.ulx + rect.width <= 375,
+                "right margin: {rect:?} on {row:?}"
+            );
+            assert!(rect.uly >= 233, "below the last C++ row: {rect:?}");
+            assert!(rect.uly + rect.height <= 383, "above the buttons: {rect:?}");
+        }
     }
 
-    present
-}
-
-/// The bar is window chrome above any screen: the game frame (main menu or a
-/// match) is copied byte-for-byte below it, and the menu overlay only paints its
-/// own pixels.
-#[test]
-fn the_menu_bar_keeps_the_underlying_screen_intact() {
-    // A menu-like dark frame and a game-like frame stand in for the two screens.
-    for background in [Rgba::rgb(12, 16, 24), Rgba::rgb(160, 120, 70)] {
-        let frame = RgbaBuffer::filled(640, 480, background);
-        let original = frame.clone();
-        let mut menu = WindowMenu::new();
-
-        // `File` is open; the menu draws in the bar band and, while open, over
-        // the top of the game area.
-        click(&mut menu, title_rect(MenuPage::File));
-
-        let mut present = present_game_frame(&frame, BAR_HEIGHT as u32);
-        let mut overlay = RgbaBuffer::new(640, 480 + BAR_HEIGHT as u32);
-        menu.render_overlay(&mut overlay, RenderScale::PixelPerfect, AaMode::Off);
-        composite_overlay(&overlay, &mut present, 1);
-
-        assert_eq!(
-            frame, original,
-            "the game frame itself must not be modified"
-        );
-        assert_eq!(
-            present.get(320, (BAR_HEIGHT as u32 + 300) as i32),
-            Some(background),
-            "the game pixels below the menu must stay byte-identical"
-        );
-        assert_eq!(
-            present.get(500, 5),
-            Some(BAR_BACKGROUND),
-            "the menu bar itself must be drawn in the band above the frame"
-        );
-    }
-}
-
-/// HD modes composite the bar as a crisp nearest `Г—S` block; the HD game frame
-/// below it keeps its pixels.
-#[test]
-fn the_menu_bar_scales_with_the_hd_frame() {
-    let background = Rgba::rgb(40, 80, 120);
-    let frame = RgbaBuffer::filled(1280, 960, background);
-    let mut menu = WindowMenu::new();
-
-    click(&mut menu, title_rect(MenuPage::Settings));
-
-    let mut present = present_game_frame(&frame, BAR_HEIGHT as u32 * 2);
-    let mut overlay = RgbaBuffer::new(640, 480 + BAR_HEIGHT as u32);
-    menu.render_overlay(&mut overlay, RenderScale::Hd2, AaMode::Off);
-    composite_overlay(&overlay, &mut present, 2);
-
-    // (500,5) logical в†’ (1000,10) pixels: the bar is a 2Г—2 block there.
-    assert_eq!(present.get(1000, 10), Some(BAR_BACKGROUND));
-    assert_eq!(present.get(1001, 11), Some(BAR_BACKGROUND));
-    // Below the bar the HD frame is untouched.
-    assert_eq!(present.get(640, 32 + 600), Some(background));
-    assert_eq!(frame.get(640, 600), Some(background));
-}
-
-/// The labels in the menu are exactly the resolutions the requirement names.
-#[test]
-fn the_menu_names_the_three_resolutions() {
-    assert_eq!(resolution_label(RenderScale::PixelPerfect), "640x480 (1:1)");
-    assert_eq!(resolution_label(RenderScale::Hd2), "1280x960 (x2)");
-    assert_eq!(resolution_label(RenderScale::Hd4), "2560x1920 (x4)");
+    let in_game = PreferencesDialog::new(
+        PreferencesVariant::InGame,
+        Preferences::default(),
+        PreferencesInfo::default(),
+    );
+    assert!(
+        !in_game.has_video_rows(),
+        "PREFSPIC fills the block with its own rows"
+    );
+    assert_eq!(
+        in_game.video_option_screen_rect(VideoRow::Resolution, 0),
+        None
+    );
 }
 
 /// The repository ships a valid, documented template; it must stay readable by

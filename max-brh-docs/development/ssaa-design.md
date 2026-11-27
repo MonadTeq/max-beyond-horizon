@@ -38,7 +38,7 @@
 3. `main.rs` CLI: `--aa` парсинг/валидация.
 4. `render` + `ui`: прокинуть `aa` в `render_frame_hd*`/`render_session_hd`; HD-адаптеры — nearest ×aa в S·aa.
 5. `WindowPresentation`: поле `aa`, `ss_buffer`, ветка `present` (Off=текущий / aa>1=downscale), `set_aa` без переоткрытия окна.
-6. `window_menu.rs`: пункт Antialiasing (Off/2x/4x) + `SetAa`.
+6. `window_menu.rs`: пункт Antialiasing (Off/2x/4x) + `SetAa` (историческое: меню окна убрано, настройки перенесены в диалог `Setup`).
 7. Гейты: `presentation_gate.rs` (aa-детерминизм), `hd_presentation.rs` (aa=off identity + SSAA-golden), `hd_frame_bench.rs --aa`.
 8. Доки: `remaster-hd.md`, шапка `settings.rs`, шаблон `settings.jsonc`.
 

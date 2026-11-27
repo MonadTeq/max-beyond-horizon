@@ -93,7 +93,6 @@ pub mod unitmenu;
 pub mod unitstats;
 pub mod upgrademenu;
 pub mod vision;
-pub mod window_menu;
 pub mod winloss;
 
 use std::fmt;
@@ -193,10 +192,6 @@ pub use unitmenu::{
 };
 pub use unitstats::{UnitStatsAction, UnitStatsAssets, UnitStatsMenu};
 pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
-pub use window_menu::{
-    composite_overlay, resolution_label, to_game_event, MenuItem, MenuPage, MenuResponse,
-    WindowMenu, WindowMenuAction, BAR_HEIGHT, RESOLUTIONS,
-};
 
 /// Application mode (affects only the CLI and diagnostics, not the simulation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
