@@ -875,21 +875,33 @@ pub fn unit_frame_index_with_animation(
     index.min(last)
 }
 
-/// World point of the sprite anchor: the center of the visual cell, for buildings РІР‚вЂќ +31.
+/// World point of the sprite anchor: the simulation pixel of the unit.
 ///
-/// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`) and `Render`
-/// (`unitinfo.cpp:3138`) draw at `unit.x/unit.y`; for `BUILDING` this is the center of
-/// the 2Р“вЂ”2 rectangle, for the others РІР‚вЂќ the cell center.
+/// C++ `UnitInfo::SetPosition` (`unitinfo.cpp:1301`) and `Render` (`:3138`) draw at
+/// `unit.x/unit.y`; the port keeps that pixel in [`crate::App::visual_position`]
+/// (fractional cells, 64 px per cell) and the anchor is the point in world pixels.
+/// A standing unit's pixel is the center of its cell (`+31` for a 2×2 `BUILDING`),
+/// a routed one is wherever `UnitInfo::Move`/`AirPath::Execute` walked it.
+///
+/// A missile is the exception: it is not paced (the oracle flies four air steps per
+/// tick), so the frame interpolates the projectile cell and the anchor is the
+/// center of that cell.
 pub fn unit_anchor_world(unit: &max_core::unit::UnitInfo, visual: (f32, f32)) -> (i32, i32) {
-    let mut x = (visual.0 * 64.0 + 32.0).round() as i32;
-    let mut y = (visual.1 * 64.0 + 32.0).round() as i32;
+    let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
 
-    if unit.is_quad() {
-        x += BUILDING_ANCHOR_OFFSET;
-        y += BUILDING_ANCHOR_OFFSET;
+    if unit.flags & unit_flags::MISSILE_UNIT != 0 {
+        let mut x = (visual.0 * tile + tile / 2.0).round() as i32;
+        let mut y = (visual.1 * tile + tile / 2.0).round() as i32;
+
+        if unit.is_quad() {
+            x += BUILDING_ANCHOR_OFFSET;
+            y += BUILDING_ANCHOR_OFFSET;
+        }
+
+        return (x, y);
     }
 
-    (x, y)
+    ((visual.0 * tile).round() as i32, (visual.1 * tile).round() as i32)
 }
 
 /// Diagnostics of one frame.
@@ -2275,7 +2287,7 @@ impl<D: Dispatcher> App<D> {
             // ahead (`update_visual_units`).
             let (visual_x, visual_y) = self
                 .visual_position(id)
-                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+                .unwrap_or_else(|| crate::visual_target(unit));
             let tile_x = visual_x.round() as i16;
             let tile_y = visual_y.round() as i16;
             let in_range = range.is_some_and(|range| {
@@ -2325,7 +2337,7 @@ impl<D: Dispatcher> App<D> {
             // then the camera converts it to screen coordinates.
             let (grid_x, grid_y) = self
                 .visual_position(visible[index])
-                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+                .unwrap_or_else(|| crate::visual_target(unit));
             // Rocket/torpedo trail particles (`Paths_DrawMissile`) and the
             // projectiles themselves (`AirPath::Execute` РІР‚вЂќ pixel step): C++ spreads
             // only the draw zones, the port keeps this in pixel `x/y`.

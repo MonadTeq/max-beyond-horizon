@@ -22,6 +22,17 @@ use max_core::{TeamId, UnitListKind, UnitOrder, UnitOrderState};
 
 const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 
+/// Frame position of a unit in fractional cells — the simulation **pixel**
+/// (`UnitInfo::x/y`, 64 px per cell) the sprite is drawn on.
+fn simulation_visual(app: &App, id: max_core::UnitId) -> (f32, f32) {
+    let unit = app.state_ref().unit(id).expect("unit");
+
+    (
+        f32::from(unit.x) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+        f32::from(unit.y) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+    )
+}
+
 /// Reference `--demo tests/data/save1_v70.cam --turns 5`, obtained by a run.
 ///
 /// Fixed in the test so that any change of the simulation/save loading
@@ -35,9 +46,15 @@ const SAVE1: &[u8] = include_bytes!("data/save1_v70.cam");
 /// `Ai_CheckEndTurn` (`ai.cpp:249-259`) legitimately starts the computer's
 /// `BeginTurn` on the first demo tick; the task list it builds is part of the
 /// AI digest. Units/turn are unchanged; only the AI bookkeeping digest moved.
-const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xE9F8;
-const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0xAB5A;
-const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0x5ED7;
+///
+/// Re-pinned again (2026-11-27, pixel movement): `UnitInfo::Move`/`AirPath::Execute`
+/// now walk `x/y` **pixel by pixel** at the movement budget instead of one cell per
+/// order pass, so after five ticks the routed units stand on different pixels and
+/// have different `moved`/`grid`/`in_transit` values in the canonical state. The
+/// snapshot layout and the unit count did not change.
+const SAVE1_FIVE_TICK_STATE_DIGEST: u16 = 0xFFE8;
+const SAVE1_FIVE_TICK_STATE_CHECKSUM: u16 = 0xA96F;
+const SAVE1_FIVE_TICK_REPLAY_CRC: u16 = 0xC93D;
 const SAVE1_FIVE_TICK_UNITS: usize = 312;
 const SAVE1_FIVE_TICK_TURN: i32 = 1;
 const SAVE1_FIVE_TICK_SNAPSHOT_LEN: usize = 790_012;
@@ -381,12 +398,9 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     let command = command_move_linear(id, from, to, UnitOrder::Move, UnitOrderState::Init);
     app.universe_mut().apply_now(command);
 
-    // Without dt — a snapshot: the visual position equals the simulation one.
+    // Without dt — a snapshot: the visual position equals the simulation pixel.
     app.update_visual_units(0.0);
-    assert_eq!(
-        app.visual_position(id),
-        Some((f32::from(from.x), f32::from(from.y)))
-    );
+    assert_eq!(app.visual_position(id), Some(simulation_visual(&app, id)));
 
     for _ in 0..6 {
         app.tick();
@@ -400,10 +414,9 @@ fn visual_units_smoothly_catch_up_and_snap_without_dt() {
     );
 
     app.update_visual_units(0.0);
-    let grid = app.state_ref().unit(id).expect("юнит").grid;
     assert_eq!(
         app.visual_position(id),
-        Some((f32::from(grid.x), f32::from(grid.y))),
+        Some(simulation_visual(&app, id)),
         "dt=0 (headless/QA) — без интерполяции"
     );
 }
@@ -449,20 +462,22 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     app.update_visual_units(0.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
-    // The first tick: a step east; the next step is east too — the sprite and
-    // the simulation face east.
+    // The first tick: the hull starts walking east in pixels; the cell is still
+    // (10,10) because the border is crossed half a cell later.
     app.tick();
-    assert_eq!(
-        app.state_ref().unit(id).expect("танк").grid,
-        Point::new(11, 10)
+    let walked = app.state_ref().unit(id).expect("танк").clone();
+    assert_eq!(walked.grid, Point::new(10, 10));
+    assert!(
+        i32::from(walked.x) > 10 * 64 + 32,
+        "танк идёт на восток по пикселям"
     );
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
-    // The next cell is a budget window away (`MOVEMENT_CELLS_PER_SECOND`): tick
-    // until the tank enters (12,10). At the boundary the simulation has already
-    // started turning north (`GroundPath::UpdateUnitAngle`: E → NE), and the frame
-    // draws exactly the simulation state — including that one-step turn.
+    // The next cell border is one budget window away (`MOVEMENT_CELLS_PER_SECOND`):
+    // tick until the tank enters (12,10). The rotation toward the next segment
+    // (north) happens on the cell center (`Move()` at `moved == 64`), so the hull
+    // still faces east on the border and turns E → NE on the center.
     let mut ticks = 0;
     while app.state_ref().unit(id).map(|unit| unit.grid) != Some(Point::new(12, 10)) {
         app.tick();
@@ -470,33 +485,37 @@ fn visual_angle_stays_on_the_segment_being_animated() {
         ticks += 1;
         assert!(ticks < 64, "танк не вошёл в (12,10)");
     }
+    while app.state_ref().unit(id).map(|unit| unit.x) != Some(12 * 64 + 32) {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+        ticks += 1;
+        assert!(ticks < 64, "танк не дошёл до центра (12,10)");
+    }
     assert_eq!(app.state_ref().unit(id).expect("танк").angle, 1);
     assert_eq!(
         app.visual_angle(id),
         Some(1),
-        "the sprite is the simulation state: after the boundary turn it faces NE"
+        "the sprite is the simulation state: after the center turn it faces NE"
     );
 
-    // Every frame draws the sprite on the simulation cell: the movement is a cell
-    // hop per budget window, and the angle never runs ahead of the drawn cell.
+    // Every frame draws the sprite on the simulation pixel: the movement is 4-5
+    // pixels per budget window, and the angle never runs ahead of the drawn pixel.
     let mut previous = app.visual_position(id).expect("танк");
     for frame in 0..120 {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
-        let unit = app.state_ref().unit(id).expect("танк");
         let now = app.visual_position(id).expect("танк");
 
         assert_eq!(
             now,
-            (f32::from(unit.grid.x), f32::from(unit.grid.y)),
-            "кадр {frame}: спрайт обязан стоять в клетке симуляции ({:?})",
-            unit.grid
+            simulation_visual(&app, id),
+            "кадр {frame}: спрайт обязан стоять на пикселе симуляции"
         );
 
         let dx = now.0 - previous.0;
         let dy = now.1 - previous.1;
-        // A hop is one cell per budget window; the hull may already have made its
-        // 45° boundary step toward the next segment (`GroundPath::UpdateUnitAngle`),
+        // A hop is a few pixels along one axis; the hull may already have made its
+        // 45° center step toward the next segment (`GroundPath::UpdateUnitAngle`),
         // so the drawn angle is at most one octant away from the hop direction.
         if dx.abs() > 1e-4 || dy.abs() > 1e-4 {
             let step_x = i32::from(dx > 0.0) - i32::from(dx < 0.0);
@@ -513,7 +532,7 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     }
 
     // We finish the frame without simulation ticks: the sprite is already on the
-    // last simulation cell (the frame never interpolates a walked route).
+    // last simulation pixel (the frame never interpolates a walked route).
     for _ in 0..60 {
         app.update_visual_units(1.0 / 60.0);
     }
@@ -523,8 +542,8 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     assert_eq!(unit.angle, 0);
     assert_eq!(
         app.visual_position(id),
-        Some((12.0, 8.0)),
-        "по завершении маршрута визуальная позиция совпадает с клеткой"
+        Some(simulation_visual(&app, id)),
+        "по завершении маршрута визуальная позиция совпадает с пикселем"
     );
     assert_eq!(app.visual_angle(id), Some(0));
 }
@@ -555,10 +574,10 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         UnitOrderState::Init,
     ));
 
-    // `dt = 0` — the starting snapshot (exactly the simulation cell).
+    // `dt = 0` — the starting snapshot (exactly the simulation pixel).
     app.update_visual_units(0.0);
     let start = app.visual_position(id).expect("юнит жив");
-    assert_eq!(start, (f32::from(from.x), f32::from(from.y)));
+    assert_eq!(start, simulation_visual(&app, id));
 
     // We wait for the tick on which the simulation takes the first route step: the `Init`
     // order may first request a path (`NEW_ORDER`/`ISSUING_PATH`).
@@ -573,20 +592,19 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "юнит не сдвинулся за {ticks} тиков"
     );
 
-    // A frame with real `dt` draws the sprite on the simulation cell: the
+    // A frame with real `dt` draws the sprite on the simulation pixel: the
     // simulation itself walks the route at the movement-budget pace, so the frame
     // never interpolates a walked route.
     app.update_visual_units(1.0 / 60.0);
     let first = app.visual_position(id).expect("юнит жив");
-    let first_grid = app.state_ref().unit(id).expect("юнит").grid;
     assert_eq!(
         first,
-        (f32::from(first_grid.x), f32::from(first_grid.y)),
-        "the sprite is the simulation position: {first:?} vs {first_grid:?}"
+        simulation_visual(&app, id),
+        "the sprite is the simulation pixel: {first:?}"
     );
 
-    // The next visible movement is one budget window away: tick and draw until the
-    // sprite enters the next cell; between the windows the frame stays still.
+    // The next visible pixel step is one budget window away: tick and draw until the
+    // sprite moves; the frame stays still between the windows.
     app.viewport_mut().center_on_grid(from.x, from.y);
     let first_frame = app.render_frame();
     let mut second = first;
@@ -595,11 +613,10 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
         let now = app.visual_position(id).expect("юнит жив");
-        let grid = app.state_ref().unit(id).expect("юнит").grid;
         assert_eq!(
             now,
-            (f32::from(grid.x), f32::from(grid.y)),
-            "every frame draws the simulation cell"
+            simulation_visual(&app, id),
+            "every frame draws the simulation pixel"
         );
         if now != first {
             second = now;
@@ -634,8 +651,13 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
     let target = app.state_ref().unit(id).expect("юнит жив").grid;
     assert_eq!(
         app.visual_position(id),
-        Some((f32::from(target.x), f32::from(target.y))),
-        "по завершении маршрута визуальная позиция совпадает с целевой клеткой"
+        Some(simulation_visual(&app, id)),
+        "по завершении маршрута визуальная позиция совпадает с пикселем цели"
+    );
+    assert_eq!(
+        app.state_ref().unit(id).expect("юнит").grid,
+        target,
+        "the route ends on the target cell"
     );
 }
 

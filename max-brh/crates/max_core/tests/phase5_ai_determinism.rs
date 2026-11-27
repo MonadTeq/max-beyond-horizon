@@ -103,7 +103,14 @@ const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x1240, 0x755E);
 /// Repinned (2026-11-27, movement tempo): the scout walks at the visual pace, so
 /// it covers fewer cells in the fixed rounds and its position/path (and the AI
 /// task state that follows it) are part of the digest.
-const RECON_CRCS: (u16, u16, u16) = (0x0CCE, 0x3EB2, 0x775F);
+///
+/// Repinned again (2026-11-27, pixel movement): `UnitInfo::Move` advances `x/y` by
+/// 4-5 pixels per pass and recomputes `grid` when the pixel crosses the cell
+/// border, so at the fixed round boundaries the scout has a different `grid`
+/// (half a cell earlier), `moved` and `in_transit` — all snapshot fields carried by
+/// the packet-45 checksum and the state digest. The replay digest follows the same
+/// position.
+const RECON_CRCS: (u16, u16, u16) = (0x90D4, 0x0184, 0x26BE);
 
 /// A.2: clan `AyersHand` resolves to `Missiles`; the base plays six rounds.
 fn strategy_scenario() -> GameUniverse {

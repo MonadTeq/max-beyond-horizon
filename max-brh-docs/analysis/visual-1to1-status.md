@@ -3575,7 +3575,7 @@ IN_TRANSITION). Golden переснят осознанно: изменились
 |---|---|---|
 | `click_scroll` | `GameManager_SetGridOffset` (`game_manager.cpp:6351-6357`): смещение принимается только при `click_scroll == 0` **или** зажатой ЛКМ | `scroll::ScrollState::step` + `App::update_scroll`: при `click_scroll` скролл идёт только «при удержании», иначе по наведению; кнопки панели (`End Turn`/`Files`/`Preferences`) приоритетнее, как порядок `windows[]` в `GameManager_ProcessInput` (`:6527-6563`) |
 | `quick_scroll` | `GameManager_ZoomMainMapView` (`:1711-1721`) → `GridStepLevel`; `ScrollMainMapView` (`:1652-1677`) накапливает `ScrollRate += GridStepLevel * ScrollRateLimit` | шаг камеры = `quick_scroll` **экранных** пикселей за кадр 30 Гц (`grid_step` сокращается с переводом мир↔экран); дробная часть переносится, `ScrollRateLimit ≤ 1.5` (`:1636-1650`); в `Scroll Speed` 4..128 |
-| `fast_movement` | `UnitInfo::Move` (`unitinfo.cpp:1742`): `velocity += FastMovement ? 2 : 1`; `Paths_CalculateStep` (`paths.cpp:297`): `max_velocity` 16 вместо 8 | скорость визуального маршрута ×2 (`VISUAL_CELLS_PER_SECOND * 2` в `App::update_visual_units`). Симуляция порта двигает юнита на клетку за тик, поэтому настройка видна ровно как визуальный эффект оригинала; число шагов/очков движения не меняется |
+| `fast_movement` | `UnitInfo::Move` (`unitinfo.cpp:1742`): `velocity += FastMovement ? 2 : 1`; `Paths_CalculateStep` (`paths.cpp:297`): `max_velocity` 16 вместо 8 | бюджет движения (`max_core::game`) ×2: 8-9 пикселей за проход вместо 4-5 (`DRAIN_UNITS_PER_TICK` → `movement_units_per_tick`), клетка проходится за ~7.5 тиков; число шагов/очков движения не меняется. Кадровый маршрут-fallback масштабирует ту же скорость (`visual_target` = `x/y`, поэтому при движущемся маршруте он не используется) |
 | `follow_unit` | `UnitInfo::FollowUnit` (`unitinfo.cpp:3597-3606`): turn-based / ход команды / ход закончен, юнит виден и вне окна карты → `MAP_VIEW_CENTER` | `App::follow_selected_unit`: `PlayMode::TurnBased || team == player || finished_turn`, `visible_to_team`, `!map_viewport().is_tile_visible` → `center_on_grid`; вызывается после тика локальной партии (и в кадре сетевого `UiSessionSink`) |
 | `auto_select` | `GameManager_AutoSelectNext` (`game_manager.cpp:1779-1792`), `IsInteractable` (`:3230-3265`), `SelectNextUnit` (`:1544-1566`) | `App::auto_select_after_tick` (снимок приказа до тика): завершение `MOVE`/`MOVE_TO_UNIT`/`MOVE_TO_ATTACK` или гибель выделенного → если юнит не интерактивен, `select_next_unit`; `is_interactable` — порт условий (`speed`, `shots` + враг в радиусе `RANGE`, `BUILD/SELECT_SITE`), `next_valid_unit` — `Access_IsValidNextUnit`/`Access_SeekNextUnit` в порядке `Access_UnitsLists` + fallback `GetFirstRelevantUnit`. После `BuildMenu` — `App::auto_select_after_order` (`units_manager.cpp:825-826`). В сетевой партии хук — в `App::tick` |
 | `enemy_halt` | `Access_UpdateMapStatus` (`access.cpp:827-868`): обнаружен враг класса, который юнит/группа может атаковать, `order != ORDER_AWAIT` → `UnitEventEmergencyStop` | `max_core`: поле `GameState::enemy_halt` (в C++ — `settings`, в порте — вход симуляции); `access::target_class` — порт `Access_GetTargetClass` (`:724`); в `GameState::update_map_status_unit` накапливается `enemy_target_class` и ставится `UnitEvent::EmergencyStop` (обрабатывается `process_orders` → `stop_movement`). Ядро по умолчанию `false` (юнит-тесты), `App` пишет значение из `Preferences` при старте/загрузке — `settings.cpp` default `enemy_halt=1` |
@@ -6207,3 +6207,72 @@ combat_aircraft_left_click_attacks_a_foreign_unit` (мышь: `Attack:`, зак�
 * `qa_run move-input.qa` + `qa_golden_check` — PASS, 7 кадров, максимум 0.184 %
   (`game-turn2`);
 * оракулы `max-cpp-port/` и `max-original/` не изменялись.
+
+---
+
+## 53. Пиксельное движение юнитов — дефект «дёрганое движение» (2026-11-27)
+
+**Симптом.** После бюджета движения (`c8f906b`) симуляция двигалась целыми
+клетками (1 клетка за 15 тиков), а спрайт рисовался на sim-позиции: юнит прыгал по
+центрам клеток каждые 0.25 с. Воздушный юнит прыгал на 16 px раз в ~4 тика.
+
+**Оракул (не менялся).** `UnitInfo::Move` (`unitinfo.cpp:1730-1892`): `x/y`
+продвигается на `velocity` пикселей за тик (до `max_velocity` 8, `fast_movement`
+×2), `grid_x = x >> 6` пересчитывается при пересечении границы клетки, на
+`moved == 64` клетка завершается (`path->UpdateUnitAngle`, `IN_PROGRESS`), спрайт
+рисуется в `x/y`. `AirPath::Execute` (`airpath.cpp:219-244`): `m_step += m_delta`,
+`position = (m_step >> 16) + m_start`, `grid = x >> 6` — прямые пиксельные шаги
+(16 px по доминирующей оси).
+
+**Исправление.**
+
+* `max_core::game` — бюджет остаётся 4 клетки/с (`MOVEMENT_CELLS_PER_SECOND`,
+  `DRAIN_UNITS_PER_PIXEL = 15`, `DRAIN_UNITS_PER_TICK = 64`), но пейсит
+  **пиксели**: `movement_pixels` отдаёт 4-5 целых пикселей за проход (8-9 при
+  `fast_movement`), `spend_movement` списывает по факту; кредит копится не больше
+  двух тиков (`DRAIN_CREDIT_CAP`), поэтому блокировка не даёт рывка. Бюджет и
+  подшаг воздуха — вне снапшота.
+* `unit_order::unit_move` — `x/y += DIRECTION_OFFSETS[angle] * pixels`,
+  `moved` 0..64, `grid = x >> 6` на границе клетки (там же реакции/перехват), конец
+  клетки — `SetPosition` (точный центр); остановка в середине клетки доводит её до
+  центра и не разворачивает шаг обратно.
+* `unit_order::air_path_execute` — шаг `AirPath` размазан по тикам через
+  `game::AirCredit` (та же fixed-point интеграция `m_delta`, что и в
+  `m_step`), `grid = x >> 6`, конец сегмента — центр целевой клетки;
+  `Paths_TakeStep` по-прежнему раз в клетку.
+* `max_app` — `visual_target` = `x/y / 64` для всех юнитов, `unit_anchor_world` =
+  пиксель (`visual * 64`), спрайт = sim-пиксель на каждом кадре; ракеты остаются
+  на интерполируемой клетке (их полёт не пейсится). Стартовая точка кадра —
+  `x/y` даже без `update_visual_units` (fallback `visual_target`).
+
+**CRC.** Промежуточные `x/y` — поля снапшота; кроме них у движущегося юнита в
+фиксированный момент отличаются `moved`, `in_transit` и (на границе) `grid`.
+Перепин: `recon` (`phase5_ai_determinism.rs`, `ai-port-status.md`), demo-дайджест
+`SAVE1.CAM` (`max_app`), остальные сценарии ИИ не изменились.
+
+**Тесты.**
+
+* `max_core/tests/pixel_movement.rs` — наземный маршрут: шаг 4-5 px, без прыжков
+  на клетку, сквозь не-центры, прилёт в центр; воздушный: шаг по оси ≤ 5 px, без
+  старого 16-px шага, прилёт в центр; перехват — на границе клетки (`moved` 32..63).
+* `max_app/tests/pixel_motion_frame.rs` — кадровый: спрайт = `x/y` на каждом
+  кадре, шаг ≤ 5 px (наземный и воздушный), прилёт в центр клетки.
+* Обновлены кадровые ожидания (`visual_position` теперь `x/y / 64`): intercept-*,
+  app, move_input, local_sp, vision_scan, visual_sync_snap, render/lib-тесты.
+
+**Валидация.**
+
+* `cargo check --workspace` — зелёный;
+* `cargo nextest run --workspace --no-default-features` — 2528 passed, 6 skipped;
+* `qa_run move-input.qa` — PASS (5437 кадров, 7 кадров); `qa_golden_check` —
+  PASS, максимум 0.370 % (`game-turn2`, порог 1 %);
+* `qa_run combat-tb.qa` — PASS (489 кадров, 11 кадров); `qa_golden_check` — PASS,
+  максимум 0.357 % (`combat-tb-explosion-end`);
+* `host-smoke.ps1 -Clients 2` и `-Clients 3` — PASS (10 ходов, `desyncs=0`,
+  `barrier_timeouts=0`, общий `shared:` CRC совпал);
+* оракулы `max-cpp-port/` и `max-original/` не изменялись.
+
+*Примечание к голденам:* статичные HUD-области дают одинаковые 637 пикселей
+(0.207 %) и в `move-input`, и в `combat-tb` — это дрейф, не связанный с движением
+(совпадает между разными сценариями), ниже порога; кадры с движением/взрывами —
+≤ 0.370 %.

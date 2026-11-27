@@ -89,14 +89,13 @@ fn a_position_change_without_a_walked_route_snaps() {
         app.update_visual_units(FRAME_SECONDS);
 
         let unit = app.state_ref().unit(id).cloned().expect("unit");
-        // The frame target the branch snaps to: the cell of a ground unit, the
-        // `x/y` pixel over 64 of an aircraft (`visual_target`).
-        let target = if is_pixel_positioned(&unit) {
+        // The frame target the branch snaps to: the simulation pixel of every unit
+        // (`x/y / 64`; a ground unit that was written directly stands on the cell
+        // center, i.e. `grid + 0.5`).
+        let target = {
             let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
 
             (f32::from(unit.x) / tile, f32::from(unit.y) / tile)
-        } else {
-            (f32::from(unit.grid.x), f32::from(unit.grid.y))
         };
         let jump = (target.0 - start.0).abs().max((target.1 - start.1).abs());
 

@@ -89,11 +89,13 @@ fn spotting_an_enemy_shows_the_radar_ping_notice() {
     );
 }
 
-/// Moves the **simulation** cell one step east (the frame is not touched): this is
-/// what a 60 Hz tick does while the sprite still walks the previous segment.
+/// Moves the **simulation** one cell east (the frame is not touched): this is what a
+/// tick of `UnitInfo::Move` does — the pixel is snapped to the next cell center
+/// (`SetPosition`), which is also the frame target (`visual_target`).
 fn step_simulation(app: &mut App, mover: UnitId) {
     let mut unit = app.state_ref().unit(mover).cloned().expect("юнит");
     unit.grid = Point::new(unit.grid.x + 1, unit.grid.y);
+    max_core::unit_order::update_grid_position(&mut unit);
     app.universe_mut().write_unit(mover, unit);
 }
 
@@ -128,9 +130,9 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
     let ex = i32::from(enemy_unit.grid.x);
     let ey = i32::from(enemy_unit.grid.y);
     assert_eq!(
-        app.visual_position(mover).map(|(x, _)| x.round()),
-        Some(21.0),
-        "the sprite is drawn on the walked simulation cell"
+        app.visual_position(mover).map(|(x, _)| x),
+        Some(21.5),
+        "the sprite is drawn on the walked simulation pixel (cell 21 center)"
     );
     assert!(
         enemy_unit.is_visible_to_team(TeamId::RED),
@@ -148,6 +150,7 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
     {
         let mut unit = app.state_ref().unit(mover).cloned().expect("юнит");
         unit.grid = Point::new(16, 20);
+        max_core::unit_order::update_grid_position(&mut unit);
         app.universe_mut().write_unit(mover, unit);
     }
     app.update_visual_units(1.0 / 60.0);
@@ -168,9 +171,9 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
     }
 
     assert_eq!(
-        app.visual_position(mover).map(|(x, _)| x.round()),
-        Some(16.0),
-        "спрайт дошёл до клетки"
+        app.visual_position(mover).map(|(x, _)| x),
+        Some(16.5),
+        "спрайт дошёл до центра клетки"
     );
     assert!(
         !app.vision().covers(ex, ey),
@@ -213,6 +216,7 @@ fn the_fog_closes_when_the_scanner_leaves() {
     // The simulation moves the scanner far away (a teleport for the frame too).
     let mut unit = app.state_ref().unit(mover).cloned().expect("юнит");
     unit.grid = Point::new(20, 30);
+    max_core::unit_order::update_grid_position(&mut unit);
     app.universe_mut().write_unit(mover, unit);
 
     let snapshot = app.snapshot();

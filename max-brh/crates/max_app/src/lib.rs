@@ -698,10 +698,10 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// Visual unit positions in cells (fractional) — drawing only.
     ///
     /// A routed unit is drawn on its simulation position (the simulation itself
-    /// walks the route at [`VISUAL_CELLS_PER_SECOND`], one cell per movement-budget
-    /// window); this map still carries the fallback position of a unit whose
-    /// position changed without a walked route (save/load, transport/state
-    /// synchronization). These values are not part of the CRC/snapshot.
+    /// walks `x/y` 4-5 pixels per movement-budget window); this map still carries
+    /// the fallback position of a unit whose position changed without a walked
+    /// route (save/load, transport/state synchronization). These values are not part
+    /// of the CRC/snapshot.
     visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
     /// Last known frame target of a unit in cells (fractional): the simulation cell
     /// of a ground/sea unit, the **pixel** position (`unit->x/y / 64`) of an
@@ -1007,39 +1007,40 @@ pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 /// synchronization: the visual position is set to the target without animation.
 ///
 /// The movement budget does **not** reach this branch: a routed unit is drawn on the
-/// simulation position (`max_core::MOVEMENT_CELLS_PER_SECOND`, one cell per budget
-/// window). A save/load or a transport synchronization keeps the snap: the route is
+/// simulation pixel (`max_core::MOVEMENT_CELLS_PER_SECOND`, 4-5 pixels per tick).
+/// A save/load or a transport synchronization keeps the snap: the route is
 /// unknown there.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
 
 /// Frame target of a unit in fractional cells — where the sprite has to be drawn.
 ///
-/// * Ground/sea units: the simulation cell. The simulation itself walks a cell at
-///   the movement-budget pace (`max_core::MOVEMENT_CELLS_PER_SECOND`).
-/// * Aircraft: the **pixel** position from `AirPath::Execute` (`airpath.cpp:219-242`,
-///   `unit->x/y`, one cell = 64 px). The air path is a straight line in pixels, so
-///   a routed aircraft is drawn at the simulation pixel (`render::air_pixel_anchor`
-///   draws at `fraction * 64`); the fallback route of an un-walked position write
-///   passes the same line, not a cell stair.
-fn visual_target(unit: &UnitInfo) -> (f32, f32) {
-    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
-        let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
-
-        (f32::from(unit.x) / tile, f32::from(unit.y) / tile)
-    } else {
-        (f32::from(unit.grid.x), f32::from(unit.grid.y))
+/// * Ground/sea and air units: the **simulation pixel** `UnitInfo::x/y` divided by
+///   `GFX_MAP_TILE_SIZE` — the simulation walks routed units pixel by pixel
+///   (`unit_order::unit_move`, `unit_order::air_path_execute`) at the movement-budget
+///   pace (`max_core::MOVEMENT_CELLS_PER_SECOND`), so `x/y` is smooth in every
+///   frame and the sprite simply follows it.
+/// * Missiles: their `x/y` is the projectile pixel, but the oracle draws them
+///   through the frame route (they are not paced — `Paths_DrawMissile` batches four
+///   air steps per tick); the frame interpolates the projectile cell
+///   (`unit.grid`) through [`App::visual_paths`].
+pub(crate) fn visual_target(unit: &UnitInfo) -> (f32, f32) {    if unit.flags & unit_flags::MISSILE_UNIT != 0 {
+        return (f32::from(unit.grid.x), f32::from(unit.grid.y));
     }
+
+    let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
+
+    (f32::from(unit.x) / tile, f32::from(unit.y) / tile)
 }
 
 /// Whether the frame draws this unit on the simulation position — the port of the
 /// oracle's single sprite state.
 ///
-/// The simulation itself walks every routed unit a cell at the movement-budget pace
-/// (`max_core::MOVEMENT_CELLS_PER_SECOND`), so the sprite **is** the simulation:
-/// [`UnitInfo::route_pending`] selects those units, of every team and in every
-/// phase. Projectiles are excluded: the oracle flies them by `max_velocity` pixel
-/// steps, far faster than one cell per budget window, and they carry no route
-/// sprite — the frame keeps their pixel route in [`App::visual_paths`].
+/// The simulation itself walks every routed unit **pixel by pixel** at the
+/// movement-budget pace (`max_core::MOVEMENT_CELLS_PER_SECOND`), so the sprite
+/// **is** the simulation: [`UnitInfo::route_pending`] selects those units, of every
+/// team and in every phase. Projectiles are excluded: the oracle flies them by
+/// `max_velocity` pixel steps — far faster than the budget — and they carry no
+/// route sprite, so the frame keeps their pixel route in [`App::visual_paths`].
 fn draws_on_simulation_position(unit: &UnitInfo) -> bool {
     unit.route_pending() && unit.flags & unit_flags::MISSILE_UNIT == 0
 }
@@ -1086,36 +1087,26 @@ fn advance_visual_route(
 /// sprite ([`render::unit_anchor_world`]/[`render::air_pixel_anchor`] without the
 /// hover bob and the construction-tape shift).
 ///
-/// Ground/sea: the center of the visual cell (`UnitInfo::SetPosition`,
-/// `unitinfo.cpp:1301`; the 2×2 layout center is `+31`). Aircraft: the air-path
-/// pixel — `AirPath::Execute` draws the plane at `unit->x/y`
-/// (`airpath.cpp:219-242`) and [`App::visual_position`] stores that pixel in cells
-/// (64 px per cell); the simulation itself paces the air route, so for a routed
-/// aircraft this is the simulation pixel.
+/// Ground/sea and air: the simulation pixel `x/y` (the movement budget walks it,
+/// and `UnitInfo::SetPosition` keeps a standing unit on the cell center; a 2×2
+/// building on `+31`). Missiles: their frame route is cell-based, so the anchor is
+/// the center of the interpolated cell.
 ///
 /// Used by the frame to align effects with the sprite without touching the
 /// simulation: `UnitsManager_StartExplosion` aligns the blast with `unit->x/y`
 /// (`units_manager.cpp:3991-3994`), which in the port is this frame point.
 fn frame_pixel_anchor(unit: &UnitInfo, visual: (f32, f32)) -> (f32, f32) {
-    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
-        (
-            (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round(),
-            (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round(),
-        )
-    } else {
-        let mut x = (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32 + 32.0).round();
-        let mut y = (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32 + 32.0).round();
+    let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
 
-        // `UnitInfo::SetPosition` (`unitinfo.cpp:1301-1311`): a 2×2 building is
-        // centered on its footprint (`+31`), exactly as `update_grid_position` sets
-        // the simulation pixel.
-        if unit.is_quad() {
-            x += crate::render::BUILDING_ANCHOR_OFFSET as f32;
-            y += crate::render::BUILDING_ANCHOR_OFFSET as f32;
-        }
-
-        (x, y)
+    if unit.flags & unit_flags::MISSILE_UNIT != 0 {
+        // A missile's visual position is its interpolated cell (`visual_target`).
+        return (
+            (visual.0 * tile + tile / 2.0).round(),
+            (visual.1 * tile + tile / 2.0).round(),
+        );
     }
+
+    ((visual.0 * tile).round(), (visual.1 * tile).round())
 }
 
 /// One step of a unit visual route: the point in cells and the movement direction
@@ -3904,7 +3895,7 @@ impl<D: Dispatcher> App<D> {
                 self.visual_units
                     .get(&id)
                     .copied()
-                    .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y))),
+                    .unwrap_or_else(|| visual_target(unit)),
             );
         }
 
@@ -4003,7 +3994,7 @@ impl<D: Dispatcher> App<D> {
     /// C++ decrements `UnitInfo::speed` in `Paths_CalculateStep` as the sprite walks
     /// a cell, so the number in `GameManager_UpdateInfoDisplay` falls together with
     /// the sprite. The port simulation paces the route itself (the movement budget,
-    /// one cell per window) and the frame draws the sprite on the simulation cell, so
+    /// pixels per window) and the frame draws the sprite on the simulation pixel, so
     /// the panel reads the simulation value. The fallback frame route
     /// ([`VisualStep::speed`]) still adds the points of the cells the sprite has not
     /// walked yet. Frame-only, not part of the CRC.
@@ -4461,18 +4452,18 @@ impl<D: Dispatcher> App<D> {
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
 
-            // A routed unit is drawn on the simulation position itself: the
-            // simulation paces the route by the movement budget
-            // (`max_core::MOVEMENT_CELLS_PER_SECOND`, one cell per budget window), so
+            // A routed unit is drawn on the simulation pixel itself: the
+            // simulation walks the route by the movement budget
+            // (`max_core::MOVEMENT_CELLS_PER_SECOND`, 4-5 pixels per pass), so
             // there is nothing to interpolate. No frame-side route report, no snap,
             // no corpse walk: a shot, an intercept or a death of such a unit happens
-            // on the cell the player sees. The closing team keeps the same rule for
-            // its last cell (the closing state ends on the tick that enters it).
+            // on the pixel the player sees. The closing team keeps the same rule for
+            // its last pixel.
             //
             // The tick that **ends** the route (arrival, intercept halt) clears the
-            // path, so the unit is no longer `route_pending`: the last one-cell step
+            // path, so the unit is no longer `route_pending`: the last walked pixel
             // must be drawn at the simulation position too, not interpolated as a
-            // save/load teleport. A one-cell goal change is always a walked step.
+            // save/load teleport. A small goal change is always a walked step.
             //
             // Projectiles keep the frame route: their pixel flight is much faster
             // than the budget, and they carry no route sprite (see
@@ -4490,7 +4481,10 @@ impl<D: Dispatcher> App<D> {
                 *goal = target;
                 queue.clear();
                 *last_speed = unit.speed;
-                anchors.insert(id, (target.0.round() as i16, target.1.round() as i16));
+                // The frame's vision anchor: the cell the sprite's **pixel** stands
+                // in (`grid_x = x >> 6`); the visual position is pixel / 64, so the
+                // floor is that cell even mid-transition.
+                anchors.insert(id, (target.0.floor() as i16, target.1.floor() as i16));
                 continue;
             }
 
@@ -4651,9 +4645,12 @@ impl<D: Dispatcher> App<D> {
             // is carried over to the next route points — the speed is constant.
             advance_visual_route(current, queue, budget);
 
-            // The anchor of the frame's vision: the cell the sprite stands in
-            // (the same rounding the renderer uses for the drawing cell).
-            anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
+            // The anchor of the frame's vision: the cell the sprite's pixel stands in
+            // (`grid_x = x >> 6`, as in `Access_UpdateMapStatus`).
+            anchors.insert(
+                id,
+                (current.0.floor() as i16, current.1.floor() as i16),
+            );
         }
 
         // Presentation corpses whose unit the simulation already removed: the walk

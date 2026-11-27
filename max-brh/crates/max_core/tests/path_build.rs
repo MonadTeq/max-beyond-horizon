@@ -122,9 +122,11 @@ fn engineer_builds_the_whole_path_while_material_lasts() {
         "the Path order keeps the route"
     );
 
-    // Five cells (10..=14): each one takes one production turn.
+    // Five cells (10..=14): each one takes one production turn; the hull walks a
+    // cell in one movement-budget window (`MOVEMENT_CELLS_PER_SECOND`, 15 ticks),
+    // so a turn gives it enough ticks to complete the next cell.
     for _ in 0..6 {
-        turn(&mut state, 6);
+        turn(&mut state, 20);
     }
 
     assert_eq!(

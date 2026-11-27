@@ -287,9 +287,14 @@ fn fast_movement_doubles_the_visual_unit_speed() {
         app.update_visual_units(0.0);
     }
 
-    /// Frames until the sprite is drawn on the destination cell.
+    /// Frames until the sprite is drawn on the destination cell center.
     fn frames_to_arrival(app: &mut App, id: max_core::UnitId, destination: Point) -> usize {
-        let target = (f32::from(destination.x), f32::from(destination.y));
+        // The route ends exactly on the simulation pixel of the cell center
+        // (`UnitInfo::SetPosition`: `grid * 64 + 32`), which the frame draws.
+        let target = (
+            f32::from(destination.x) + 0.5,
+            f32::from(destination.y) + 0.5,
+        );
 
         for frame in 1..=600 {
             app.local_update(1.0 / 60.0);

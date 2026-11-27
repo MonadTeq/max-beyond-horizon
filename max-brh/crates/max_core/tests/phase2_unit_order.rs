@@ -282,17 +282,19 @@ fn move_request_path_and_emergency_stop() {
     );
 
     assert!(
-        run_until(&mut state, 8, |state| {
+        run_until(&mut state, 64, |state| {
             state
                 .snapshot()
                 .unit(unit)
-                .is_some_and(|unit| unit.grid == Point::new(11, 10))
+                .is_some_and(|unit| unit.x == 11 * 64 + 32 && unit.moved == 0)
         }),
         "the tank did not traverse the first cell"
     );
 
-    // Emergency stop in the middle of the route.
+    // Emergency stop on the center of the entered cell (`ORDER_STATE_IN_PROGRESS`;
+    // mid-cell the oracle only drops the remaining steps and finishes the cell).
     let unit_ref = state.unit_mut(unit).expect("unit");
+    assert_eq!(unit_ref.state, UnitOrderState::InProgress);
     unit_order::stop_movement(unit_ref, false);
     {
         let unit = state.snapshot().unit(unit).expect("unit");
@@ -325,7 +327,9 @@ fn order_cycle_is_bit_identical() {
         state.set_order(fighter, UnitOrder::TakeOff, UnitOrderState::Init);
         ticks(&mut state, 7);
         order_move(&mut state, fighter, Point::new(15, 10));
-        assert!(run_until(&mut state, 64, |state| {
+        // Five cells at the movement-budget pace (`MOVEMENT_CELLS_PER_SECOND`) need
+        // about 75 ticks.
+        assert!(run_until(&mut state, 200, |state| {
             state
                 .snapshot()
                 .unit(fighter)

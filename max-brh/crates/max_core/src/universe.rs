@@ -2340,7 +2340,8 @@ impl<D: Dispatcher> GameUniverse<D> {
         // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
         // (`game_manager.cpp:488-490`, `:549-558`). The walk itself is paced by the
         // simulation-wide movement budget (`GameState::movement_budget`) on every
-        // tick, so the simulation walks a cell exactly when the frame draws it. The
+        // tick, so the simulation walks a pixel exactly when the frame draws it (the
+        // cell changes on the pixel border). The
         // machine runs on the tick that finishes the walk, i.e. the next team starts
         // after the movement — as in the oracle, where the same loop ends the drain.
         let pending = self.state.begin_end_turn_movement(team);

@@ -131,12 +131,12 @@ fn explosion_of(app: &App) -> Option<UnitId> {
     })
 }
 
-/// `UnitInfo::SetPosition` pixel of a frame position — the sprite anchor of a
-/// ground unit (`unitinfo.cpp:1301`).
+/// Sprite pixel of a frame position — the simulation pixel (`UnitInfo::x/y`) the
+/// frame draws a routed unit on (the visual position is `x/y / 64`).
 fn cell_pixel(position: (f32, f32)) -> (i32, i32) {
     (
-        (position.0 * 64.0 + 32.0).round() as i32,
-        (position.1 * 64.0 + 32.0).round() as i32,
+        (position.0 * 64.0).round() as i32,
+        (position.1 * 64.0).round() as i32,
     )
 }
 
@@ -250,10 +250,12 @@ fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
         app.update_visual_units(1.0 / 60.0);
 
         let now = app.visual_position(mover);
-        let simulation = app
-            .state_ref()
-            .unit(mover)
-            .map(|unit| (f32::from(unit.grid.x), f32::from(unit.grid.y)));
+        let simulation = app.state_ref().unit(mover).map(|unit| {
+            (
+                f32::from(unit.x) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+                f32::from(unit.y) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+            )
+        });
 
         if let (Some(previous), Some(now)) = (previous, now) {
             if closing && !resynced {
@@ -261,7 +263,7 @@ fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
                 assert_eq!(
                     Some(now),
                     simulation,
-                    "the re-synchronization must land on the simulation cell"
+                    "the re-synchronization must land on the simulation pixel"
                 );
             } else {
                 let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
@@ -339,7 +341,7 @@ fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
     }
 
     let death_cell = death_cell.expect("the intercept killed the mover");
-    let _death_pixel = death_pixel.expect("the intercept killed the mover");
+    let death_pixel = death_pixel.expect("the intercept killed the mover");
     assert!(
         frames_after_death > 0,
         "the explosion was observed while its animation played"
@@ -349,12 +351,13 @@ fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
         "the blast outlives the hull it was spawned on"
     );
 
-    // The last drawn sprite is exactly on the halt cell — the point where the attack
-    // started, not a cell in mid-air ahead of it.
+    // The last drawn sprite is exactly on the death pixel (the halt point where the
+    // attack started), not on a cell ahead of it.
     let last = last_drawn.expect("the hull is drawn until its blast ends");
-    assert!(
-        (last.0 - death_cell.x as f32).abs() < 1e-3 && (last.1 - death_cell.y as f32).abs() < 1e-3,
-        "the last drawn sprite is on the halt cell {death_cell:?}: {last:?}"
+    assert_eq!(
+        cell_pixel(last),
+        death_pixel,
+        "the last drawn sprite is on the halt pixel {death_pixel:?} (cell {death_cell:?})"
     );
     assert!(
         app.visual_position(mover).is_none(),

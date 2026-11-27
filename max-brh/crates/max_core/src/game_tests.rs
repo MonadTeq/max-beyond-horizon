@@ -848,8 +848,9 @@ fn give_straight_route(state: &mut GameState, id: UnitId, steps: usize, speed: u
 }
 
 /// The movement budget paces a route in the **active turn** (not only while a team
-/// turn closes): one cell per `MOVEMENT_CELLS_PER_SECOND` window — a steady state of
-/// 15 ticks per cell at 60 Hz — and the turn-close machine is not started.
+/// turn closes): the simulation walks **pixels** at `MOVEMENT_CELLS_PER_SECOND` —
+/// 4-5 pixels per tick — and crosses a cell border every 15 ticks at 60 Hz. The
+/// turn-close machine is not started.
 #[test]
 fn the_movement_budget_paces_routes_in_the_active_turn() {
     let (mut state, id, _) = tank_state();
@@ -886,11 +887,11 @@ fn the_movement_budget_paces_routes_in_the_active_turn() {
         "four movement points walk four cells: {entries:?}"
     );
     assert!(
-        entries[0] <= 2,
-        "the first cell is entered on the first budget window: {entries:?}"
+        entries[0] <= 8,
+        "the first cell border is crossed on the eighth budget window: {entries:?}"
     );
 
-    // Steady state: one cell per 15 ticks — four cells per second at 60 Hz.
+    // Steady state: a cell border every 15 ticks — four cells per second at 60 Hz.
     for pair in entries.windows(2).skip(1) {
         assert_eq!(
             pair[1] - pair[0],
@@ -901,6 +902,11 @@ fn the_movement_budget_paces_routes_in_the_active_turn() {
 
     let unit = state.unit(id).expect("unit");
     assert_eq!(unit.grid, Point::new(14, 10));
+    assert_eq!(
+        (unit.x, unit.y),
+        ((14 * 64 + 32) as u16, (10 * 64 + 32) as u16),
+        "the route ends on the center of the last cell"
+    );
     assert_eq!(unit.orders, UnitOrder::Await);
     assert!(unit.path.is_none(), "the route is dropped on arrival");
     assert!(
@@ -909,46 +915,54 @@ fn the_movement_budget_paces_routes_in_the_active_turn() {
     );
 }
 
-/// The budget **pauses** the order pass between two cells: the unit stays in the
-/// cell it entered and no longer reports a pending order.
+/// The budget advances the hull **pixel by pixel**: every pass moves 4-5 pixels
+/// (one budget window), the order stays `IN_TRANSITION`, and the cell completes
+/// exactly on its center — never a whole-cell jump.
 #[test]
-fn the_movement_budget_pauses_the_pass_between_cells() {
+fn the_movement_budget_walks_a_cell_in_pixel_steps() {
     let (mut state, id, _) = tank_state();
-    give_straight_route(&mut state, id, 3, 3);
+    give_straight_route(&mut state, id, 2, 2);
 
-    // First window: the first cell is entered.
-    state.tick();
-    assert_eq!(state.unit(id).expect("unit").grid, Point::new(11, 10));
-    assert!(
-        state.movement_paused(id),
-        "the credit is spent: the next pass must wait for the budget"
+    let start = i32::from(state.unit(id).expect("unit").x);
+    let mut previous = start;
+    let mut steps = Vec::new();
+
+    for _ in 0..15 {
+        state.tick();
+
+        let unit = state.unit(id).expect("unit");
+        let x = i32::from(unit.x);
+        steps.push(x - previous);
+        previous = x;
+    }
+
+    for (index, step) in steps.iter().enumerate() {
+        assert!(
+            (4..=5).contains(step),
+            "tick {}: the hull moves {step} pixels, not one budget window (4-5): {steps:?}",
+            index + 1
+        );
+    }
+    assert_eq!(
+        steps.iter().sum::<i32>(),
+        64,
+        "15 budget windows walk exactly one cell: {steps:?}"
     );
 
-    // The following ticks are paused — no cell and no second pass.
-    let paused = state.unit(id).expect("unit").clone();
-    for _ in 0..10 {
-        state.tick();
-        let unit = state.unit(id).expect("unit");
-        assert_eq!(
-            unit.grid, paused.grid,
-            "a paused unit does not enter a cell"
-        );
-        assert_eq!(
-            unit.state, paused.state,
-            "a paused unit keeps its order state"
-        );
-        assert!(state.movement_paused(id));
-    }
-
-    // A budget window later the next cell is entered.
-    for _ in 0..10 {
-        state.tick();
-    }
-    assert_eq!(state.unit(id).expect("unit").grid, Point::new(12, 10));
+    let unit = state.unit(id).expect("unit");
+    assert_eq!(unit.grid, Point::new(11, 10), "the border was crossed");
+    assert_eq!(
+        (unit.x, unit.y),
+        ((11 * 64 + 32) as u16, (10 * 64 + 32) as u16),
+        "the cell completes exactly on its center"
+    );
+    assert_eq!(unit.moved, 0, "no half-cell offset is left over");
+    assert!(!unit.in_transit, "the transition is over");
 }
 
-/// The movement budget is **not** part of the snapshot/CRC: a credit value the
-/// simulation keeps between the pass windows changes nothing in the canonical bytes.
+/// The movement budget is **not** part of the snapshot/CRC: the credit (and the
+/// air sub-step phase) the simulation keeps between the passes changes nothing in
+/// the canonical bytes.
 #[test]
 fn the_movement_budget_is_not_part_of_the_snapshot() {
     let (mut state, id, _) = tank_state();
@@ -958,16 +972,20 @@ fn the_movement_budget_is_not_part_of_the_snapshot() {
     state.tick();
 
     assert!(!state.movement_budget.is_empty(), "the unit is walking");
+
+    let unit = state.unit(id).expect("unit");
     assert!(
-        state.movement_paused(id),
-        "the pass is waiting for the budget"
+        i32::from(unit.x) > 10 * 64 + 32 && i32::from(unit.x) < 11 * 64 + 32,
+        "the hull is between two cell centers: x = {}",
+        unit.x
     );
+    assert_eq!(unit.moved, 8, "two budget windows of pixels");
 
     let with_budget = state.snapshot_bytes();
     state.movement_budget.clear();
     assert_eq!(
         with_budget,
         state.snapshot_bytes(),
-        "the budget only spaces the passes: it adds no field to the digest"
+        "the budget only paces the pixels: it adds no field to the digest"
     );
 }

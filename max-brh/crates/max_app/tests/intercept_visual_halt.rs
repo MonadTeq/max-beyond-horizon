@@ -212,19 +212,22 @@ fn a_surviving_unit_steps_to_the_halt_cell_with_its_simulation_cell() {
             break;
         };
         let now = app.visual_position(mover).expect("mover position");
-        let cell = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+        // The simulation **pixel** in cells — what the frame draws.
+        let sim = (
+            f32::from(unit.x) / 64.0,
+            f32::from(unit.y) / 64.0,
+        );
         let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
 
-        // The sprite is already on the simulation cell when the turn closes: the
+        // The sprite is already on the simulation pixel when the turn closes: the
         // simulation paces the movement in the active turn too. The first closing
         // frame is still checked as a phase boundary — it must be on the simulation
-        // cell, and every following frame steps a single cell.
+        // pixel, and every following frame steps a few pixels.
         if closing && !resynced {
             resynced = true;
-            assert!(
-                (now.0 - cell.0).abs() < 1e-3 && (now.1 - cell.1).abs() < 1e-3,
-                "frame {steps}: the re-synchronization must land on the simulation \
-                 cell {cell:?}: {now:?}"
+            assert_eq!(
+                now, sim,
+                "frame {steps}: the re-synchronization must land on the simulation pixel"
             );
         } else {
             assert!(
@@ -240,11 +243,11 @@ fn a_surviving_unit_steps_to_the_halt_cell_with_its_simulation_cell() {
             "frame {steps}: the sprite moved backwards: {previous:?} -> {now:?}"
         );
 
-        // During the turn close the sprite **is** the simulation cell.
+        // During the turn close the sprite **is** the simulation pixel.
         if closing {
-            assert!(
-                (now.0 - cell.0).abs() < 1e-3 && (now.1 - cell.1).abs() < 1e-3,
-                "frame {steps}: the sprite must be on the simulation cell {cell:?}: {now:?}"
+            assert_eq!(
+                now, sim,
+                "frame {steps}: the sprite must be on the simulation pixel"
             );
             if step > 1e-4 {
                 hops += 1;
@@ -260,25 +263,26 @@ fn a_surviving_unit_steps_to_the_halt_cell_with_its_simulation_cell() {
         );
         assert!(unit.hits > 0, "the mover was killed: {unit:?}");
 
-        if now == cell && unit.path.is_none() {
-            halt = Some(cell);
+        if unit.path.is_none() {
+            halt = Some(now);
             break;
         }
     }
 
-    let halt = halt.expect("the sprite must reach the halt cell");
+    let halt = halt.expect("the sprite must reach the halt pixel");
     assert_eq!(
         app.visual_position(mover),
         Some(halt),
-        "the sprite stops exactly on the halt cell"
+        "the sprite stops exactly on the halt pixel"
     );
+    let halted = app.state_ref().unit(mover).cloned().expect("halted unit");
     assert_eq!(
-        app.state_ref().unit(mover).map(|unit| unit.grid),
-        Some(Point::new(halt.0 as i16, halt.1 as i16)),
+        halted.grid,
+        Point::new(halt.0.floor() as i16, halt.1.floor() as i16),
         "the halt cell is the simulation cell"
     );
     // The intercept left a multi-cell gap between the sprite and the halt cell; the
-    // drain covered it cell by cell.
+    // drain covered it pixel by pixel.
     let gap = halt.0 - start.0;
     assert!(
         gap > 1.0,
@@ -323,10 +327,12 @@ fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
         frames += 1;
 
         let now = app.visual_position(mover);
-        let simulation = app
-            .state_ref()
-            .unit(mover)
-            .map(|unit| (f32::from(unit.grid.x), f32::from(unit.grid.y)));
+        let simulation = app.state_ref().unit(mover).map(|unit| {
+            (
+                f32::from(unit.x) / 64.0,
+                f32::from(unit.y) / 64.0,
+            )
+        });
 
         if let (Some(previous), Some(now)) = (previous, now) {
             if closing && !resynced {
@@ -334,7 +340,7 @@ fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
                 assert_eq!(
                     Some(now),
                     simulation,
-                    "frame {frames}: the re-synchronization must land on the simulation cell"
+                    "frame {frames}: the re-synchronization must land on the simulation pixel"
                 );
             } else {
                 let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
@@ -361,12 +367,12 @@ fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
             );
             if unit.hits == 0 {
                 saw_death = true;
-                // The cell the killing shot landed on: the halt cell.
-                death_cell = Some((f32::from(unit.grid.x), f32::from(unit.grid.y)));
-                // The sprite is drawn on that cell already.
+                // The pixel the killing shot landed on: the halt pixel.
+                death_cell = Some((f32::from(unit.x) / 64.0, f32::from(unit.y) / 64.0));
+                // The sprite is drawn on that pixel already.
                 assert_eq!(
                     now, death_cell,
-                    "frame {frames}: the killing shot lands on the cell the sprite is drawn on"
+                    "frame {frames}: the killing shot lands on the pixel the sprite is drawn on"
                 );
             }
         }

@@ -889,7 +889,7 @@ pub fn draw_unit_overlays<D: Dispatcher>(
 
         let visual = app
             .visual_position(id)
-            .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+            .unwrap_or_else(|| crate::visual_target(unit));
         let (rect, size) = unit_screen_rect(unit, visual, viewport);
 
         // `DrawMap_RenderUnitDisplays` is inside the C++ `SELECTABLE` check;

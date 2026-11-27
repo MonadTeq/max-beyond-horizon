@@ -50,13 +50,14 @@
 //!
 //! # Divergences from C++
 //!
-//! 1. **Movement** (DESIGN В§5.1, divergence 3): C++ moves the unit pixel by pixel
+//! 1. **Movement** (DESIGN 5.1, divergence 3): C++ moves the unit pixel by pixel
 //!    (`UnitInfo::Move`: `velocity`/`moved`/`GFX_MAP_TILE_SIZE`) and in a network
-//!    game completes at most one cell per tick. `max_core` is lockstep, and
-//!    [`unit_move`] completes exactly one cell per tick: the path step is considered
-//!    traversed, the offset is subtracted from the current `PathStep` (as in C++
-//!    `Move()`: `path_steps[step_index]->x -= offset_x`). The pixel animation вЂ”
-//!    P5.
+//!    game completes at most one cell per tick. `max_core` is lockstep and walks the
+//!    **same pixels**: [`unit_move`] advances the hull by the per-tick movement
+//!    budget (`GameState::movement_pixels`, four cells per second at 60 Hz),
+//!    recomputes `grid = x >> 6` on the cell border and completes the cell on its
+//!    center. `velocity` (the oracle's acceleration) is replaced by the constant
+//!    budget pace. Aircraft walk the same budget in sub-steps of `AirPath`.
 //! 2. `Paths_CalculateStep` is ported in full (`speed` spend, `move_fraction`,
 //!    `shots`, `max_velocity`), so the per-turn movement range matches C++
 //!    with the same attributes.
@@ -848,6 +849,12 @@ pub(crate) fn position_in_tape(state: &mut GameState, unit: &mut UnitInfo, move_
                     .y
                     .wrapping_add(tape_leave_shift(enter_y, i32::from(leave.y))),
             );
+            // C++ derives the cell from the pixel (`grid_x = x / GFX_MAP_TILE_SIZE`,
+            // after four 8 px `OffsetDrawZones` steps). The port keeps the shift in
+            // the frame (`tape_center_offset`), so the simulation cell changed
+            // without the pixel: align the pixel with the new cell — the pixel is
+            // authoritative for the following `UnitInfo::Move` (`x/y` + `moved`).
+            update_grid_position(unit);
             refresh_screen(unit);
 
             // back in the middle of its site after a failed way off, the builder
@@ -1198,9 +1205,10 @@ pub fn paths_calculate_step(
 /// `m_length % max_velocity == 0` step (`airpath.cpp:272-278`): `m_length` counts
 /// quarter-cells (`Paths_GetAirPath`: `length = steps_distance * max_velocity`,
 /// `max_velocity = 4`), so exactly **one** `speed` point is spent per crossed cell.
-/// In the port's one-cell-per-tick model ([`air_path_execute`]) the call therefore
-/// happens once per cell вЂ” the aircraft flies `speed` cells, then the `speed == 0`
-/// check at the top of `AirPath::Execute` (`airpath.cpp:186-199`) stops it.
+/// In the port the call happens when a whole `AirPath` step completes
+/// ([`air_path_execute`] spreads one step over several pixel ticks), so the
+/// aircraft still flies `speed` cells, then the `speed == 0` check at the top of
+/// `AirPath::Execute` (`airpath.cpp:186-199`) stops it.
 ///
 /// Unlike [`paths_calculate_step`] (ground: `Paths_CalculateStep`, `paths.cpp:292`)
 /// there is no `move_fraction`/`max_velocity` recalculation and no "not enough
@@ -1451,8 +1459,9 @@ fn path_execute(ctx: &mut OrderContext<'_>) -> bool {
         Some(UnitPath::Ground(_)) => ground_path_execute(ctx),
         Some(UnitPath::Air(path)) => {
             // `AirPath::Execute` (`airpath.cpp:175-295`) for a projectile
-            // (`MISSILE_UNIT`) steps **pixel by pixel** along the line `m_start_* в†’
-            // `m_end_*`; `unit_move` (a cell per tick) does not apply to projectiles.
+            // (`MISSILE_UNIT`) steps **pixel by pixel** along the line `m_start_* ->
+            // `m_end_*`; `unit_move` (the paced pixel cell transition of a unit) does
+            // not apply to projectiles, and the budget does not pace them.
             if ctx.unit.flags & MISSILE_UNIT != 0 {
                 missile_path_execute(ctx, &path);
                 false
@@ -1646,18 +1655,18 @@ fn ground_path_execute(ctx: &mut OrderContext<'_>) -> bool {
 /// (`UnitsManager_GetTargetAngle` of the segment), so a diagonal route is a
 /// straight line in the air, not the 8-direction cell stair of the ground path.
 ///
-/// The port's movement model advances one **cell of the route** per order tick
-/// (divergence 1 in the module header, [`unit_move`]): `unit->max_velocity` pixel
-/// steps make one cell (`Paths_GetAirPath` sets `max_velocity = 4`,
-/// `paths.cpp:97`), and `Paths_TakeStep(unit, 1)` is called on exactly the C++
-/// condition `m_length % unit->max_velocity == 0` вЂ” one movement point per cell.
-/// The per-turn range is therefore unchanged; only the **trajectory** (and the
-/// pixel position in the snapshot) changes, which legitimately changes the CRC of
-/// a scenario with air movement.
+/// The movement is paced **per pixel**, not per cell: one `AirPath` step
+/// (`unit->max_velocity` quarter-cell steps, `Paths_GetAirPath`, `paths.cpp:97`)
+/// is spread over several simulation ticks by the movement budget
+/// ([`GameState::movement_pixels`], [`crate::game::AirCredit`]), so the aircraft
+/// advances the same 4-5 pixels per tick as a ground unit and the drawing never
+/// sees a 16-pixel hop. `Paths_TakeStep(unit, 1)` is still called on exactly the
+/// C++ condition `m_length % unit->max_velocity == 0` after a step completes —
+/// one movement point per cell, so the per-turn range is unchanged.
 ///
-/// The C++ `do { вЂ¦ } while (unit invisible)` loop only batches steps for an
+/// The C++ `do { } while (unit invisible)` loop only batches steps for an
 /// invisible unit; `GameManager_PlayerTeam` is a local UI field, so the port takes
-/// the single per-tick step (DESIGN В§6.1).
+/// the single per-tick step (DESIGN 6.1).
 ///
 /// Returns `false` always: the cell is not completed by [`unit_move`] вЂ” the pixel
 /// position is the state, so `InTransition` is not entered for aircraft.
@@ -1701,36 +1710,35 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
 
     let mut path = *path;
     let max_velocity = i32::from(ctx.unit.max_velocity).max(1);
-    let steps = if ctx.unit.is_air() { max_velocity } else { 1 };
     let mut stepped = false;
 
-    for _ in 0..steps {
-        if path.length <= 0 {
-            break;
-        }
+    // The movement budget paces the pixel substeps: at most one budget window per
+    // tick (`MOVEMENT_CELLS_PER_SECOND` cells/s), and every pixel is charged.
+    let pixels = ctx.world.movement_pixels(ctx.id);
+    let mut budget = i32::try_from(pixels).unwrap_or(i32::MAX);
+    let mut advanced = 0i32;
 
-        if ctx.unit.is_air() && path.length == 1 {
-            // `airpath.cpp:272-278`: the last pixel step halves the deltas (and
-            // re-extends the length when the half step still moves a pixel) so the
-            // unit lands on the segment end instead of overshooting it.
-            let dx = (path.delta_x >> 16).abs() >> 1;
-            let dy = (path.delta_y >> 16).abs() >> 1;
+    while budget > 0 && path.length > 0 {
+        // One phase query borrows the budget table; the borrow ends with the block
+        // so the unit/path updates below are free.
+        let (take, position_x, position_y, steps) =
+            match ctx.world.air_credit(ctx.id, &path, &ctx.unit) {
+                Some(credit) => {
+                    let remaining = credit.remaining_pixels(&path).max(1);
+                    let take = remaining.min(budget);
+                    let (x, y, steps) = credit.advance(take);
 
-            if dx != 0 || dy != 0 {
-                path.length += 1;
-            }
+                    (take, x, y, steps)
+                }
+                None => break,
+            };
 
-            path.delta_x >>= 1;
-            path.delta_y >>= 1;
-        }
+        budget -= take;
+        advanced += take;
+        stepped = true;
 
-        path.step_x = path.step_x.wrapping_add(path.delta_x);
-        path.step_y = path.step_y.wrapping_add(path.delta_y);
-
-        let position_x = (path.step_x >> 16) + i32::from(path.start_x);
-        let position_y = (path.step_y >> 16) + i32::from(path.start_y);
-
-        // `UnitInfo::OffsetDrawZones` + `grid_x = x >> 6` (`airpath.cpp:238-242`).
+        // `OffsetDrawZones` + `grid_x = x >> 6` (`airpath.cpp:238-242`): the pixel
+        // is the drawn position, the cell only follows it.
         ctx.unit.x = position_x.clamp(0, i32::from(u16::MAX)) as u16;
         ctx.unit.y = position_y.clamp(0, i32::from(u16::MAX)) as u16;
         ctx.unit.grid = Point::new(
@@ -1738,17 +1746,50 @@ fn air_path_execute(ctx: &mut OrderContext<'_>, path: &AirPath) -> bool {
             (position_y >> 6).clamp(0, i32::from(crate::geo::MAP_HEIGHT) - 1) as i16,
         );
 
-        path.length -= 1;
-        stepped = true;
+        // A whole `AirPath` step: the counters advance exactly as in
+        // `m_step_x += m_delta_x; --m_length` (`airpath.cpp:219-244`).
+        for _ in 0..steps.min(i32::from(path.length)) {
+            path.step_x = path.step_x.wrapping_add(path.delta_x);
+            path.step_y = path.step_y.wrapping_add(path.delta_y);
+            path.length -= 1;
 
-        // `Paths_TakeStep(unit, 1)` (`airpath.cpp:272-278`): one `speed` point per
-        // `max_velocity` pixel steps, i.e. one point per crossed cell. Without it
-        // an aircraft flew its whole `speed` allowance on every order and never ran
-        // out of it within a turn (defect 3 of the manual 1.2 run).
-        if ctx.unit.is_air() && i32::from(path.length) % max_velocity == 0 {
-            paths_take_step(&mut ctx.unit, 1, ctx.world.real_time);
+            // `Paths_TakeStep(unit, 1)` (`airpath.cpp:272-278`): one `speed` point
+            // per `max_velocity` pixel steps, i.e. one point per crossed cell.
+            // Without it an aircraft flew its whole `speed` allowance on every order
+            // and never ran out of it within a turn (defect 3 of the manual 1.2 run).
+            if ctx.unit.is_air() && i32::from(path.length) % max_velocity == 0 {
+                paths_take_step(&mut ctx.unit, 1, ctx.world.real_time);
+            }
         }
     }
+
+    if path.length <= 0 {
+        // The last pixel lands exactly on the segment endpoint: `m_step` now holds
+        // the whole segment (`airpath.cpp` `Paths_FinishMove` reads the cell, the
+        // port also snaps the pixel). On the destination cell the endpoint is its
+        // center (`UnitInfo::SetPosition`): the fixed-point `m_delta` truncates the
+        // step by up to a pixel, so the landing pixel is snapped to the center.
+        let mut end_x = i32::from(path.start_x) + (path.step_x >> 16);
+        let mut end_y = i32::from(path.start_y) + (path.step_y >> 16);
+
+        if (end_x >> 6) == i32::from(path.end_x) && (end_y >> 6) == i32::from(path.end_y) {
+            end_x = i32::from(path.end_x) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+            end_y = i32::from(path.end_y) * GFX_MAP_TILE_SIZE + GFX_MAP_TILE_SIZE / 2;
+        }
+
+        ctx.unit.x = end_x.clamp(0, i32::from(u16::MAX)) as u16;
+        ctx.unit.y = end_y.clamp(0, i32::from(u16::MAX)) as u16;
+        ctx.unit.grid = Point::new(
+            (end_x >> 6).clamp(0, i32::from(crate::geo::MAP_WIDTH) - 1) as i16,
+            (end_y >> 6).clamp(0, i32::from(crate::geo::MAP_HEIGHT) - 1) as i16,
+        );
+
+        if let Some(credit) = ctx.world.air_credit(ctx.id, &path, &ctx.unit) {
+            credit.complete_segment(&path);
+        }
+    }
+
+    ctx.world.spend_movement(ctx.id, i64::from(advanced));
 
     if let Some(UnitPath::Air(stored)) = ctx.unit.path.as_mut() {
         *stored = path;
@@ -2052,9 +2093,29 @@ fn spawn_missile_trail(
     }
 }
 
-/// `UnitInfo::Move` (`unitinfo.cpp:1730`) вЂ” completing a cell transition.
+/// `UnitInfo::Move` (`unitinfo.cpp:1730`) — one pixel step of a cell transition,
+/// paced by the movement budget.
 ///
-/// In P4 one call completes one cell (divergence 1 in the module header).
+/// The oracle walks the hull **pixel by pixel** and enters the next cell only when
+/// `moved` reached `GFX_MAP_TILE_SIZE`: `OffsetDrawZones(distance_x, distance_y)`
+/// moves `x/y`, `grid_x = x >> 6` recomputes the cell from the pixel, and the last
+/// step completes the cell (`path->UpdateUnitAngle`, `IN_PROGRESS`). The speed of
+/// the walk is the `velocity` acceleration (`unitinfo.cpp:1741-1747`); the port
+/// substitutes the per-tick movement budget
+/// ([`GameState::movement_pixels`], `MOVEMENT_CELLS_PER_SECOND` cells per second at
+/// 60 Hz) — the same pixels per tick the drawing used to interpolate with, now
+/// walked by the simulation itself.
+///
+/// # The cell border
+///
+/// `grid_x = x >> 6` changes the unit's cell when its **pixel** crosses the border
+/// between two cells — half a cell before the sprite reaches the next center. That
+/// is the oracle's moment for `Hash_MapHash.Remove/Add` and
+/// `Access_UpdateMapStatus`, so the port's reaction/interception check
+/// ([`GameState::check_movement_interception`], triggered by the grid change in
+/// [`GameState::write_unit`]) fires on the same border. The cell transition itself
+/// ends on the next center (`moved == 64`), where `x/y` is snapped exactly to
+/// `UnitInfo::SetPosition`.
 fn unit_move(ctx: &mut OrderContext<'_>) {
     if access::is_engaged(ctx.world, &ctx.unit) {
         return;
@@ -2067,30 +2128,70 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     }
 
     let offset = DIRECTION_OFFSETS[(ctx.unit.angle & 7) as usize];
-    let grid = ctx.unit.grid;
-    let target = Point::new(grid.x + offset.x, grid.y + offset.y);
-    if ctx.world.map.index(target.x, target.y).is_none() {
-        ctx.blocked_on_path_request(true);
+
+    // Whole pixels of this pass: the movement budget (the oracle's `velocity`),
+    // clipped to the end of the cell so the hull lands exactly on the center.
+    let pixels = ctx.world.movement_pixels(ctx.id);
+    let moved = i32::from(ctx.unit.moved);
+    let remaining = GFX_MAP_TILE_SIZE - moved;
+    let step = i32::try_from(pixels)
+        .unwrap_or(remaining)
+        .clamp(0, remaining);
+
+    if step == 0 {
         return;
     }
 
-    ctx.unit.grid = target;
-    // `UnitInfo::Move` (`unitinfo.cpp:1801-1803`) recomputes `grid_x/grid_y` from
-    // the new pixel position; the port's cell-per-tick model enters the whole cell,
-    // so the pixel position is the cell center (`UnitInfo::SetPosition`). The pixel
-    // position must follow the cell: `UnitsManager_StartExplosion` aligns the
-    // explosion with the dead unit's `x/y` (see [`update_grid_position`]).
-    update_grid_position(&mut ctx.unit);
+    // The destination cell is only known while the hull still is in its source
+    // cell: at `moved >= 32` the pixel has already crossed the border and the grid
+    // is the entered cell, so `grid + offset` would be the cell beyond it. The
+    // transition itself was validated by `ground_path_execute` on the source cell.
+    if moved == 0 {
+        let target = Point::new(ctx.unit.grid.x + offset.x, ctx.unit.grid.y + offset.y);
+
+        if ctx.world.map.index(target.x, target.y).is_none() {
+            ctx.blocked_on_path_request(true);
+            return;
+        }
+    }
+
+    let distance_x = i32::from(offset.x) * step;
+    let distance_y = i32::from(offset.y) * step;
+    let x = (i32::from(ctx.unit.x) + distance_x).clamp(0, i32::from(u16::MAX));
+    let y = (i32::from(ctx.unit.y) + distance_y).clamp(0, i32::from(u16::MAX));
+
+    ctx.world.spend_movement(ctx.id, i64::from(step));
+
+    // `OffsetDrawZones(distance_x, distance_y)` and `grid_x = x / GFX_MAP_TILE_SIZE`
+    // (`unitinfo.cpp:1799-1803`): the sprite pixel and the cell it occupies.
+    ctx.unit.x = x as u16;
+    ctx.unit.y = y as u16;
+    ctx.unit.grid = Point::new(
+        (x >> 6).clamp(0, i32::from(crate::geo::MAP_WIDTH) - 1) as i16,
+        (y >> 6).clamp(0, i32::from(crate::geo::MAP_HEIGHT) - 1) as i16,
+    );
+    ctx.unit.moved = (moved + step) as u8;
+
+    if moved + step < GFX_MAP_TILE_SIZE {
+        // Still walking inside the cell: the order stays `IN_TRANSITION`.
+        return;
+    }
+
+    // `moved == GFX_MAP_TILE_SIZE`: the cell is complete. The pixel is snapped to the
+    // center of the entered cell (`UnitInfo::SetPosition`, `:1301`), so the sprite
+    // and every cell-derived effect agree on the stop point.
     ctx.unit.moved = 0;
     ctx.unit.in_transit = false;
+    update_grid_position(&mut ctx.unit);
 
     // `GroundPath::Execute` (`groundpath.cpp:327-360`): an amphibious unit
-    // switches its sprite block with the terrain it just entered вЂ” the carrier
+    // switches its sprite block with the terrain it just entered — the carrier
     // submerges on water and surfaces on land, `SUBMARNE` keeps its underwater
     // block (the surfaced one is set by `SpotByTeam`).
     if ctx.unit.flags & (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT) == (MOBILE_SEA_UNIT | MOBILE_LAND_UNIT)
     {
-        let base = terrain_image_base(ctx.world, &ctx.unit, target);
+        let entered = ctx.unit.grid;
+        let base = terrain_image_base(ctx.world, &ctx.unit, entered);
 
         if ctx.unit.image_base != base {
             ctx.unit.image_base = base;
@@ -2115,8 +2216,16 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     // `path_steps[step_index]->x -= offset_x` вЂ” the step is "eaten" by the transition.
     if let Some(UnitPath::Ground(path)) = ctx.unit.path.as_mut() {
         if let Some(step) = path.steps.get_mut(path.step_index as usize) {
-            step.x = step.x.wrapping_sub(offset.x as i8);
-            step.y = step.y.wrapping_sub(offset.y as i8);
+            // An emergency stop that arrived while the hull was mid-cell emptied the
+            // route (`GroundPath::CancelMovement`: `m_steps.Clear(); AddStep(0, 0)`).
+            // The oracle never subtracts the offset from that empty marker — its
+            // `Move()` completes the cell before the queued stop is processed — so
+            // the port skips the subtraction for a zero step: otherwise the marker
+            // turns into the opposite direction and the halted unit walks back a cell.
+            if step.x != 0 || step.y != 0 {
+                step.x = step.x.wrapping_sub(offset.x as i8);
+                step.y = step.y.wrapping_sub(offset.y as i8);
+            }
         }
     }
 
@@ -2178,7 +2287,8 @@ fn unit_move(ctx: &mut OrderContext<'_>) {
     }
 
     // The C++ repeat-transition loop (`while (IN_TRANSITION &&
-    // !visible)`) is not executed in network mode: one cell per tick.
+    // !visible)`) is not executed in network mode: one pixel step per order pass
+    // (`GameState::movement_pixels`), and the cell completes on its center.
 }
 
 // ---------------------------------------------------------------------------

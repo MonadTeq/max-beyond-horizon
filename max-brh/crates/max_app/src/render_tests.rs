@@ -103,11 +103,19 @@ fn aircraft_and_explosions_are_drawn_on_their_pixel() {
     let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(2));
     tank.flags |= unit_flags::MOBILE_LAND_UNIT;
     tank.grid = Point::new(10, 10);
-    assert_eq!(air_pixel_anchor(&tank, (10.0, 10.0)), None);
+    // `unit_anchor_world` takes the simulation pixel in cells: the cell center is
+    // `grid + 0.5` (`UnitInfo::SetPosition`).
+    assert_eq!(air_pixel_anchor(&tank, (10.5, 10.5)), None);
     assert_eq!(
-        unit_anchor_world(&tank, (10.0, 10.0)),
+        unit_anchor_world(&tank, (10.5, 10.5)),
         (10 * 64 + 32, 10 * 64 + 32),
-        "a ground unit stays on the cell-center anchor"
+        "a ground unit is drawn on its simulation pixel (the cell center)"
+    );
+    // A walked pixel position is drawn there, not on the cell center.
+    assert_eq!(
+        unit_anchor_world(&tank, (10.25, 10.5)),
+        (10 * 64 + 16, 10 * 64 + 32),
+        "a routed pixel position is the anchor"
     );
 
     let mut blast = UnitInfo::new(UnitType::LandExplosion, TeamId::RED, UnitId(3));

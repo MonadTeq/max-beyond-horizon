@@ -46,12 +46,13 @@
 //!    `max_net`.
 //! 2. Time budgets (`TickTimer_*`, `ExecuteReminders` limits) are not ported
 //!    (DESIGN §5.1, risk 4): the queue is processed fully.
-//! 3. In C++ `UnitsManager_ProcessOrder` may move a unit through
-//!    several cells in one tick (loop `while (state == IN_TRANSITION && !visible)`), while in
-//!    a network game — exactly one cell per `Move()` call (`if
-//!    (Remote_IsNetworkGame) return;`). `max_core` is a lockstep simulation,
-//!    so the network branch is adopted: one path step per tick, and it is
-//!    documented in `unit_order::unit_move`.
+//! 3. In C++ `UnitsManager_ProcessOrder` may move a unit through several cells in
+//!    one tick (loop `while (state == IN_TRANSITION && !visible)`); in the port the
+//!    movement budget walks a fixed number of **pixels** per tick
+//!    (`MOVEMENT_CELLS_PER_SECOND` cells per second), so a pass never crosses more
+//!    than one cell. `velocity` (the oracle's acceleration to `max_velocity`) is
+//!    replaced by that constant pace; the pixels themselves and `moved`/`grid` keep
+//!    the C++ meaning (`unit_order::unit_move`, `unit_order::air_path_execute`).
 //! 4. `UnitInfo::x/y` are pixel coordinates. They are simulation fields: `AirPath`
 //!    steps pixel by pixel, `Access_IsWithinAttackRange` checks the line of fire, and
 //!    spawn/movement derive them from the cell (`x = grid*64 + 32`, +31 for buildings).
@@ -163,13 +164,12 @@ pub struct UnitSound {
 /// Visual pace of the simulation's unit movement, in cells per second.
 ///
 /// The oracle moves `UnitInfo::x/y` only a few pixels per tick (`UnitInfo::Move`,
-/// `unitinfo.cpp:1742`) and the drawing reads the same state, so a shot, an
-/// intercept or a death always happens on the cell the sprite is drawn on. The
-/// port's movement model advances a whole cell per order pass — a ground step
-/// enters the next cell, an aircraft's `max_velocity` pixel steps make one cell —
-/// so the simulation paces every routed unit to this rate by a per-tick movement
-/// budget: the speed the frame used to interpolate with
-/// (`max_app::VISUAL_CELLS_PER_SECOND`), now walked by the simulation itself.
+/// `unitinfo.cpp:1742`: `velocity` pixels, up to `max_velocity` 8) and the drawing
+/// reads the same state, so a shot, an intercept or a death always happens on the
+/// pixel the sprite is drawn on. The port therefore walks **pixels**, too: every
+/// order pass advances a routed unit by the whole pixels of this per-tick movement
+/// budget (ground: along `DIRECTION_OFFSETS[angle]`; air: along the straight
+/// segment of `AirPath`), at four cells per second of a 60 Hz step.
 pub const MOVEMENT_CELLS_PER_SECOND: u32 = 4;
 
 /// Ticks per second of the fixed simulation step (the original's 60 Hz frame,
@@ -182,7 +182,8 @@ pub const SIMULATION_TICKS_PER_SECOND: u32 = 60;
 /// `GFX_MAP_TILE_SIZE * 4 / 60` pixels per tick — not an integer. The factor 15
 /// keeps the whole budget in integers (`64 * 4 * 15 / 60 = 64` units per tick,
 /// `64 * 15 = 960` units per cell), so the pace is deterministic and does not
-/// depend on `dt` or on the frame rate.
+/// depend on `dt` or on the frame rate; the sub-pixel remainder of the tick
+/// carries over to the next tick in [`MovementCredit::credit`].
 pub const DRAIN_UNITS_PER_PIXEL: i64 = 15;
 
 /// Movement budget granted to one routed unit per tick, in
@@ -192,21 +193,180 @@ pub const DRAIN_UNITS_PER_TICK: i64 =
     GFX_MAP_TILE_SIZE as i64 * MOVEMENT_CELLS_PER_SECOND as i64 * DRAIN_UNITS_PER_PIXEL
         / SIMULATION_TICKS_PER_SECOND as i64;
 
+/// Largest credit a routed unit may bank, in [`DRAIN_UNITS_PER_PIXEL`] units.
+///
+/// Two ticks' worth of budget: the sub-pixel remainder of the pace and the whole
+/// pixels a cell boundary cuts off carry over to the next tick instead of being
+/// lost, so the pace stays at [`MOVEMENT_CELLS_PER_SECOND`] across the cell
+/// borders. The per-pass pixel allowance is capped separately
+/// ([`GameState::movement_pixel_cap`]), so a unit blocked for a long time cannot
+/// bank a visible sprint: it moves at most one budget window per tick when the
+/// blocker leaves.
+pub const DRAIN_CREDIT_CAP: i64 = DRAIN_UNITS_PER_TICK * 2;
+
+/// Sub-step phase of one air segment ([`MovementCredit::air`]).
+///
+/// The oracle flies an aircraft by whole `AirPath` steps (`AirPath::Execute`,
+/// `airpath.cpp:219-244`): one step adds `m_delta_*` to `m_step_*`, i.e. advances
+/// `1/max_velocity` of the segment (16 pixels of a straight cell, 8 per axis of a
+/// diagonal one). Applying four steps per pass — the port's old model — is a
+/// 16-pixel jump every few ticks; the budget now spreads **one step over several
+/// ticks**, pixel by pixel, so the sprite moves smoothly.
+///
+/// The slow-motion position is the same fixed-point accumulation as the oracle's
+/// `m_step_*`: [`Self::offset_x`]/[`Self::offset_y`] are the pixel displacement from
+/// the segment start in 1/65536 px, advanced by a fraction of `m_delta_*` per tick.
+/// The authoritative position stays `UnitInfo::x/y` (a snapshot field); a save/load
+/// recovers the phase from it ([`AirCredit::new`]), so nothing of this needs to be
+/// saved.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AirCredit {
+    /// Segment identity — `AirPath::m_start_x/m_start_y/m_delta_x/m_delta_y`. A
+    /// different one is a new segment (the speed clamp of `Paths_GetAirPath`
+    /// re-requests the rest of the route) and resets the phase.
+    start_x: i16,
+    start_y: i16,
+    delta_x: i32,
+    delta_y: i32,
+    /// Segment start pixel (`AirPath::m_start_*`).
+    origin_x: i32,
+    origin_y: i32,
+    /// Pixel displacement from the origin, 1/65536 px — the port's `m_step_*`.
+    offset_x: i64,
+    offset_y: i64,
+    /// Pixels advanced into the current path step, 1/65536 px on the dominant axis.
+    progress: i64,
+    /// Dominant-axis advance of one path step, 1/65536 px (`max(|m_delta_x|,
+    /// |m_delta_y|)`).
+    step_axis: i64,
+    /// Whether the x axis advances more than y (`step_axis` is measured on it).
+    dominant_x: bool,
+}
+
+impl AirCredit {
+    /// Starts the phase of `path` from the current pixel of `unit`.
+    fn new(path: &crate::unit::AirPath, unit: &UnitInfo) -> Self {
+        let delta_x = i64::from(path.delta_x);
+        let delta_y = i64::from(path.delta_y);
+        let dominant_x = delta_x.abs() >= delta_y.abs();
+        let step_axis = delta_x.abs().max(delta_y.abs()).max(1);
+        let origin_x = i32::from(path.start_x);
+        let origin_y = i32::from(path.start_y);
+        let offset_x = (i64::from(unit.x) - i64::from(origin_x)) << 16;
+        let offset_y = (i64::from(unit.y) - i64::from(origin_y)) << 16;
+        // A segment picked up mid-step (a save/load): the integer pixel position is
+        // authoritative, so the phase is the displacement along the dominant axis.
+        let progress = {
+            let offset = if dominant_x { offset_x } else { offset_y };
+            let direction = if dominant_x {
+                delta_x.signum()
+            } else {
+                delta_y.signum()
+            };
+
+            (offset * direction).rem_euclid(step_axis)
+        };
+
+        Self {
+            start_x: path.start_x,
+            start_y: path.start_y,
+            delta_x: path.delta_x,
+            delta_y: path.delta_y,
+            origin_x,
+            origin_y,
+            offset_x,
+            offset_y,
+            progress,
+            step_axis,
+            dominant_x,
+        }
+    }
+
+    /// Whether this phase belongs to `path` (the same segment).
+    fn matches(&self, path: &crate::unit::AirPath) -> bool {
+        self.start_x == path.start_x
+            && self.start_y == path.start_y
+            && self.delta_x == path.delta_x
+            && self.delta_y == path.delta_y
+    }
+
+    /// Current sprite pixel — the oracle's `(m_step >> 16) + m_start`.
+    fn position(&self) -> (i32, i32) {
+        (
+            self.origin_x + (self.offset_x >> 16) as i32,
+            self.origin_y + (self.offset_y >> 16) as i32,
+        )
+    }
+
+    /// Whole pixels left to the end of the segment on the dominant axis (rounded
+    /// up, so a sub-pixel remainder still takes one step and lands on the end).
+    pub(crate) fn remaining_pixels(&self, path: &crate::unit::AirPath) -> i32 {
+        let delta = if self.dominant_x {
+            i64::from(path.delta_x)
+        } else {
+            i64::from(path.delta_y)
+        };
+        let step = if self.dominant_x {
+            i64::from(path.step_x)
+        } else {
+            i64::from(path.step_y)
+        };
+        let offset = if self.dominant_x {
+            self.offset_x
+        } else {
+            self.offset_y
+        };
+        let remaining = (step + i64::from(path.length) * delta - offset) * delta.signum();
+        let pixels = (remaining + 0xFFFF).div_euclid(0x1_0000);
+
+        pixels.clamp(0, i64::from(i32::MAX)) as i32
+    }
+
+    /// Advances `pixels` (the clipped tick budget) and returns the new pixel and the
+    /// number of whole `AirPath` steps completed by the advance.
+    pub(crate) fn advance(&mut self, pixels: i32) -> (i32, i32, i32) {
+        let step = i64::from(pixels) << 16;
+
+        // `m_step_x += m_delta_x` scaled by the moved part of the step: the dominant
+        // axis advances exactly `pixels`, the other one keeps the segment slope.
+        self.offset_x += i64::from(self.delta_x) * step / self.step_axis;
+        self.offset_y += i64::from(self.delta_y) * step / self.step_axis;
+        self.progress += step;
+
+        let mut steps = 0;
+        while self.progress >= self.step_axis {
+            self.progress -= self.step_axis;
+            steps += 1;
+        }
+
+        let (x, y) = self.position();
+
+        (x, y, steps)
+    }
+
+    /// Snaps the phase to the segment end (`path.step_*`) — the last pixel of the
+    /// route lands exactly on the segment endpoint.
+    pub(crate) fn complete_segment(&mut self, path: &crate::unit::AirPath) {
+        self.offset_x = i64::from(path.step_x);
+        self.offset_y = i64::from(path.step_y);
+        self.progress = 0;
+    }
+}
+
 /// Movement credit of one routed unit ([`GameState::movement_budget`]).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MovementCredit {
-    /// Movement credit in [`DRAIN_UNITS_PER_PIXEL`] units: the order pass runs only
-    /// while the credit is non-negative, and each pass charges the pixels it
-    /// actually moved (a blocked pass costs nothing, so retries stay at one per
-    /// tick as in the oracle).
+    /// Movement credit in [`DRAIN_UNITS_PER_PIXEL`] units. Every pixel the order
+    /// pass actually advances costs [`DRAIN_UNITS_PER_PIXEL`]; the credit is granted
+    /// per tick and capped at [`DRAIN_CREDIT_CAP`]. A blocked pass advances nothing
+    /// and therefore costs nothing.
     credit: i64,
-    /// Pixel position at the previous pass — the charge is measured from here.
-    x: u16,
-    y: u16,
     /// End cell of the route the credit belongs to. A new route (a different end)
     /// starts with a fresh credit: the movement must not inherit the debt of the
     /// previous route.
     end: (i16, i16),
+    /// Sub-step phase of the air segment the unit is flying, if any.
+    air: Option<AirCredit>,
 }
 
 /// The turn close of a team whose units still move — the port of the oracle's
@@ -222,7 +382,7 @@ pub(crate) struct MovementCredit {
 /// [`MOVEMENT_CELLS_PER_SECOND`]. The movement budget ([`GameState::movement_budget`])
 /// now paces the route on **every** tick — during the team's active turn as well,
 /// not only while the turn closes — and the frame draws every routed unit at the
-/// simulation position: a shot started on a cell is a shot the player sees on that
+/// simulation pixel: a shot started on a cell is a shot the player sees on that
 /// cell, and the next team starts only after the movement has finished.
 ///
 /// This struct is only the turn-close marker: the team whose routes the close waits
@@ -234,7 +394,9 @@ pub(crate) struct MovementCredit {
 /// The budget is granted per tick ([`DRAIN_UNITS_PER_TICK`], doubled by
 /// `fast_movement`) and charged by the pixels a pass actually advanced — integer
 /// arithmetic only. The pace is a function of the tick count, never of `dt` or of
-/// the frame rate.
+/// the frame rate. The pixel position and the route counters (`moved`,
+/// `grid`, `AirPath`) are snapshot fields; only the credit, its sub-pixel remainder
+/// and the air sub-step phase are kept here.
 ///
 /// The budget is **not** part of the snapshot/CRC: it only spaces the order passes
 /// the oracle would run back to back, and a lockstep peer computes it from the same
@@ -419,11 +581,13 @@ pub(crate) struct GameState {
     /// passes of the same simulation, and a lockstep peer never starts one.
     pub(crate) closing_turn: Option<ClosingTurn>,
     /// Per-unit movement credit, in [`DRAIN_UNITS_PER_PIXEL`] units — the tick
-    /// budget that paces **every** routed unit at [`MOVEMENT_CELLS_PER_SECOND`].
+    /// budget that paces **every** routed unit at [`MOVEMENT_CELLS_PER_SECOND`],
+    /// plus the sub-step phase of an air segment.
     ///
-    /// Not part of the snapshot/CRC (like the former closing-turn credit): it only
-    /// spaces the order passes the oracle would run back to back, and both lockstep
-    /// peers compute it from the same tick count in integer arithmetic.
+    /// Not part of the snapshot/CRC: the pixel position (`UnitInfo::x/y`) and the
+    /// route counters (`moved`, `grid`, `AirPath`) are the simulation state; this
+    /// map only decides how many pixels of them one pass may advance, and both
+    /// lockstep peers compute it from the same tick count in integer arithmetic.
     pub(crate) movement_budget: std::collections::BTreeMap<UnitId, MovementCredit>,
     /// `GameManager_FastMovement` ("Double Unit Steps", `game_manager.cpp:224`) —
     /// the movement budget doubles, so every routed unit walks twice as fast. The
@@ -2087,7 +2251,7 @@ impl GameState {
     pub fn process_unit_orders(&mut self, kind: UnitListKind) {
         let ids = self.lists[kind.index()].clone();
         for id in ids {
-            if self.has_unit(id) && !self.movement_paused(id) {
+            if self.has_unit(id) {
                 unit_order::process_order(self, id);
             }
         }
@@ -2217,23 +2381,105 @@ impl GameState {
         }
     }
 
+    /// Largest number of whole pixels one order pass may advance.
+    ///
+    /// One tick's budget rounded up: `ceil(64 / 15) = 4`…`5` pixels at the normal
+    /// pace, `9` with `fast_movement`. A banked credit (a cell boundary or a blocked
+    /// pass) never makes the sprite jump farther than this in one frame.
+    fn movement_pixel_cap(&self) -> i64 {
+        (self.movement_units_per_tick() + DRAIN_UNITS_PER_PIXEL - 1) / DRAIN_UNITS_PER_PIXEL
+    }
+
+    /// End cell of the route the unit is walking (the credit key).
+    fn route_end(unit: &UnitInfo) -> (i16, i16) {
+        unit.path
+            .as_ref()
+            .map(UnitPath::end)
+            .unwrap_or((unit.grid.x, unit.grid.y))
+    }
+
+    /// Whole pixels the order pass of `id` may advance this tick.
+    ///
+    /// The credit is granted per tick by [`Self::grant_movement_budget`]; a route
+    /// that starts **during** a pass (a path request completed, a fresh order) gets
+    /// one tick's allowance here, so the first pixel of the route moves on the same
+    /// pass — as the oracle's `ExecuteMove` → `Move` does.
+    pub(crate) fn movement_pixels(&mut self, id: UnitId) -> i64 {
+        let units = self.movement_units_per_tick();
+        let cap = self.movement_pixel_cap();
+        let end = self.unit(id).map(Self::route_end).unwrap_or((0, 0));
+
+        let entry = self.movement_budget.entry(id).or_insert(MovementCredit {
+            credit: units,
+            end,
+            air: None,
+        });
+
+        if entry.end != end {
+            entry.credit = units;
+            entry.end = end;
+            entry.air = None;
+        }
+
+        (entry.credit / DRAIN_UNITS_PER_PIXEL).min(cap)
+    }
+
+    /// Charges the movement budget of `id` by the `pixels` its order pass advanced.
+    ///
+    /// A blocked pass advances nothing and costs nothing: the oracle's
+    /// `UnitInfo::RegisterMovementWait` retry keeps one attempt per tick, as before.
+    /// The credit may go slightly negative on an air step whose rounded pixel
+    /// position advanced one pixel more than the axis charge of the same pass; the
+    /// next grant covers it, so the pace self-corrects.
+    pub(crate) fn spend_movement(&mut self, id: UnitId, pixels: i64) {
+        if pixels <= 0 {
+            return;
+        }
+
+        if let Some(entry) = self.movement_budget.get_mut(&id) {
+            entry.credit -= pixels * DRAIN_UNITS_PER_PIXEL;
+        }
+    }
+
+    /// Sub-step phase of the air segment `path` for `id`, started from the unit's
+    /// current pixel ([`AirCredit::new`]) when the segment is new.
+    pub(crate) fn air_credit(
+        &mut self,
+        id: UnitId,
+        path: &crate::unit::AirPath,
+        unit: &UnitInfo,
+    ) -> Option<&mut AirCredit> {
+        let entry = self.movement_budget.get_mut(&id)?;
+
+        match entry.air {
+            Some(phase) if phase.matches(path) => {}
+            _ => entry.air = Some(AirCredit::new(path, unit)),
+        }
+
+        entry.air.as_mut()
+    }
+
     /// Grants this tick's movement budget to every routed unit — called before
     /// [`Self::process_orders`].
     ///
     /// The budget is granted to **all** units walking a route, of every team and in
-    /// every phase, not only to the closing team: the simulation itself walks a cell
-    /// at [`MOVEMENT_CELLS_PER_SECOND`], so the frame can draw every unit on its
-    /// simulation position and a shot always lands where the sprite is.
+    /// every phase, not only to the closing team: the simulation itself walks the
+    /// pixels at [`MOVEMENT_CELLS_PER_SECOND`], so the frame can draw every unit on
+    /// its simulation pixel and a shot always lands where the sprite is.
     ///
-    /// The credit never banks more than one tick, so a unit blocked by another one
+    /// The credit banks at most [`DRAIN_CREDIT_CAP`] (two ticks), and the pass moves
+    /// at most [`Self::movement_pixel_cap`] pixels, so a unit blocked by another one
     /// does not sprint when the blocker leaves. A new route (a different end cell)
-    /// starts from a zero credit: the movement must not inherit the debt of the
+    /// starts with a fresh credit: the movement must not inherit the debt of the
     /// previous route.
     fn grant_movement_budget(&mut self) {
         let units = self.movement_units_per_tick();
 
-        // The pre-pass positions: the charge of this tick is measured from them.
-        let mut moving: Vec<(UnitId, u16, u16, (i16, i16))> = Vec::new();
+        if let Some(closing) = self.closing_turn.as_mut() {
+            closing.passes = closing.passes.saturating_add(1);
+        }
+
+        let mut moving: Vec<(UnitId, (i16, i16))> = Vec::new();
         for kind in UnitListKind::ALL {
             for id in self.unit_list(kind) {
                 let Some(unit) = self.unit(*id) else { continue };
@@ -2242,104 +2488,32 @@ impl GameState {
                     continue;
                 }
 
-                let end = unit
-                    .path
-                    .as_ref()
-                    .map(UnitPath::end)
-                    .unwrap_or((unit.grid.x, unit.grid.y));
-
-                moving.push((*id, unit.x, unit.y, end));
+                moving.push((*id, Self::route_end(unit)));
             }
         }
 
         // Units that stopped walking (out of speed, halted, destroyed) drop out —
         // the next route starts with a fresh credit.
         self.movement_budget
-            .retain(|id, _| moving.iter().any(|(moving_id, _, _, _)| *moving_id == *id));
+            .retain(|id, _| moving.iter().any(|(moving_id, _)| moving_id == id));
 
-        for (id, x, y, end) in moving {
+        for (id, end) in moving {
+            // A fresh entry starts from zero so this tick's grant is the first
+            // allowance; an existing route banks it (capped).
             let entry = self.movement_budget.entry(id).or_insert(MovementCredit {
                 credit: 0,
-                x,
-                y,
                 end,
+                air: None,
             });
 
             if entry.end != end {
-                entry.credit = 0;
+                entry.credit = units;
                 entry.end = end;
-            }
-
-            entry.credit = (entry.credit + units).min(units);
-            entry.x = x;
-            entry.y = y;
-        }
-    }
-
-    /// Charges this tick's budget by the pixels the order pass actually moved —
-    /// called after [`Self::process_orders`].
-    ///
-    /// A blocked pass moves nothing and therefore costs nothing: the oracle's
-    /// `UnitInfo::RegisterMovementWait` retry keeps one attempt per tick, as before.
-    /// A unit that ends its route (arrival, halt, out of speed) leaves the budget:
-    /// its next route must not start in debt.
-    fn charge_movement_budget(&mut self) {
-        let mut positions: Vec<(UnitId, u16, u16)> = Vec::new();
-        let mut routed: Vec<UnitId> = Vec::new();
-
-        for kind in UnitListKind::ALL {
-            for id in self.unit_list(kind) {
-                let Some(unit) = self.unit(*id) else { continue };
-
-                if paced_movement(unit) {
-                    routed.push(*id);
-                }
-
-                if self.movement_budget.contains_key(id) {
-                    positions.push((*id, unit.x, unit.y));
-                }
+                entry.air = None;
+            } else {
+                entry.credit = (entry.credit + units).min(DRAIN_CREDIT_CAP.max(units));
             }
         }
-
-        if let Some(closing) = self.closing_turn.as_mut() {
-            closing.passes = closing.passes.saturating_add(1);
-        }
-
-        for (id, x, y) in positions {
-            let Some(entry) = self.movement_budget.get_mut(&id) else {
-                continue;
-            };
-
-            let dx = i64::from(x.abs_diff(entry.x));
-            let dy = i64::from(y.abs_diff(entry.y));
-            entry.credit -= dx.max(dy) * DRAIN_UNITS_PER_PIXEL;
-            entry.x = x;
-            entry.y = y;
-        }
-
-        self.movement_budget
-            .retain(|id, _| routed.iter().any(|routed_id| routed_id == id));
-    }
-
-    /// Whether the movement budget pauses this unit's order pass: the credit is
-    /// spent, so the unit must not enter the next cell/pixel yet.
-    ///
-    /// Only a unit that is actually walking a route can be paused — a halted,
-    /// firing or exploding unit pays no budget and stays on its normal pass (the
-    /// reaction fire and the emergency stops keep running every tick, exactly like
-    /// the oracle's `GameManager_ProgressTurn`).
-    fn movement_paused(&self, id: UnitId) -> bool {
-        let Some(unit) = self.unit(id) else {
-            return false;
-        };
-
-        if !paced_movement(unit) {
-            return false;
-        }
-
-        self.movement_budget
-            .get(&id)
-            .is_some_and(|entry| entry.credit < 0)
     }
 
     /// `Access_AreTaskEventsPending` (`access.cpp:2269`) — the predicate of the
@@ -3330,15 +3504,14 @@ impl GameState {
         self.apply_pending_commands();
 
         // 3. Orders. Every routed unit receives the movement budget of this tick
-        //    before the pass and is charged by the pixels it actually advanced after
-        //    it: the simulation walks a cell at the visual pace
-        //    ([`MOVEMENT_CELLS_PER_SECOND`]) in **every** phase, so the frame can
-        //    draw each unit on the simulation position and a shot/intercept always
+        //    before the pass; the pass advances at most that many whole pixels and
+        //    charges them as it moves. The simulation walks the route at the visual
+        //    pace ([`MOVEMENT_CELLS_PER_SECOND`]) in **every** phase, so the frame
+        //    can draw each unit on the simulation pixel and a shot/intercept always
         //    lands where the sprite is.
         if self.game_state != GameStateType::TurnActive {
             self.grant_movement_budget();
             self.process_orders();
-            self.charge_movement_budget();
         }
 
         // 4. AI reactions and end of turn.

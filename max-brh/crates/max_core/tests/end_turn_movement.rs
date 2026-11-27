@@ -200,8 +200,8 @@ fn the_turn_close_walks_one_cell_per_visual_budget_window() {
         "eight movement points walk eight cells: {entries:?}"
     );
     assert!(
-        entries[0] <= 4,
-        "the hull turns within a few passes, then the first window walks: {entries:?}"
+        entries[0] <= 9,
+        "the hull turns within a few passes, then the first border is crossed: {entries:?}"
     );
 
     // Steady state: one cell per 15 ticks — four cells per second at 60 Hz.
@@ -272,7 +272,8 @@ fn fast_movement_halves_the_budget_window() {
     assert_eq!(fast.len(), 8, "the setting changes the pace, not the route");
 
     // The same eight cells: the normal pace needs 4 x 15 ticks for the last four
-    // cells, the doubled pace 4 x 7.5 ticks.
+    // cells, the doubled pace 4 x 7.5 ticks — 8 whole pixels per tick, so the cell
+    // border falls every 8 ticks.
     fn span_of_last_four(entries: &[usize]) -> usize {
         entries[entries.len() - 1] - entries[entries.len() - 5]
     }
@@ -284,8 +285,8 @@ fn fast_movement_halves_the_budget_window() {
     );
     assert_eq!(
         span_of_last_four(&fast),
-        30,
-        "`fast_movement` doubles the pace: four cells in 30 ticks: {fast:?}"
+        32,
+        "`fast_movement` doubles the pace: four cells in 32 ticks (8-pixel steps): {fast:?}"
     );
 }
 

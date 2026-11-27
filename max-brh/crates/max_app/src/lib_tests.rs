@@ -119,8 +119,8 @@ fn displayed_speed_follows_the_visual_route_not_the_tick() {
         "the surveyor starts with movement points: {speed0}"
     );
 
-    // One budget window enters the first cell; the frame draws the sprite on the
-    // simulation cell.
+    // One budget window of pixels walks the hull over the cell border; the frame
+    // draws the sprite on the simulation pixel.
     let mut ticks = 0;
     while app.state_ref().unit(surveyor).map(|unit| unit.grid) == Some(start) && ticks < 64 {
         app.tick();
@@ -133,13 +133,16 @@ fn displayed_speed_follows_the_visual_route_not_the_tick() {
     );
     app.update_visual_units(1.0 / 60.0);
 
-    let grid = app.state_ref().unit(surveyor).expect("surveyor").grid;
-    let sim_speed = app.state_ref().unit(surveyor).expect("surveyor").speed;
+    let unit = app.state_ref().unit(surveyor).expect("surveyor").clone();
+    let sim_speed = unit.speed;
     assert!(sim_speed < speed0, "the tick spends movement points");
     assert_eq!(
         app.visual_position(surveyor),
-        Some((f32::from(grid.x), f32::from(grid.y))),
-        "the sprite is drawn on the simulation cell"
+        Some((
+            f32::from(unit.x) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+            f32::from(unit.y) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+        )),
+        "the sprite is drawn on the simulation pixel"
     );
     assert_eq!(
         app.displayed_speed(surveyor),

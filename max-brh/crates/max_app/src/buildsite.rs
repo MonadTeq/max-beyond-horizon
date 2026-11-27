@@ -268,9 +268,14 @@ impl BuildSiteSelect {
         ghost.state = UnitOrderState::ExecutingOrder;
         ghost.set_visible_to_team(self.team, true);
 
+        // `unit_anchor_world` takes the simulation pixel in cells: the tape cell's
+        // center is the pixel `grid * 64 + 32` (`UnitInfo::SetPosition`).
         let (world_x, world_y) = crate::render::unit_anchor_world(
             &ghost,
-            (f32::from(self.anchor.x), f32::from(self.anchor.y)),
+            (
+                f32::from(self.anchor.x) + 0.5,
+                f32::from(self.anchor.y) + 0.5,
+            ),
         );
         let (screen_x, screen_y) = viewport.world_to_screen(world_x, world_y);
         // The ghost is not a state unit: default C++ presentation

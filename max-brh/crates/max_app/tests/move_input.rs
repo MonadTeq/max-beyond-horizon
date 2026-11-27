@@ -171,7 +171,12 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
             );
             let index = max_app::render::unit_frame_index(unit, base, sprite.sheet.len());
             let frame = sprite.sheet.frame(index).expect("кадр");
-            let visual = (f32::from(unit.grid.x), f32::from(unit.grid.y));
+            // `unit_anchor_world` takes the simulation pixel in cells (`x/y / 64`);
+            // a standing building's pixel is the center of its footprint.
+            let visual = (
+                f32::from(unit.x) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+                f32::from(unit.y) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+            );
             let anchor = max_app::render::unit_anchor_world(unit, visual);
 
             frame.bounds_for_anchor(anchor.0, anchor.1)
@@ -196,8 +201,10 @@ fn generator_and_mining_station_are_on_different_cells_without_sprite_overlap() 
             max_app::render::unit_anchor_world(
                 mining_station,
                 (
-                    f32::from(mining_station.grid.x),
-                    f32::from(mining_station.grid.y)
+                    f32::from(mining_station.x)
+                        / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+                    f32::from(mining_station.y)
+                        / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
                 )
             ),
             (
@@ -716,7 +723,11 @@ fn left_click_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() 
             }
 
             let grid = app.state_ref().unit(surveyor).map(|unit| unit.grid);
-            let target = (f32::from(destination.x), f32::from(destination.y));
+            // The route ends exactly on the cell center pixel (`grid + 0.5` cells).
+            let target = (
+                f32::from(destination.x) + 0.5,
+                f32::from(destination.y) + 0.5,
+            );
 
             if grid == Some(destination) && position == target {
                 break;
@@ -736,8 +747,11 @@ fn left_click_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() 
         );
         assert_eq!(
             seen.last(),
-            Some(&(f32::from(destination.x), f32::from(destination.y))),
-            "в конце маршрута визуальная позиция — целевая клетка: {seen:?}"
+            Some(&(
+                f32::from(destination.x) + 0.5,
+                f32::from(destination.y) + 0.5
+            )),
+            "в конце маршрута визуальная позиция — центр целевой клетки: {seen:?}"
         );
 
         // End Turn with the real panel button (`WINDOW_ENDTURN`, (390,2)-(462,23)).
@@ -784,7 +798,10 @@ fn left_click_then_end_turn_moves_the_unit_through_the_path_in_the_local_loop() 
         );
         assert_eq!(
             app.visual_position(surveyor),
-            Some((f32::from(destination.x), f32::from(destination.y))),
+            Some((
+                f32::from(destination.x) + 0.5,
+                f32::from(destination.y) + 0.5
+            )),
             "визуальный маршрут доигран после смены хода"
         );
 

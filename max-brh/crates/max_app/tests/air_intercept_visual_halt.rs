@@ -1105,12 +1105,12 @@ fn a_long_ground_route_follows_the_simulation_at_the_turn_close() {
         }
 
         assert!(
-            (frame.sprite().0 - f32::from(frame.grid.x)).abs() < 1e-3
-                && (frame.sprite().1 - f32::from(frame.grid.y)).abs() < 1e-3,
-            "frame {}: the sprite must be on the simulation cell ({},{}), got {:?}",
+            (frame.sprite().0 - air_target(frame).0).abs() < 1e-3
+                && (frame.sprite().1 - air_target(frame).1).abs() < 1e-3,
+            "frame {}: the sprite must be on the simulation pixel ({},{}), got {:?}",
             frame.index,
-            frame.grid.x,
-            frame.grid.y,
+            frame.pixel.0,
+            frame.pixel.1,
             frame.visual
         );
 
@@ -1130,7 +1130,7 @@ fn a_long_ground_route_follows_the_simulation_at_the_turn_close() {
 
         assert!(
             frame.step <= 1.0 + 1e-3,
-            "frame {}: a ground step is one cell, not {:.4}",
+            "frame {}: a ground pixel step is one budget window, not {:.4} cells",
             frame.index,
             frame.step
         );
@@ -1141,12 +1141,12 @@ fn a_long_ground_route_follows_the_simulation_at_the_turn_close() {
     }
     assert!(hops > 0, "the tank must actually walk during the drain");
 
-    // No teleport past the halt cell: the tank only ever moves one cell at a time,
-    // and it stops on the halt cell.
-    let expected = (f32::from(halt.grid.x), f32::from(halt.grid.y));
+    // The tank stops on the halt cell center (`UnitInfo::SetPosition`).
     assert!(
-        (halt.sprite().0 - expected.0).abs() < 1e-3 && (halt.sprite().1 - expected.1).abs() < 1e-3,
-        "the sprite must stop on the halt cell: {:?} != {expected:?}",
-        halt.visual
+        (halt.sprite().0 - air_target(halt).0).abs() < 1e-3
+            && (halt.sprite().1 - air_target(halt).1).abs() < 1e-3,
+        "the sprite must stop on the halt cell center: {:?} != {:?}",
+        halt.visual,
+        air_target(halt)
     );
 }

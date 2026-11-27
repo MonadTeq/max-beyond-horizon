@@ -370,7 +370,9 @@ fn all_eight_directions_move_facing_the_step() {
         let mut moves = 0;
         let mut last_angle = start_angle;
 
-        for _ in 0..40 {
+        // A cell takes a movement-budget window (15 ticks at 60 Hz), so three cells
+        // need about 45 ticks plus the turns (`MOVEMENT_CELLS_PER_SECOND`).
+        for _ in 0..200 {
             state.tick();
             let unit = state.unit(id).unwrap();
             let changed = unit.grid != previous;
@@ -464,12 +466,21 @@ fn turn_at_cell_boundary_precedes_the_next_step() {
     assert_eq!(unit.grid, Point::new(11, 10));
     assert_eq!(unit.angle, 2);
 
-    // The next budget window enters (12,10); at the boundary rotation toward the
-    // next step (north) starts: E → NE.
+    // The next budget window crosses the border of (12,10); the hull keeps its
+    // eastward course while it walks the rest of the cell, and the rotation toward
+    // the next step (north) starts on the cell center (`Move()` at `moved == 64`):
+    // E → NE.
     tick_until(&mut state, id, Point::new(12, 10), 32);
+    for _ in 0..32 {
+        if state.unit(id).unwrap().x == 12 * 64 + 32 {
+            break;
+        }
+        state.tick();
+    }
     let unit = state.unit(id).unwrap();
     assert_eq!(unit.grid, Point::new(12, 10));
-    assert_eq!(unit.angle, 1, "на границе клетки — один шаг 45° к северу");
+    assert_eq!(unit.x, 12 * 64 + 32, "клетка пройдена до центра");
+    assert_eq!(unit.angle, 1, "на центре клетки — один шаг 45° к северу");
 
     // The next pass finishes turning NE → N without movement
     // (as `GroundPath::Execute`).
@@ -490,9 +501,9 @@ fn turn_at_cell_boundary_precedes_the_next_step() {
     assert_eq!(unit.angle, 0);
 
     // On every moving tick the angle matches the transition direction
-    // (tolerance ±1 — only a rotation started at the boundary toward the next step).
+    // (tolerance ±1 — only a rotation started at the cell center toward the next step).
     let mut previous = unit.grid;
-    for _ in 0..40 {
+    for _ in 0..100 {
         state.tick();
         let unit = state.unit(id).unwrap();
         if unit.grid != previous {

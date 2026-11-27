@@ -1696,9 +1696,9 @@ impl App {
                 // units still walk, the simulation keeps ticking — the oracle's
                 // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
                 // (`game_manager.cpp:488-490`). The movement budget already paces the
-                // route in every phase (one cell per budget window), so the walk is
-                // drawn cell by cell and the team-turn machine advances the turn on
-                // the tick the walk ends.
+                // route in every phase (4-5 pixels per pass), so the walk is drawn
+                // pixel by pixel and the team-turn machine advances the turn on the
+                // tick the walk ends.
                 if self.universe.turn_close_pending() {
                     let _report = self.tick();
                     update.ticked = true;

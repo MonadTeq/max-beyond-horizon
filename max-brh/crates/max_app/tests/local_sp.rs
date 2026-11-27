@@ -187,7 +187,15 @@ fn local_update_with_real_dt_animates_move_orders() {
 
     app.update_visual_units(0.0);
     let start = app.visual_position(surveyor).expect("Surveyor жив");
-    assert_eq!(start, (f32::from(from.x), f32::from(from.y)));
+    let unit = app.state_ref().unit(surveyor).expect("Surveyor").clone();
+    assert_eq!(
+        start,
+        (
+            f32::from(unit.x) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+            f32::from(unit.y) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+        ),
+        "the sprite starts on the simulation pixel"
+    );
 
     let mut seen: Vec<(f32, f32)> = vec![start];
 
@@ -207,8 +215,11 @@ fn local_update_with_real_dt_animates_move_orders() {
     );
     assert_eq!(
         seen.last(),
-        Some(&(f32::from(destination.x), f32::from(destination.y))),
-        "в конце маршрута визуальная позиция — целевая клетка: {seen:?}"
+        Some(&(
+            f32::from(destination.x) + 0.5,
+            f32::from(destination.y) + 0.5
+        )),
+        "в конце маршрута визуальная позиция — центр целевой клетки: {seen:?}"
     );
 }
 
