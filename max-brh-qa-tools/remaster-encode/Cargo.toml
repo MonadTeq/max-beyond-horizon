@@ -1,0 +1,30 @@
+[package]
+name = "remaster-encode"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "R2 (HD remaster) build-time KTX2 encoder: lossless sources -> ETC1S/UASTC .ktx2 + remaster-manifest.json"
+
+# A separate Cargo project (its own Cargo.lock), not part of the max-brh workspace.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+# The R1 loader's own manifest types (`max_assets::remaster`) are used in the tests,
+# so the emitted JSON cannot drift from what the game reads.
+max_assets = { path = "../../max-brh/crates/max_assets" }
+# Real game art for the sample sources: the same decoders the client uses (WRL tile,
+# FRAMEPIC chrome, TANK sprite frame).
+max_render = { path = "../../max-brh/crates/max_render" }
+
+# The encoder selected in R0: a pure-Rust port of Khronos KTX-Software (libktx).
+# Pinned exactly; `Cargo.lock` is committed, which is part of the determinism contract.
+ktx-rs = { version = "=4.4.4", default-features = false }
+# Lossless PNG input/output only (no JPEG/WebP/GIF codecs in the build).
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[profile.release]
+debug = false
