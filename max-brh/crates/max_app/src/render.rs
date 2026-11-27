@@ -2472,6 +2472,98 @@ impl<D: Dispatcher> App<D> {
                 }
             }
         }
+
+        self.draw_presentation_corpses(frame, viewport, stats);
+    }
+
+    /// Presentation corpses ([`App::presentation_corpses`]) — the dead units whose
+    /// sprite still walks to the pixel where the simulation killed them.
+    ///
+    /// The simulation deletes an intercepted unit half-way through its blast, while
+    /// the frame (4 cells/s against a cell per tick) may still be several cells
+    /// short of the halt cell. The sprite of such a corpse is drawn from the last
+    /// simulation snapshot until it arrives, so the replay ends where the original
+    /// ends it — on the cell where the anti-aircraft opened fire — instead of
+    /// vanishing in mid-air.
+    ///
+    /// Frame only: the state, the snapshot and the CRC are untouched; `dt = 0`
+    /// (headless/QA) has no corpses at all, so the golden frames do not change.
+    ///
+    /// The hull is drawn with the sprite the unit had when it died: no flight bob
+    /// (`ShakeAir` moves a *living* hovering unit), no construction-tape shift and no
+    /// selection marker — a corpse stands still, loses its tape and is deselected.
+    fn draw_presentation_corpses(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &max_render::viewport::Viewport,
+        stats: &mut RenderStats,
+    ) {
+        let Some(assets) = self.assets() else {
+            return;
+        };
+        if self.presentation_corpses().is_empty() {
+            return;
+        }
+
+        let range = viewport.visible_tiles();
+        let margin = 2;
+        let palette = self.animated_palette().unwrap_or(&assets.system_palette);
+        let effects = self.preferences.effects;
+        let zoom = viewport.zoom().max(1);
+
+        for (id, corpse) in self.presentation_corpses() {
+            let Some(visual) = self.visual_position(*id) else {
+                continue;
+            };
+            let tile_x = visual.0.round() as i16;
+            let tile_y = visual.1.round() as i16;
+            let in_range = range.is_some_and(|range| {
+                tile_x >= range.x0 - margin
+                    && tile_y >= range.y0 - margin
+                    && tile_x <= range.x1 + margin
+                    && tile_y <= range.y1 + margin
+            });
+            if !in_range {
+                continue;
+            }
+            if !self.no_fow() && !self.presented_visible(&corpse.unit) {
+                continue;
+            }
+
+            // The same pixel anchor the live unit uses: `UnitInfo::x/y` of the
+            // sprite (the air-path pixel for an aircraft, the cell center
+            // otherwise).
+            let (world_x, world_y) = air_pixel_anchor(&corpse.unit, visual)
+                .unwrap_or_else(|| unit_anchor_world(&corpse.unit, visual));
+            let anchor = viewport.world_to_screen(world_x, world_y);
+
+            let team_clan = self
+                .state_ref()
+                .teams()
+                .get(corpse.unit.team.0 as usize)
+                .map(|team| team.team_clan);
+            let image_base = image_base_for(&corpse.unit, team_clan);
+            let body_angle = self.visual_angle(*id).unwrap_or(corpse.unit.angle);
+
+            if draw_unit_sprites_with_animation(
+                assets,
+                palette,
+                &corpse.unit,
+                &UnitPresentation::default(),
+                image_base,
+                body_angle,
+                crate::render::FrameAnimation::default(),
+                effects,
+                0,
+                frame,
+                anchor,
+                zoom,
+            )
+            .is_some()
+            {
+                stats.units_drawn += 1;
+            }
+        }
     }
 
     /// Construction site ghost (`GameManager_TempTape`) into the map buffer.

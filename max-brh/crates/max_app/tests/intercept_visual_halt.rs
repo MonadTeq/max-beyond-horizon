@@ -28,8 +28,10 @@
 //!
 //! * A surviving unit walks the queued route to the halt cell at the original speed
 //!   and stops exactly there — the same sequence of frames, no jump.
-//! * A unit killed on the halt cell freezes on the pixel the frame had reached (see
-//!   `intercept_explosion.rs` for the blast that is drawn there) — again no jump.
+//! * A unit killed on the halt cell **walks there too**: the corpse keeps its queued
+//!   route, finishes it on the halt cell (the point of the first attack) and only
+//!   then disappears. It never freezes — or vanishes — several cells short of it
+//!   (see `intercept_explosion.rs` for the blast that rides the corpse).
 
 use std::path::{Path, PathBuf};
 
@@ -269,8 +271,23 @@ fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
     );
 }
 
+/// The intercept kills the mover on the halt cell: its sprite must still **walk**
+/// there — no jump and no freeze in mid-air — and the walk must end exactly on that
+/// cell, the point of the first attack.
+///
+/// Oracle: `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`) →
+/// `BlockedOnPathRequest` (`unitinfo.cpp:3628`) stops the mover on the cell where it
+/// entered the enemy's weapon range and the reaction fire kills it there;
+/// `UnitInfo::StopMovement` (`:3222`) clears the path and never rewrites `x/y`, so
+/// the original shows the corpse and its blast on the halt cell.
+///
+/// The port's frame lags the cell-per-tick simulation by several cells, so the
+/// corpse finishes its queued route at `VISUAL_CELLS_PER_SECOND` and the frame keeps
+/// it drawable after `unit_order::progress_explosion` removes the unit
+/// (`max_app::CorpseVisual`): the sprite arrives on the halt cell instead of freezing
+/// short of it.
 #[test]
-fn a_unit_killed_on_the_halt_cell_freezes_instead_of_jumping() {
+fn a_unit_killed_on_the_halt_cell_walks_there_instead_of_jumping() {
     let Some(mut app) = game_app() else {
         return;
     };
@@ -280,12 +297,15 @@ fn a_unit_killed_on_the_halt_cell_freezes_instead_of_jumping() {
 
     let max_frame_step = max_frame_step(&app);
     let mut previous = app.visual_position(mover);
-    let mut frozen = None;
     let mut saw_death = false;
+    let mut death_cell = None;
+    let mut last_drawn = None;
+    let mut frames = 0usize;
 
-    for _ in 0..120 {
+    for _ in 0..400 {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
+        frames += 1;
 
         let now = app.visual_position(mover);
 
@@ -293,32 +313,46 @@ fn a_unit_killed_on_the_halt_cell_freezes_instead_of_jumping() {
             let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
             assert!(
                 step <= max_frame_step,
-                "the sprite of the unit killed on the halt cell teleports: {previous:?} -> {now:?}"
+                "frame {frames}: the sprite of the unit killed on the halt cell teleports: \
+                 {previous:?} -> {now:?}"
             );
+            // The route is a straight row: nothing is ever re-targeted behind the
+            // sprite (`StopMovement` clears the path, not the pixel).
+            assert!(
+                now.0 >= previous.0 - 1e-4,
+                "frame {frames}: the sprite moved backwards: {previous:?} -> {now:?}"
+            );
+        }
+        if let Some(now) = now {
+            last_drawn = Some(now);
         }
         previous = now;
 
-        let Some(unit) = app.state_ref().unit(mover).cloned() else {
-            break;
-        };
-        assert_ne!(
-            unit.grid, destination,
-            "the intercept must stop the unit before its destination"
-        );
-
-        if unit.hits == 0 {
-            saw_death = true;
-
-            // The death frame does not move the sprite: it freezes on the pixel the
-            // frame had reached (`UnitInfo::x/y` survives `StopMovement`).
-            let now = now.expect("the corpse is still drawn after the death frame");
-            let frozen = *frozen.get_or_insert(now);
-            assert_eq!(
-                now, frozen,
-                "the corpse must not move after the death frame"
+        if let Some(unit) = app.state_ref().unit(mover) {
+            assert_ne!(
+                unit.grid, destination,
+                "the intercept must stop the unit before its destination"
             );
+            if unit.hits == 0 {
+                saw_death = true;
+                // The cell the killing shot landed on: the halt cell, the point of
+                // the first attack.
+                death_cell = Some((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+            }
         }
     }
 
     assert!(saw_death, "the intercept killed the mover on the halt cell");
+
+    let death_cell = death_cell.expect("the death cell of the mover");
+    let end = last_drawn.expect("the corpse is drawn while it walks");
+    assert!(
+        (end.0 - death_cell.0).abs() < 1e-3 && (end.1 - death_cell.1).abs() < 1e-3,
+        "the corpse must end on the halt cell — the point where the anti-aircraft \
+         started attacking: {end:?} != {death_cell:?}"
+    );
+    assert!(
+        app.visual_position(mover).is_none(),
+        "the corpse is gone once the walk is over"
+    );
 }

@@ -719,6 +719,16 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// it paid for, so the panel's `Speed` row reaches 0 when the sprite arrives,
     /// not when the fast simulation does. Frame-only, not part of the snapshot/CRC.
     visual_speeds: std::collections::HashMap<UnitId, u16>,
+    /// Presentation corpses ([`CorpseVisual`]): dead units whose sprite still
+    /// walks the route to the pixel the simulation killed them on.
+    ///
+    /// The simulation removes an intercepted unit in the middle of its explosion,
+    /// while the frame (4 cells/s against a cell per tick) may still be several
+    /// cells behind. Without the record the sprite would freeze — or vanish — in
+    /// mid-air, short of the cell where the anti-aircraft opened fire. The walk is
+    /// finished from here and the blast stays on the corpse
+    /// ([`App::update_visual_units`]). Frame only, not part of the snapshot/CRC.
+    corpse_visuals: std::collections::BTreeMap<UnitId, CorpseVisual>,
     /// Frame-side offset in **pixels** of an explosion effect against the pixel the
     /// simulation stored for it (`UnitsManager_StartExplosion`,
     /// `units_manager.cpp:3991-3994`).
@@ -727,11 +737,17 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// the unit's `x/y` — the pixel the sprite is drawn at. The port's sprite is the
     /// interpolated **frame** position, which may lag the cell-per-tick simulation,
     /// so the blast is drawn at the corpse instead of jumping to the death cell.
-    /// The offset (`frame pixel - simulation pixel`) is frozen once the explosion
-    /// releases its parent in the middle of the animation
-    /// (`unit_order::progress_explosion`), so the blast does not jump back while it
-    /// plays. Frame-only, not part of the snapshot/CRC.
+    /// The offset (`frame pixel - simulation pixel`) follows the walking corpse for
+    /// the whole animation, so corpse and blast end on the death pixel together.
+    /// Frame-only, not part of the snapshot/CRC.
     effect_offsets: std::collections::HashMap<UnitId, (i32, i32)>,
+    /// The unit a blast belongs to, remembered by the frame (`effect_offsets`).
+    ///
+    /// `unit_order::progress_explosion` clears `UnitInfo::parent_unit` half-way
+    /// through the animation; the frame keeps the link so the blast stays on the
+    /// corpse (which may still be walking to the death pixel) instead of freezing
+    /// in mid-air. Frame-only, not part of the snapshot/CRC.
+    effect_parents: std::collections::HashMap<UnitId, UnitId>,
     /// Frame-side vision of the local player's team — the live scan coverage
     /// computed from the **visual** anchors, so the radar (the minimap fog and the
     /// unit dots) moves on arrival, not earlier
@@ -1096,6 +1112,43 @@ fn drained_visual_steps(
     queue
 }
 
+/// Walks a unit's visual route by no more than `budget` cells — the per-frame
+/// movement budget of [`App::update_visual_units`]
+/// ([`VISUAL_CELLS_PER_SECOND`] × the frame time).
+///
+/// The remaining budget is carried over to the next waypoint, so the speed is
+/// constant; a waypoint closer than the budget is reached exactly, so the sprite
+/// never overshoots the halt pixel. Used for the units of the simulation and for
+/// the presentation corpses ([`CorpseVisual`]) that finish their walk after the
+/// simulation removed them.
+fn advance_visual_route(
+    current: &mut (f32, f32),
+    queue: &mut std::collections::VecDeque<VisualStep>,
+    budget: f32,
+) {
+    let mut left = budget;
+
+    while left > 0.0 {
+        let Some(&waypoint) = queue.front() else {
+            break;
+        };
+        let dx = waypoint.x - current.0;
+        let dy = waypoint.y - current.1;
+        let distance = dx.abs().max(dy.abs());
+
+        if distance <= left {
+            *current = (waypoint.x, waypoint.y);
+            queue.pop_front();
+            left -= distance;
+        } else {
+            let factor = left / distance;
+            current.0 += dx * factor;
+            current.1 += dy * factor;
+            left = 0.0;
+        }
+    }
+}
+
 /// Pixel point the frame draws a unit's sprite at — the C++ `UnitInfo::x/y` of the
 /// sprite ([`render::unit_anchor_world`]/[`render::air_pixel_anchor`] without the
 /// hover bob and the construction-tape shift).
@@ -1155,6 +1208,27 @@ struct VisualStep {
     /// and the sprite move together; the port's simulation runs ahead of the
     /// frame).
     speed: u16,
+}
+
+/// A dead unit whose sprite still has a route to the point where the simulation
+/// killed it — a **presentation corpse**.
+///
+/// The frame walks a route at [`VISUAL_CELLS_PER_SECOND`], while the simulation
+/// moves a cell per tick: an intercepted aircraft is killed (and removed by
+/// `unit_order::progress_explosion` → `access::build_clearing` in the middle of
+/// its blast) while its sprite is still several cells from the death pixel. The
+/// record keeps the last simulation snapshot and the death point, so the corpse
+/// finishes the walk to the cell where the anti-aircraft opened fire instead of
+/// freezing (or vanishing) in mid-air.
+///
+/// Frame only: not part of the snapshot/CRC and never read by the simulation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CorpseVisual {
+    /// Last simulation snapshot of the unit (drawn while the walk lasts).
+    pub unit: UnitInfo,
+    /// The frame-space point the simulation died on — the same space as
+    /// `visual_target` (cell center for ground/sea, `x/y / 64` for an aircraft).
+    pub death: (f32, f32),
 }
 
 /// Selected unit order at the tick start — for auto-selection
@@ -1237,7 +1311,9 @@ impl<D: Dispatcher> App<D> {
             visual_goals: std::collections::HashMap::new(),
             visual_paths: std::collections::HashMap::new(),
             visual_speeds: std::collections::HashMap::new(),
+            corpse_visuals: std::collections::BTreeMap::new(),
             effect_offsets: std::collections::HashMap::new(),
+            effect_parents: std::collections::HashMap::new(),
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             hover_anims: std::collections::HashMap::new(),
@@ -3859,7 +3935,9 @@ impl<D: Dispatcher> App<D> {
         self.visual_goals.clear();
         self.visual_paths.clear();
         self.visual_speeds.clear();
+        self.corpse_visuals.clear();
         self.effect_offsets.clear();
+        self.effect_parents.clear();
         self.hover_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
@@ -3875,14 +3953,33 @@ impl<D: Dispatcher> App<D> {
     ///
     /// If [`App::update_visual_units`] has not been called yet,
     /// the simulation cell is returned — headless frames and tests see exactly `grid`.
+    ///
+    /// A presentation corpse ([`CorpseVisual`]) keeps its position after the
+    /// simulation removed the unit, so the frame can finish its walk to the death
+    /// point and draw it there.
     pub fn visual_position(&self, id: UnitId) -> Option<(f32, f32)> {
-        let unit = self.state_ref().unit(id)?;
-        Some(
-            self.visual_units
-                .get(&id)
-                .copied()
-                .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y))),
-        )
+        if let Some(unit) = self.state_ref().unit(id) {
+            return Some(
+                self.visual_units
+                    .get(&id)
+                    .copied()
+                    .unwrap_or((f32::from(unit.grid.x), f32::from(unit.grid.y))),
+            );
+        }
+
+        self.corpse_visuals.get(&id)?;
+        self.visual_units.get(&id).copied()
+    }
+
+    /// Presentation corpses of the frame ([`CorpseVisual`]) — the dead units whose
+    /// sprite still walks to the pixel where the simulation killed them.
+    ///
+    /// Read-only frame state: the renderer draws them
+    /// (`render::App::draw_presentation_corpses`) and the frame tests assert that an
+    /// intercepted unit stops on the cell where the attack started. Not part of the
+    /// snapshot/CRC.
+    pub fn presentation_corpses(&self) -> &std::collections::BTreeMap<UnitId, CorpseVisual> {
+        &self.corpse_visuals
     }
 
     /// Frame-side vision of the local player's team ([`vision::VisionView`]).
@@ -3918,8 +4015,14 @@ impl<D: Dispatcher> App<D> {
     ///
     /// The value is for drawing only: not part of the snapshot/CRC and does not
     /// change the simulation.
+    ///
+    /// A presentation corpse ([`CorpseVisual`]) keeps the angle of the segment its
+    /// sprite still walks — its `UnitInfo` is no longer in the state.
     pub fn visual_angle(&self, id: UnitId) -> Option<u8> {
-        let unit = self.state_ref().unit(id)?;
+        let unit = match self.state_ref().unit(id) {
+            Some(unit) => unit,
+            None => &self.corpse_visuals.get(&id)?.unit,
+        };
 
         // A projectile keeps the launch angle for the whole flight: C++
         // `AirPath::AirPath` (`airpath.cpp:52-59`) takes `m_angle = unit->angle` and
@@ -4296,6 +4399,17 @@ impl<D: Dispatcher> App<D> {
     /// report — save/load, transport/state synchronization — is still a snap
     /// (`VISUAL_TELEPORT_CELLS`), because its route is unknown.
     ///
+    /// **Death.** A unit killed while its sprite still walks ends the walk on the
+    /// pixel where the simulation killed it — the halt cell of the intercept, the
+    /// point where the anti-aircraft opened fire — and never in mid-air behind
+    /// that pixel. The queued route is kept (a dead unit gets no new cells, but the
+    /// cells it already has are the ones the simulation walked before the killing
+    /// hit); the corpse keeps walking them at the visual speed, and the record
+    /// [`CorpseVisual`] keeps it drawable after
+    /// `unit_order::progress_explosion` deletes it half-way through its blast. The
+    /// blast stays on the corpse (`effect_offsets`), so corpse and explosion end on
+    /// the death pixel together.
+    ///
     /// P4: the map is updated in place (`retain` + `insert`), not rebuilt
     /// every frame. This removes the `HashMap` allocation of `ids.len()`
     /// cells per 60 Hz frame; the values/traversal order are not used
@@ -4347,10 +4461,21 @@ impl<D: Dispatcher> App<D> {
         let mut anchors: std::collections::BTreeMap<UnitId, (i16, i16)> =
             std::collections::BTreeMap::new();
 
-        visual.retain(|id, _| state.unit(*id).is_some());
-        goals.retain(|id, _| state.unit(*id).is_some());
-        paths.retain(|id, _| state.unit(*id).is_some());
-        speeds.retain(|id, _| state.unit(*id).is_some());
+        // A presentation corpse ([`CorpseVisual`]) outlives the unit in the state:
+        // the frame keeps its sprite until the walk to the death pixel is over
+        // (see the ghost pass below). A record whose route is exhausted lives one
+        // more call, so the arrival frame is drawn with the corpse exactly on the
+        // death pixel; the next frame drops the record and with it the sprite.
+        {
+            let corpses = &self.corpse_visuals;
+
+            visual.retain(|id, _| state.unit(*id).is_some() || corpses.contains_key(id));
+            goals.retain(|id, _| state.unit(*id).is_some() || corpses.contains_key(id));
+            paths.retain(|id, _| state.unit(*id).is_some() || corpses.contains_key(id));
+            speeds.retain(|id, _| state.unit(*id).is_some() || corpses.contains_key(id));
+            self.corpse_visuals
+                .retain(|id, _| paths.get(id).is_some_and(|queue| !queue.is_empty()));
+        }
 
         // `dt = 0` (headless/QA): the snapshot — the frame reads exactly the simulation
         // cell. The route queue is reset, so the goldens do not drift.
@@ -4365,6 +4490,8 @@ impl<D: Dispatcher> App<D> {
                 paths.remove(&id);
                 speeds.insert(id, unit.speed);
             }
+            // A pure snapshot has no presentation corpses (and no walk to finish).
+            self.corpse_visuals.clear();
             // No frame time: the vision is the simulation one (the radar, the fog
             // and the golden frames read exactly the scan of the tick).
             self.vision.reset_from_sim(state);
@@ -4382,28 +4509,6 @@ impl<D: Dispatcher> App<D> {
             let goal = goals.entry(id).or_insert(target);
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
-
-            // A dead unit stops **where the frame caught it** — it is not pulled to
-            // its simulation cell.
-            //
-            // Oracle: the sprite is drawn at `UnitInfo::x/y`, and an emergency stop
-            // (`UnitInfo::StopMovement`, `unitinfo.cpp:3222` → `BlockedOnPathRequest`,
-            // `:3628`) only clears the path — it never rewrites the pixel position.
-            // A unit caught mid-cell therefore freezes on the pixel it had reached,
-            // not on the cell center. The port's pixel is the interpolated frame
-            // position, so the corpse keeps `current`; only the route ahead is
-            // dropped (a corpse does not walk). Its blast is drawn at the corpse
-            // (see `effect_offsets` below): `UnitsManager_StartExplosion` aligns the
-            // effect with `unit->x - explosion->x` (`units_manager.cpp:3991-3994`),
-            // so a teleport of the sprite to the death cell must not happen here —
-            // that was the "the unit jumps forward and explodes" playtest defect.
-            if unit.hits == 0 {
-                queue.clear();
-                *goal = target;
-                *last_speed = unit.speed;
-                anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
-                continue;
-            }
 
             // The simulation moved the unit (usually one cell per tick).
             // We append the actual route cells so that the frame walks them,
@@ -4498,33 +4603,67 @@ impl<D: Dispatcher> App<D> {
             // refill) — keep the reference in sync so the next delta is correct.
             *last_speed = unit.speed;
 
+            // A dead unit stops on the pixel where the simulation killed it — the
+            // halt cell of the intercept, i.e. the point where the anti-aircraft
+            // opened fire — and **not** in mid-air behind that cell.
+            //
+            // Oracle: the sprite is drawn at `UnitInfo::x/y`, and an emergency stop
+            // (`UnitInfo::StopMovement`, `unitinfo.cpp:3222` → `BlockedOnPathRequest`,
+            // `:3628`) only clears the path — it never rewrites `x/y`. In the port the
+            // cell-per-tick simulation resolves the killing shot while the frame still
+            // walks the drained route, so the corpse keeps its queued route and walks
+            // it at the visual speed to the death pixel: the sprite arrives there
+            // exactly as the hull did in the original, instead of freezing (or being
+            // pulled) several cells short of the cell where the attack started.
+            //
+            // The route was built above, from the drain report or from the per-cell
+            // steps of the killing tick; a corpse never gets new cells from the
+            // simulation. The record keeps the unit drawable after
+            // `unit_order::progress_explosion` removes it in the middle of its blast.
+            let dead = unit.hits == 0;
+
+            if dead && !queue.is_empty() {
+                // The corpse of a unit the simulation has just killed (or killed
+                // earlier: it stays dead and stops getting cells).
+                self.corpse_visuals.insert(
+                    id,
+                    CorpseVisual {
+                        unit: unit.clone(),
+                        death: target,
+                    },
+                );
+            }
+
             // We pass no more than `budget` cells per frame; the remaining budget
             // is carried over to the next route points — the speed is constant.
-            let mut left = budget;
-
-            while left > 0.0 {
-                let Some(&waypoint) = queue.front() else {
-                    break;
-                };
-                let dx = waypoint.x - current.0;
-                let dy = waypoint.y - current.1;
-                let distance = dx.abs().max(dy.abs());
-
-                if distance <= left {
-                    *current = (waypoint.x, waypoint.y);
-                    queue.pop_front();
-                    left -= distance;
-                } else {
-                    let factor = left / distance;
-                    current.0 += dx * factor;
-                    current.1 += dy * factor;
-                    left = 0.0;
-                }
-            }
+            advance_visual_route(current, queue, budget);
 
             // The anchor of the frame's vision: the cell the sprite stands in
             // (the same rounding the renderer uses for the drawing cell).
             anchors.insert(id, (current.0.round() as i16, current.1.round() as i16));
+        }
+
+        // Presentation corpses whose unit the simulation already removed: the walk
+        // to the death pixel continues here. An intercepted aircraft is deleted by
+        // `access::build_clearing` half-way through its blast, several cells before
+        // the sprite reached the halt cell; without this the plane would vanish in
+        // mid-air and the blast (drawn on the corpse) would stop behind the point
+        // where the attack started.
+        let ghost_ids: Vec<UnitId> = self
+            .corpse_visuals
+            .keys()
+            .copied()
+            .filter(|id| state.unit(*id).is_none())
+            .collect();
+
+        for id in ghost_ids {
+            let Some(death) = self.corpse_visuals.get(&id).map(|corpse| corpse.death) else {
+                continue;
+            };
+            let current = visual.entry(id).or_insert(death);
+            let queue = paths.entry(id).or_default();
+
+            advance_visual_route(current, queue, budget);
         }
 
         // Frame-side anchor of the explosion effects — the port of the
@@ -4541,10 +4680,13 @@ impl<D: Dispatcher> App<D> {
         // stored offset is `frame pixel - simulation pixel` of the dead unit.
         //
         // While the effect still references its parent the offset follows the
-        // corpse; the explosion releases the parent in the middle of the animation
-        // (`unit_order::progress_explosion`), after which the frozen value keeps the
-        // blast in place — it never jumps back to the death cell mid-animation.
+        // corpse. `unit_order::progress_explosion` releases the parent in the middle
+        // of the animation; the frame remembers the link (`effect_parents`) so the
+        // blast keeps riding the corpse for the rest of its walk and ends on the
+        // death pixel — where both the sprite and the simulation put the unit.
         self.effect_offsets
+            .retain(|id, _| state.unit(*id).is_some());
+        self.effect_parents
             .retain(|id, _| state.unit(*id).is_some());
         for id in &ids {
             let Some(unit) = state.unit(*id) else {
@@ -4555,10 +4697,22 @@ impl<D: Dispatcher> App<D> {
                 continue;
             }
 
-            let Some(parent_id) = unit.parent_unit else {
+            let parent_id = unit
+                .parent_unit
+                .or_else(|| self.effect_parents.get(id).copied());
+            let Some(parent_id) = parent_id else {
                 continue;
             };
-            let Some(parent) = state.unit(parent_id) else {
+            self.effect_parents.insert(*id, parent_id);
+            // A presentation corpse keeps its owner known after the simulation
+            // removed it, so the blast stays on the walking corpse all the way to
+            // the death pixel.
+            let parent = state.unit(parent_id).or_else(|| {
+                self.corpse_visuals
+                    .get(&parent_id)
+                    .map(|corpse| &corpse.unit)
+            });
+            let Some(parent) = parent else {
                 continue;
             };
             let Some(&(visual_x, visual_y)) = visual.get(&parent_id) else {

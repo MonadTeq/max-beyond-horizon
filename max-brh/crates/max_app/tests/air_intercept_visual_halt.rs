@@ -20,6 +20,12 @@
 //! * [`an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close`] — the
 //!   gate: after the turn close the sprite must walk the queued air route to the
 //!   halt pixel, like the ground version in `intercept_visual_halt.rs`.
+//! * [`an_intercepted_aircraft_dies_on_the_cell_of_the_first_attack`] — the
+//!   **death** frame: with the mission hits (no `hits = 500`) the battery kills the
+//!   bomber. The sprite must still walk to the halt cell — the point where the
+//!   anti-aircraft opened fire — and the corpse and its blast must end there: no
+//!   jump, no freeze in mid-air. QA captured the halt frames with `hits = 500`; the
+//!   owner plays the real mission, where the bomber dies.
 //! * [`an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close`] —
 //!   the control: without the turn close the same intercept walks smoothly, so
 //!   the scenario itself is sound and the bulk turn-close drain is the trigger.
@@ -75,6 +81,19 @@
 //! the halt cell at `VISUAL_CELLS_PER_SECOND`. A real save/load or transport
 //! synchronization has **no** report (the route is unknown) and keeps the snap.
 //!
+//! The **death** frame needed a second rule: `App::update_visual_units` used to
+//! freeze a dead unit on the pixel the frame had reached (`unit.hits == 0` branch,
+//! `queue.clear()`). That is `intercept_explosion.rs`'s rule, written for a corpse
+//! that must not jump — but with the drain it left the sprite, the corpse and the
+//! blast several cells **short** of the halt cell: the bomber died in mid-air, away
+//! from the battery that had just opened fire, while the simulation had killed it
+//! on the halt cell. The dead unit now keeps its queued route: the corpse walks it
+//! at `VISUAL_CELLS_PER_SECOND` to the death pixel (the halt cell — the point of the
+//! first attack) and the frame keeps the corpse drawable after
+//! `unit_order::progress_explosion` deletes it half-way through the blast
+//! ([`max_app::CorpseVisual`]), so the walk always completes. The blast stays on the
+//! corpse and ends on that pixel too.
+//!
 //! # Running
 //!
 //! ```text
@@ -82,7 +101,7 @@
 //! ```
 //!
 //! The tests write every captured frame to `max-brh/qa-out/air-intercept-teleport/`
-//! (`frames-turn-close.csv`, `frames-natural.csv`).
+//! (`frames-turn-close.csv`, `frames-natural.csv`, `frames-death.csv`).
 
 use std::path::{Path, PathBuf};
 
@@ -127,11 +146,11 @@ fn mission_app() -> Box<App> {
 
 /// The player's real bomber and the enemy anti-aircraft at 045-042.
 ///
-/// The bomber is moved to the playtest cell and made airborne; its hits are
-/// raised so that the reaction fire does not kill it — the frame under test is
-/// the halt, not the corpse (the death frame has its own branch and is covered
-/// by `intercept_explosion.rs`).
-fn setup_intercept(app: &mut App) -> (UnitId, UnitId) {
+/// The bomber is moved to the playtest cell and made airborne. `hits` — the
+/// mission value stays when `None` (the battery kills the bomber: the death frame),
+/// `Some(n)` raises it so that the reaction fire does not kill the bomber (the halt
+/// frame — QA's `hits = 500` run).
+fn setup_intercept(app: &mut App, hits: Option<u16>) -> (UnitId, UnitId) {
     let player = app.state_ref().player_team();
 
     let state = app.state_ref();
@@ -165,7 +184,9 @@ fn setup_intercept(app: &mut App) -> (UnitId, UnitId) {
         unit.flags |= unit_flags::HOVERING;
         // `UnitInfo::SetPosition` for the new cell (the air path starts from `x/y`).
         max_core::unit_order::update_grid_position(unit);
-        unit.hits = 500;
+        if let Some(hits) = hits {
+            unit.hits = hits;
+        }
         unit.orders = UnitOrder::Await;
         unit.state = UnitOrderState::ExecutingOrder;
     }
@@ -179,11 +200,16 @@ fn setup_intercept(app: &mut App) -> (UnitId, UnitId) {
 }
 
 /// One captured frame: the sprite point, the simulation point and the order.
+///
+/// The last three fields describe the death frame: the blast of the killed unit,
+/// the pixel the frame draws that blast at (`explosion pixel + offset`) and whether
+/// the sprite of this frame is still drawn at all (a presentation corpse keeps
+/// walking after the simulation removed its unit — [`max_app::CorpseVisual`]).
 #[derive(Debug, Clone)]
 struct Frame {
     index: u32,
     phase: &'static str,
-    visual: (f32, f32),
+    visual: Option<(f32, f32)>,
     step: f32,
     grid: Point,
     pixel: (u16, u16),
@@ -191,6 +217,9 @@ struct Frame {
     state: UnitOrderState,
     hits: u16,
     path: bool,
+    blast_cell: Option<Point>,
+    blast_drawn: Option<(i32, i32)>,
+    drawn: bool,
 }
 
 impl Frame {
@@ -199,35 +228,81 @@ impl Frame {
         id: UnitId,
         index: u32,
         phase: &'static str,
-        previous: (f32, f32),
+        previous: Option<(f32, f32)>,
     ) -> Self {
-        let unit = app.state_ref().unit(id).cloned().expect("bomber");
-        let visual = app.visual_position(id).expect("sprite");
-        let step = (visual.0 - previous.0)
-            .abs()
-            .max((visual.1 - previous.1).abs());
+        let unit = app.state_ref().unit(id).cloned();
+        let visual = app.visual_position(id);
+        let step = match (previous, visual) {
+            (Some(previous), Some(visual)) => (visual.0 - previous.0)
+                .abs()
+                .max((visual.1 - previous.1).abs()),
+            _ => 0.0,
+        };
+        let (grid, pixel, orders, state, hits, path) = match &unit {
+            Some(unit) => (
+                unit.grid,
+                (unit.x, unit.y),
+                unit.orders,
+                unit.state,
+                unit.hits,
+                unit.path.is_some(),
+            ),
+            None => (
+                Point::ZERO,
+                (0, 0),
+                UnitOrder::Idle,
+                UnitOrderState::Init,
+                0,
+                false,
+            ),
+        };
+        // The blast of the killed unit (`LNDEXPLD`/`AIREXPLD`/...): the cell the
+        // simulation spawned it on and the pixel the frame draws it at.
+        let mut blast_cell = None;
+        let mut blast_drawn = None;
+        for blast in app.state_ref().unit_ids_in_order() {
+            let Some(unit) = app.state_ref().unit(blast) else {
+                continue;
+            };
+            if !matches!(
+                unit.unit_type,
+                UnitType::HitExplosion
+                    | UnitType::LandExplosion
+                    | UnitType::BuildingExplosion
+                    | UnitType::AirExplosion
+                    | UnitType::SeaExplosion
+            ) {
+                continue;
+            }
+            let offset = app.explosion_draw_offset(blast).unwrap_or((0, 0));
+            blast_cell = Some(unit.grid);
+            blast_drawn = Some((i32::from(unit.x) + offset.0, i32::from(unit.y) + offset.1));
+            break;
+        }
 
         Self {
             index,
             phase,
             visual,
             step,
-            grid: unit.grid,
-            pixel: (unit.x, unit.y),
-            orders: unit.orders,
-            state: unit.state,
-            hits: unit.hits,
-            path: unit.path.is_some(),
+            grid,
+            pixel,
+            orders,
+            state,
+            hits,
+            path,
+            blast_cell,
+            blast_drawn,
+            drawn: visual.is_some(),
         }
     }
 
     fn line(&self) -> String {
         format!(
-            "{:03} {} visual=({:.4},{:.4}) step={:.4} grid=({},{}) px=({},{}) {:?}/{:?} hits={} path={}",
+            "{:03} {} visual={:?} step={:.4} grid=({},{}) px=({},{}) {:?}/{:?} hits={} path={} blast={:?}/{:?}",
             self.index,
             self.phase,
-            self.visual.0,
-            self.visual.1,
+            self.visual,
             self.step,
             self.grid.x,
             self.grid.y,
@@ -236,8 +311,18 @@ impl Frame {
             self.orders,
             self.state,
             self.hits,
-            self.path
+            self.path,
+            self.blast_cell,
+            self.blast_drawn
         )
+    }
+
+    /// The sprite point of this frame (`App::visual_position`).
+    ///
+    /// Panics when the frame has no sprite: a survivor always has one, and the
+    /// death frames use [`Frame::drawn`] instead.
+    fn sprite(&self) -> (f32, f32) {
+        self.visual.expect("the frame draws the unit")
     }
 }
 
@@ -246,16 +331,30 @@ fn write_frames(name: &str, frames: &[Frame]) {
     let dir = qa_out_dir().join("air-intercept-teleport");
     std::fs::create_dir_all(&dir).expect("qa-out dir");
     let mut csv = String::from(
-        "frame,phase,visual_x,visual_y,step,grid_x,grid_y,pixel_x,pixel_y,orders,state,hits,path\n",
+        "frame,phase,visual_x,visual_y,step,grid_x,grid_y,pixel_x,pixel_y,orders,state,hits,path,\
+         blast_x,blast_y,blast_px,blast_py,drawn\n",
     );
 
     for frame in frames {
+        let (visual_x, visual_y) = match frame.visual {
+            Some(visual) => (format!("{:.4}", visual.0), format!("{:.4}", visual.1)),
+            None => (String::new(), String::new()),
+        };
+        let (blast_x, blast_y) = match frame.blast_cell {
+            Some(cell) => (cell.x.to_string(), cell.y.to_string()),
+            None => (String::new(), String::new()),
+        };
+        let (blast_px, blast_py) = match frame.blast_drawn {
+            Some((x, y)) => (x.to_string(), y.to_string()),
+            None => (String::new(), String::new()),
+        };
+
         csv.push_str(&format!(
-            "{},{},{:.4},{:.4},{:.4},{},{},{},{},{:?},{:?},{},{}\n",
+            "{},{},{},{},{:.4},{},{},{},{},{:?},{:?},{},{},{},{},{},{},{}\n",
             frame.index,
             frame.phase,
-            frame.visual.0,
-            frame.visual.1,
+            visual_x,
+            visual_y,
             frame.step,
             frame.grid.x,
             frame.grid.y,
@@ -264,7 +363,12 @@ fn write_frames(name: &str, frames: &[Frame]) {
             frame.orders,
             frame.state,
             frame.hits,
-            frame.path
+            frame.path,
+            blast_x,
+            blast_y,
+            blast_px,
+            blast_py,
+            frame.drawn
         ));
     }
 
@@ -300,11 +404,11 @@ fn air_target_of_last(frames: &[Frame]) -> (f32, f32) {
 /// rest of the air route, then only the frame clock runs.
 fn run_turn_close() -> (Vec<Frame>, f32) {
     let mut app = mission_app();
-    let (bomber, _anti_air) = setup_intercept(&mut app);
+    let (bomber, _anti_air) = setup_intercept(&mut app, Some(500));
     let max_step = max_frame_step(&app);
 
     app.update_visual_units(0.0);
-    let mut previous = app.visual_position(bomber).expect("sprite");
+    let mut previous = app.visual_position(bomber);
     let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
 
     let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
@@ -342,15 +446,64 @@ fn run_turn_close() -> (Vec<Frame>, f32) {
     (frames, max_step)
 }
 
+/// The owner's **death** flow: the same order and End Turn, but with the mission
+/// hits (no `hits = 500`), so the battery really kills the bomber.
+///
+/// After the turn close the simulation keeps ticking one step per frame — the AI
+/// turn, the delayed reaction fire of the battery, the shot that kills the bomber —
+/// while the frame walks the drained route, exactly as the owner plays it.
+fn run_death_turn_close() -> (Vec<Frame>, f32) {
+    let mut app = mission_app();
+    let (bomber, _anti_air) = setup_intercept(&mut app, None);
+    let max_step = max_frame_step(&app);
+
+    app.update_visual_units(0.0);
+    let mut previous = app.visual_position(bomber);
+    let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
+
+    let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
+        .expect("air move order");
+    app.submit(order);
+
+    let mut index = 0;
+    for _ in 0..5 {
+        app.tick();
+        app.update_visual_units(FRAME_SECONDS);
+        index += 1;
+        frames.push(Frame::capture(&app, bomber, index, "tick", previous));
+        previous = frames.last().expect("frame").visual;
+    }
+
+    let player = app.state_ref().player_team();
+    app.universe_mut().end_local_turn(player);
+
+    for _ in 0..260 {
+        app.tick();
+        app.update_visual_units(FRAME_SECONDS);
+        index += 1;
+        frames.push(Frame::capture(
+            &app,
+            bomber,
+            index,
+            "after-turn-close",
+            previous,
+        ));
+        previous = frames.last().expect("frame").visual;
+    }
+
+    write_frames("frames-death", &frames);
+    (frames, max_step)
+}
+
 /// The control flow: the order alone, the simulation ticks one cell per frame
 /// until the intercept halts the bomber, then the sprite walks the queue.
 fn run_without_turn_close() -> (Vec<Frame>, f32) {
     let mut app = mission_app();
-    let (bomber, _anti_air) = setup_intercept(&mut app);
+    let (bomber, _anti_air) = setup_intercept(&mut app, Some(500));
     let max_step = max_frame_step(&app);
 
     app.update_visual_units(0.0);
-    let mut previous = app.visual_position(bomber).expect("sprite");
+    let mut previous = app.visual_position(bomber);
     let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
 
     let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
@@ -406,9 +559,9 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
     // threshold, otherwise the frames do not exercise the defect.
     let start = frames.first().expect("start");
     let halt = frames.last().expect("last");
-    let gap = (halt.visual.0 - start.visual.0)
+    let gap = (halt.sprite().0 - start.sprite().0)
         .abs()
-        .max((halt.visual.1 - start.visual.1).abs());
+        .max((halt.sprite().1 - start.sprite().1).abs());
     assert!(
         gap > max_app::VISUAL_TELEPORT_CELLS as f32,
         "the scenario must move the aircraft more than {} cells: {gap:.3}",
@@ -457,10 +610,10 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
             jumped.phase,
             jumped.step,
             max_step,
-            previous.visual.0,
-            previous.visual.1,
-            jumped.visual.0,
-            jumped.visual.1,
+            previous.sprite().0,
+            previous.sprite().1,
+            jumped.sprite().0,
+            jumped.sprite().1,
             jumped.grid.x,
             jumped.grid.y,
             jumped.pixel.0,
@@ -472,7 +625,7 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
     // No jump: the sprite must have arrived at the halt pixel by walking.
     let target = air_target_of_last(&frames);
     assert!(
-        (halt.visual.0 - target.0).abs() < 1e-3 && (halt.visual.1 - target.1).abs() < 1e-3,
+        (halt.sprite().0 - target.0).abs() < 1e-3 && (halt.sprite().1 - target.1).abs() < 1e-3,
         "the sprite must stop on the halt pixel: {:?} != {target:?}",
         halt.visual
     );
@@ -498,10 +651,10 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close() {
             now.index,
             now.phase,
             now.step,
-            pair[0].visual.0,
-            pair[0].visual.1,
-            now.visual.0,
-            now.visual.1
+            pair[0].sprite().0,
+            pair[0].sprite().1,
+            now.sprite().0,
+            now.sprite().1
         );
     }
 
@@ -515,9 +668,186 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close() {
 
     let target = air_target_of_last(&frames);
     assert!(
-        (halt.visual.0 - target.0).abs() < 1e-3 && (halt.visual.1 - target.1).abs() < 1e-3,
+        (halt.sprite().0 - target.0).abs() < 1e-3 && (halt.sprite().1 - target.1).abs() < 1e-3,
         "the sprite must walk to the halt pixel: {:?} != {target:?}",
         halt.visual
+    );
+}
+
+/// The **death** gate: the aircraft the battery kills is presented on the cell
+/// where the attack started — no jump, no corpse frozen (or vanishing) in mid-air.
+///
+/// Oracle: the battery reacts to the aircraft entering its range
+/// (`Access_UpdateMapStatus` → `UnitEventEmergencyStop` → `BlockedOnPathRequest`,
+/// `unitinfo.cpp:3628`; the reaction fire follows on the next order pass), so the
+/// bomber is stopped and killed **on the same cell**; the sprite is drawn at
+/// `UnitInfo::x/y`, which that stop never rewrites, and the blast at the same pixel
+/// (`UnitsManager_StartExplosion`, `units_manager.cpp:3991-3994`).
+///
+/// The port's simulation resolves the killing shot while the frame still walks the
+/// drained route (a cell per tick against `VISUAL_CELLS_PER_SECOND`), so the frame
+/// has to finish that walk: the corpse keeps its route, arrives exactly on the
+/// death pixel — the cell of the first attack — and the blast rides it there. The
+/// frames captured here are the owner's: with the mission hits the bomber really
+/// dies, unlike QA's `hits = 500` run of the halt gate above.
+#[test]
+fn an_intercepted_aircraft_dies_on_the_cell_of_the_first_attack() {
+    let (frames, max_step) = run_death_turn_close();
+
+    println!("frame, phase, sprite (cells), step, simulation cell / pixel");
+    for frame in &frames {
+        println!("{}", frame.line());
+    }
+    println!("max frame step: {max_step:.4} cells");
+
+    let mission_hits = frames.first().expect("start").hits;
+    assert!(
+        mission_hits > 0,
+        "the scenario needs a live bomber at the start: {mission_hits}"
+    );
+
+    // 1. The battery really kills the bomber (no `hits = 500` in this run).
+    let death_index = frames
+        .iter()
+        .position(|frame| frame.hits == 0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the battery must kill the bomber within {} frames",
+                frames.len()
+            )
+        });
+    let death = frames[death_index].clone();
+
+    // 2. The first attack: the reaction shot that first lowers the hits. It lands
+    //    while the bomber is halted by the interrupt — on the halt cell, i.e. the
+    //    cell the aircraft entered the battery's range on.
+    let attack_index = frames[..death_index]
+        .iter()
+        .position(|frame| frame.hits < mission_hits)
+        .expect("the battery opens fire before the kill");
+    let attack = frames[attack_index].clone();
+    assert_eq!(
+        attack.orders,
+        UnitOrder::Await,
+        "the battery engages the aircraft the moment the interrupt stops it"
+    );
+    assert!(!attack.path, "the halted aircraft has no route left");
+
+    // 3. The death happened on the cell of the first attack, not on a later one:
+    //    the aircraft never walks on after the shot (the simulation cell and pixel
+    //    of the death frame are the ones of the attack frame).
+    assert_eq!(
+        death.grid, attack.grid,
+        "the bomber dies where the first attack landed: death cell {:?}, attack cell {:?}",
+        death.grid, attack.grid
+    );
+    assert_eq!(
+        death.pixel, attack.pixel,
+        "the bomber dies on the pixel of the first attack: death pixel {:?}, attack pixel {:?}",
+        death.pixel, attack.pixel
+    );
+
+    // 4. The sprite never jumps — the walk to the death pixel is a normal frame
+    //    route (`VISUAL_CELLS_PER_SECOND`), not a snap and not a freeze.
+    if let Some(index) = frames.windows(2).position(|pair| pair[1].step > max_step) {
+        let previous = &frames[index];
+        let jumped = &frames[index + 1];
+        panic!(
+            "frame {} ({}): the sprite of the intercepted aircraft teleports {:.4} cells \
+             (a frame may move {:.4}): {:?} -> {:?}; the simulation killed it at cell ({},{}) \
+             pixel ({},{}).",
+            jumped.index,
+            jumped.phase,
+            jumped.step,
+            max_step,
+            previous.visual,
+            jumped.visual,
+            death.grid.x,
+            death.grid.y,
+            death.pixel.0,
+            death.pixel.1
+        );
+    }
+
+    // 5. The corpse — not only the simulation — ends on the cell of the first
+    //    attack. The sprite receives the last waypoint exactly (the halt pixel), then
+    //    the frame drops it: `max_frame_step` is the only tolerance of the walk.
+    let last_drawn = frames
+        .iter()
+        .filter(|frame| frame.drawn)
+        .last()
+        .expect("the corpse is drawn while it walks");
+    let death_point = (
+        f32::from(death.pixel.0) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+        f32::from(death.pixel.1) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
+    );
+    assert!(
+        (last_drawn.sprite().0 - death_point.0).abs() < f32::EPSILON
+            && (last_drawn.sprite().1 - death_point.1).abs() < f32::EPSILON,
+        "the corpse must end exactly on the death pixel {death_point:?}: {:?}",
+        last_drawn.sprite()
+    );
+    assert!(
+        !frames.last().expect("last frame").drawn,
+        "the corpse is gone once the walk is over"
+    );
+    // The death pixel lies inside the attack cell (the air path keeps the pixel,
+    // the cell is the pixel over the tile size — `UnitInfo::grid`).
+    let tile = i32::from(max_core::unit_order::GFX_MAP_TILE_SIZE);
+    assert_eq!(
+        (
+            i32::from(death.pixel.0) / tile,
+            i32::from(death.pixel.1) / tile
+        ),
+        (i32::from(attack.grid.x), i32::from(attack.grid.y)),
+        "the walk ends on the cell of the first attack"
+    );
+
+    // 6. The blast is drawn on the corpse while it walks (`OffsetDrawZones`) and
+    //    ends on the death pixel with it: `UnitsManager_StartExplosion` puts the
+    //    effect on the dying unit's pixel, and the burst never leaves the corpse.
+    //    (Only the **death** blast has the parent link in the state —
+    //    `start_explosion` sets `parent_unit` for a killed unit; the impact flash of
+    //    the first, non-lethal shot keeps its simulation pixel.)
+    let mut blast_on_corpse = 0usize;
+    for frame in frames
+        .iter()
+        .filter(|frame| frame.blast_drawn.is_some() && frame.hits == 0)
+    {
+        let Some(visual) = frame.visual else {
+            continue;
+        };
+        let expected = (
+            (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+            (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+        );
+        assert_eq!(
+            frame.blast_drawn,
+            Some(expected),
+            "frame {}: the blast is drawn on the corpse: {:?} != {expected:?}",
+            frame.index,
+            frame.blast_drawn
+        );
+        blast_on_corpse += 1;
+    }
+    assert!(
+        blast_on_corpse > 0,
+        "the blast follows the corpse to the death pixel"
+    );
+    let last_blast = frames
+        .iter()
+        .filter(|frame| frame.blast_drawn.is_some() && frame.hits == 0)
+        .last()
+        .expect("the blast outlives the corpse's walk");
+    assert_eq!(
+        last_blast.blast_drawn,
+        Some((i32::from(death.pixel.0), i32::from(death.pixel.1))),
+        "the blast ends on the pixel where the simulation killed the bomber"
+    );
+    assert_eq!(
+        last_blast.blast_cell,
+        Some(death.grid),
+        "the blast is spawned on the death cell (`UnitsManager_StartExplosion`)"
     );
 }
 
@@ -600,7 +930,7 @@ fn run_long_ground_route() -> (Vec<Frame>, f32) {
 
     let max_step = max_frame_step(&app);
     app.update_visual_units(0.0);
-    let mut previous = app.visual_position(mover).expect("sprite");
+    let mut previous = app.visual_position(mover);
     let mut frames = vec![Frame::capture(&app, mover, 0, "start", previous)];
 
     let mut index = 0;
@@ -682,10 +1012,10 @@ fn a_long_ground_route_walks_to_the_halt_cell_at_the_turn_close() {
             jumped.phase,
             jumped.step,
             max_step,
-            previous.visual.0,
-            previous.visual.1,
-            jumped.visual.0,
-            jumped.visual.1,
+            previous.sprite().0,
+            previous.sprite().1,
+            jumped.sprite().0,
+            jumped.sprite().1,
             jumped.grid.x,
             jumped.grid.y
         );
@@ -694,7 +1024,7 @@ fn a_long_ground_route_walks_to_the_halt_cell_at_the_turn_close() {
     // No jump: the ground sprite stops exactly on the halt cell.
     let expected = (f32::from(halt.grid.x), f32::from(halt.grid.y));
     assert!(
-        (halt.visual.0 - expected.0).abs() < 1e-3 && (halt.visual.1 - expected.1).abs() < 1e-3,
+        (halt.sprite().0 - expected.0).abs() < 1e-3 && (halt.sprite().1 - expected.1).abs() < 1e-3,
         "the sprite must stop on the halt cell: {:?} != {expected:?}",
         halt.visual
     );
