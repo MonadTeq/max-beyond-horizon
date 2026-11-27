@@ -123,6 +123,16 @@ pub enum WindowInput {
         /// y coordinate.
         y: i32,
     },
+    /// Vertical mouse wheel in whole notches (positive = wheel up).
+    ///
+    /// The SDL float delta is quantized with a remainder, exactly as the oracle
+    /// does (`mouse_quantize_wheel_axis`, `max-cpp-port/src/mouse.c:302`), so
+    /// high-resolution wheels accumulate into notches instead of losing sub-notch
+    /// deltas.
+    MouseWheel {
+        /// Wheel notches since the previous event (`y` axis).
+        notches: i32,
+    },
 }
 
 /// Translates an SDL key with modifiers: `Alt+<printable>` РІвЂ вЂ™ [`WindowKey::Alt`]
@@ -155,6 +165,20 @@ fn window_key_mod(code: Keycode, modifiers: Mod) -> WindowKey {
             }
         }
     }
+}
+
+/// `mouse_quantize_wheel_axis` (`max-cpp-port/src/mouse.c:302`) — keeps the
+/// sub-notch part of a wheel delta across events and returns whole notches.
+///
+/// SDL reports wheel deltas as floats; the oracle accumulates them and truncates
+/// toward zero, so a high-resolution wheel produces notches at the right rate
+/// instead of losing every sub-notch delta.
+pub fn quantize_wheel_axis(delta: f32, remainder: &mut f32) -> i32 {
+    *remainder += delta;
+    let notches = remainder.trunc() as i32;
+    *remainder -= notches as f32;
+
+    notches
 }
 
 /// `Alt+Enter` / `Alt+KpEnter` РІР‚вЂќ the fullscreen shortcut of the C++ oracle
@@ -251,6 +275,8 @@ pub struct SdlWindow {
     display_scale: f32,
     /// Refresh rate of the display at creation (Hz; diagnostics only).
     display_refresh_rate: f32,
+    /// Sub-notch part of the wheel delta (`mouse_wheel_remainder_y`, `mouse.c:47`).
+    wheel_remainder: f32,
     /// A layout or visibility change asks for one extra frame.
     /// Cursor cache: key (`CursorId | frame << 8`) РІвЂ вЂ™ SDL cursor.
     cursors: HashMap<u32, Cursor>,
@@ -386,6 +412,7 @@ impl SdlWindow {
             fullscreen: false,
             display_scale,
             display_refresh_rate,
+            wheel_remainder: 0.0,
             cursors: HashMap::new(),
             active_cursor: None,
             _sdl: sdl,
@@ -1101,6 +1128,16 @@ impl SdlWindow {
                         .window_to_frame(x.round() as i32, y.round() as i32)
                         .unwrap_or((-1, -1));
                     inputs.push(WindowInput::MouseRelease { x, y });
+                }
+                // Mouse wheel — `mouse_add_wheel_event` (`max-cpp-port/src/mouse.c:312`):
+                // a float delta is quantized into notches with a remainder, so a
+                // high-resolution wheel accumulates sub-notch deltas.
+                sdl3::event::Event::MouseWheel { y, .. } => {
+                    let notches = quantize_wheel_axis(y, &mut self.wheel_remainder);
+
+                    if notches != 0 {
+                        inputs.push(WindowInput::MouseWheel { notches });
+                    }
                 }
                 // P4 (TC-1107), 1.4.2: alt-tab/minimize/restore do not stop the loop.
                 // Presentation state only; the geometry is refreshed when the

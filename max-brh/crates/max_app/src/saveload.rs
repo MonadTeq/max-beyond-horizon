@@ -480,7 +480,8 @@ impl SaveLoadMenu {
             InputEvent::MouseClick(x, y) => self.click(x, y),
             InputEvent::RightClick(_, _)
             | InputEvent::MouseMove(_, _)
-            | InputEvent::MouseRelease(_, _) => SaveLoadAction::None,
+            | InputEvent::MouseRelease(_, _)
+            | InputEvent::MouseWheel(..) => SaveLoadAction::None,
         }
     }
 

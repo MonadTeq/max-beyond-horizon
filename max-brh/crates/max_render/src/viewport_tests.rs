@@ -304,3 +304,44 @@ fn scaled_zoom_is_not_clamped_by_max_zoom() {
     // reaches: `S = 4` at the maximum 1:1 zoom needs 512.
     assert_eq!(hd.zoom(), MAX_ZOOM * 4);
 }
+
+/// The 1:1 window chrome draws the map into a 448×448 window of the 640×480 frame
+/// (`WINDOW_MAIN_MAP`). The camera must clamp against that window, otherwise it
+/// stops 96 px short of the map's left/top edge and the first cell (`001-001`) is
+/// never inside the map window.
+#[test]
+fn a_smaller_map_view_lets_the_camera_reach_the_map_edge() {
+    // Full-frame camera: the leftmost/topmost center is half of the 640×480 frame.
+    let mut full = Viewport::with_center(640, 480, (0, 0), 64);
+    full.center_on_world(0, 0);
+    assert_eq!(
+        full.origin(),
+        (320 - 320, 240 - 240),
+        "full-frame clamp: the origin can reach 0"
+    );
+
+    // The same frame with the 448×448 map window: the center may go down to 224
+    // (448 / 2), i.e. the world origin is reachable as well.
+    let mut window = Viewport::with_center(640, 480, (0, 0), 64);
+    window.set_view_size(448, 448);
+    window.center_on_world(0, 0);
+
+    assert_eq!(window.view_size(), (448, 448));
+    assert_eq!(window.screen(), (640, 480), "the frame stays 640×480");
+    assert_eq!(window.center(), (224, 224));
+    assert_eq!(window.origin(), (0, 0));
+
+    // Scrolling cannot go further: the origin stays at the map edge.
+    window.scroll_by_screen(-100_000, -100_000);
+    assert_eq!(window.origin(), (0, 0));
+
+    // ... and the first cell fills the top-left corner of the map window.
+    let cell = window.tile_rect(0, 0);
+    assert_eq!((cell.ulx, cell.uly), (0, 0));
+    assert_eq!(window.tile_rect(0, 0).width, 64);
+
+    // The bottom-right end: the last cell ends exactly at the window edge.
+    window.center_on_world(i32::from(MAP_WIDTH) * 64, i32::from(MAP_HEIGHT) * 64);
+    let last = window.tile_rect(MAP_WIDTH - 1, MAP_HEIGHT - 1);
+    assert_eq!((last.lrx(), last.lry()), (448, 448));
+}

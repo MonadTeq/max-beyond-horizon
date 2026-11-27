@@ -449,6 +449,38 @@ fn map_viewport_is_448_and_keeps_camera() {
 }
 
 #[test]
+fn zoom_pointer_hot_spot_lands_on_the_slider_position() {
+    // `ZOOMPTR` (`MAX.RES`): 25×14, hot spot `ulx = 12` — the middle of the knob.
+    // `WindowManager_DecodeSimpleImage` subtracts that hot spot from the draw
+    // position (`window_manager.cpp:784-785`), so the image's left edge is
+    // `slider.ulx + offset - 12`.
+    let (left, top) = zoom_pointer_position(64, 12, 0);
+    assert_eq!(left, layout::ZOOM_SLIDER.ulx + 14 - 12);
+    assert_eq!(top, layout::ZOOM_SLIDER.uly + 1);
+    assert_eq!(
+        left + 12,
+        layout::ZOOM_SLIDER.ulx + zoom_slider_offset(64),
+        "the knob's hot spot is the slider position used by `zoom_from_slider_x`"
+    );
+    assert_eq!(zoom_from_slider_x(left + 12), 64, "leftmost position is 1:1");
+
+    // The whole knob stays inside the 130-px slider window at both ends.
+    for zoom in [8u32, 32, 64] {
+        let (left, top) = zoom_pointer_position(zoom, 12, 0);
+        assert!(
+            left >= layout::ZOOM_SLIDER.ulx,
+            "zoom {zoom}: the knob starts left of the slider"
+        );
+        assert!(
+            left + 25 <= layout::ZOOM_SLIDER.lrx(),
+            "zoom {zoom}: the 25-px knob ends past the slider"
+        );
+        assert_eq!(top + 14, layout::ZOOM_SLIDER.uly + 15);
+    }
+}
+
+
+#[test]
 fn captions_and_fonts_match_game_manager() {
     assert_eq!(PanelButton::Files.caption(), Some("Files"));
     assert_eq!(PanelButton::EndTurn.caption(), Some("End Turn"));

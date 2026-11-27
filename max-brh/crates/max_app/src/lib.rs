@@ -3633,6 +3633,21 @@ impl<D: Dispatcher> App<D> {
 
         self.assets = Some(assets);
 
+        // `WINDOW_MAIN_MAP` (180,18) 448×448: with the 1:1 chrome the map is drawn
+        // into that window of the 640×480 frame, so the camera view is the map
+        // window, not the whole frame (`WindowManager_MapWidth/MapHeight`,
+        // `window_manager.cpp:202-230`). Clamping against the 640×480 frame kept the
+        // camera at least 96 px away from the map's left/top edge, so the first cell
+        // (`001-001`) was never visible in the map window.
+        if self.chrome_active() {
+            let area = max_render::layout::MAIN_MAP;
+            self.viewport
+                .set_view_size(area.width as u32, area.height as u32);
+        } else {
+            self.viewport
+                .set_view_size(self.config.screen_width, self.config.screen_height);
+        }
+
         Ok(report)
     }
 

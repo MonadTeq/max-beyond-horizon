@@ -1399,6 +1399,9 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
             // `RMB`); here it closes the screen, like `Esc`.
             crate::ui::InputEvent::RightClick(..) => BuildMenuAction::Close,
             crate::ui::InputEvent::Key(key) => menu.key(self.state_ref(), key),
+            // The wheel is a map-view control; the modal build menu
+            // (`GameManager_DisableMainMenu`) swallows it.
+            crate::ui::InputEvent::MouseWheel(..) => BuildMenuAction::None,
         };
 
         self.build_menu = Some(menu);

@@ -81,7 +81,7 @@ use crate::unit::{UnitId, UnitInfo, UnitListKind, UnitPath, UnitPresentation};
 use crate::unit_order;
 use crate::unit_values::{
     ATTRIB_AGENT_ADJUST, ATTRIB_AMMO, ATTRIB_ATTACK, ATTRIB_HITS, ATTRIB_MOVE_AND_FIRE,
-    ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
+    ATTRIB_RANGE, ATTRIB_ROUNDS, ATTRIB_SPEED, ATTRIB_STORAGE, ATTRIB_TURNS,
 };
 use crate::victory::{
     cargo_gold_consumption_rate, cargo_raw_consumption_rate, cargo_type_of, CargoType,
@@ -402,24 +402,19 @@ pub(crate) struct GameState {
     pub(crate) victory_limit: i32,
 }
 
-/// The movement part of `Access_AreTaskEventsPending` (`access.cpp:2270`): a unit
-/// whose move order is waiting to be executed (state is not `EXECUTING_ORDER`) and
-/// has an assigned route.
+/// One term of the turn-close drain: the unit has a task the pass has to advance.
 ///
-/// The oracle's pass on such a unit is `UnitInfo::ExecuteMove` →
-/// `GroundPath::Execute`, which enters a cell only while `speed` covers its cost
-/// (`Paths_CalculateStep`, `paths.cpp:292`); with no speed left it still stops the
-/// order state (`EXECUTING_ORDER` + `MoveFinished`), which is where the end-of-turn
-/// drain ends. Used only by [`GameState::finish_end_turn_movement`]: the other
-/// pending orders of the oracle predicate (fire, explode, activate, tape
-/// positioning, scaling) are not part of the end-of-turn route drain.
-fn end_turn_path_pending(unit: &UnitInfo) -> bool {
-    unit.has_move_order()
-        && unit.path.is_some()
-        && matches!(
-            unit.state,
-            UnitOrderState::InProgress | UnitOrderState::InTransition
-        )
+/// The oracle predicate `Access_AreTaskEventsPending` (`access.cpp:2269`) lists
+/// `FIRE`/`EXPLODE`/`ACTIVATE`/tape/scaling orders, `ORDER_STATE_DESTROY`, a move
+/// order outside `EXECUTING_ORDER` and any `ORDER_STATE_INIT`. The port's drain is
+/// the **movement + reaction-fire** part of it (see
+/// [`GameState::task_events_pending`]); this helper is the wider set used only for
+/// the no-progress fingerprint, so that the reaction chain that runs *inside* the
+/// drain is observed while it advances.
+fn pending_task_order(unit: &UnitInfo) -> bool {
+    matches!(unit.orders, UnitOrder::Fire | UnitOrder::Explode)
+        || unit.state == UnitOrderState::Destroy
+        || (unit.has_move_order() && unit.state != UnitOrderState::ExecutingOrder)
 }
 
 impl Default for GameState {
@@ -968,7 +963,97 @@ impl GameState {
             if let Some(previous) = &previous {
                 if previous.grid != unit.grid {
                     self.update_map_status(id, true);
+
+                    // The reaction check from the enemy side (see
+                    // [`Self::check_movement_interception`]): a unit entering an
+                    // enemy's weapon range while that enemy sees it is stopped.
+                    self.check_movement_interception(id);
                 }
+            }
+        }
+    }
+
+    /// A moving unit enters an enemy's weapon range while it is visible to that
+    /// enemy: the movement is interrupted (the intercept).
+    ///
+    /// `UnitsManager_CheckReaction` (`units_manager.cpp:4709`) accepts exactly this
+    /// situation — `shots > 0`, no delayed reaction, `Access_IsWithinAttackRange`,
+    /// `Access_IsValidAttackTarget`, `UnitsManager_ShouldAttack` — but the oracle's
+    /// own halt (`Access_UpdateMapStatus`, `access.cpp:827-868`) only fires when the
+    /// mover *reveals* an enemy it is worth stopping for. A unit walking into a
+    /// turret that the player has already scouted therefore kept its route and was
+    /// shot at the destination ("the unit reaches the destination and explodes on
+    /// the final point, ignoring the attack" — manual run).
+    ///
+    /// The port evaluates the same reaction check while the mover changes cells and
+    /// queues `UnitEventEmergencyStop`; the stop goes through the oracle path
+    /// (`BlockedOnPathRequest(true)` → delayed reaction list), so the enemy opens
+    /// fire at the halt cell on the next order pass.
+    ///
+    /// Gated by the `enemy_halt` preference (the setting that enables movement
+    /// halts) and by `disable_fire` (no reaction fire at all). Missiles are
+    /// projectiles, not units — their route is never interrupted.
+    fn check_movement_interception(&mut self, id: UnitId) {
+        if self.disable_fire || !self.enemy_halt {
+            return;
+        }
+
+        let Some(mover) = self.unit(id).cloned() else {
+            return;
+        };
+
+        if mover.hits == 0
+            || mover.flags & unit_flags::MISSILE_UNIT != 0
+            || !mover.has_move_order()
+            || !matches!(
+                mover.state,
+                UnitOrderState::InProgress | UnitOrderState::InTransition
+            )
+        {
+            return;
+        }
+
+        // One stop per unit and pass: `UnitEvent_UnitEvents` is drained by
+        // `UnitsManager_ProcessOrders`, so a duplicated event would stop the same
+        // unit twice.
+        if self.unit_events.iter().any(|event| event.unit() == id) {
+            return;
+        }
+
+        for kind in [
+            UnitListKind::MobileLandSea,
+            UnitListKind::MobileAir,
+            UnitListKind::Stationary,
+        ] {
+            for enemy_id in self.unit_list(kind) {
+                let Some(enemy) = self.unit(*enemy_id) else {
+                    continue;
+                };
+
+                if enemy.team == mover.team
+                    || enemy.hits == 0
+                    || enemy.shots == 0
+                    || enemy.delayed_reaction != 0
+                {
+                    continue;
+                }
+
+                if !mover.is_visible_to_team(enemy.team)
+                    || !crate::access::is_within_attack_range(
+                        self,
+                        enemy,
+                        mover.grid,
+                        enemy.base_values.get_attribute(ATTRIB_RANGE),
+                    )
+                    || !crate::access::is_valid_attack_target(self, enemy, &mover)
+                    || !crate::combat::should_attack(self, enemy, &mover)
+                {
+                    continue;
+                }
+
+                self.unit_events
+                    .push(crate::events::UnitEvent::EmergencyStop { unit: id });
+                return;
             }
         }
     }
@@ -1953,75 +2038,169 @@ impl GameState {
     /// (`game_manager.cpp:488-490` after `UpdateGui` of the team, and
     /// `:549-558` for the concurrent round close). The team's `06` already ran,
     /// the phase is `GAME_STATE_9_END_TURN`, and the oracle keeps ticking the
-    /// simulation while a unit still has a pending task. On each
-    /// `UnitsManager_ProcessOrders` pass a `Move/IN_PROGRESS` unit executes one
-    /// cell — `UnitInfo::ExecuteMove` → `GroundPath::Execute` (`groundpath.cpp:210`)
-    /// — and `Paths_CalculateStep` (`paths.cpp:292`) spends the cell's cost from
-    /// `speed`. The drain ends when no waiting route step is left: the unit ran out
-    /// of speed and `GroundPath::Execute` set `EXECUTING_ORDER` or the route ended.
+    /// simulation while a unit still has a pending task. `GameManager_ProgressTurn`
+    /// (`game_manager.cpp:2586`) is a full `GameManager_ProcessTick(false)`, i.e.
+    /// every pass runs `UnitsManager_ProcessOrders` (`game_manager.cpp:5186`):
+    /// movement **and** `UnitsManager_AssessAttacks` (reaction fire) **and**
+    /// `UnitEvent_UnitEvents` (the emergency stops queued by `Access_UpdateMapStatus`).
     ///
-    /// The port narrows the predicate to the **movement** part of
-    /// `Access_AreTaskEventsPending` (`access.cpp:2270`): `FIRE`/`EXPLODE`/
-    /// `ACTIVATE`/tape/scaling orders keep their normal tick-loop handling, so
-    /// the execution order of all orders is unchanged — only a route with
-    /// movement points left is walked to its end at the turn close.
+    /// The port used to run only `UnitInfo::ExecuteMove` for the closing team's
+    /// routes here. That skipped both the reaction pass and the unit events, so a
+    /// unit that spotted an enemy while walking never received its
+    /// `UnitEventEmergencyStop` (`enemy_halt`), walked to the destination and was
+    /// fired upon there — the manual-run defect "the unit reaches its destination
+    /// and explodes on the final point, ignoring the attack". Each pass is now the
+    /// oracle's full order pass (`UnitsManager_ProcessOrders`: movement, reaction
+    /// fire, emergency stops), so the halt is applied before the next cell and the
+    /// stopped unit is queued for reaction fire (`MoveFinished(true)`); the enemy
+    /// then opens fire at the halt cell on the next order pass.
     ///
-    /// Returns the number of completed cell transitions.
+    /// Returns the number of completed cell transitions of the closing team.
     pub(crate) fn finish_end_turn_movement(&mut self, team: TeamId) -> usize {
         let mut transitions = 0usize;
+        let mut fingerprint: Option<Vec<u32>> = None;
+
         // `GameManager_ProgressTurn` is one `ProcessTick`; the pass cap mirrors
         // the oracle's own bound on a pinned unit (`UnitInfo::RegisterMovementWait`
         // stops the retry at `MOVEMENT_WAIT_LIMIT`).
         for _ in 0..unit_order::MOVEMENT_WAIT_LIMIT {
-            let mut progressed = false;
+            if !self.task_events_pending(team) {
+                break;
+            }
 
-            for kind in UnitListKind::ALL {
-                let ids = self.lists[kind.index()].clone();
-                for id in ids {
-                    let Some(before) = self.unit(id).and_then(|unit| {
-                        // `Access_AreTaskEventsPending`: a move order whose state
-                        // is not `EXECUTING_ORDER`, i.e. a route step is pending.
-                        (unit.team == team && end_turn_path_pending(unit)).then_some((
-                            unit.grid,
-                            unit.state,
-                            unit.speed,
-                            unit.path.is_some(),
-                            // `Paths_UpdateAngle` rotates one 45° step per
-                            // `GroundPath::Execute` call before the cell can be
-                            // entered — a rotation is progress too.
-                            unit.angle,
-                        ))
-                    }) else {
-                        continue;
-                    };
+            let before: Vec<(UnitId, Point)> = self
+                .unit_ids_in_order()
+                .into_iter()
+                .filter_map(|id| self.unit(id).map(|unit| (id, unit.team, unit.grid)))
+                .filter(|(_, owner, _)| *owner == team)
+                .map(|(id, _, grid)| (id, grid))
+                .collect();
 
-                    unit_order::process_order(self, id);
+            self.process_orders();
 
-                    let Some(after) = self.unit(id) else {
-                        // The unit was destroyed while walking (a mine, an
-                        // explosion) — the route is over.
-                        progressed = true;
-                        continue;
-                    };
+            let after: Vec<(UnitId, Point)> = self
+                .unit_ids_in_order()
+                .into_iter()
+                .filter_map(|id| self.unit(id).map(|unit| (id, unit.team, unit.grid)))
+                .filter(|(_, owner, _)| *owner == team)
+                .map(|(id, _, grid)| (id, grid))
+                .collect();
 
-                    if after.grid != before.0 {
-                        transitions += 1;
-                    }
-
-                    if (after.grid, after.state, after.speed, after.path.is_some(), after.angle)
-                        != before
-                    {
-                        progressed = true;
-                    }
+            for (id, grid) in &before {
+                if after
+                    .iter()
+                    .find(|(other, _)| other == id)
+                    .is_some_and(|(_, now)| now != grid)
+                {
+                    transitions += 1;
                 }
             }
 
-            if !progressed {
+            // A pass always advances one of the pending task events. If the
+            // fingerprint did not change, the remaining event cannot progress
+            // (a state the oracle avoids); stop instead of burning the budget.
+            let now = self.task_event_fingerprint();
+            if fingerprint.as_ref() == Some(&now) {
                 break;
             }
+            fingerprint = Some(now);
         }
 
         transitions
+    }
+
+    /// `Access_AreTaskEventsPending` (`access.cpp:2269`) — the predicate of the
+    /// turn-close drain (`while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`).
+    ///
+    /// The port drains the **routes of the closing team that are being walked** —
+    /// the movement part the old drain already used
+    /// (`has_move_order` + a path + `IN_PROGRESS`/`IN_TRANSITION`). The oracle
+    /// predicate also lists pending fire/explosion/activation/tape/scaling orders,
+    /// `ORDER_STATE_INIT`, path-request states and the
+    /// `UnitsManager_DelayedAttackTargets` lists; those keep their normal tick
+    /// handling. In particular the reaction exchange the halted unit starts is
+    /// resolved on the next order pass (a tick later), not inside the turn close —
+    /// the halted unit is still added to the delayed reaction lists by
+    /// `UnitInfo::BlockedOnPathRequest` (see `events::process_unit_event`), so the
+    /// enemy fires at the halt cell.
+    ///
+    /// This is the narrowest form that fixes the manual-run intercept defect while
+    /// leaving the shot/AI-turn timing scenarios untouched
+    /// (`max_app/tests/ai_turn_timer.rs`, `max-brh-qa/scripts/combat-tb.qa`).
+    fn task_events_pending(&self, team: TeamId) -> bool {
+        for kind in UnitListKind::ALL {
+            for id in self.unit_list(kind) {
+                let Some(unit) = self.unit(*id) else { continue };
+
+                if unit.team == team
+                    && unit.path.is_some()
+                    && matches!(
+                        unit.state,
+                        UnitOrderState::InProgress | UnitOrderState::InTransition
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Cheap fingerprint of the tasks a drain pass may advance: the pending orders
+    /// ([`pending_task_order`]) and the reaction target lists.
+    ///
+    /// A full order pass always advances at least one of these fields (a cell,
+    /// an order state, a shot, a reaction target). An unchanged fingerprint means
+    /// the remaining event cannot progress; the drain then stops instead of
+    /// spinning the pass budget.
+    fn task_event_fingerprint(&self) -> Vec<u32> {
+        let mut out = Vec::new();
+
+        for kind in UnitListKind::ALL {
+            for id in self.unit_list(kind) {
+                let Some(unit) = self.unit(*id) else { continue };
+
+                if !pending_task_order(unit) {
+                    continue;
+                }
+
+                out.extend([
+                    u32::from(id.0),
+                    u32::from(unit.orders as u8),
+                    u32::from(unit.state as u8),
+                    unit.grid.x as i32 as u32,
+                    unit.grid.y as i32 as u32,
+                    u32::from(unit.x),
+                    u32::from(unit.y),
+                    u32::from(unit.speed),
+                    u32::from(unit.shots),
+                    u32::from(unit.ammo),
+                    u32::from(unit.hits),
+                    unit.image_index as i16 as i32 as u32,
+                    u32::from(unit.firing_recoil_frames),
+                    u32::from(unit.moved),
+                    u32::from(unit.angle),
+                    u32::from(unit.turret_angle),
+                    unit.turret_image_index as i16 as i32 as u32,
+                    u32::from(unit.velocity),
+                    u32::from(unit.engine),
+                    u32::from(unit.weapon),
+                    u32::from(unit.laying_state),
+                    u32::from(unit.live_attack),
+                    u32::from(unit.movement_wait_count),
+                    u32::from(unit.in_transit),
+                ]);
+            }
+        }
+
+        out.push(u32::MAX);
+        for targets in &self.delayed_attack_targets {
+            out.push(targets.len() as u32);
+            out.extend(targets.iter().map(|id| u32::from(id.0)));
+        }
+
+        out
     }
 
     /// `GameManager_RefreshOrders` (`game_manager.cpp:838-891`), the economy part —

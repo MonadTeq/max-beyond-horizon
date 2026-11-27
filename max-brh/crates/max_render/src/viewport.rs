@@ -86,6 +86,15 @@ impl TileRange {
 pub struct Viewport {
     screen_width: u32,
     screen_height: u32,
+    /// Width of the visible map area in screen pixels.
+    ///
+    /// Usually equal to `screen_width`; with the 1:1 window chrome the map is
+    /// drawn into a 448×448 window inside the 640×480 frame
+    /// (`WINDOW_MAIN_MAP`, [`crate::layout::MAIN_MAP`]), so the camera is clamped
+    /// to that window even though the frame is larger.
+    view_width: u32,
+    /// Height of the visible map area in screen pixels (see `view_width`).
+    view_height: u32,
     center_x: i32,
     center_y: i32,
     zoom: u32,
@@ -120,6 +129,8 @@ impl Viewport {
         let mut viewport = Self {
             screen_width: width,
             screen_height: height,
+            view_width: width,
+            view_height: height,
             center_x: MAP_WIDTH as i32 * MAP_TILE_PIXELS / 2,
             center_y: MAP_HEIGHT as i32 * MAP_TILE_PIXELS / 2,
             zoom: DEFAULT_ZOOM,
@@ -135,6 +146,8 @@ impl Viewport {
         let mut viewport = Self {
             screen_width: width,
             screen_height: height,
+            view_width: width,
+            view_height: height,
             center_x: center.0,
             center_y: center.1,
             zoom: zoom.clamp(MIN_ZOOM, MAX_ZOOM),
@@ -143,6 +156,25 @@ impl Viewport {
         viewport.clamp_center();
 
         viewport
+    }
+
+    /// Sets the visible map area (screen pixels) inside the frame.
+    ///
+    /// The 1:1 chrome draws the map into a 448×448 window of the 640×480 frame
+    /// (`WINDOW_MAIN_MAP`), so the camera has to clamp its center against that
+    /// window: with the full-frame size the camera could not reach the map's
+    /// left/top edge and the first cell (`001-001`) stayed outside the window.
+    /// The screen size (the frame buffer) does not change.
+    pub fn set_view_size(&mut self, width: u32, height: u32) {
+        self.view_width = width.max(1);
+        self.view_height = height.max(1);
+        self.clamp_center();
+    }
+
+    /// Visible map area in screen pixels (`view_width`, `view_height`).
+    #[inline]
+    pub fn view_size(&self) -> (u32, u32) {
+        (self.view_width, self.view_height)
     }
 
     /// Screen size `(width, height)`.
@@ -171,6 +203,8 @@ impl Viewport {
         let mut viewport = Self {
             screen_width: self.screen_width.saturating_mul(factor),
             screen_height: self.screen_height.saturating_mul(factor),
+            view_width: self.view_width.saturating_mul(factor),
+            view_height: self.view_height.saturating_mul(factor),
             center_x: self.center_x,
             center_y: self.center_y,
             zoom: self.zoom.saturating_mul(factor),
@@ -222,11 +256,11 @@ impl Viewport {
         self.set_zoom(self.zoom / ZOOM_STEP)
     }
 
-    /// The world pixel visible at the top-left corner of the screen.
+    /// The world pixel visible at the top-left corner of the **map view**.
     pub fn origin(&self) -> (i32, i32) {
-        let half_width_world = (i64::from(self.screen_width) * i64::from(MAP_TILE_PIXELS)
+        let half_width_world = (i64::from(self.view_width) * i64::from(MAP_TILE_PIXELS)
             / (2 * i64::from(self.zoom))) as i32;
-        let half_height_world = (i64::from(self.screen_height) * i64::from(MAP_TILE_PIXELS)
+        let half_height_world = (i64::from(self.view_height) * i64::from(MAP_TILE_PIXELS)
             / (2 * i64::from(self.zoom))) as i32;
 
         (
@@ -313,13 +347,14 @@ impl Viewport {
         self.clamp_center();
     }
 
-    /// Prevents the camera from going beyond the map (accounting for half the screen).
+    /// Prevents the camera from going beyond the map (accounting for half the
+    /// visible map area).
     pub fn clamp_center(&mut self) {
         let map_width_world = i32::from(MAP_WIDTH) * MAP_TILE_PIXELS;
         let map_height_world = i32::from(MAP_HEIGHT) * MAP_TILE_PIXELS;
-        let half_width_world = (i64::from(self.screen_width) * i64::from(MAP_TILE_PIXELS)
+        let half_width_world = (i64::from(self.view_width) * i64::from(MAP_TILE_PIXELS)
             / (2 * i64::from(self.zoom))) as i32;
-        let half_height_world = (i64::from(self.screen_height) * i64::from(MAP_TILE_PIXELS)
+        let half_height_world = (i64::from(self.view_height) * i64::from(MAP_TILE_PIXELS)
             / (2 * i64::from(self.zoom))) as i32;
 
         if map_width_world <= 2 * half_width_world {
@@ -343,8 +378,7 @@ impl Viewport {
     /// past the map.
     pub fn visible_tiles(&self) -> Option<TileRange> {
         let (x0, y0) = self.screen_to_grid(0, 0);
-        let (x1, y1) =
-            self.screen_to_grid(self.screen_width as i32 - 1, self.screen_height as i32 - 1);
+        let (x1, y1) = self.screen_to_grid(self.view_width as i32 - 1, self.view_height as i32 - 1);
 
         let x0 = x0.max(0);
         let y0 = y0.max(0);

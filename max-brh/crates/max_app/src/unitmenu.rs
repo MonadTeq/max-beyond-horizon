@@ -930,6 +930,9 @@ pub fn menu_event(menu: &UnitMenu, event: crate::ui::InputEvent) -> MenuEvent {
         },
         crate::ui::InputEvent::RightClick(..) => MenuEvent::Close,
         crate::ui::InputEvent::MouseRelease(..) => MenuEvent::None,
+        // The wheel zooms the map and closes the popup before the menu sees it
+        // (`session_mouse_wheel`); the arm keeps the match exhaustive.
+        crate::ui::InputEvent::MouseWheel(..) => MenuEvent::None,
         crate::ui::InputEvent::Key(key) => match menu.key(key) {
             Some(MenuKey::Close) => MenuEvent::Close,
             Some(MenuKey::Item(index)) => {

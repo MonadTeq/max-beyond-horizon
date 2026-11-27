@@ -1096,13 +1096,17 @@ impl Panels {
             layout::ZOOM_SLIDER.uly,
             false,
         );
-        let offset = zoom_slider_offset(viewport.zoom());
+        let (pointer_x, pointer_y) = zoom_pointer_position(
+            viewport.zoom(),
+            i32::from(self.zoom_pointer.ulx),
+            i32::from(self.zoom_pointer.uly),
+        );
         painted += self.blit_clipped(
             frame,
             palette,
             &self.zoom_pointer,
-            layout::ZOOM_SLIDER.ulx + offset,
-            layout::ZOOM_SLIDER.uly + 1,
+            pointer_x,
+            pointer_y,
             true,
             layout::ZOOM_SLIDER,
         );
@@ -1479,6 +1483,10 @@ pub const ZOOM_RANGE: i32 = 60;
 /// Zoom increment of the `+`/`−` panel buttons — `Gfx_ZoomLevel ± 10`
 /// (`game_manager.cpp:6645-6679`).
 pub const ZOOM_BUTTON_STEP: u32 = 10;
+/// Mouse-wheel zoom sensitivity — `mouse_wheel_sensitivity` (`settings.cpp:109`):
+/// one wheel notch changes `Gfx_ZoomLevel` by 3 (`mouse_get_wheel_delta`,
+/// `mouse.c:323-325`; `GameManager_ProcessInput`, `game_manager.cpp:6412`).
+pub const WHEEL_ZOOM_STEP: i32 = 3;
 
 /// Zoom pointer offset.
 ///
@@ -1492,6 +1500,24 @@ pub fn zoom_slider_offset(zoom: u32) -> i32 {
     let zoom = zoom.clamp(max_render::viewport::MIN_ZOOM, 64);
 
     (ZOOM_SLIDER_KNOB_SPAN * (64 - zoom) as i32) / ZOOM_RANGE + ZOOM_SLIDER_KNOB_OFFSET
+}
+
+/// Screen position of the zoom pointer's top-left corner.
+///
+/// Oracle: `GameManager_UpdateZoomSlider` (`game_manager.cpp:1731-1740`) loads
+/// `ZOOMPTR` at `offset + window.ulx` / `window.uly + 1`, and
+/// `WindowManager_DecodeSimpleImage` (`window_manager.cpp:784-785`) subtracts the
+/// image's own hotspot: `ulx -= image->ulx; uly -= image->uly;`. `ZOOMPTR` is
+/// 25×14 with `ulx = 12` (hot spot — a half of the 25 px knob), so the knob's
+/// *hot spot* lands on `window.ulx + offset` and the pointer's left edge is 12 px
+/// to its left. Without the subtraction the port drew the knob at the hot-spot
+/// position and it sat 12 px right of the slider position — at the maximum zoom
+/// (the leftmost position) the knob looked shifted off the track.
+pub fn zoom_pointer_position(zoom: u32, pointer_ulx: i32, pointer_uly: i32) -> (i32, i32) {
+    (
+        layout::ZOOM_SLIDER.ulx + zoom_slider_offset(zoom) - pointer_ulx,
+        layout::ZOOM_SLIDER.uly + 1 - pointer_uly,
+    )
 }
 
 /// The inverse conversion: slider x → scale.

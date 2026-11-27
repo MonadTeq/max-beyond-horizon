@@ -1006,6 +1006,7 @@ fn input_event(input: WindowInput) -> InputEvent {
         WindowInput::MouseClick { x, y } => InputEvent::MouseClick(x, y),
         WindowInput::MouseRelease { x, y } => InputEvent::MouseRelease(x, y),
         WindowInput::MouseRightClick { x, y } => InputEvent::RightClick(x, y),
+        WindowInput::MouseWheel { notches } => InputEvent::MouseWheel(notches),
     }
 }
 

@@ -429,6 +429,51 @@ fn zooming_closes_the_unit_menu() {
     );
 }
 
+/// The mouse wheel zooms the map — `GameManager_ProcessInput`
+/// (`game_manager.cpp:6404-6414`): the wheel delta is added to `Gfx_ZoomLevel`,
+/// one notch being `mouse_wheel_sensitivity` = 3 (`settings.cpp:109`), clamped to
+/// the original 4…64 range (the port's viewport: 8…64). Like every
+/// `MAP_VIEW_ZOOM` the change closes the command popup (`:1769`).
+#[test]
+fn the_mouse_wheel_zooms_the_map() {
+    let Some(mut app) = game_app() else {
+        return;
+    };
+
+    let id = spawn(&mut app, UnitType::Tank);
+    open_menu(&mut app, id);
+
+    let start = app.viewport().zoom();
+    assert_eq!(start, 64, "the default camera is 1:1");
+
+    // One notch down: −3 zoom levels.
+    let _ = max_app::handle_session_input(&mut app, max_app::InputEvent::MouseWheel(-1));
+    assert_eq!(app.viewport().zoom(), start - 3);
+    assert!(
+        app.unit_menu().is_none(),
+        "a wheel zoom is a `MAP_VIEW_ZOOM` update and closes the popup"
+    );
+
+    // One notch up: back to 1:1.
+    let _ = max_app::handle_session_input(&mut app, max_app::InputEvent::MouseWheel(1));
+    assert_eq!(app.viewport().zoom(), start);
+
+    // The top clamp is 64: further notches up change nothing (and keep the popup
+    // state untouched — the oracle does not call `DeinitPopupButtons` when
+    // `GameManager_ZoomMainMapView` returns `false`).
+    let _ = max_app::handle_session_input(&mut app, max_app::InputEvent::MouseWheel(10));
+    assert_eq!(app.viewport().zoom(), 64);
+
+    // The bottom clamp is the viewport minimum (8, the oracle's 4 is not
+    // reachable in the port).
+    let _ = max_app::handle_session_input(&mut app, max_app::InputEvent::MouseWheel(-100));
+    assert_eq!(
+        app.viewport().zoom(),
+        max_render::viewport::MIN_ZOOM,
+        "the wheel respects the viewport zoom range"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Defects 4/5: the hand over actionable elements, the "no" sign over the rest
 // ---------------------------------------------------------------------------

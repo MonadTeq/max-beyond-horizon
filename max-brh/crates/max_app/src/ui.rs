@@ -175,6 +175,14 @@ pub enum InputEvent {
     RightClick(i32, i32),
     /// Mouse move in window pixels.
     MouseMove(i32, i32),
+    /// Mouse wheel in whole notches, positive = wheel up.
+    ///
+    /// `WindowInput::MouseWheel` already quantizes the SDL float delta into
+    /// notches (the remainder is kept, `mouse_quantize_wheel_axis`, `mouse.c:302`).
+    /// The oracle reads `mouse_get_wheel_delta` once per frame (`mouse.c:323`) and
+    /// multiplies the notches by `mouse_wheel_sensitivity` (3,
+    /// `settings.cpp:109`).
+    MouseWheel(i32),
 }
 
 /// Network session entry parameters — the result of the menu choice.
@@ -795,7 +803,9 @@ impl Screen {
 
             if let Self::Help { help, mode, .. } = self {
                 match event {
-                    InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => {}
+                    InputEvent::MouseMove(..)
+                    | InputEvent::MouseRelease(..)
+                    | InputEvent::MouseWheel(..) => {}
                     InputEvent::MouseClick(x, y) => {
                         if let Some(window) = help.as_mut() {
                             if window.input(InputEvent::MouseClick(x, y)) == HelpAction::Close {
@@ -1033,14 +1043,16 @@ impl Screen {
             PreGameStage::Mobilize(_) => match event {
                 InputEvent::MouseMove(..)
                 | InputEvent::RightClick(..)
-                | InputEvent::MouseRelease(..) => PreGameInput::None,
+                | InputEvent::MouseRelease(..)
+                | InputEvent::MouseWheel(..) => PreGameInput::None,
                 InputEvent::MouseClick(x, y) => PreGameInput::MobilizeClick(x, y),
                 InputEvent::Key(key) => PreGameInput::MobilizeKey(key),
             },
             PreGameStage::Landing(_) => match event {
                 InputEvent::MouseMove(..)
                 | InputEvent::RightClick(..)
-                | InputEvent::MouseRelease(..) => PreGameInput::None,
+                | InputEvent::MouseRelease(..)
+                | InputEvent::MouseWheel(..) => PreGameInput::None,
                 InputEvent::Key(Key::Escape) => PreGameInput::Cancel,
                 InputEvent::Key(Key::Enter) => PreGameInput::LandingConfirm,
                 InputEvent::Key(Key::Left) => PreGameInput::LandingStep(-1, 0),
@@ -1238,7 +1250,8 @@ impl Screen {
             match event {
                 InputEvent::MouseMove(..)
                 | InputEvent::RightClick(..)
-                | InputEvent::MouseRelease(..) => {}
+                | InputEvent::MouseRelease(..)
+                | InputEvent::MouseWheel(..) => {}
                 InputEvent::MouseClick(x, y) => {
                     if tips.is_some() {
                         scroll = newgame::tips_scroll_at(x, y);
@@ -1380,7 +1393,8 @@ impl Screen {
             match event {
                 InputEvent::MouseMove(..)
                 | InputEvent::RightClick(..)
-                | InputEvent::MouseRelease(..) => {}
+                | InputEvent::MouseRelease(..)
+                | InputEvent::MouseWheel(..) => {}
                 InputEvent::MouseClick(x, y) if native_frame => {
                     action = gamesetupmenu::mission_select_at(x, y);
 
@@ -1757,6 +1771,7 @@ impl Screen {
             InputEvent::MouseMove(..) => {}
             InputEvent::MouseRelease(..) => {}
             InputEvent::RightClick(..) => {}
+            InputEvent::MouseWheel(..) => {}
             InputEvent::MouseClick(x, y) => {
                 let point = Point::new(x, y);
 
@@ -2103,6 +2118,7 @@ impl Screen {
             InputEvent::MouseMove(..) => {}
             InputEvent::MouseRelease(..) => {}
             InputEvent::RightClick(..) => {}
+            InputEvent::MouseWheel(..) => {}
             InputEvent::MouseClick(x, y) => {
                 // Planet grid: a click on the picture/name selects the planet. This is
                 // done before `hit_test`, because the planet labels are regular
@@ -2398,18 +2414,27 @@ where
         return session_unit_stats_input(app, event);
     }
 
+    // Repair shop slot list (C++ `RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`) — a
+    // full-screen modal opened by `activate`: the map/panels receive no input
+    // (`GameManager_DisableMainMenu` around `Run`), including the wheel.
+    if app.repair_shop().is_some() {
+        return session_repair_shop_input(app, event);
+    }
+
+    // Mouse wheel — `GameManager_ProcessInput` (`game_manager.cpp:6404-6414`).
+    // The oracle handles the wheel while `GameManager_IsMainMenuEnabled`, i.e. also
+    // over the command popup (`GameManager_DeinitPopupButtons` runs on a real zoom
+    // change), but not while a modal `GameManager_DisableMainMenu` window is open —
+    // those are checked above and return early.
+    if let InputEvent::MouseWheel(notches) = event {
+        return session_mouse_wheel(app, notches);
+    }
+
     // Selected unit command menu (C++ `GameManager_PopupButtons`) — modal:
     // while it is open, the map/panels/chat receive no orders, and a click outside the menu
     // or Esc closes it (like `GameManager_DeinitPopupButtons`).
     if app.unit_menu().is_some() {
         return session_unit_menu_input(app, event);
-    }
-
-    // Repair shop slot list (C++ `RepairShopMenu`, `DEPOTFRM`/`HANGRFRM`) — a
-    // full-screen modal opened by `activate`: the map/panels receive no input
-    // (`GameManager_DisableMainMenu` around `Run`).
-    if app.repair_shop().is_some() {
-        return session_repair_shop_input(app, event);
     }
 
     // While the computer moves/a transition runs, orders and selection are impossible:
@@ -2598,6 +2623,9 @@ where
             Transition::None
         }
         InputEvent::Key(_) => Transition::None,
+        // The wheel is handled above (before the command popup), so it never
+        // reaches this match; the arm keeps the match exhaustive.
+        InputEvent::MouseWheel(_) => Transition::None,
     }
 }
 
@@ -3637,6 +3665,41 @@ where
                 .set_zoom(zoom.saturating_sub(panels::ZOOM_BUTTON_STEP));
         }
         _ => {}
+    }
+
+    Transition::None
+}
+
+/// Mouse wheel → map zoom — `GameManager_ProcessInput` (`game_manager.cpp:6404-6414`).
+///
+/// `mouse_get_wheel_delta` (`mouse.c:323`) returns the notches accumulated since
+/// the previous frame times `mouse_wheel_sensitivity`
+/// (`settings.cpp:109`: 3), and the oracle passes `Gfx_ZoomLevel + delta_y` to
+/// `GameManager_UpdateMainMapView(MAP_VIEW_ZOOM, …)`. The clamp is
+/// `GameManager_ZoomMainMapView` (`game_manager.cpp:1699-1700`): `MainmapZoomLimit…64`
+/// — the port keeps its viewport range [`max_render::viewport::MIN_ZOOM`]…64.
+///
+/// A real zoom change closes the command popup: `GameManager_UpdateMainMapView`
+/// calls `GameManager_DeinitPopupButtons` (`:1769`).
+fn session_mouse_wheel<D: Dispatcher>(app: &mut App<D>, notches: i32) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    if notches == 0 {
+        return Transition::None;
+    }
+
+    let before = app.viewport().zoom();
+    let target = i64::from(before) + i64::from(notches) * i64::from(panels::WHEEL_ZOOM_STEP);
+    let target = target.clamp(
+        i64::from(max_render::viewport::MIN_ZOOM),
+        i64::from(max_render::viewport::DEFAULT_ZOOM),
+    );
+
+    app.viewport_mut().set_zoom(target as u32);
+
+    if app.viewport().zoom() != before {
+        app.deinit_popup_buttons();
     }
 
     Transition::None

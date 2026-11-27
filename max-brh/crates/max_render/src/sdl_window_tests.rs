@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn wheel_deltas_quantize_into_notches_with_a_remainder() {
+    let mut remainder = 0.0f32;
+
+    // A normal notch.
+    assert_eq!(quantize_wheel_axis(1.0, &mut remainder), 1);
+    assert_eq!(remainder, 0.0);
+
+    // A high-resolution wheel: four quarter notches make one notch, the rest is
+    // kept for the next event (`mouse_quantize_wheel_axis`, `mouse.c:302`).
+    assert_eq!(quantize_wheel_axis(0.25, &mut remainder), 0);
+    assert_eq!(quantize_wheel_axis(0.25, &mut remainder), 0);
+    assert_eq!(quantize_wheel_axis(0.25, &mut remainder), 0);
+    assert_eq!(quantize_wheel_axis(0.25, &mut remainder), 1);
+    assert_eq!(remainder, 0.0);
+
+    // The other direction.
+    assert_eq!(quantize_wheel_axis(-1.0, &mut remainder), -1);
+    assert_eq!(remainder, 0.0);
+
+    // Two notches in one event.
+    assert_eq!(quantize_wheel_axis(2.0, &mut remainder), 2);
+}
+
+#[test]
 fn focus_and_minimize_events_are_input_neutral() {
     for event in [
         WindowEvent::FocusLost,

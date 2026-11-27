@@ -206,6 +206,9 @@ impl Recorder {
     pub fn record(&mut self, event: InputEvent, context: RecordContext) {
         match event {
             InputEvent::MouseMove(..) | InputEvent::MouseRelease(..) => {}
+            // The wheel zooms the map — a view action the QA script language does
+            // not model (`click`/`rclick`/`key` only), so it is not recorded.
+            InputEvent::MouseWheel(..) => {}
             // While the chat is open, the UI itself ignores the mouse — so we do not write it either.
             InputEvent::MouseClick(..) | InputEvent::RightClick(..) if context.text_open => {}
             InputEvent::MouseClick(x, y) => self.record_click("click", x, y),

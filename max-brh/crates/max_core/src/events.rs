@@ -84,6 +84,15 @@ impl UnitEvent {
 }
 
 /// `UnitEvent::Process` — applies the event to the game.
+///
+/// `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`) only calls
+/// `UnitInfo::StopMovement` (`unitinfo.cpp:3222`). On the turn state that reaches
+/// `GroundPath::CancelMovement` (`groundpath.cpp:161`) → `BlockedOnPathRequest()`
+/// with the default `mode = true`, and `UnitInfo::BlockedOnPathRequest`
+/// (`unitinfo.cpp:3628`) → `MoveFinished(true)` → `UnitsManager_AddToDelayedReactionList`
+/// (`unitinfo.cpp:3692-3694`). The stopped unit becomes a reaction target at the
+/// cell where it halted — that is the intercept: enemy units open fire there
+/// instead of at the destination of the interrupted route.
 pub(crate) fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
     match event {
         UnitEvent::EmergencyStop { unit } => {
@@ -93,9 +102,43 @@ pub(crate) fn process_unit_event(state: &mut GameState, event: &UnitEvent) {
             if target.hits == 0 {
                 return;
             }
+
+            // `UnitInfo::StopMovement` reacts only to a move order whose path is
+            // still being walked; everything else is a no-op.
+            if target.orders != UnitOrder::Move
+                || target.path.is_none()
+                || !matches!(
+                    target.state,
+                    UnitOrderState::InProgress | UnitOrderState::InTransition
+                )
+            {
+                return;
+            }
+
+            // `GroundPath::CancelMovement`: the turn state calls
+            // `BlockedOnPathRequest()` (`mode = true`), the transition state only
+            // empties the remaining steps and the reaction is queued when the
+            // current cell completes.
+            let blocked = target.state == UnitOrderState::InProgress;
             let mut target = target;
             unit_order::stop_movement(&mut target, state.disable_fire);
-            state.write_unit(*unit, target);
+            state.write_unit(*unit, target.clone());
+
+            if blocked && !state.disable_fire {
+                state.add_to_delayed_reaction_list(*unit);
+
+                // `MoveFinished(true)` also reports a minelayer and evaluates the
+                // unit's own attack targets (`Ai_CheckMines`/`Ai_EvaluateAttackTargets`).
+                if matches!(
+                    target.unit_type,
+                    UnitType::MineLayer | UnitType::SeaMineLayer
+                ) {
+                    crate::ai::ai_check_mines(state, *unit);
+                }
+                if target.ammo > 0 {
+                    state.ai_evaluate_attack_targets(*unit);
+                }
+            }
         }
     }
 }
