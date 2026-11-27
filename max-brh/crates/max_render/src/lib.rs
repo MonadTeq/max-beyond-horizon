@@ -100,7 +100,7 @@ pub use palette::{
     PALETTE_BYTES, PALETTE_SIZE, SHADOW_BRIGHTNESS_LEVEL, TEAM_BLUE_COLORS, TEAM_DERELICT_COLORS,
     TEAM_GRAY_COLORS, TEAM_GREEN_COLORS, TEAM_RED_COLORS,
 };
-pub use presentation::{PresentationState, ScreenGeometry};
+pub use presentation::{window_points_for, PresentationState, ScreenGeometry};
 pub use render_scale::{
     FilterMode, PresentationMode, PresentationModeError, RenderScale, HD_SCALES, HD_SCALE_X2,
     HD_SCALE_X4, PIXEL_PERFECT_SCALE,

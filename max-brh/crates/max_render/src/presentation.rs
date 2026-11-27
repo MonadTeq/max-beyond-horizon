@@ -220,6 +220,38 @@ impl ScreenGeometry {
     }
 }
 
+/// Window points of a logical `width × height` frame presented at `render_scale`.
+///
+/// The window is the **render frame** (`width·S × height·S`) times the integer
+/// window `scale`, so the logical frame is the only size the caller passes and
+/// `S` is applied exactly once: `640×480` at `S = 2` with window scale 1 opens
+/// `1280×960` points (`remaster-hd.md` §R7, "the window is created at the render
+/// frame size"). [`ScreenGeometry::fit_with_render_scale`] then lays the render
+/// frame out in those points, and [`ScreenGeometry::window_to_frame`] divides it
+/// back by `S` for the UI.
+///
+/// Passing an already `×S` size here (and letting the geometry multiply it
+/// again) is the defect this function exists to prevent: it produced a
+/// `640·S² × 480·S²` layout, which both cropped the interface to its centre in
+/// the window and mapped every click to the wrong logical point.
+///
+/// In [`RenderScale::PixelPerfect`] it is the historical rule: the window is
+/// `width·scale × height·scale` points.
+pub fn window_points_for(
+    width: u32,
+    height: u32,
+    render_scale: RenderScale,
+    scale: u32,
+) -> (u32, u32) {
+    let factor = render_scale.scale().max(1);
+    let scale = scale.clamp(1, crate::frame_scale::MAX_SCALE);
+
+    (
+        width.max(1).saturating_mul(factor).saturating_mul(scale),
+        height.max(1).saturating_mul(factor).saturating_mul(scale),
+    )
+}
+
 /// Presentation-only state of the window: focus, minimize, occlusion.
 ///
 /// Every method changes drawing decisions only. No method reads or writes the

@@ -180,3 +180,83 @@ fn pixel_perfect_geometry_is_the_same_through_either_constructor() {
         assert_eq!(explicit.scale(), legacy.scale());
     }
 }
+
+#[test]
+fn hd_window_opens_at_the_render_frame_so_the_interface_fits() {
+    for scale in [RenderScale::Hd2, RenderScale::Hd4] {
+        let factor = scale.scale();
+        let render = (FRAME_WIDTH * factor, FRAME_HEIGHT * factor);
+        let points = window_points_for(FRAME_WIDTH, FRAME_HEIGHT, scale, 1);
+
+        // The window is exactly the render frame (1280×960 at S = 2), never the
+        // 640·S² frame that results from applying S twice.
+        assert_eq!(points, render, "[{}]", scale.label());
+
+        let geometry = ScreenGeometry::native_with_render_scale(points, points, scale);
+
+        // The whole interface is in the window: the content rectangle is the
+        // drawable itself, not a larger frame cropped to its centre.
+        assert_eq!(geometry.render_frame_size(), render, "[{}]", scale.label());
+        assert_eq!(
+            geometry.content_rect(),
+            PixelRect::new(0, 0, render.0 as i32, render.1 as i32),
+            "[{}] the interface is cropped by the window",
+            scale.label()
+        );
+        assert!(geometry.fills_output(), "[{}]", scale.label());
+
+        // Hit test: the window point arrives at the UI as the logical 640×480
+        // point (`/S` exactly once, no half-screen shift).
+        assert_eq!(geometry.window_to_frame(0, 0), Some((0, 0)));
+        assert_eq!(
+            geometry.window_to_frame(render.0 as i32 - 1, render.1 as i32 - 1),
+            Some((FRAME_WIDTH as i32 - 1, FRAME_HEIGHT as i32 - 1)),
+            "[{}] the bottom-right window point",
+            scale.label()
+        );
+        assert_eq!(
+            geometry.window_to_frame((render.0 / 2) as i32, (render.1 / 2) as i32),
+            Some(((FRAME_WIDTH / 2) as i32, (FRAME_HEIGHT / 2) as i32)),
+            "[{}] the window centre",
+            scale.label()
+        );
+    }
+}
+
+#[test]
+fn hd_window_scale_multiplies_the_render_frame() {
+    // `--scale 2` on the HD window: twice the render frame, every render pixel
+    // an exact 2×2 output block — the logical frame is still 640×480.
+    let points = window_points_for(FRAME_WIDTH, FRAME_HEIGHT, RenderScale::Hd2, 2);
+
+    assert_eq!(points, (2560, 1920));
+
+    let geometry = ScreenGeometry::native_with_render_scale(points, points, RenderScale::Hd2);
+
+    assert_eq!(geometry.scale(), 2);
+    assert_eq!(geometry.content_rect(), PixelRect::new(0, 0, 2560, 1920));
+    assert_eq!(geometry.window_to_frame(2559, 1919), Some((639, 479)));
+    assert_eq!(geometry.window_to_frame(1280, 960), Some((320, 240)));
+}
+
+#[test]
+fn pixel_perfect_window_points_are_the_historical_sizes() {
+    // `S = 1` keeps the historical `new_scaled` rule: the window is the logical
+    // frame times the integer window scale.
+    for (scale, expected) in [(1, (640, 480)), (2, (1280, 960)), (4, (2560, 1920))] {
+        assert_eq!(
+            window_points_for(FRAME_WIDTH, FRAME_HEIGHT, RenderScale::PixelPerfect, scale),
+            expected
+        );
+    }
+
+    // A zero window scale is the logical frame itself (defensive clamp).
+    assert_eq!(
+        window_points_for(FRAME_WIDTH, FRAME_HEIGHT, RenderScale::PixelPerfect, 0),
+        (640, 480)
+    );
+    assert_eq!(
+        window_points_for(FRAME_WIDTH, FRAME_HEIGHT, RenderScale::Hd2, 0),
+        (1280, 960)
+    );
+}

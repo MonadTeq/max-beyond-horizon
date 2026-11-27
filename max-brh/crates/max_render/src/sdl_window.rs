@@ -248,8 +248,36 @@ impl SdlWindow {
         height: u32,
         scale: Option<u32>,
     ) -> Result<Self, WindowError> {
+        Self::new_with_render_scale(title, width, height, RenderScale::PixelPerfect, scale)
+    }
+
+    /// Creates a window for the logical `width × height` frame presented at
+    /// `render_scale` (`max-brh-docs/development/remaster-hd.md` §R7).
+    ///
+    /// `width`/`height` are the **logical** frame size (640×480 in the client),
+    /// never the render frame: the window opens at the render frame —
+    /// [`crate::presentation::window_points_for`] gives `width·S × height·S`
+    /// points — times the optional window `scale`, so the logical frame keeps its
+    /// coordinates and [`Self::window_to_frame`] divides by `S` exactly once.
+    /// `scale = None` picks an integer scale for the desktop.
+    ///
+    /// This is the constructor that knows the presentation scale. Feeding it a
+    /// size that is already `×S` makes the geometry multiply it again
+    /// (`640·S² × 480·S²`), which crops the interface to its centre in the window
+    /// and shifts every click; [`Self::present`] guards the buffer against
+    /// [`Self::render_frame_size`] in debug builds.
+    pub fn new_with_render_scale(
+        title: &str,
+        width: u32,
+        height: u32,
+        render_scale: RenderScale,
+        scale: Option<u32>,
+    ) -> Result<Self, WindowError> {
         let width = width.max(1);
         let height = height.max(1);
+        let factor = render_scale.scale().max(1);
+        let render_width = width.saturating_mul(factor);
+        let render_height = height.saturating_mul(factor);
         let sdl = sdl3::init().map_err(|error| WindowError::new("init", error))?;
         let video = sdl
             .video()
@@ -262,14 +290,14 @@ impl SdlWindow {
                     .ok()
                     .and_then(|display| display.get_usable_bounds().ok());
                 let auto = bounds
-                    .map(|rect| (rect.width() / width).min(rect.height() / height))
+                    .map(|rect| (rect.width() / render_width).min(rect.height() / render_height))
                     .unwrap_or(1);
 
                 auto.clamp(1, 4)
             }
         };
-        let window_width = width * scale;
-        let window_height = height * scale;
+        let (window_width, window_height) =
+            crate::presentation::window_points_for(width, height, render_scale, scale);
         let window = video
             .window(title, window_width, window_height)
             .resizable()
@@ -301,8 +329,14 @@ impl SdlWindow {
             events,
             title: title.to_owned(),
             base_size: (width, height),
-            render_scale: RenderScale::PixelPerfect,
-            geometry: ScreenGeometry::fit(window_points, output_pixels, width, height),
+            render_scale,
+            geometry: ScreenGeometry::fit_with_render_scale(
+                window_points,
+                output_pixels,
+                width,
+                height,
+                render_scale,
+            ),
             presentation: PresentationState::new(),
             fullscreen: false,
             display_scale,
@@ -347,6 +381,10 @@ impl SdlWindow {
     /// hands [`Self::present`] a render frame of [`Self::render_frame_size`] and
     /// the frame is uploaded with linear filtering; `PixelPerfect` keeps nearest
     /// neighbour and the historical 640×480 frame.
+    /// [`Self::new_with_render_scale`] opens the window for a presentation scale
+    /// once; this switch keeps the window as it is, and the render frame is laid
+    /// out in it (never shrunk), so a larger scale may letterbox or crop until
+    /// the window is resized.
     pub fn set_render_scale(&mut self, render_scale: RenderScale) {
         if self.render_scale == render_scale {
             return;
@@ -593,6 +631,13 @@ impl SdlWindow {
             // HD: the buffer is the render frame (640·S × 480·S) of the logical
             // 640×480 frame; its size does not change the geometry.
             self.refresh_layout();
+            debug_assert_eq!(
+                (buffer.width(), buffer.height()),
+                self.render_frame_size(),
+                "HD present expects the logical frame times S; another buffer size means the \
+                 window was opened for a different scale (S applied twice), which crops the \
+                 interface in the window and breaks mouse hit testing"
+            );
         } else {
             // PixelPerfect keeps the historical behavior: the presented buffer
             // is the logical frame, so a different buffer size re-lays out it.

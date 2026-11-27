@@ -1195,16 +1195,19 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // keeps its own coordinates.
     let (presentation, render_scale) = cli.presentation()?;
     let hd_factor = render_scale.scale();
-    let mut window = SdlWindow::new_scaled(
+    // The constructor takes the **logical** frame size and applies S itself: the
+    // window opens at the 640*S x 480*S render frame in points, so S is never
+    // applied twice. The old code passed 640*S here and the presentation switch
+    // multiplied it again: the geometry then laid out a 640*S^2 frame, which
+    // cropped the interface to its centre in the window and shifted every click.
+    let mut window = SdlWindow::new_with_render_scale(
         "M.A.X. — Rust client (M4.2 HUD)",
-        config.screen_width * hd_factor,
-        config.screen_height * hd_factor,
+        config.screen_width,
+        config.screen_height,
+        render_scale,
         normalized_window_scale(cli.window_scale),
     )
     .map_err(|error| anyhow!("{error}"))?;
-    if presentation.is_hd() {
-        window.set_render_scale(render_scale);
-    }
     // HD layers of the remaster (`remaster-hd.md` §R3–§R7), resolved once.
     // `PixelPerfect` loads nothing: the historical path must not depend on the
     // remaster being present. Every missing asset falls back per asset, so a
@@ -1426,8 +1429,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
         "UI: кадр {}x{}, окно {}x{} точек / {}x{} пикселей (DPI×{:.2}, масштаб {}, \
          дисплей {:.0} Гц, fullscreen={}); меню — мышь/стрелки, Enter; \
          в игре — LMB выбор/движение/меню, RMB выбор/контекст, клик по врагу — атака, End Turn; Esc — выход",
-        config.screen_width,
-        config.screen_height,
+        config.screen_width * hd_factor,
+        config.screen_height * hd_factor,
         window.size().0,
         window.size().1,
         window.output_size().0,

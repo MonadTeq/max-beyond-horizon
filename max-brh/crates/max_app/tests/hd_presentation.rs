@@ -38,10 +38,13 @@ use max_render::hd_chrome::{HdChrome, HdImage};
 use max_render::hd_sprites::{HdIndexFrame, HdIndexMap, HdShadowFrame, HdSpriteBank};
 use max_render::hd_terrain::{HdTerrainAtlas, HdTile};
 use max_render::hd_text::{HdFontAtlas, HdFonts, HdGlyphAtlas};
-use max_render::presentation::ScreenGeometry;
+use max_render::layout::{
+    END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON, HELP_BUTTON, PREFS_BUTTON, ZOOM_PLUS,
+};
+use max_render::presentation::{window_points_for, ScreenGeometry};
 use max_render::render_scale::RenderScale;
 use max_render::text::GnwFontId;
-use max_render::{upscale_nearest, FRAME_HEIGHT, FRAME_WIDTH};
+use max_render::{upscale_nearest, PixelRect, FRAME_HEIGHT, FRAME_WIDTH};
 
 /// Frame of a logical map area (`layout::MAIN_MAP` is 448×448).
 const MAP_AREA: i32 = 448;
@@ -678,4 +681,78 @@ fn hd_soak_renders_frames_without_touching_the_state() {
         "the match advanced"
     );
     let _ = digest;
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5: the HD window holds the whole interface and hit-tests logical buttons
+// ---------------------------------------------------------------------------
+
+/// The HD window opens at the render frame (`640·S × 480·S` points), so the
+/// whole interface — panels, menus, HUD — fits the window, and a click on a
+/// button drawn as its `×S` block reaches the UI inside the **logical** 640×480
+/// rectangle of that button.
+///
+/// Regression gate for the R7 integration defect where the window was opened at
+/// `640·S` and the presentation switch applied `S` again: the geometry laid out
+/// a `640·S² × 480·S²` frame, which cropped the interface to its centre in the
+/// window and mapped every click half a screen off (the UI then received points
+/// like `(320 + x/2, 240 + y/2)`, outside every button).
+#[test]
+fn hd_window_shows_the_whole_interface_and_hit_tests_logical_buttons() {
+    let buttons = [
+        ("End Turn", END_TURN_BUTTON),
+        ("Files", FILES_BUTTON),
+        ("Preferences", PREFS_BUTTON),
+        ("Grid", GRID_BUTTON),
+        ("Zoom +", ZOOM_PLUS),
+        ("Help", HELP_BUTTON),
+    ];
+
+    for scale in [RenderScale::Hd2, RenderScale::Hd4] {
+        let factor = scale.scale() as i32;
+        let points = window_points_for(FRAME_WIDTH, FRAME_HEIGHT, scale, 1);
+        let geometry = ScreenGeometry::native_with_render_scale(points, points, scale);
+
+        // The whole interface is in the window: the content rectangle is the
+        // drawable itself — no crop, no letterbox at the reference window size.
+        assert_eq!(geometry.render_frame_size(), points, "[{}]", scale.label());
+        assert_eq!(
+            geometry.content_rect(),
+            PixelRect::new(0, 0, points.0 as i32, points.1 as i32),
+            "[{}] the interface is cropped by the HD window",
+            scale.label()
+        );
+        assert!(geometry.fills_output(), "[{}]", scale.label());
+
+        for (name, rect) in buttons {
+            // A click on the centre of the `×S` block the button is drawn as.
+            let (window_x, window_y) = geometry.frame_scale().frame_to_window(
+                rect.ulx * factor + factor / 2,
+                rect.uly * factor + factor / 2,
+            );
+            let mapped = geometry
+                .window_to_frame(window_x, window_y)
+                .unwrap_or_else(|| {
+                    panic!("[{}] {name}: the click is outside the frame", scale.label())
+                });
+
+            assert!(
+                rect.contains(mapped.0, mapped.1),
+                "[{}] {name}: the click on the x{factor} block maps to {mapped:?}, outside \
+                 the logical rectangle {rect:?}",
+                scale.label()
+            );
+            // The block's top-left pixel maps to the logical top-left corner: the
+            // logical rectangle did not move.
+            let (window_x, window_y) = geometry
+                .frame_scale()
+                .frame_to_window(rect.ulx * factor, rect.uly * factor);
+            assert_eq!(
+                geometry.window_to_frame(window_x, window_y),
+                Some((rect.ulx, rect.uly)),
+                "[{}] {name}: the logical rectangle moved",
+                scale.label()
+            );
+        }
+    }
 }
