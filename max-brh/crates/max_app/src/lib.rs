@@ -748,6 +748,15 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// corpse (which may still be walking to the death pixel) instead of freezing
     /// in mid-air. Frame-only, not part of the snapshot/CRC.
     effect_parents: std::collections::HashMap<UnitId, UnitId>,
+    /// The team whose turn closed on the previous frame (`max_core::ClosingTurn`).
+    ///
+    /// While the turn close drains, the frame draws the closing team on the
+    /// simulation position instead of interpolating. The team is remembered for one
+    /// more frame because the tick that enters the **last** cell (the halt of an
+    /// intercept) also ends the closing state: without the memory that cell would be
+    /// interpolated again and the sprite would trail the halt by one cell — exactly
+    /// the desync this fix removes. Frame only, not part of the snapshot/CRC.
+    closing_visual_team: Option<TeamId>,
     /// Frame-side vision of the local player's team — the live scan coverage
     /// computed from the **visual** anchors, so the radar (the minimap fog and the
     /// unit dots) moves on arrival, not earlier
@@ -993,13 +1002,12 @@ pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 /// A jump larger than this number of cells is not a route but a teleport/state
 /// synchronization: the visual position is set to the target without animation.
 ///
-/// Exception: the end-of-turn route drain
-/// (`GameState::finish_end_turn_movement`) walks the whole pending route inside
-/// one call and reports the actual waypoints ([`max_core::DrainedRoute`]); the
-/// frame rebuilds its queue from that report and walks the sprite to the halt
-/// cell instead of snapping (see [`App::update_visual_units`]). A real
-/// save/load or transport synchronization has no such report — the route is
-/// unknown — and keeps the snap.
+/// The turn-close drain does **not** reach this branch any more: it walks the
+/// closing routes inside the simulation at the visual pace
+/// (`max_core::ClosingTurn`), one cell per budget window, so the frame sees at most
+/// a one-cell step and draws every unit of the closing team exactly on the
+/// simulation position ([`App::update_visual_units`]). A save/load or a transport
+/// synchronization keeps the snap: the route is unknown there.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
 
 /// Frame target of a unit in fractional cells — where the sprite has to be drawn.
@@ -1018,98 +1026,6 @@ fn visual_target(unit: &UnitInfo) -> (f32, f32) {
     } else {
         (f32::from(unit.grid.x), f32::from(unit.grid.y))
     }
-}
-
-/// The frame point of a waypoint the end-of-turn drain walked
-/// ([`max_core::DrainedStep`]) — the same coordinate space as [`visual_target`]:
-/// the cell center for a ground/sea unit, the `x/y` pixel over 64 for an
-/// aircraft.
-///
-/// The core keeps both raw positions: which one the frame draws is a
-/// presentation decision and must stay here, next to [`visual_target`].
-fn drained_step_point(unit: &UnitInfo, step: &max_core::DrainedStep) -> (f32, f32) {
-    if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
-        let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
-
-        (f32::from(step.x) / tile, f32::from(step.y) / tile)
-    } else {
-        (f32::from(step.grid_x), f32::from(step.grid_y))
-    }
-}
-
-/// Whether a drained route ends exactly on the unit's new simulation target.
-///
-/// The guard keeps a report that no longer matches the state (the simulation
-/// moved again after the drain, or the route belongs to an earlier position)
-/// from animating the sprite to the wrong point: only a route that ends on the
-/// current target may replace the snap.
-fn drained_route_ends_at(
-    unit: &UnitInfo,
-    route: &max_core::DrainedRoute,
-    target: (f32, f32),
-) -> bool {
-    route.steps.last().is_some_and(|step| {
-        let point = drained_step_point(unit, step);
-
-        (point.0 - target.0).abs() < 1e-3 && (point.1 - target.1).abs() < 1e-3
-    })
-}
-
-/// Rebuilds the visual queue of a unit from the route the end-of-turn drain
-/// walked ([`max_core::DrainedRoute`]).
-///
-/// The drain (`GameState::finish_end_turn_movement`) runs the whole pending
-/// route inside one `end_local_turn`, so the simulation target lands far ahead of
-/// the sprite and the state keeps only the halt cell. The report carries the
-/// cells/pixels the unit actually entered; [`App::update_visual_units`] moves the
-/// sprite by no more than the frame budget per frame, so even one long segment is
-/// walked, not jumped. The direction of every segment comes from its displacement
-/// (as in the per-tick branch), so the sprite turns on the actual turn cell.
-fn drained_visual_steps(
-    unit: &UnitInfo,
-    from: (f32, f32),
-    route: &max_core::DrainedRoute,
-) -> std::collections::VecDeque<VisualStep> {
-    let mut queue = std::collections::VecDeque::with_capacity(route.steps.len());
-    let mut previous = from;
-
-    for step in &route.steps {
-        let point = drained_step_point(unit, step);
-        let dx = point.0 - previous.0;
-        let dy = point.1 - previous.1;
-        // `f32::signum` returns 1.0 for +0.0, so the sign is taken by comparison:
-        // an axial segment must not turn diagonal (the same rule as the per-tick
-        // branch below).
-        let sign_x = if dx > 0.0 {
-            1
-        } else if dx < 0.0 {
-            -1
-        } else {
-            0
-        };
-        let sign_y = if dy > 0.0 {
-            1
-        } else if dy < 0.0 {
-            -1
-        } else {
-            0
-        };
-        let angle = if sign_x == 0 && sign_y == 0 {
-            unit.angle
-        } else {
-            max_core::unit_order::paths_get_angle(sign_x, sign_y) as u8
-        };
-
-        queue.push_back(VisualStep {
-            x: point.0,
-            y: point.1,
-            angle,
-            speed: step.speed,
-        });
-        previous = point;
-    }
-
-    queue
 }
 
 /// Walks a unit's visual route by no more than `budget` cells — the per-frame
@@ -1314,6 +1230,7 @@ impl<D: Dispatcher> App<D> {
             corpse_visuals: std::collections::BTreeMap::new(),
             effect_offsets: std::collections::HashMap::new(),
             effect_parents: std::collections::HashMap::new(),
+            closing_visual_team: None,
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             hover_anims: std::collections::HashMap::new(),
@@ -1369,6 +1286,11 @@ impl<D: Dispatcher> App<D> {
         self.universe
             .set_disable_fire(self.preferences.disable_fire);
         self.universe.set_real_time(self.preferences.real_time);
+        // `fast_movement` ("Double Unit Steps"): the turn-close drain walks the
+        // closing routes twice as fast (C++ `GameManager_FastMovement`,
+        // `game_manager.cpp:3027`), so the simulation keeps the drawing tempo.
+        self.universe
+            .set_fast_movement(self.preferences.fast_movement);
         self.universe_events = self.universe.subscribe();
         self.turn_events = self.universe.subscribe();
         self.music_events = self.universe.subscribe();
@@ -3938,6 +3860,7 @@ impl<D: Dispatcher> App<D> {
         self.corpse_visuals.clear();
         self.effect_offsets.clear();
         self.effect_parents.clear();
+        self.closing_visual_team = None;
         self.hover_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
@@ -3980,6 +3903,17 @@ impl<D: Dispatcher> App<D> {
     /// snapshot/CRC.
     pub fn presentation_corpses(&self) -> &std::collections::BTreeMap<UnitId, CorpseVisual> {
         &self.corpse_visuals
+    }
+
+    /// Whether the local turn close is waiting for the closing team's movement
+    /// (`max_core::universe::GameUniverse::turn_close_pending`).
+    ///
+    /// Read-only: while this is `true` the local clock keeps ticking
+    /// (`local.rs::local_clock`, the `LocalPhase::Advancing` branch) and
+    /// [`Self::update_visual_units`] draws the closing team on the simulation
+    /// position — the drain walks at the visual pace (`max_core::ClosingTurn`).
+    pub fn turn_close_pending(&self) -> bool {
+        self.universe.turn_close_pending()
     }
 
     /// Frame-side vision of the local player's team ([`vision::VisionView`]).
@@ -4390,25 +4324,21 @@ impl<D: Dispatcher> App<D> {
     /// visual animation clock: the builder shows the working pose `+16`, and
     /// a "growing" unit — full size.
     ///
-    /// The end-of-turn route drain is the one simulation step that moves a unit
-    /// farther than one cell: `GameState::finish_end_turn_movement` walks the
-    /// whole remaining route inside `end_local_turn`. It reports the walked
-    /// waypoints ([`max_core::DrainedRoute`]); the frame rebuilds the queue from
-    /// that report and walks the sprite to the halt cell, so no jump happens for
-    /// any drain length (air and ground alike). A position change without such a
-    /// report — save/load, transport/state synchronization — is still a snap
+    /// **The turn close.** The closing team's routes are walked by the simulation
+    /// itself at the visual pace (`max_core::ClosingTurn`, one cell per budget
+    /// window): the frame draws those units on the simulation position, without
+    /// interpolation. An intercept, the shot and the death of a closing unit
+    /// therefore happen on the cell the player sees, and the next team starts only
+    /// after the walk has finished. A position change without such a drain —
+    /// save/load, transport/state synchronization — is a snap
     /// (`VISUAL_TELEPORT_CELLS`), because its route is unknown.
     ///
     /// **Death.** A unit killed while its sprite still walks ends the walk on the
-    /// pixel where the simulation killed it — the halt cell of the intercept, the
-    /// point where the anti-aircraft opened fire — and never in mid-air behind
-    /// that pixel. The queued route is kept (a dead unit gets no new cells, but the
-    /// cells it already has are the ones the simulation walked before the killing
-    /// hit); the corpse keeps walking them at the visual speed, and the record
-    /// [`CorpseVisual`] keeps it drawable after
-    /// `unit_order::progress_explosion` deletes it half-way through its blast. The
-    /// blast stays on the corpse (`effect_offsets`), so corpse and explosion end on
-    /// the death pixel together.
+    /// pixel where the simulation killed it; the record [`CorpseVisual`] keeps it
+    /// drawable after `unit_order::progress_explosion` deletes it half-way through
+    /// its blast, and the blast stays on the corpse (`effect_offsets`). A unit
+    /// killed during the turn close needs neither: its sprite is already on the
+    /// simulation pixel when the killing shot lands.
     ///
     /// P4: the map is updated in place (`retain` + `insert`), not rebuilt
     /// every frame. This removes the `HashMap` allocation of `ids.len()`
@@ -4428,12 +4358,15 @@ impl<D: Dispatcher> App<D> {
         // `SLFDOPN1..6` frames of the self-destruct dialog (`TIMER_FPS_TO_MS(48)`).
         self.advance_self_destruct(dt);
 
-        // The routes the last turn close walked (`GameState::finish_end_turn_movement`):
-        // the frame rebuilds its queue from them when the drain moved the
-        // simulation farther than `VISUAL_TELEPORT_CELLS` (see the branch below).
-        // A presentation report, taken once here; `dt <= 0` (headless/QA) is a
-        // pure snapshot, so the report is simply dropped there.
-        let drained = self.universe.take_drained_routes();
+        // The team whose turn is closing (`max_core::ClosingTurn`): its units walk at
+        // the visual pace in the simulation itself, so the frame draws them exactly
+        // where the simulation puts them (see the branch in the loop below). The team
+        // is remembered for one more frame: the tick that enters the closing unit's
+        // last cell (an intercept's halt) also ends the closing state, and that cell
+        // must be drawn on the simulation position too.
+        let active_closing = self.universe.closing_turn_team();
+        let closing_team = active_closing.or(self.closing_visual_team.take());
+        self.closing_visual_team = active_closing;
 
         let ids = self.state_ref().unit_ids_in_order();
         let dt = dt.clamp(0.0, 0.1);
@@ -4510,6 +4443,21 @@ impl<D: Dispatcher> App<D> {
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
 
+            // The turn close walks the closing team's routes **inside the
+            // simulation** at the visual pace (`max_core::ClosingTurn`, one cell per
+            // budget window). The sprite is therefore drawn on the simulation
+            // position itself: no interpolation, no route report, no snap. An
+            // intercept, the shot and the death of such a unit happen on the cell the
+            // player sees, and the next team starts only after the walk ends.
+            if closing_team == Some(unit.team) {
+                *current = target;
+                *goal = target;
+                queue.clear();
+                *last_speed = unit.speed;
+                anchors.insert(id, (target.0.round() as i16, target.1.round() as i16));
+                continue;
+            }
+
             // The simulation moved the unit (usually one cell per tick).
             // We append the actual route cells so that the frame walks them,
             // not cutting the path in a straight line; a big jump — a teleport/sync.
@@ -4524,27 +4472,11 @@ impl<D: Dispatcher> App<D> {
                 let spent = last_speed.saturating_sub(unit.speed);
 
                 if distance > VISUAL_TELEPORT_CELLS as f32 {
-                    // The turn close (`GameState::finish_end_turn_movement`)
-                    // walks the whole pending route inside one `end_local_turn`:
-                    // the simulation target lands far ahead of the sprite and the
-                    // state keeps only the halt cell. The drain reports the
-                    // cells/pixels it actually walked; when that report ends
-                    // exactly on the new target the frame rebuilds the queue from
-                    // it, so the sprite walks to the halt cell instead of jumping
-                    // there. A genuine teleport (save/load, transport/state
-                    // synchronization) has no such report — the route is unknown
-                    // — and keeps the immediate snap.
-                    let drained_route = drained.iter().find(|route| {
-                        route.unit == id && drained_route_ends_at(unit, route, target)
-                    });
-
+                    // A jump this large is not a route: it is a save/load or a
+                    // transport/state synchronization. The route is unknown, so the
+                    // sprite is set to the target without animation.
                     queue.clear();
-
-                    if let Some(route) = drained_route {
-                        queue.extend(drained_visual_steps(unit, *goal, route));
-                    } else {
-                        *current = target;
-                    }
+                    *current = target;
                 } else {
                     // Whole-cell route steps are split so the sprite walks the cells;
                     // an aircraft's sub-cell pixel step is one waypoint.
@@ -4609,17 +4541,15 @@ impl<D: Dispatcher> App<D> {
             //
             // Oracle: the sprite is drawn at `UnitInfo::x/y`, and an emergency stop
             // (`UnitInfo::StopMovement`, `unitinfo.cpp:3222` → `BlockedOnPathRequest`,
-            // `:3628`) only clears the path — it never rewrites `x/y`. In the port the
-            // cell-per-tick simulation resolves the killing shot while the frame still
-            // walks the drained route, so the corpse keeps its queued route and walks
-            // it at the visual speed to the death pixel: the sprite arrives there
-            // exactly as the hull did in the original, instead of freezing (or being
-            // pulled) several cells short of the cell where the attack started.
+            // `:3628`) only clears the path — it never rewrites `x/y`.
             //
-            // The route was built above, from the drain report or from the per-cell
-            // steps of the killing tick; a corpse never gets new cells from the
-            // simulation. The record keeps the unit drawable after
-            // `unit_order::progress_explosion` removes it in the middle of its blast.
+            // A unit killed during the **turn close** needs none of this: its sprite
+            // follows the simulation cell (`ClosingTurn`), so it is already on the
+            // death pixel. This branch covers the ordinary case — a unit killed during
+            // a turn whose sprite is still interpolating its queued route: the corpse
+            // keeps that route and walks it at the visual speed to the death pixel, and
+            // the record keeps it drawable after `unit_order::progress_explosion`
+            // removes the unit in the middle of its blast.
             let dead = unit.hits == 0;
 
             if dead && !queue.is_empty() {
@@ -4644,11 +4574,10 @@ impl<D: Dispatcher> App<D> {
         }
 
         // Presentation corpses whose unit the simulation already removed: the walk
-        // to the death pixel continues here. An intercepted aircraft is deleted by
-        // `access::build_clearing` half-way through its blast, several cells before
-        // the sprite reached the halt cell; without this the plane would vanish in
-        // mid-air and the blast (drawn on the corpse) would stop behind the point
-        // where the attack started.
+        // to the death pixel continues here. A unit killed during an ordinary turn is
+        // deleted in the middle of its blast while its sprite still walks the queued
+        // route; without this it would vanish in mid-air. (A unit killed during the
+        // turn close never needs the record — its sprite is on the simulation cell.)
         let ghost_ids: Vec<UnitId> = self
             .corpse_visuals
             .keys()
@@ -4672,18 +4601,16 @@ impl<D: Dispatcher> App<D> {
         // drawn at the **dying unit's pixel**, i.e. at the sprite the original draws.
         //
         // The oracle's `unit->x/y` and its sprite are the same point; the port's
-        // sprite is the interpolated frame position, which lags the cell-per-tick
-        // simulation. For an intercepted unit killed on its halt cell that lag is
-        // several cells, so drawing the blast at the simulation pixel would leave the
-        // corpse behind an explosion that "happened elsewhere" (the previous
-        // playtest defect). The frame therefore keeps the blast on the corpse: the
-        // stored offset is `frame pixel - simulation pixel` of the dead unit.
+        // sprite is the interpolated frame position while a unit walks during a normal
+        // turn, so it may lag the simulation. The frame therefore keeps the blast on
+        // the sprite: the stored offset is `frame pixel - simulation pixel` of the
+        // dead unit. During the turn close the offset is zero — the sprite follows the
+        // simulation (`ClosingTurn`), so the blast lands on the cell the player sees.
         //
-        // While the effect still references its parent the offset follows the
-        // corpse. `unit_order::progress_explosion` releases the parent in the middle
-        // of the animation; the frame remembers the link (`effect_parents`) so the
-        // blast keeps riding the corpse for the rest of its walk and ends on the
-        // death pixel — where both the sprite and the simulation put the unit.
+        // While the effect still references its parent the offset follows the corpse.
+        // `unit_order::progress_explosion` releases the parent in the middle of the
+        // animation; the frame remembers the link (`effect_parents`) so the blast keeps
+        // riding the corpse for the rest of its walk and ends on the death pixel.
         self.effect_offsets
             .retain(|id, _| state.unit(*id).is_some());
         self.effect_parents

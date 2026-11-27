@@ -2596,6 +2596,13 @@ impl<D: Dispatcher> crate::App<D> {
         let enemy_halt = self.preferences.enemy_halt;
         self.universe.set_enemy_halt(enemy_halt);
 
+        // "Double Unit Steps" (`GameManager_FastMovement`, `game_manager.cpp:3027`):
+        // the turn-close drain walks the closing routes twice as fast. Not part of
+        // the snapshot — it only spaces passes of the same simulation, so the
+        // archive digest does not move.
+        self.universe
+            .set_fast_movement(self.preferences.fast_movement);
+
         if let Some(local) = self.local.as_mut() {
             local.setup.timer = self.preferences.turn_timer.max(0) as u32;
             local.setup.endturn = self.preferences.endturn.max(0) as u32;

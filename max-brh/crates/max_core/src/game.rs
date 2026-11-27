@@ -160,53 +160,101 @@ pub struct UnitSound {
     pub kind: UnitSoundKind,
 }
 
-/// One waypoint of a route walked by the end-of-turn drain.
+/// Visual pace of the end-of-turn drain, in cells per second.
 ///
-/// The report is **presentation only** (like [`UnitSound`]): it is not part of
-/// the snapshot/CRC and does not affect the simulation. Both positions are kept
-/// raw — the cell **and** the pixel — because the frame picks the one its
-/// `visual_target` uses: the cell for a ground/sea unit, the `x/y` pixel for an
-/// aircraft (`airpath.cpp:219-242`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DrainedStep {
-    /// Cell the unit entered (`UnitInfo::grid`).
-    pub grid_x: i16,
-    /// Cell the unit entered (`UnitInfo::grid`).
-    pub grid_y: i16,
-    /// Pixel position after the pass (`UnitInfo::x`).
-    pub x: u16,
-    /// Pixel position after the pass (`UnitInfo::y`).
-    pub y: u16,
-    /// Movement points the pass spent entering this waypoint
-    /// (`Paths_CalculateStep`/`Paths_TakeStep`): the frame attaches them to the
-    /// visual step so the panel's `Speed` row falls together with the sprite.
-    pub speed: u16,
+/// The oracle closes a team turn with
+/// `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
+/// (`game_manager.cpp:488-490`): the closing routes are walked by **ordinary
+/// ticks** while the frame keeps drawing, because the original moves
+/// `UnitInfo::x/y` only a few pixels per tick (`UnitInfo::Move`,
+/// `unitinfo.cpp:1742`). The port's movement model advances a whole cell per order
+/// pass — a ground step enters the next cell, an aircraft's `max_velocity` pixel
+/// steps make one cell — so the drain paces a cell to this rate: the same speed the
+/// frame used to interpolate with (`max_app::VISUAL_CELLS_PER_SECOND`).
+pub const CLOSING_CELLS_PER_SECOND: u32 = 4;
+
+/// Ticks per second of the fixed simulation step (the original's 60 Hz frame,
+/// `GameManager_ProcessTick`, `game_manager.cpp:5144`).
+pub const SIMULATION_TICKS_PER_SECOND: u32 = 60;
+
+/// Fixed point of the drain budget: one fifteenth of a pixel.
+///
+/// [`CLOSING_CELLS_PER_SECOND`] cells/s at [`SIMULATION_TICKS_PER_SECOND`] is
+/// `GFX_MAP_TILE_SIZE * 4 / 60` pixels per tick — not an integer. The factor 15
+/// keeps the whole budget in integers (`64 * 4 * 15 / 60 = 64` units per tick,
+/// `64 * 15 = 960` units per cell), so the pace is deterministic and does not
+/// depend on `dt` or on the frame rate.
+pub const DRAIN_UNITS_PER_PIXEL: i64 = 15;
+
+/// Drain budget granted to one moving unit per tick, in [`DRAIN_UNITS_PER_PIXEL`]
+/// units: four cells per second of a 60 Hz step is `4.27` pixels.
+pub const DRAIN_UNITS_PER_TICK: i64 = GFX_MAP_TILE_SIZE as i64
+    * CLOSING_CELLS_PER_SECOND as i64
+    * DRAIN_UNITS_PER_PIXEL
+    / SIMULATION_TICKS_PER_SECOND as i64;
+
+/// One unit of the closing team inside [`ClosingTurn`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClosingUnit {
+    /// Movement credit in [`DRAIN_UNITS_PER_PIXEL`] units: the drain advances the
+    /// unit only while the credit is non-negative, and charges it by the pixels the
+    /// pass actually moved (a blocked pass costs nothing, so retries stay at one
+    /// per tick as in the oracle).
+    credit: i64,
+    /// Pixel position at the previous pass — the charge is measured from here.
+    x: u16,
+    y: u16,
 }
 
-/// The route one unit walked during [`GameState::finish_end_turn_movement`].
+/// The turn close of a team whose units still move — the port of the oracle's
+/// `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
+/// (`game_manager.cpp:488-490`; `:549-558` for the concurrent close).
 ///
-/// # Why the frame needs it
+/// # Why the drain is incremental
 ///
-/// The turn close drains a pending route **inside one call**
-/// (`while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`,
-/// `game_manager.cpp:488-490`): the simulation can advance a whole `speed`
-/// allowance (14+ cells for an aircraft, 17+ for a tank) between two frames.
-/// The frame cannot see the intermediate cells from the state alone — it only
-/// sees the start and the halt cell — so
-/// `App::update_visual_units` used to treat a jump over
-/// `VISUAL_TELEPORT_CELLS` as a save/load synchronization and snapped the
-/// sprite. This report carries the actual walked waypoints, so the frame can
-/// rebuild its queue and walk the sprite to the halt cell instead.
+/// The port used to walk the whole remaining route inside one `end_local_turn`
+/// call: fourteen cells or more between two frames. Reaction fire is resolved in
+/// simulation cells, so an intercept, the shot and the death all happened where
+/// the *simulation* was — several cells ahead of a sprite that walks at
+/// [`CLOSING_CELLS_PER_SECOND`]. The drain now advances one order pass per budget
+/// window instead, and the frame draws every unit at the simulation position
+/// (no interpolation): a shot started on a cell is a shot the player sees on that
+/// cell, and the next team starts only after the movement has finished.
 ///
-/// A genuine teleport (save/load, transport/state synchronization) has no such
-/// report, so it keeps the immediate snap: the route is **unknown** there.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DrainedRoute {
-    /// The unit that walked the route.
-    pub unit: UnitId,
-    /// Waypoints in traversal order, ending exactly on the halt
-    /// cell/pixel.
-    pub steps: Vec<DrainedStep>,
+/// # Determinism
+///
+/// The budget is granted per tick ([`DRAIN_UNITS_PER_TICK`], doubled by
+/// `fast_movement`) and charged by the pixels a pass actually advanced — integer
+/// arithmetic only. The pace is a function of the tick count, never of `dt` or of
+/// the frame rate.
+///
+/// The drain state is **not** part of the snapshot/CRC: it only spaces the passes
+/// the oracle would run back to back, and a lockstep peer never starts one. Only
+/// the local team-turn machine drains ([`crate::universe::GameUniverse::end_local_turn`]);
+/// a network match closes turns through the barrier FSM.
+#[derive(Debug, Clone)]
+pub(crate) struct ClosingTurn {
+    /// Team whose turn is being closed.
+    pub(crate) team: TeamId,
+    /// `fast_movement` of the match ("Double Unit Steps"): the budget doubles, as
+    /// C++ `GameManager_FastMovement` doubles the movement velocity
+    /// (`unitinfo.cpp:1742`).
+    pub(crate) fast_movement: bool,
+    /// Per-unit movement credit.
+    credit: std::collections::BTreeMap<UnitId, ClosingUnit>,
+    /// Passes the drain has run (diagnostics and tests).
+    pub(crate) passes: u32,
+}
+
+impl ClosingTurn {
+    /// Credit one moving unit gains per tick, in [`DRAIN_UNITS_PER_PIXEL`] units.
+    fn units_per_tick(&self) -> i64 {
+        if self.fast_movement {
+            DRAIN_UNITS_PER_TICK * 2
+        } else {
+            DRAIN_UNITS_PER_TICK
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,16 +420,16 @@ pub(crate) struct GameState {
     /// A UI/QA report (like `unit_sounds`), **not** part of the snapshot/CRC:
     /// the client drains it into [`crate::universe::GameEvent::EnemySpotted`].
     pub(crate) spotted_reports: Vec<UnitId>,
-    /// Routes walked by the last [`Self::finish_end_turn_movement`] drain.
+    /// The turn close in progress ([`ClosingTurn`]) — the incremental, drawing-paced
+    /// drain of the closing team's routes. `None` when no turn is closing.
     ///
-    /// A **presentation report** (like `unit_sounds`/`spotted_reports`), not part
-    /// of the snapshot/CRC: the frame rebuilds its visual queue from it, because
-    /// the turn close walks a whole route inside one call and the state only
-    /// keeps the halt cell. Taken once by the client
-    /// ([`crate::universe::GameUniverse::take_drained_routes`]); a save/load or a
-    /// transport synchronization — a route the simulation does **not** know —
-    /// leaves it empty, so the frame still snaps there.
-    pub(crate) drained_routes: Vec<DrainedRoute>,
+    /// Not part of the snapshot/CRC (like the presentation reports): it spaces
+    /// passes of the same simulation, and a lockstep peer never starts one.
+    pub(crate) closing_turn: Option<ClosingTurn>,
+    /// `GameManager_FastMovement` ("Double Unit Steps", `game_manager.cpp:224`) —
+    /// the closing drain runs at twice the visual pace. The simulation result is
+    /// unchanged, so the setting is not part of the snapshot/CRC.
+    pub(crate) fast_movement: bool,
     /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
     /// barrier counters so that the state is self-contained.
     pub(crate) turn_indices: [u8; TEAM_SLOTS],
@@ -461,36 +509,18 @@ pub(crate) struct GameState {
     pub(crate) victory_limit: i32,
 }
 
-/// One term of the turn-close drain: the unit has a task the pass has to advance.
+/// Whether a unit is walking a route the turn close has to finish — the movement
+/// part of the oracle's `Access_AreTaskEventsPending` (`access.cpp:2269`) that the
+/// port's drain waits for ([`GameState::task_events_pending`]).
 ///
-/// The oracle predicate `Access_AreTaskEventsPending` (`access.cpp:2269`) lists
-/// `FIRE`/`EXPLODE`/`ACTIVATE`/tape/scaling orders, `ORDER_STATE_DESTROY`, a move
-/// order outside `EXECUTING_ORDER` and any `ORDER_STATE_INIT`. The port's drain is
-/// the **movement + reaction-fire** part of it (see
-/// [`GameState::task_events_pending`]); this helper is the wider set used only for
-/// the no-progress fingerprint, so that the reaction chain that runs *inside* the
-/// drain is observed while it advances.
-fn pending_task_order(unit: &UnitInfo) -> bool {
-    matches!(unit.orders, UnitOrder::Fire | UnitOrder::Explode)
-        || unit.state == UnitOrderState::Destroy
-        || (unit.has_move_order() && unit.state != UnitOrderState::ExecutingOrder)
-}
-
-/// Position and movement points of a unit at a drain pass boundary — what
-/// [`GameState::finish_end_turn_movement`] compares between two
-/// `UnitsManager_ProcessOrders` passes to report a [`DrainedStep`].
-#[derive(Debug, Clone, Copy)]
-struct DrainSnapshot {
-    /// Unit id.
-    unit: UnitId,
-    /// Map cell.
-    grid: Point,
-    /// Pixel position X.
-    x: u16,
-    /// Pixel position Y.
-    y: u16,
-    /// Remaining movement points.
-    speed: u16,
+/// Only such a unit pays the closing drain budget; a halted, firing or exploding
+/// unit keeps its normal per-tick pass.
+fn closing_route_pending(unit: &UnitInfo) -> bool {
+    unit.path.is_some()
+        && matches!(
+            unit.state,
+            UnitOrderState::InProgress | UnitOrderState::InTransition
+        )
 }
 
 impl Default for GameState {
@@ -556,7 +586,8 @@ impl GameState {
             industry_message: None,
             unit_sounds: Vec::new(),
             spotted_reports: Vec::new(),
-            drained_routes: Vec::new(),
+            closing_turn: None,
+            fast_movement: false,
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
             team_data_crc16: [0; TEAM_SLOTS],
@@ -2050,7 +2081,7 @@ impl GameState {
     pub fn process_unit_orders(&mut self, kind: UnitListKind) {
         let ids = self.lists[kind.index()].clone();
         for id in ids {
-            if self.has_unit(id) {
+            if self.has_unit(id) && !self.closing_move_paused(id) {
                 unit_order::process_order(self, id);
             }
         }
@@ -2103,7 +2134,7 @@ impl GameState {
     // End of turn (DESIGN §5.3, `game_manager.cpp:2042-2087`)
     // -----------------------------------------------------------------------
 
-    /// The end-of-turn route drain — `GameManager_TeamTurnTurnBased` /
+    /// Opening of the end-of-turn route drain — `GameManager_TeamTurnTurnBased` /
     /// `GameManager_TeamTurnConcurrent` "waiting for units to finish moving":
     ///
     /// ```c
@@ -2112,137 +2143,179 @@ impl GameState {
     /// }
     /// ```
     ///
-    /// (`game_manager.cpp:488-490` after `UpdateGui` of the team, and
-    /// `:549-558` for the concurrent round close). The team's `06` already ran,
-    /// the phase is `GAME_STATE_9_END_TURN`, and the oracle keeps ticking the
-    /// simulation while a unit still has a pending task. `GameManager_ProgressTurn`
-    /// (`game_manager.cpp:2586`) is a full `GameManager_ProcessTick(false)`, i.e.
-    /// every pass runs `UnitsManager_ProcessOrders` (`game_manager.cpp:5186`):
-    /// movement **and** `UnitsManager_AssessAttacks` (reaction fire) **and**
-    /// `UnitEvent_UnitEvents` (the emergency stops queued by `Access_UpdateMapStatus`).
+    /// (`game_manager.cpp:488-490` after `UpdateGui` of the team, and `:549-558`
+    /// for the concurrent round close). The team's `06` has already run and the
+    /// phase is `GAME_STATE_9_END_TURN`; every following [`Self::tick`] is the
+    /// oracle's `GameManager_ProgressTurn` (`game_manager.cpp:2586`) — a full
+    /// `GameManager_ProcessTick(false)`: `UnitsManager_ProcessOrders` with the
+    /// movement, `UnitsManager_AssessAttacks` (reaction fire) and the
+    /// `UnitEvent_UnitEvents` (the emergency stops queued by
+    /// `Access_UpdateMapStatus`).
     ///
-    /// The port used to run only `UnitInfo::ExecuteMove` for the closing team's
-    /// routes here. That skipped both the reaction pass and the unit events, so a
-    /// unit that spotted an enemy while walking never received its
-    /// `UnitEventEmergencyStop` (`enemy_halt`), walked to the destination and was
-    /// fired upon there — the manual-run defect "the unit reaches its destination
-    /// and explodes on the final point, ignoring the attack". Each pass is now the
-    /// oracle's full order pass (`UnitsManager_ProcessOrders`: movement, reaction
-    /// fire, emergency stops), so the halt is applied before the next cell and the
-    /// stopped unit is queued for reaction fire (`MoveFinished(true)`); the enemy
-    /// then opens fire at the halt cell on the next order pass.
+    /// The drain is **not** walked here: as in the oracle it stays in the tick loop
+    /// and advances one order pass per [`ClosingTurn`] budget window, so the
+    /// simulation walks the route at the speed the frame draws it — the intercept,
+    /// the shot and the death then happen on the cell the player sees.
     ///
-    /// The drained cells/pixels are reported in [`Self::drained_routes`]
-    /// ([`DrainedRoute`]): the presentation cannot reconstruct them from the
-    /// state (it keeps only the halt cell), and without them the frame treats the
-    /// drained jump as a save/load synchronization and snaps the sprite.
-    ///
-    /// Returns the number of completed cell transitions of the closing team.
-    pub(crate) fn finish_end_turn_movement(&mut self, team: TeamId) -> usize {
-        let mut transitions = 0usize;
-        let mut fingerprint: Option<Vec<u32>> = None;
+    /// Returns `true` while a route is still pending: the caller has to keep
+    /// ticking before the turn may close ([`Self::closing_turn_pending`]).
+    pub(crate) fn begin_end_turn_movement(&mut self, team: TeamId) -> bool {
+        let fast_movement = self.fast_movement;
+        self.closing_turn = Some(ClosingTurn {
+            team,
+            fast_movement,
+            credit: std::collections::BTreeMap::new(),
+            passes: 0,
+        });
 
-        // The frame rebuilds its route from [`Self::drained_routes`]; only the
-        // routes walked by **this** turn close are reported. A stale report must
-        // not animate a later, genuinely unknown position (save/load, sync).
-        self.drained_routes.clear();
-
-        // `GameManager_ProgressTurn` is one `ProcessTick`; the pass cap mirrors
-        // the oracle's own bound on a pinned unit (`UnitInfo::RegisterMovementWait`
-        // stops the retry at `MOVEMENT_WAIT_LIMIT`).
-        for _ in 0..unit_order::MOVEMENT_WAIT_LIMIT {
-            if !self.task_events_pending(team) {
-                break;
-            }
-
-            let before = self.drain_snapshot(team);
-
-            self.process_orders();
-
-            let after = self.drain_snapshot(team);
-
-            for was in &before {
-                let Some(now) = after.iter().find(|now| now.unit == was.unit) else {
-                    // The unit was destroyed during the pass: the frame's corpse
-                    // branch keeps it at the caught pixel, a route is meaningless.
-                    continue;
-                };
-
-                if now.grid == was.grid && now.x == was.x && now.y == was.y {
-                    continue;
-                }
-
-                if now.grid != was.grid {
-                    transitions += 1;
-                }
-
-                self.record_drained_step(was, now);
-            }
-
-            // A pass always advances one of the pending task events. If the
-            // fingerprint did not change, the remaining event cannot progress
-            // (a state the oracle avoids); stop instead of burning the budget.
-            let now = self.task_event_fingerprint();
-            if fingerprint.as_ref() == Some(&now) {
-                break;
-            }
-            fingerprint = Some(now);
-        }
-
-        transitions
+        self.task_events_pending(team)
     }
 
-    /// The closing team's units and their movement state at a drain pass
-    /// boundary — the input of [`Self::record_drained_step`].
-    fn drain_snapshot(&self, team: TeamId) -> Vec<DrainSnapshot> {
-        self.unit_ids_in_order()
-            .into_iter()
-            .filter_map(|id| self.unit(id).map(|unit| (id, unit)))
-            .filter(|(_, unit)| unit.team == team)
-            .map(|(id, unit)| DrainSnapshot {
-                unit: id,
-                grid: unit.grid,
-                x: unit.x,
-                y: unit.y,
-                speed: unit.speed,
-            })
-            .collect()
+    /// Whether a turn close is in progress ([`ClosingTurn`]).
+    pub(crate) fn closing_turn_active(&self) -> bool {
+        self.closing_turn.is_some()
     }
 
-    /// Appends the waypoint one drain pass walked to the unit's
-    /// [`DrainedRoute`].
-    ///
-    /// The report keeps the raw cell **and** pixel position (the presentation
-    /// picks the one its frame target uses) and the movement points the pass
-    /// spent, so the panel's `Speed` row can follow the sprite instead of the
-    /// fast simulation.
-    fn record_drained_step(&mut self, before: &DrainSnapshot, after: &DrainSnapshot) {
-        let step = DrainedStep {
-            grid_x: after.grid.x,
-            grid_y: after.grid.y,
-            x: after.x,
-            y: after.y,
-            speed: before.speed.saturating_sub(after.speed),
+    /// Whether the closing team still has a route to walk — the port of the
+    /// oracle's `while (Access_AreTaskEventsPending())` predicate
+    /// ([`Self::task_events_pending`]). `false` when no turn is closing.
+    pub(crate) fn closing_turn_pending(&self) -> bool {
+        self.closing_turn
+            .as_ref()
+            .is_some_and(|closing| self.task_events_pending(closing.team))
+    }
+
+    /// The team whose turn is closing, if any.
+    pub(crate) fn closing_turn_team(&self) -> Option<TeamId> {
+        self.closing_turn.as_ref().map(|closing| closing.team)
+    }
+
+    /// Ends the closing state (the drain is over).
+    pub(crate) fn end_closing_turn(&mut self) -> Option<TeamId> {
+        self.closing_turn.take().map(|closing| closing.team)
+    }
+
+    /// Passes the closing drain has run (diagnostics and tests).
+    pub(crate) fn closing_turn_passes(&self) -> u32 {
+        self.closing_turn
+            .as_ref()
+            .map(|closing| closing.passes)
+            .unwrap_or(0)
+    }
+
+    /// Grants this tick's movement budget to the closing team's routed units —
+    /// the "tick" half of [`ClosingTurn`], called before [`Self::process_orders`].
+    fn grant_closing_turn_budget(&mut self) {
+        let Some(team) = self.closing_turn_team() else {
+            return;
+        };
+        let Some(units) = self
+            .closing_turn
+            .as_ref()
+            .map(ClosingTurn::units_per_tick)
+        else {
+            return;
         };
 
-        if let Some(route) = self
-            .drained_routes
-            .iter_mut()
-            .find(|route| route.unit == after.unit)
-        {
-            route.steps.push(step);
-        } else {
-            self.drained_routes.push(DrainedRoute {
-                unit: after.unit,
-                steps: vec![step],
-            });
+        // The pre-pass positions: the charge of this tick is measured from them.
+        let mut moving: Vec<(UnitId, u16, u16)> = Vec::new();
+        for kind in UnitListKind::ALL {
+            for id in self.unit_list(kind) {
+                let Some(unit) = self.unit(*id) else { continue };
+
+                if unit.team != team || !closing_route_pending(unit) {
+                    continue;
+                }
+
+                moving.push((*id, unit.x, unit.y));
+            }
+        }
+
+        let Some(closing) = self.closing_turn.as_mut() else {
+            return;
+        };
+
+        // Units that stopped walking (out of speed, halted, destroyed) drop out.
+        closing.credit.retain(|id, _| {
+            moving
+                .iter()
+                .any(|(moving_id, _, _)| *moving_id == *id)
+        });
+
+        for (id, x, y) in moving {
+            let entry = closing
+                .credit
+                .entry(id)
+                .or_insert(ClosingUnit { credit: 0, x, y });
+
+            entry.credit += units;
+            entry.x = x;
+            entry.y = y;
         }
     }
 
-    /// Takes the routes the last turn-close drain walked (a presentation report,
-    /// see [`DrainedRoute`]). Not part of the snapshot/CRC.
-    pub(crate) fn take_drained_routes(&mut self) -> Vec<DrainedRoute> {
-        std::mem::take(&mut self.drained_routes)
+    /// Charges this tick's budget by the pixels the order pass actually moved —
+    /// the second half of [`ClosingTurn`], called after [`Self::process_orders`].
+    ///
+    /// A blocked pass moves nothing and therefore costs nothing: the oracle's
+    /// `UnitInfo::RegisterMovementWait` retry keeps one attempt per tick, as before.
+    fn charge_closing_turn_budget(&mut self) {
+        let Some(team) = self.closing_turn_team() else {
+            return;
+        };
+
+        let mut positions: Vec<(UnitId, u16, u16)> = Vec::new();
+        for kind in UnitListKind::ALL {
+            for id in self.unit_list(kind) {
+                let Some(unit) = self.unit(*id) else { continue };
+
+                if unit.team == team {
+                    positions.push((*id, unit.x, unit.y));
+                }
+            }
+        }
+
+        let Some(closing) = self.closing_turn.as_mut() else {
+            return;
+        };
+        closing.passes = closing.passes.saturating_add(1);
+
+        for (id, x, y) in positions {
+            let Some(entry) = closing.credit.get_mut(&id) else {
+                continue;
+            };
+
+            let dx = i64::from(x.abs_diff(entry.x));
+            let dy = i64::from(y.abs_diff(entry.y));
+            entry.credit -= dx.max(dy) * DRAIN_UNITS_PER_PIXEL;
+            entry.x = x;
+            entry.y = y;
+        }
+    }
+
+    /// Whether the closing drain pauses this unit's order pass: the movement budget
+    /// is spent, so the unit must not enter the next cell/pixel yet.
+    ///
+    /// Only a unit that is actually walking a route can be paused — a halted,
+    /// firing or exploding unit pays no budget and stays on its normal pass (the
+    /// reaction fire and the emergency stops of the turn close keep running every
+    /// tick, exactly like the oracle's `GameManager_ProgressTurn`).
+    fn closing_move_paused(&self, id: UnitId) -> bool {
+        let Some(closing) = self.closing_turn.as_ref() else {
+            return false;
+        };
+        let Some(unit) = self.unit(id) else {
+            return false;
+        };
+
+        if unit.team != closing.team || !closing_route_pending(unit) {
+            return false;
+        }
+
+        closing
+            .credit
+            .get(&id)
+            .is_some_and(|entry| entry.credit < 0)
     }
 
     /// `Access_AreTaskEventsPending` (`access.cpp:2269`) — the predicate of the
@@ -2255,88 +2328,22 @@ impl GameState {
     /// `ORDER_STATE_INIT`, path-request states and the
     /// `UnitsManager_DelayedAttackTargets` lists; those keep their normal tick
     /// handling. In particular the reaction exchange the halted unit starts is
-    /// resolved on the next order pass (a tick later), not inside the turn close —
+    /// resolved on the following order passes, not inside the turn close —
     /// the halted unit is still added to the delayed reaction lists by
     /// `UnitInfo::BlockedOnPathRequest` (see `events::process_unit_event`), so the
     /// enemy fires at the halt cell.
-    ///
-    /// This is the narrowest form that fixes the manual-run intercept defect while
-    /// leaving the shot/AI-turn timing scenarios untouched
-    /// (`max_app/tests/ai_turn_timer.rs`, `max-brh-qa/scripts/combat-tb.qa`).
     fn task_events_pending(&self, team: TeamId) -> bool {
         for kind in UnitListKind::ALL {
             for id in self.unit_list(kind) {
                 let Some(unit) = self.unit(*id) else { continue };
 
-                if unit.team == team
-                    && unit.path.is_some()
-                    && matches!(
-                        unit.state,
-                        UnitOrderState::InProgress | UnitOrderState::InTransition
-                    )
-                {
+                if unit.team == team && closing_route_pending(unit) {
                     return true;
                 }
             }
         }
 
         false
-    }
-
-    /// Cheap fingerprint of the tasks a drain pass may advance: the pending orders
-    /// ([`pending_task_order`]) and the reaction target lists.
-    ///
-    /// A full order pass always advances at least one of these fields (a cell,
-    /// an order state, a shot, a reaction target). An unchanged fingerprint means
-    /// the remaining event cannot progress; the drain then stops instead of
-    /// spinning the pass budget.
-    fn task_event_fingerprint(&self) -> Vec<u32> {
-        let mut out = Vec::new();
-
-        for kind in UnitListKind::ALL {
-            for id in self.unit_list(kind) {
-                let Some(unit) = self.unit(*id) else { continue };
-
-                if !pending_task_order(unit) {
-                    continue;
-                }
-
-                out.extend([
-                    u32::from(id.0),
-                    u32::from(unit.orders as u8),
-                    u32::from(unit.state as u8),
-                    unit.grid.x as i32 as u32,
-                    unit.grid.y as i32 as u32,
-                    u32::from(unit.x),
-                    u32::from(unit.y),
-                    u32::from(unit.speed),
-                    u32::from(unit.shots),
-                    u32::from(unit.ammo),
-                    u32::from(unit.hits),
-                    unit.image_index as i16 as i32 as u32,
-                    u32::from(unit.firing_recoil_frames),
-                    u32::from(unit.moved),
-                    u32::from(unit.angle),
-                    u32::from(unit.turret_angle),
-                    unit.turret_image_index as i16 as i32 as u32,
-                    u32::from(unit.velocity),
-                    u32::from(unit.engine),
-                    u32::from(unit.weapon),
-                    u32::from(unit.laying_state),
-                    u32::from(unit.live_attack),
-                    u32::from(unit.movement_wait_count),
-                    u32::from(unit.in_transit),
-                ]);
-            }
-        }
-
-        out.push(u32::MAX);
-        for targets in &self.delayed_attack_targets {
-            out.push(targets.len() as u32);
-            out.extend(targets.iter().map(|id| u32::from(id.0)));
-        }
-
-        out
     }
 
     /// `GameManager_RefreshOrders` (`game_manager.cpp:838-891`), the economy part —
@@ -3298,10 +3305,19 @@ impl GameState {
         // 2. Input commands: in arrival order.
         self.apply_pending_commands();
 
+        // 2b. The turn close ([`ClosingTurn`]): the closing team's routes receive the
+        //     movement budget of this tick, so the drain advances a cell/pixel at the
+        //     visual pace — the oracle's `GameManager_ProgressTurn` in the tempo of
+        //     the drawing (`game_manager.cpp:488-490`).
+        self.grant_closing_turn_budget();
+
         // 3. Orders.
         if self.game_state != GameStateType::TurnActive {
             self.process_orders();
         }
+
+        // 3b. Charge the budget by the pixels the pass actually advanced.
+        self.charge_closing_turn_budget();
 
         // 4. AI reactions and end of turn.
         if self.game_state != GameStateType::TurnActive && !self.orders_pending {

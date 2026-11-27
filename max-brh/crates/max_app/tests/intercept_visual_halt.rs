@@ -1,5 +1,5 @@
-//! Playtest defect: a unit stopped by an intercept (`UnitEventEmergencyStop`) did
-//! not walk to the halt cell — its sprite **jumped** there.
+//! Playtest defect: a unit stopped by an intercept (`UnitEventEmergencyStop`) was
+//! attacked and killed **ahead of its sprite**.
 //!
 //! # Oracle
 //!
@@ -8,30 +8,34 @@
 //!   there. The stop itself — `UnitEventEmergencyStop::Process`
 //!   (`unitevents.cpp:38`) → `UnitInfo::StopMovement` (`unitinfo.cpp:3222`) →
 //!   `BlockedOnPathRequest` (`:3628`) — only clears the path and the movement
-//!   counters (`MoveFinished`, `:3654`); it never rewrites `x/y`. The sprite always
-//!   arrives at the halt pixel by walking, never by a jump.
-//! * The port's simulation moves a whole cell per tick while the frame walks the
-//!   same route at `VISUAL_CELLS_PER_SECOND` (`App::update_visual_units`), so a
-//!   stopped unit still has queued visual cells — the sprite has to pass them.
+//!   counters (`MoveFinished`, `:3654`); it never rewrites `x/y`.
+//! * The original moves the simulation and the sprite together, so the halt cell is
+//!   the cell the player sees the unit stopped on.
 //!
-//! # Defects
+//! # Defect
 //!
-//! * `update_visual_units` pulled the visual position to the simulation cell in the
-//!   dead-unit branch (`*current = target`, the "corpse on the death cell" fix). An
-//!   intercepted unit is killed on the halt cell while its sprite is still several
-//!   cells behind — the player saw the sprite **teleport** into the stop cell.
-//!   (The `VISUAL_TELEPORT_CELLS` branch — a jump of more than six cells in one
-//!   simulation step, treated as a save/load or transport-style synchronization — is
-//!   a separate policy and is not this defect.)
+//! The turn close walked the whole remaining route **inside one `end_local_turn`
+//! call**, while the frame interpolated the same route at
+//! `VISUAL_CELLS_PER_SECOND`; reaction fire is resolved in simulation cells, so the
+//! intercept, the shot and the death happened several cells ahead of the sprite.
+//!
+//! # Fix under test
+//!
+//! The drain is incremental (`max_core::ClosingTurn`): every tick walks the closing
+//! route by one visual budget window, and `App::update_visual_units` draws the
+//! closing team on the **simulation** cell — no interpolation, no corpse walk. A
+//! ground step is a whole cell (`max_core::CLOSING_CELLS_PER_SECOND` cells per
+//! second), so the sprite steps cell by cell and is always exactly where the
+//! simulation is.
 //!
 //! # Frames under test
 //!
-//! * A surviving unit walks the queued route to the halt cell at the original speed
-//!   and stops exactly there — the same sequence of frames, no jump.
-//! * A unit killed on the halt cell **walks there too**: the corpse keeps its queued
-//!   route, finishes it on the halt cell (the point of the first attack) and only
-//!   then disappears. It never freezes — or vanishes — several cells short of it
-//!   (see `intercept_explosion.rs` for the blast that rides the corpse).
+//! * A surviving unit steps to the halt cell and stops exactly there — the sprint
+//!   cell the simulation entered, never one behind it.
+//! * A unit killed on the halt cell is drawn there when the killing shot lands, and
+//!   its sprite disappears with the hull — no walk back into the death cell.
+//!
+//! (See `intercept_explosion.rs` for the blast drawn on the death pixel.)
 
 use std::path::{Path, PathBuf};
 
@@ -172,22 +176,18 @@ fn intercept_scenario(app: &mut App, hits: u16) -> Option<(UnitId, Point)> {
     Some((mover, destination))
 }
 
-/// The largest sprite step a frame may take: the visual speed times the frame time.
+/// The largest sprite step a frame may take: one cell.
 ///
-/// `fast_movement` ("Double Unit Steps") doubles the visual speed
-/// (`App::update_visual_units`, the C++ `UnitInfo::Move` `velocity += 2`).
-fn max_frame_step(app: &App) -> f32 {
-    let scale = if app.preferences().fast_movement {
-        2.0
-    } else {
-        1.0
-    };
-
-    max_app::VISUAL_CELLS_PER_SECOND * scale * (1.0 / 60.0) + 1e-3
-}
+/// Outside the turn close the frame interpolates at `VISUAL_CELLS_PER_SECOND`; during
+/// the close the simulation itself walks a cell per budget window
+/// (`max_core::CLOSING_CELLS_PER_SECOND`) and the sprite follows it exactly. Both
+/// are covered by one cell, which is the strongest statement available for a
+/// cell-per-tick simulation: the sprite is never more than the step the simulation
+/// just made away from it.
+const DRAIN_CELL_STEP: f32 = 1.0 + 1e-3;
 
 #[test]
-fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
+fn a_surviving_unit_steps_to_the_halt_cell_with_its_simulation_cell() {
     let Some(mut app) = game_app() else {
         return;
     };
@@ -198,13 +198,16 @@ fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
     };
 
     let start = app.visual_position(mover).expect("mover position");
-    let max_frame_step = max_frame_step(&app);
     let mut previous = start;
     let mut steps = 0usize;
-    let mut moved = 0usize;
+    let mut hops = 0usize;
     let mut halt = None;
+    // The first drain frame re-synchronizes the sprite with the simulation, so it may
+    // cover the lag of the player's own turn — see the check below.
+    let mut resynced = false;
 
-    for _ in 0..300 {
+    for _ in 0..400 {
+        let closing = app.turn_close_pending();
         app.tick();
         app.update_visual_units(1.0 / 60.0);
 
@@ -212,23 +215,46 @@ fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
             break;
         };
         let now = app.visual_position(mover).expect("mover position");
-
-        // `UnitInfo::Move` walks the pixels; the sprite may not jump.
+        let cell = (f32::from(unit.grid.x), f32::from(unit.grid.y));
         let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
-        assert!(
-            step <= max_frame_step,
-            "frame {steps}: the sprite of the intercepted unit teleports: {previous:?} -> {now:?}"
-        );
 
-        // The route is a straight row, so the sprite only moves forward: nothing is
-        // ever re-targeted behind it (`StopMovement` clears the path, not the pixel).
+        // The first drain frame puts the sprite on the simulation cell: during the
+        // player's own turn the simulation walks a cell per tick while the frame
+        // interpolates at `VISUAL_CELLS_PER_SECOND`, so the sprite is a few cells
+        // behind when the turn closes. That frame may cover the lag — but it must
+        // land on the simulation cell, and every following frame steps a single cell.
+        if closing && !resynced {
+            resynced = true;
+            assert!(
+                (now.0 - cell.0).abs() < 1e-3 && (now.1 - cell.1).abs() < 1e-3,
+                "frame {steps}: the re-synchronization must land on the simulation \
+                 cell {cell:?}: {now:?}"
+            );
+        } else {
+            assert!(
+                step <= DRAIN_CELL_STEP,
+                "frame {steps}: the sprite of the intercepted unit jumps {step:.4} \
+                 cells: {previous:?} -> {now:?}"
+            );
+        }
+
+        // The route is a straight row, so the sprite only moves forward.
         assert!(
             now.0 >= previous.0 - 1e-4,
             "frame {steps}: the sprite moved backwards: {previous:?} -> {now:?}"
         );
-        if step > 1e-4 {
-            moved += 1;
+
+        // During the turn close the sprite **is** the simulation cell.
+        if closing {
+            assert!(
+                (now.0 - cell.0).abs() < 1e-3 && (now.1 - cell.1).abs() < 1e-3,
+                "frame {steps}: the sprite must be on the simulation cell {cell:?}: {now:?}"
+            );
+            if step > 1e-4 {
+                hops += 1;
+            }
         }
+
         previous = now;
         steps += 1;
 
@@ -238,9 +264,8 @@ fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
         );
         assert!(unit.hits > 0, "the mover was killed: {unit:?}");
 
-        let halt_cell = (f32::from(unit.grid.x), f32::from(unit.grid.y));
-        if now == halt_cell {
-            halt = Some(halt_cell);
+        if now == cell && unit.path.is_none() {
+            halt = Some(cell);
             break;
         }
     }
@@ -256,38 +281,30 @@ fn a_surviving_unit_walks_to_the_halt_cell_without_a_jump() {
         Some(Point::new(halt.0 as i16, halt.1 as i16)),
         "the halt cell is the simulation cell"
     );
-    // A full animation, not a jump: the gap is several cells and the frame passes it
-    // at `VISUAL_CELLS_PER_SECOND` (times `fast_movement`), i.e. many frames per cell.
-    assert!(
-        steps >= 30 && moved >= 30,
-        "the frame must walk to the halt cell, not jump: {steps} frames, {moved} moving"
-    );
     // The intercept left a multi-cell gap between the sprite and the halt cell; the
-    // frame covered it cell by cell.
+    // drain covered it cell by cell.
     let gap = halt.0 - start.0;
     assert!(
-        gap > 3.0,
+        gap > 1.0,
         "the scenario must leave the sprite behind the halt cell: {start:?} -> {halt:?}"
+    );
+    assert!(
+        hops >= 2,
+        "the drain must walk the cells one by one: {hops} steps in {steps} frames"
     );
 }
 
-/// The intercept kills the mover on the halt cell: its sprite must still **walk**
-/// there — no jump and no freeze in mid-air — and the walk must end exactly on that
-/// cell, the point of the first attack.
+/// The intercept kills the mover on the halt cell: the sprite is drawn there when
+/// the killing shot lands, and it disappears with the hull — no walk back into the
+/// death cell, no freeze in mid-air.
 ///
 /// Oracle: `UnitEventEmergencyStop::Process` (`unitevents.cpp:38`) →
 /// `BlockedOnPathRequest` (`unitinfo.cpp:3628`) stops the mover on the cell where it
 /// entered the enemy's weapon range and the reaction fire kills it there;
 /// `UnitInfo::StopMovement` (`:3222`) clears the path and never rewrites `x/y`, so
 /// the original shows the corpse and its blast on the halt cell.
-///
-/// The port's frame lags the cell-per-tick simulation by several cells, so the
-/// corpse finishes its queued route at `VISUAL_CELLS_PER_SECOND` and the frame keeps
-/// it drawable after `unit_order::progress_explosion` removes the unit
-/// (`max_app::CorpseVisual`): the sprite arrives on the halt cell instead of freezing
-/// short of it.
 #[test]
-fn a_unit_killed_on_the_halt_cell_walks_there_instead_of_jumping() {
+fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
     let Some(mut app) = game_app() else {
         return;
     };
@@ -295,29 +312,41 @@ fn a_unit_killed_on_the_halt_cell_walks_there_instead_of_jumping() {
         return;
     };
 
-    let max_frame_step = max_frame_step(&app);
     let mut previous = app.visual_position(mover);
     let mut saw_death = false;
     let mut death_cell = None;
     let mut last_drawn = None;
     let mut frames = 0usize;
+    // See the survivor test: the first drain frame re-synchronizes the sprite.
+    let mut resynced = false;
 
     for _ in 0..400 {
+        let closing = app.turn_close_pending();
         app.tick();
         app.update_visual_units(1.0 / 60.0);
         frames += 1;
 
         let now = app.visual_position(mover);
+        let simulation = app.state_ref().unit(mover).map(|unit| {
+            (f32::from(unit.grid.x), f32::from(unit.grid.y))
+        });
 
         if let (Some(previous), Some(now)) = (previous, now) {
-            let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
-            assert!(
-                step <= max_frame_step,
-                "frame {frames}: the sprite of the unit killed on the halt cell teleports: \
-                 {previous:?} -> {now:?}"
-            );
-            // The route is a straight row: nothing is ever re-targeted behind the
-            // sprite (`StopMovement` clears the path, not the pixel).
+            if closing && !resynced {
+                resynced = true;
+                assert_eq!(
+                    Some(now),
+                    simulation,
+                    "frame {frames}: the re-synchronization must land on the simulation cell"
+                );
+            } else {
+                let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
+                assert!(
+                    step <= DRAIN_CELL_STEP,
+                    "frame {frames}: the sprite of the unit killed on the halt cell jumps \
+                     {step:.4} cells: {previous:?} -> {now:?}"
+                );
+            }
             assert!(
                 now.0 >= previous.0 - 1e-4,
                 "frame {frames}: the sprite moved backwards: {previous:?} -> {now:?}"
@@ -335,9 +364,14 @@ fn a_unit_killed_on_the_halt_cell_walks_there_instead_of_jumping() {
             );
             if unit.hits == 0 {
                 saw_death = true;
-                // The cell the killing shot landed on: the halt cell, the point of
-                // the first attack.
+                // The cell the killing shot landed on: the halt cell.
                 death_cell = Some((f32::from(unit.grid.x), f32::from(unit.grid.y)));
+                // The sprite is drawn on that cell already.
+                assert_eq!(
+                    now,
+                    death_cell,
+                    "frame {frames}: the killing shot lands on the cell the sprite is drawn on"
+                );
             }
         }
     }
@@ -345,14 +379,13 @@ fn a_unit_killed_on_the_halt_cell_walks_there_instead_of_jumping() {
     assert!(saw_death, "the intercept killed the mover on the halt cell");
 
     let death_cell = death_cell.expect("the death cell of the mover");
-    let end = last_drawn.expect("the corpse is drawn while it walks");
+    let end = last_drawn.expect("the hull is drawn up to its death");
     assert!(
         (end.0 - death_cell.0).abs() < 1e-3 && (end.1 - death_cell.1).abs() < 1e-3,
-        "the corpse must end on the halt cell — the point where the anti-aircraft \
-         started attacking: {end:?} != {death_cell:?}"
+        "the last drawn sprite is on the halt cell: {end:?} != {death_cell:?}"
     );
     assert!(
         app.visual_position(mover).is_none(),
-        "the corpse is gone once the walk is over"
+        "the sprite is gone with the hull once the simulation removes it"
     );
 }

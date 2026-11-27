@@ -147,9 +147,10 @@ pub use events::{ApplyOutcome, CommandQueue, UnitEvent};
 // `crate::universe::GameUniverse` plus the read-only `StateRef`. The type itself
 // stays `pub(crate)`-visible to the facade and the inline `#[cfg(test)]` modules.
 pub use game::{
-    DrainedRoute, DrainedStep, LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound,
-    UnitSoundKind, GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER,
-    PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, TEAM_SLOTS,
+    LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound, UnitSoundKind,
+    CLOSING_CELLS_PER_SECOND, GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
+    INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, SIMULATION_TICKS_PER_SECOND,
+    TEAM_SLOTS,
 };
 pub use max_types::geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,

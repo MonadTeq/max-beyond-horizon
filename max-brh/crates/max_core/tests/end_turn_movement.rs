@@ -17,10 +17,19 @@
 //! `GroundPath::Execute` (`groundpath.cpp:210`), which spends the cell cost from
 //! `speed` (`Paths_CalculateStep`, `paths.cpp:292`).
 //!
-//! The port runs that drain at the turn close
-//! (`GameUniverse::end_local_turn` → `GameState::finish_end_turn_movement`):
-//! a unit with a path and movement points left walks its route before the next
-//! team starts.
+//! # The drain is incremental (visual tempo)
+//!
+//! The port runs that loop **in the tick**: `GameUniverse::end_local_turn` marks
+//! the closing team (`GameState::begin_end_turn_movement` → `ClosingTurn`) and
+//! returns; every following tick advances the movement by one visual budget window
+//! (`max_core::CLOSING_CELLS_PER_SECOND` cells per second of a 60 Hz step), with
+//! reaction fire resolved between the cells. The simulation therefore walks a cell
+//! exactly when the frame draws it, and the next team starts on the tick the walk
+//! ends — the original's tempo, where `UnitInfo::Move` moves the unit a few pixels
+//! per tick and the drawing follows the state.
+//!
+//! These scenarios drive the drain through [`support::close_turn`] (a headless
+//! frame loop) unless a test is *about* the pacing itself.
 
 mod support;
 
@@ -82,7 +91,7 @@ fn unit_with_path_and_speed_advances_at_the_turn_end() {
     let start = universe.snapshot().unit(id).cloned().expect("unit").grid;
     assert_eq!(start, Point::new(10, 10));
 
-    let over = universe.end_local_turn(TeamId::RED);
+    let over = support::close_turn(&mut universe, TeamId::RED);
     assert!(!over, "the match is not over");
 
     let unit = universe.snapshot().unit(id).cloned();
@@ -117,6 +126,195 @@ fn unit_with_path_and_speed_advances_at_the_turn_end() {
     );
 }
 
+/// The turn close is **incremental**: `end_local_turn` no longer walks the route,
+/// it marks the closing team, and the movement advances one cell per visual budget
+/// window (four cells per second of a 60 Hz simulation step).
+///
+/// This is the property that keeps the simulation and the drawing together: when
+/// the drain ran the whole route inside one call, reaction fire was resolved
+/// several cells ahead of the sprite. The same route, walked cell by cell, keeps
+/// the attack on the cell the player sees.
+#[test]
+fn the_turn_close_walks_one_cell_per_visual_budget_window() {
+    let mut universe = support::game();
+    universe.begin_local_round();
+
+    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+    // Eight cells and enough speed for all of them.
+    give_route(&mut universe, id, 8, 8);
+
+    universe.end_local_turn(TeamId::RED);
+
+    // The turn is not closed yet, and no cell was entered inside the call.
+    assert!(
+        universe.turn_close_pending(),
+        "the turn close must wait for the route"
+    );
+    assert_eq!(
+        universe.snapshot().active_turn_team(),
+        TeamId::RED,
+        "the next team must not start before the movement is finished"
+    );
+    assert_eq!(
+        universe.snapshot().unit(id).expect("unit").grid,
+        Point::new(10, 10),
+        "`end_local_turn` must not walk the route by itself"
+    );
+
+    // Drive the drain and remember the tick every cell was entered on. The hull
+    // first turns toward the first route step (`Paths_UpdateAngle`, `paths.cpp:258`):
+    // a turning pass moves no pixel, so it costs no budget and keeps the normal pace.
+    let mut entries: Vec<usize> = Vec::new();
+    let mut last = universe.snapshot().unit(id).expect("unit").grid.x;
+
+    for tick in 1..=400 {
+        universe.tick();
+
+        let grid = universe.snapshot().unit(id).expect("unit").grid;
+        if grid.x != last {
+            entries.push(tick);
+            last = grid.x;
+        }
+
+        if !universe.turn_close_pending() {
+            break;
+        }
+    }
+
+    assert_eq!(
+        entries.len(),
+        8,
+        "eight movement points walk eight cells: {entries:?}"
+    );
+    assert!(
+        entries[0] <= 4,
+        "the hull turns within a few passes, then the first window walks: {entries:?}"
+    );
+
+    // Steady state: one cell per 15 ticks — four cells per second at 60 Hz.
+    for pair in entries.windows(2).skip(1) {
+        assert_eq!(
+            pair[1] - pair[0],
+            15,
+            "a cell takes exactly one visual budget window: {entries:?}"
+        );
+    }
+
+    assert_eq!(
+        universe.snapshot().active_turn_team(),
+        TeamId::GREEN,
+        "the next team starts on the tick the walk ends"
+    );
+    assert_eq!(
+        universe.snapshot().unit(id).expect("unit").grid,
+        Point::new(18, 10),
+        "the whole route is walked, one cell per window"
+    );
+}
+
+/// `fast_movement` ("Double Unit Steps") halves the budget window, as
+/// `GameManager_FastMovement` doubles the movement velocity in the original
+/// (`unitinfo.cpp:1742`).
+#[test]
+fn fast_movement_halves_the_budget_window() {
+    /// Tick numbers of the cell entries of the closing tank.
+    fn entries(fast_movement: bool) -> Vec<usize> {
+        let mut universe = support::game();
+        universe.begin_local_round();
+        universe.set_fast_movement(fast_movement);
+
+        let id =
+            support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+        give_route(&mut universe, id, 8, 8);
+        universe.end_local_turn(TeamId::RED);
+
+        let mut entries = Vec::new();
+        let mut last = universe.snapshot().unit(id).expect("unit").grid.x;
+
+        for tick in 1..=400 {
+            universe.tick();
+
+            let grid = universe.snapshot().unit(id).expect("unit").grid;
+            if grid.x != last {
+                entries.push(tick);
+                last = grid.x;
+            }
+
+            if !universe.turn_close_pending() {
+                break;
+            }
+        }
+
+        entries
+    }
+
+    let normal = entries(false);
+    let fast = entries(true);
+
+    assert_eq!(normal.len(), 8);
+    assert_eq!(fast.len(), 8, "the setting changes the pace, not the route");
+
+    // The same eight cells: the normal pace needs 4 x 15 ticks for the last four
+    // cells, the doubled pace 4 x 7.5 ticks.
+    fn span_of_last_four(entries: &[usize]) -> usize {
+        entries[entries.len() - 1] - entries[entries.len() - 5]
+    }
+
+    assert_eq!(
+        span_of_last_four(&normal),
+        60,
+        "four cells take 4 x 15 ticks at the normal pace: {normal:?}"
+    );
+    assert_eq!(
+        span_of_last_four(&fast),
+        30,
+        "`fast_movement` doubles the pace: four cells in 30 ticks: {fast:?}"
+    );
+}
+
+/// The pacing does not change the simulation result: the same closing turn walked
+/// at either pace ends in byte-identical canonical state (the drain only spaces the
+/// passes, exactly like a different frame rate spaces the oracle's `ProgressTurn`).
+#[test]
+fn the_drain_pace_does_not_change_the_state_bytes() {
+    fn close(fast_movement: bool) -> (Vec<u8>, Point, u16, u32) {
+        let mut universe = support::game();
+        universe.begin_local_round();
+        universe.set_fast_movement(fast_movement);
+
+        let id =
+            support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+        give_route(&mut universe, id, 6, 3);
+        let over = support::close_turn(&mut universe, TeamId::RED);
+        assert!(!over, "the match is not over");
+
+        let state = universe.snapshot();
+        let unit = state.unit(id).expect("unit");
+
+        (
+            state.snapshot_bytes(),
+            unit.grid,
+            unit.speed,
+            universe.closing_turn_passes(),
+        )
+    }
+
+    let slow = close(false);
+    let fast = close(true);
+
+    assert_eq!(
+        slow.0, fast.0,
+        "the visual pace must not change the canonical state bytes"
+    );
+    assert_eq!(slow.1, fast.1, "the same cells are walked");
+    assert_eq!(slow.1, Point::new(13, 10), "three cells for three points");
+    assert_eq!(slow.2, 0, "the remaining speed is spent");
+    assert_eq!(
+        slow.3, 0,
+        "the drain state is gone once the turn close is over"
+    );
+}
+
 /// Without movement points the route is not walked: the drain is bounded by
 /// `speed`, as in `GroundPath::Execute` (`speed == 0` → `MoveFinished`, the path
 /// stays for the next turn).
@@ -129,7 +327,7 @@ fn a_route_without_speed_does_not_advance_at_the_turn_end() {
     give_route(&mut universe, id, 4, 0);
 
     let before = universe.snapshot().unit(id).cloned().expect("unit").grid;
-    universe.end_local_turn(TeamId::RED);
+    support::close_turn(&mut universe, TeamId::RED);
 
     let unit = universe.snapshot().unit(id).cloned().expect("unit");
     assert_eq!(unit.grid, before, "no speed — no cell is entered");
@@ -145,7 +343,7 @@ fn the_end_of_turn_walk_is_deterministic() {
         universe.begin_local_round();
         let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
         give_route(&mut universe, id, 6, 3);
-        universe.end_local_turn(TeamId::RED);
+        support::close_turn(&mut universe, TeamId::RED);
         let state = universe.snapshot();
         let unit = state.unit(id).expect("unit");
         (state.snapshot_bytes(), unit.grid, unit.speed)
@@ -159,55 +357,42 @@ fn the_end_of_turn_walk_is_deterministic() {
     assert_eq!(first.2, 0);
 }
 
-/// The turn close reports the route it walked ([`max_core::DrainedRoute`]): the
-/// presentation cannot reconstruct the intermediate cells from the state — it
-/// keeps only the halt cell — so without the report the sprite snaps there (the
-/// `VISUAL_TELEPORT_CELLS` branch of `App::update_visual_units`).
+/// The drain state itself is **not** part of the snapshot: a state captured while
+/// the turn close is waiting for the route carries no extra field, and the bytes
+/// move only when the simulation does.
 #[test]
-fn the_turn_end_reports_the_walked_route() {
+fn the_closing_turn_is_not_part_of_the_snapshot() {
     let mut universe = support::game();
     universe.begin_local_round();
-
-    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
-    give_route(&mut universe, id, 4, 2);
-
+    let id = support::spawn(
+        &mut universe,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
+    give_route(&mut universe, id, 4, 4);
     universe.end_local_turn(TeamId::RED);
 
-    let routes = universe.take_drained_routes();
-    let route = routes
-        .iter()
-        .find(|route| route.unit == id)
-        .expect("the walked route is reported");
+    assert!(universe.turn_close_pending(), "the route is still pending");
+    let pending = universe.snapshot().snapshot_bytes();
 
-    assert_eq!(
-        route
-            .steps
-            .iter()
-            .map(|step| (step.grid_x, step.grid_y))
-            .collect::<Vec<_>>(),
-        vec![(11, 10), (12, 10)],
-        "one waypoint per entered cell, in traversal order"
+    // The first pass is a real state change (one cell entered)...
+    universe.tick();
+    assert_ne!(
+        pending,
+        universe.snapshot().snapshot_bytes(),
+        "a walked cell changes the canonical bytes"
     );
     assert!(
-        route.steps.iter().all(|step| step.speed == 1),
-        "one movement point per entered cell"
+        universe.turn_close_pending(),
+        "the route is not finished after one cell"
     );
 
-    let unit = universe.snapshot().unit(id).cloned().expect("unit");
-    let last = route.steps.last().expect("last waypoint");
+    // ...and the byte length is the same before and after: the drain adds no field
+    // to the digest, it only spaces the passes.
     assert_eq!(
-        (last.grid_x, last.grid_y),
-        (unit.grid.x, unit.grid.y),
-        "the report ends on the halt cell"
-    );
-    assert_eq!(
-        (last.x, last.y),
-        (unit.x, unit.y),
-        "and on the halt pixel"
-    );
-
-    assert!(
-        universe.take_drained_routes().is_empty(),
-        "the report is taken once"
+        pending.len(),
+        universe.snapshot().snapshot_bytes().len(),
+        "the closing drain must not extend the snapshot"
     );
 }

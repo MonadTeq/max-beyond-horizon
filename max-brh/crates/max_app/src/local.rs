@@ -1685,6 +1685,16 @@ impl App {
                 }
             }
             LocalPhase::Advancing => {
+                // The turn close (`max_core::ClosingTurn`): while the closing team's
+                // units still walk, the simulation keeps ticking — the oracle's
+                // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
+                // (`game_manager.cpp:488-490`). The drain advances one order pass per
+                // visual budget window, so the movement is drawn cell by cell and the
+                // team-turn machine advances the turn on the tick the walk ends.
+                if self.universe.turn_close_pending() {
+                    let _report = self.tick();
+                    update.ticked = true;
+                }
                 // The visual route also runs in the transition phase between
                 // teams, until the turn-transition window opens.
                 self.update_visual_units(dt);

@@ -4,11 +4,12 @@
 //! `App::update_visual_units` treats a jump larger than
 //! [`max_app::VISUAL_TELEPORT_CELLS`] as a state synchronization — a save/load or
 //! a transport/network position write — and sets the sprite to the new target
-//! without animation, because the route is **unknown**. The one exception is the
-//! end-of-turn route drain: it reports the cells it actually walked
-//! (`max_core::DrainedRoute`) and the frame walks them
-//! (`air_intercept_visual_halt.rs`). This test guards the fallback: without a
-//! drained report the frame must not invent a route.
+//! without animation, because the route is **unknown**.
+//!
+//! The turn close does **not** reach this branch: it walks the closing routes inside
+//! the simulation at the visual pace (`max_core::ClosingTurn`), so the frame sees at
+//! most a one-cell step. This test guards the fallback for a position write the
+//! simulation did not walk: the frame must not invent a route there.
 //!
 //! No game assets and no simulation tick are needed: the unit position is written
 //! directly, the way a load or a transport synchronization does, and only the
@@ -61,7 +62,7 @@ fn player_unit(app: &App, what: &str, predicate: impl Fn(&UnitInfo) -> bool) -> 
 /// synchronization — snaps in both coordinate spaces: the cell of a ground unit
 /// and the pixel of an aircraft.
 #[test]
-fn a_position_change_without_a_drained_route_snaps() {
+fn a_position_change_without_a_walked_route_snaps() {
     let mut app = mission_app();
     // Twice the `VISUAL_TELEPORT_CELLS` threshold.
     const JUMP: i16 = 12;

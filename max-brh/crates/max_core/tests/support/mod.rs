@@ -141,6 +141,46 @@ pub fn run_turns(
     done(universe)
 }
 
+/// Upper bound of the ticks a headless turn close may take.
+///
+/// The drain walks one cell per `max_core::CLOSING_CELLS_PER_SECOND` budget window
+/// (15 ticks at 60 Hz), so even a route across the whole 112-cell map fits with a
+/// wide margin.
+pub const TURN_CLOSE_TICK_LIMIT: usize = 40_000;
+
+/// Closes `team`'s turn through the facade **and** drives the incremental
+/// end-of-turn drain to its end.
+///
+/// `GameUniverse::end_local_turn` no longer walks the closing routes itself: it
+/// enters the drain (`max_core::game::ClosingTurn`) and returns. Every following
+/// `GameUniverse::tick` advances the movement by one visual budget window, exactly
+/// as the application's frames do. A headless scenario that wants the settled turn
+/// close (the next team started, the routes walked) uses this helper.
+///
+/// Returns the value `end_local_turn` produced (the match-over flag).
+pub fn close_turn(universe: &mut GameUniverse, team: TeamId) -> bool {
+    let over = universe.end_local_turn(team);
+    drain_turn_close(universe);
+
+    over
+}
+
+/// Ticks until the closing drain has finished and the turn machine advanced.
+///
+/// Panics when the drain does not finish within [`TURN_CLOSE_TICK_LIMIT`] ticks:
+/// a drain that never ends is a defect (the closing unit is pinned).
+pub fn drain_turn_close(universe: &mut GameUniverse) {
+    for _ in 0..TURN_CLOSE_TICK_LIMIT {
+        if !universe.turn_close_pending() {
+            return;
+        }
+
+        universe.tick();
+    }
+
+    panic!("the turn close did not finish within {TURN_CLOSE_TICK_LIMIT} ticks");
+}
+
 /// Marks a unit as flying (`HOVERING`), as after a successful takeoff.
 pub fn set_hovering(universe: &mut GameUniverse, id: UnitId, hovering: bool) {
     if let Some(unit) = universe.unit_mut(id) {

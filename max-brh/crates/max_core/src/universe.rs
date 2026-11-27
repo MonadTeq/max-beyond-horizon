@@ -111,9 +111,7 @@ use crate::enums::{
     RESEARCH_TOPIC_COUNT,
 };
 use crate::events::{self, ApplyOutcome, CommandQueue, StateSyncPacket, UnitEvent};
-use crate::game::{
-    DrainedRoute, GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS,
-};
+use crate::game::{GameState, OrderData, TurnEvent, UnitSound, PLAYER_TEAM_COUNT, TEAM_SLOTS};
 use crate::geo::Point;
 use crate::input::{Command, Packet12MissionSupply};
 use crate::pathfinding::PathRequest;
@@ -1318,6 +1316,19 @@ impl<D: Dispatcher> GameUniverse<D> {
         // Phases 1-3 of the owner table: the unchanged simulation tick.
         self.state.tick();
 
+        // The turn close of the local machine (`GameState::ClosingTurn`): the closing
+        // team has finished walking, so the machine advances to the next team — the
+        // oracle runs it right after the
+        // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();` loop
+        // (`game_manager.cpp:488-490`). The notices go to the event stream of this
+        // tick, so the application sees the turn change on the frame the movement
+        // ended.
+        if self.state.closing_turn_active() && !self.state.closing_turn_pending() {
+            self.state.end_closing_turn();
+            self.run_turn_machine();
+            self.seq += 1;
+        }
+
         // Barrier facts: after the rules phase, before the checksum (owner item 3).
         let facts = self.barrier_facts();
 
@@ -1543,6 +1554,16 @@ impl<D: Dispatcher> GameUniverse<D> {
     /// The `GameManager_RealTime` setting (`game.rs:360`).
     pub fn set_real_time(&mut self, value: bool) {
         self.state.real_time = value;
+    }
+
+    /// `GameManager_FastMovement` ("Double Unit Steps", `game_manager.cpp:224`) —
+    /// the pace of the turn-close drain: the closing routes walk twice as fast.
+    ///
+    /// The setting only spaces the passes of the same simulation, so it is not part
+    /// of the snapshot/CRC; the client installs the `fast_movement` preference here,
+    /// the way C++ reads the setting at match start (`game_manager.cpp:3027`).
+    pub fn set_fast_movement(&mut self, value: bool) {
+        self.state.fast_movement = value;
     }
 
     /// Re-seeds the simulation RNG — `Randomizer_SetSeed` (`game.rs:226`), the
@@ -2317,27 +2338,49 @@ impl<D: Dispatcher> GameUniverse<D> {
         // `GameManager_TeamTurnTurnBased`/`GameManager_TeamTurnConcurrent`: the turn
         // close drains the still-walking routes —
         // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
-        // (`game_manager.cpp:488-490`, `:549-558`). A unit with a path and movement
-        // points left advances along it, spending `speed` per cell, before the next
-        // team of the round is started.
-        self.state.finish_end_turn_movement(team);
-        let over = self.run_turn_machine();
+        // (`game_manager.cpp:488-490`, `:549-558`). The drain is **incremental**
+        // (`GameState::begin_end_turn_movement` → `ClosingTurn`): each following
+        // [`Self::tick`] advances the closing routes by the visual movement budget,
+        // so the simulation walks a cell exactly when the frame draws it. The
+        // machine runs on the tick that finishes the walk, i.e. the next team starts
+        // after the movement — as in the oracle, where the same loop ends the drain.
+        let pending = self.state.begin_end_turn_movement(team);
         // The turn transition is an observable state change (ADR §1.3): bump the
         // facade version once per atomic facade operation.
         self.seq += 1;
-        over
+
+        if pending {
+            // The turn stays open until the movement is finished: the caller keeps
+            // ticking ([`Self::turn_close_pending`]).
+            return false;
+        }
+
+        self.state.end_closing_turn();
+        self.run_turn_machine()
     }
 
-    /// Takes the routes the last turn-close drain walked — the presentation
-    /// report of [`GameState::finish_end_turn_movement`]
-    /// ([`crate::game::DrainedRoute`]).
+    /// Whether the local turn machine is waiting for the closing team's movement to
+    /// finish ([`GameState::closing_turn_pending`]).
     ///
-    /// **Channel:** presentation pull, not simulation: the frame
-    /// (`App::update_visual_units`) rebuilds its visual queue from the report so
-    /// the sprite walks to the halt cell instead of snapping when the turn close
-    /// drained more than `VISUAL_TELEPORT_CELLS`. Not part of the snapshot/CRC.
-    pub fn take_drained_routes(&mut self) -> Vec<DrainedRoute> {
-        self.state.take_drained_routes()
+    /// **Channel:** presentation read, not simulation: the frame keeps the sprite of
+    /// a closing team's unit on the simulation cell while this is `true`, and the
+    /// application keeps ticking until the machine advances the turn.
+    pub fn turn_close_pending(&self) -> bool {
+        self.state.closing_turn_pending()
+    }
+
+    /// The team whose turn is closing — its units walk at the visual pace
+    /// (`GameState::closing_turn_team`).
+    ///
+    /// **Channel:** presentation read: the frame draws these units at the
+    /// simulation position instead of interpolating a route.
+    pub fn closing_turn_team(&self) -> Option<TeamId> {
+        self.state.closing_turn_team()
+    }
+
+    /// Passes the closing drain has run (diagnostics and tests).
+    pub fn closing_turn_passes(&self) -> u32 {
+        self.state.closing_turn_passes()
     }
 
     /// Runs `GameState::next_team` until a team has to act (`Human`/`Computer`) or

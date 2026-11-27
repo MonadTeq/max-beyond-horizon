@@ -138,7 +138,10 @@ fn the_turn_close_stops_a_mover_in_the_enemy_range_and_fires_at_the_halt_cell() 
         .expect("mover")
         .hits;
 
-    let over = scenario.universe.end_local_turn(TeamId::RED);
+    // The turn close is incremental (`GameState::ClosingTurn`): the drain walks the
+    // route one visual budget window at a time, so the halt and the reaction fire
+    // happen while the scenario ticks.
+    let over = support::close_turn(&mut scenario.universe, TeamId::RED);
     assert!(!over, "the match is not over");
 
     // The halted unit is already on `UnitsManager_DelayedAttackTargets`;
@@ -197,9 +200,9 @@ fn a_scouted_enemy_still_intercepts_the_mover() {
         .expect("mover")
         .hits;
 
-    scenario.universe.end_local_turn(TeamId::RED);
+    support::close_turn(&mut scenario.universe, TeamId::RED);
 
-    // The reaction fires on the next order pass (see the previous test).
+    // The reaction fires during the same close (see the previous test).
     for _ in 0..60 {
         if scenario
             .universe
@@ -239,7 +242,21 @@ fn a_scouted_enemy_still_intercepts_the_mover() {
 fn enemy_halt_off_lets_the_mover_reach_the_destination() {
     let mut scenario = scenario(false, false);
 
-    scenario.universe.end_local_turn(TeamId::RED);
+    support::close_turn(&mut scenario.universe, TeamId::RED);
+
+    // The destination shot is resolved after the walk; give the reaction pass its
+    // ticks (the drain itself no longer runs ahead of the drawing).
+    for _ in 0..60 {
+        if scenario
+            .universe
+            .snapshot()
+            .unit(scenario.mover)
+            .is_some_and(|unit| unit.orders == UnitOrder::Await)
+        {
+            break;
+        }
+        scenario.universe.tick();
+    }
 
     let mover = scenario
         .universe
@@ -280,10 +297,13 @@ fn a_killed_intercepted_unit_explodes_on_the_halt_cell() {
         mover.hits = 1;
     }
 
+    // The intercept is resolved inside the incremental drain; the explosion lives a
+    // few ticks, so it is looked for on every tick of the close (`hits = 1`: the
+    // first reaction shot kills the mover).
     scenario.universe.end_local_turn(TeamId::RED);
 
     let mut explosion = None;
-    for _ in 0..60 {
+    for _ in 0..support::TURN_CLOSE_TICK_LIMIT {
         scenario.universe.tick();
 
         explosion = scenario

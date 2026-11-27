@@ -2479,12 +2479,13 @@ impl<D: Dispatcher> App<D> {
     /// Presentation corpses ([`App::presentation_corpses`]) — the dead units whose
     /// sprite still walks to the pixel where the simulation killed them.
     ///
-    /// The simulation deletes an intercepted unit half-way through its blast, while
-    /// the frame (4 cells/s against a cell per tick) may still be several cells
-    /// short of the halt cell. The sprite of such a corpse is drawn from the last
-    /// simulation snapshot until it arrives, so the replay ends where the original
-    /// ends it — on the cell where the anti-aircraft opened fire — instead of
-    /// vanishing in mid-air.
+    /// The simulation deletes a unit half-way through its blast, while the frame
+    /// (4 cells/s against a cell per tick) may still be several cells short of the
+    /// cell it died on — the ordinary mid-turn case: a unit killed while it walks
+    /// during its owner's own turn. The sprite of such a corpse is drawn from the
+    /// last simulation snapshot until it arrives, so it does not vanish in mid-air.
+    /// A unit killed during the **turn close** has no such walk: its sprite follows
+    /// the simulation cell (`max_core::ClosingTurn`).
     ///
     /// Frame only: the state, the snapshot and the CRC are untouched; `dt = 0`
     /// (headless/QA) has no corpses at all, so the golden frames do not change.

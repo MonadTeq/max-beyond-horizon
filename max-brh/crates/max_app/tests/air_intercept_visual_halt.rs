@@ -1,98 +1,58 @@
-//! Playtest defect: an **aircraft** stopped by anti-aircraft fire (the
-//! `enemy_halt` intercept) teleports when the owner closes the turn, while the
-//! ground regression test [`intercept_visual_halt.rs`] stays green.
+//! Playtest defect: an intercepted unit was shot down **ahead of its sprite** —
+//! the attack and the death happened on cells the aircraft had not reached on
+//! screen yet.
 //!
 //! # Scenario under test (the owner's)
 //!
 //! Campaign 1, "Islands in the Sun" (`SAVE1.CAM`; the committed fixture is the
 //! byte-identical copy of `max-original/SAVE1.CAM`). The mission has a real
-//! anti-aircraft battery next to the playtest cell 046-043: `ANTIAIR` at
-//! 045-042 (with `ANTIAIR` 043-042 and a radar 044-042 beside it). The player's
-//! bomber is put on the playtest start cell 068-039, made airborne (`HOVERING`)
-//! and ordered to fly to the battery (`ORDER_MOVE`, air path). The bomber is
-//! spotted by the enemy team so that the intercept reaction check can see it.
+//! anti-aircraft battery next to the playtest cell 046-043: `ANTIAIR` at 045-042
+//! (with `ANTIAIR` 043-042 and a radar 044-042 beside it). The player's bomber is
+//! put on the playtest start cell 068-039, made airborne (`HOVERING`) and ordered
+//! to fly to the battery (`ORDER_MOVE`, air path). The bomber is spotted by the
+//! enemy team so that the intercept reaction check can see it.
 //!
-//! Frame 1..5 walk the sprite at `VISUAL_CELLS_PER_SECOND`; then the turn is
-//! closed (`end_local_turn`), exactly as the owner does after giving the order.
+//! A few frames walk the sprite; then the turn is closed (`end_local_turn`),
+//! exactly as the owner does after giving the order.
+//!
+//! # The defect (fixed)
+//!
+//! The turn close used to walk the **whole** remaining route inside one
+//! `end_local_turn` call (`GameState::finish_end_turn_movement`). An aircraft
+//! spends its whole `speed` allowance there (the bomber: 22 cells), so between two
+//! frames the simulation landed next to the battery while the sprite was still
+//! several cells behind. Reaction fire is resolved in simulation cells, so the
+//! intercept, the shot and the death all happened at a point the player had not
+//! seen the aircraft reach — "they shoot ahead of the sprite".
+//!
+//! # The fix under test
+//!
+//! The drain is now **incremental** (`max_core::game::ClosingTurn`): `end_local_turn`
+//! only marks the closing team, and every following tick advances the closing
+//! routes by the visual movement budget (`max_core::CLOSING_CELLS_PER_SECOND` cells
+//! per second of a 60 Hz step, doubled by `fast_movement`), with the reaction fire
+//! resolved between the cells. `App::update_visual_units` draws a closing unit on
+//! the **simulation** position — no interpolation, no drained-route report — so the
+//! attack and the death happen exactly where the sprite is. The next team starts on
+//! the tick the movement ends.
 //!
 //! # Frames
 //!
-//! * [`an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close`] — the
-//!   gate: after the turn close the sprite must walk the queued air route to the
-//!   halt pixel, like the ground version in `intercept_visual_halt.rs`.
+//! * [`an_intercepted_aircraft_follows_the_simulation_at_the_turn_close`] — the
+//!   gate: while the turn close drains, every frame draws the aircraft on the
+//!   simulation position, and the sprite walks (frame by frame) to the halt pixel.
 //! * [`an_intercepted_aircraft_dies_on_the_cell_of_the_first_attack`] — the
 //!   **death** frame: with the mission hits (no `hits = 500`) the battery kills the
-//!   bomber. The sprite must still walk to the halt cell — the point where the
-//!   anti-aircraft opened fire — and the corpse and its blast must end there: no
-//!   jump, no freeze in mid-air. QA captured the halt frames with `hits = 500`; the
-//!   owner plays the real mission, where the bomber dies.
-//! * [`an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close`] —
-//!   the control: without the turn close the same intercept walks smoothly, so
-//!   the scenario itself is sound and the bulk turn-close drain is the trigger.
-//! * [`a_long_ground_route_walks_to_the_halt_cell_at_the_turn_close`] — the same
-//!   frame gate for a tank route longer than six cells: it proves the defect was
-//!   the drain/threshold combination, not the air path, and explains why
-//!   `intercept_visual_halt.rs` (route drained by only a few cells) is green.
-//!
-//! # Defect (exact place)
-//!
-//! `App::update_visual_units` (`max_app/src/lib.rs:4295-4307` before the fix)
-//! compares the frame goal with the new simulation target. A jump larger than
-//! [`VISUAL_TELEPORT_CELLS`] (6 cells) is treated as a save/load or transport
-//! synchronization and the sprite is set to the target without animation:
-//!
-//! ```ignore
-//! if distance > VISUAL_TELEPORT_CELLS as f32 {
-//!     queue.clear();
-//!     *current = target;      // <-- the teleport
-//! }
-//! ```
-//!
-//! The jump itself is produced by the turn close:
-//! `GameUniverse::end_local_turn` (`max_core/src/universe.rs:2304-2321`) calls
-//! `GameState::finish_end_turn_movement` (`max_core/src/game.rs:2059-2110`),
-//! which runs the still-walking routes to the end **inside one call** — the
-//! oracle's `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
-//! (`game_manager.cpp:488-490`). An aircraft spends its whole `speed` allowance
-//! (bomber: 22 cells) in that drain, so the simulation target moves much farther
-//! than six cells before the next `update_visual_units`; the frame had no
-//! intermediate cells and applied the synchronization branch. The air path
-//! itself is not at fault (`visual_target` reads the correct `AirPath` pixel,
-//! `lib.rs:989-996`), the dead-unit branch is not reached (the bomber survives
-//! this intercept), and `fast_movement` only doubles the per-frame budget
-//! (`lib.rs:4217-4221`) — with the setting off the teleport was the same 14.6
-//! cells.
-//!
-//! The ground test missed it because its route is drained to a halt point less
-//! than six cells ahead of the sprite: the same branch was never entered. A
-//! ground route longer than six drained cells teleported too (verified with a
-//! 20-cell tank route), so the defect is not air-specific — the aircraft is just
-//! the case where the drain always exceeds the threshold.
-//!
-//! # Fix
-//!
-//! The drain now **reports the route it walked**
-//! (`GameState::finish_end_turn_movement` → [`max_core::DrainedRoute`]): every
-//! order pass of the drain appends the cell and pixel the unit entered plus the
-//! movement points the pass spent. `App::update_visual_units` takes the report
-//! (`GameUniverse::take_drained_routes`) and — when a jump larger than
-//! [`VISUAL_TELEPORT_CELLS`] ends exactly on the reported route end — rebuilds
-//! the visual queue from the report instead of snapping, so the sprite walks to
-//! the halt cell at `VISUAL_CELLS_PER_SECOND`. A real save/load or transport
-//! synchronization has **no** report (the route is unknown) and keeps the snap.
-//!
-//! The **death** frame needed a second rule: `App::update_visual_units` used to
-//! freeze a dead unit on the pixel the frame had reached (`unit.hits == 0` branch,
-//! `queue.clear()`). That is `intercept_explosion.rs`'s rule, written for a corpse
-//! that must not jump — but with the drain it left the sprite, the corpse and the
-//! blast several cells **short** of the halt cell: the bomber died in mid-air, away
-//! from the battery that had just opened fire, while the simulation had killed it
-//! on the halt cell. The dead unit now keeps its queued route: the corpse walks it
-//! at `VISUAL_CELLS_PER_SECOND` to the death pixel (the halt cell — the point of the
-//! first attack) and the frame keeps the corpse drawable after
-//! `unit_order::progress_explosion` deletes it half-way through the blast
-//! ([`max_app::CorpseVisual`]), so the walk always completes. The blast stays on the
-//! corpse and ends on that pixel too.
+//!   bomber. The sprite is on the halt cell when the killing shot lands, and the
+//!   blast is drawn on the same pixel.
+//! * [`an_intercepted_aircraft_walks_without_the_turn_close`] — the control: the
+//!   same intercept outside the turn close walks the same way, so the scenario
+//!   itself is sound.
+//! * [`a_long_ground_route_follows_the_simulation_at_the_turn_close`] — the same
+//!   frame gate for a tank route longer than six cells: a ground cell is one
+//!   budget window (`max_core::CLOSING_CELLS_PER_SECOND`), so the sprite steps a
+//!   whole cell at a time — but always on the cell the simulation is on, never
+//!   several cells behind it.
 //!
 //! # Running
 //!
@@ -101,7 +61,8 @@
 //! ```
 //!
 //! The tests write every captured frame to `max-brh/qa-out/air-intercept-teleport/`
-//! (`frames-turn-close.csv`, `frames-natural.csv`, `frames-death.csv`).
+//! (`frames-turn-close.csv`, `frames-natural.csv`, `frames-death.csv`,
+//! `frames-ground-turn-close.csv`).
 
 use std::path::{Path, PathBuf};
 
@@ -126,6 +87,10 @@ const ANTI_AIR_CELL: Point = Point::new(45, 42);
 /// Frame step of the visual clock (`App::update_visual_units`).
 const FRAME_SECONDS: f32 = 1.0 / 60.0;
 
+/// Upper bound of the frames a turn-close drain may take (a route across the whole
+/// map at one cell per budget window still fits with room to spare).
+const DRAIN_FRAME_LIMIT: usize = 20_000;
+
 /// `max-brh/qa-out` — the QA drop directory of the workspace.
 fn qa_out_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../qa-out")
@@ -135,8 +100,7 @@ fn qa_out_dir() -> PathBuf {
 /// from the save).
 ///
 /// The application is boxed: the local match is large and two copies on the test
-/// stack overflow it (the same reason `intercept_visual_halt.rs` prepares the
-/// match in the caller).
+/// stack overflow it.
 fn mission_app() -> Box<App> {
     let mut app = Box::new(App::new(AppConfig::default()));
     app.start_local_game_from_save(&LocalSetup::default(), SAVE1_CAMPAIGN)
@@ -149,7 +113,7 @@ fn mission_app() -> Box<App> {
 /// The bomber is moved to the playtest cell and made airborne. `hits` — the
 /// mission value stays when `None` (the battery kills the bomber: the death frame),
 /// `Some(n)` raises it so that the reaction fire does not kill the bomber (the halt
-/// frame — QA's `hits = 500` run).
+/// frame).
 fn setup_intercept(app: &mut App, hits: Option<u16>) -> (UnitId, UnitId) {
     let player = app.state_ref().player_team();
 
@@ -201,14 +165,14 @@ fn setup_intercept(app: &mut App, hits: Option<u16>) -> (UnitId, UnitId) {
 
 /// One captured frame: the sprite point, the simulation point and the order.
 ///
-/// The last three fields describe the death frame: the blast of the killed unit,
-/// the pixel the frame draws that blast at (`explosion pixel + offset`) and whether
-/// the sprite of this frame is still drawn at all (a presentation corpse keeps
-/// walking after the simulation removed its unit — [`max_app::CorpseVisual`]).
+/// The blast fields describe the death frame: the cell the simulation spawned the
+/// explosion on and the pixel the frame draws it at.
 #[derive(Debug, Clone)]
 struct Frame {
     index: u32,
     phase: &'static str,
+    /// Whether the turn close was draining this frame (`GameUniverse::turn_close_pending`).
+    closing: bool,
     visual: Option<(f32, f32)>,
     step: f32,
     grid: Point,
@@ -220,6 +184,8 @@ struct Frame {
     blast_cell: Option<Point>,
     blast_drawn: Option<(i32, i32)>,
     drawn: bool,
+    turn: i32,
+    team: u8,
 }
 
 impl Frame {
@@ -283,6 +249,7 @@ impl Frame {
         Self {
             index,
             phase,
+            closing: app.turn_close_pending(),
             visual,
             step,
             grid,
@@ -294,14 +261,18 @@ impl Frame {
             blast_cell,
             blast_drawn,
             drawn: visual.is_some(),
+            turn: app.state_ref().turn_counter(),
+            team: app.state_ref().active_turn_team().0,
         }
     }
 
     fn line(&self) -> String {
         format!(
-            "{:03} {} visual={:?} step={:.4} grid=({},{}) px=({},{}) {:?}/{:?} hits={} path={} blast={:?}/{:?}",
+            "{:03} {} closing={} visual={:?} step={:.4} grid=({},{}) px=({},{}) {:?}/{:?} \
+             hits={} path={} blast={:?}/{:?} turn={} team={}",
             self.index,
             self.phase,
+            self.closing,
             self.visual,
             self.step,
             self.grid.x,
@@ -313,7 +284,9 @@ impl Frame {
             self.hits,
             self.path,
             self.blast_cell,
-            self.blast_drawn
+            self.blast_drawn,
+            self.turn,
+            self.team
         )
     }
 
@@ -331,8 +304,8 @@ fn write_frames(name: &str, frames: &[Frame]) {
     let dir = qa_out_dir().join("air-intercept-teleport");
     std::fs::create_dir_all(&dir).expect("qa-out dir");
     let mut csv = String::from(
-        "frame,phase,visual_x,visual_y,step,grid_x,grid_y,pixel_x,pixel_y,orders,state,hits,path,\
-         blast_x,blast_y,blast_px,blast_py,drawn\n",
+        "frame,phase,closing,visual_x,visual_y,step,grid_x,grid_y,pixel_x,pixel_y,orders,state,\
+         hits,path,blast_x,blast_y,blast_px,blast_py,drawn,turn,team\n",
     );
 
     for frame in frames {
@@ -350,9 +323,10 @@ fn write_frames(name: &str, frames: &[Frame]) {
         };
 
         csv.push_str(&format!(
-            "{},{},{},{},{:.4},{},{},{},{},{:?},{:?},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{:.4},{},{},{},{},{:?},{:?},{},{},{},{},{},{},{},{},{}\n",
             frame.index,
             frame.phase,
+            frame.closing,
             visual_x,
             visual_y,
             frame.step,
@@ -368,16 +342,18 @@ fn write_frames(name: &str, frames: &[Frame]) {
             blast_y,
             blast_px,
             blast_py,
-            frame.drawn
+            frame.drawn,
+            frame.turn,
+            frame.team
         ));
     }
 
     std::fs::write(dir.join(format!("{name}.csv")), csv).expect("frames csv");
 }
 
-/// The largest sprite step a frame may take: the visual speed times the frame
-/// time (with `fast_movement`, "Double Unit Steps", doubling it — the preference
-/// is on by default and set in `SAVE1.CAM`).
+/// The largest sprite step a frame may take for a sub-cell mover: the visual speed
+/// times the frame time (with `fast_movement`, "Double Unit Steps", doubling it —
+/// the preference is on by default and set in `SAVE1.CAM`).
 fn max_frame_step(app: &App) -> f32 {
     let scale = if app.preferences().fast_movement {
         2.0
@@ -388,34 +364,94 @@ fn max_frame_step(app: &App) -> f32 {
     max_app::VISUAL_CELLS_PER_SECOND * scale * FRAME_SECONDS + 1e-3
 }
 
-/// The aircraft's simulation pixel at the last captured frame, in cells
-/// (`visual_target`, `max_app/src/lib.rs:989-996`).
-fn air_target_of_last(frames: &[Frame]) -> (f32, f32) {
-    let last = frames.last().expect("last frame");
+/// The aircraft's simulation pixel, in cells (`visual_target`).
+fn air_target(frame: &Frame) -> (f32, f32) {
     let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
 
     (
-        f32::from(last.pixel.0) / tile,
-        f32::from(last.pixel.1) / tile,
+        f32::from(frame.pixel.0) / tile,
+        f32::from(frame.pixel.1) / tile,
     )
 }
 
-/// The owner's flow: order → a few frames → End Turn; the turn close drains the
-/// rest of the air route, then only the frame clock runs.
-fn run_turn_close() -> (Vec<Frame>, f32) {
+/// The largest sprite step during the turn-close drain: one cell per budget window.
+///
+/// The port's movement model advances a whole cell per order pass (ground: one
+/// cell; aircraft: `max_velocity` pixel steps, which also make a cell), so a drain
+/// step is a cell hop every
+/// `max_core::CLOSING_CELLS_PER_SECOND`-based window. The drawing follows the
+/// simulation exactly — that is the property under test — and the hop is bounded by
+/// the window, not by the frame interpolation.
+const DRAIN_CELL_STEP: f32 = 1.0 + 1e-3;
+
+/// Whether the frame at `index` is the first frame of the turn-close drain.
+///
+/// The sprite re-synchronizes with the simulation there: during the player's own
+/// turn the simulation walks a cell per tick while the frame interpolates at
+/// [`max_app::VISUAL_CELLS_PER_SECOND`], so the sprite is several cells behind when
+/// the turn closes. That single frame covers the lag; every following drain frame
+/// draws the sprite on the simulation position.
+fn is_drain_resync(frames: &[Frame], index: usize) -> bool {
+    frames[index].phase == "turn-close"
+        && (index == 0 || frames[index - 1].phase != "turn-close")
+}
+
+/// Asserts that no frame moves the sprite more than the visual budget — except the
+/// one re-synchronization frame of the turn close ([`is_drain_resync`]), which
+/// covers the lag of the player's own turn, and the drain frames themselves, whose
+/// step is one cell per budget window ([`DRAIN_CELL_STEP`]).
+fn assert_no_jumps_after_resync(frames: &[Frame], max_step: f32) {
+    for (index, pair) in frames.windows(2).enumerate() {
+        let now = &pair[1];
+
+        if is_drain_resync(frames, index + 1) {
+            continue;
+        }
+
+        let limit = if now.phase == "turn-close" {
+            DRAIN_CELL_STEP
+        } else {
+            max_step
+        };
+
+        assert!(
+            now.step <= limit,
+            "frame {} ({}): the sprite jumps {:.4} cells (a frame may move {:.4}): \
+             {:?} -> {:?}",
+            now.index,
+            now.phase,
+            now.step,
+            limit,
+            pair[0].visual,
+            now.visual
+        );
+    }
+}
+
+/// Orders the bomber and walks five frames before the turn close — the owner's
+/// flow up to the End Turn click.
+struct Opened {
+    app: Box<App>,
+    bomber: UnitId,
+    frames: Vec<Frame>,
+    previous: Option<(f32, f32)>,
+    index: u32,
+}
+
+fn open_bomber_attack(hits: Option<u16>) -> Opened {
     let mut app = mission_app();
-    let (bomber, _anti_air) = setup_intercept(&mut app, Some(500));
-    let max_step = max_frame_step(&app);
+    let (bomber, _anti_air) = setup_intercept(&mut app, hits);
 
     app.update_visual_units(0.0);
-    let mut previous = app.visual_position(bomber);
+    let previous = app.visual_position(bomber);
     let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
+    let mut previous = previous;
+    let mut index = 0;
 
     let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
         .expect("air move order");
     app.submit(order);
 
-    let mut index = 0;
     for _ in 0..5 {
         app.tick();
         app.update_visual_units(FRAME_SECONDS);
@@ -424,129 +460,134 @@ fn run_turn_close() -> (Vec<Frame>, f32) {
         previous = frames.last().expect("frame").visual;
     }
 
-    let player = app.state_ref().player_team();
-    app.universe_mut().end_local_turn(player);
+    Opened {
+        app,
+        bomber,
+        frames,
+        previous,
+        index,
+    }
+}
 
-    // The turn close drained the route inside the call above: no simulation tick
-    // follows, only the frame clock (the way the UI draws after the click).
-    for _ in 0..200 {
-        app.update_visual_units(FRAME_SECONDS);
-        index += 1;
-        frames.push(Frame::capture(
-            &app,
-            bomber,
-            index,
-            "after-turn-close",
-            previous,
+/// Frames of one phase while the turn close drains (or the plain clock runs).
+fn observe(
+    opened: &mut Opened,
+    phase: &'static str,
+    count: usize,
+) {
+    for _ in 0..count {
+        opened.app.update_visual_units(FRAME_SECONDS);
+        opened.index += 1;
+        opened.frames.push(Frame::capture(
+            &opened.app,
+            opened.bomber,
+            opened.index,
+            phase,
+            opened.previous,
         ));
-        previous = frames.last().expect("frame").visual;
+        opened.previous = opened.frames.last().expect("frame").visual;
+    }
+}
+
+/// The owner's flow: order → a few frames → End Turn. The turn close walks the rest
+/// of the air route at the visual pace, ticking once per frame as the application
+/// does while the closing team's movement lasts.
+fn run_turn_close() -> (Vec<Frame>, f32) {
+    let mut opened = open_bomber_attack(Some(500));
+    let max_step = max_frame_step(&opened.app);
+
+    let player = opened.app.state_ref().player_team();
+    opened.app.universe_mut().end_local_turn(player);
+
+    // `end_local_turn` only marks the closing team now (`max_core::ClosingTurn`).
+    assert!(
+        opened.app.universe_mut().turn_close_pending(),
+        "the bomber's route must still be pending after the End Turn"
+    );
+
+    let mut drain_frames = 0usize;
+    while opened.app.universe_mut().turn_close_pending() {
+        opened.app.tick();
+        observe(&mut opened, "turn-close", 1);
+        drain_frames += 1;
+        assert!(
+            drain_frames < DRAIN_FRAME_LIMIT,
+            "the turn close did not finish within {DRAIN_FRAME_LIMIT} frames"
+        );
     }
 
+    // Frames of the next team's turn: the bomber sits on the halt cell.
+    for _ in 0..40 {
+        opened.app.tick();
+        observe(&mut opened, "after-turn-close", 1);
+    }
+
+    let frames = opened.frames;
     write_frames("frames-turn-close", &frames);
     (frames, max_step)
 }
 
-/// The owner's **death** flow: the same order and End Turn, but with the mission
-/// hits (no `hits = 500`), so the battery really kills the bomber.
-///
-/// After the turn close the simulation keeps ticking one step per frame — the AI
-/// turn, the delayed reaction fire of the battery, the shot that kills the bomber —
-/// while the frame walks the drained route, exactly as the owner plays it.
+/// The owner's **death** flow: the same order and End Turn, but with a lethal hull
+/// (`hits = 2`), so the battery kills the bomber on the halt cell.
 fn run_death_turn_close() -> (Vec<Frame>, f32) {
-    let mut app = mission_app();
-    let (bomber, _anti_air) = setup_intercept(&mut app, None);
-    let max_step = max_frame_step(&app);
+    let mut opened = open_bomber_attack(Some(2));
+    let max_step = max_frame_step(&opened.app);
 
-    app.update_visual_units(0.0);
-    let mut previous = app.visual_position(bomber);
-    let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
+    let player = opened.app.state_ref().player_team();
+    opened.app.universe_mut().end_local_turn(player);
 
-    let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
-        .expect("air move order");
-    app.submit(order);
-
-    let mut index = 0;
-    for _ in 0..5 {
-        app.tick();
-        app.update_visual_units(FRAME_SECONDS);
-        index += 1;
-        frames.push(Frame::capture(&app, bomber, index, "tick", previous));
-        previous = frames.last().expect("frame").visual;
+    let mut drain_frames = 0usize;
+    while opened.app.universe_mut().turn_close_pending() {
+        opened.app.tick();
+        observe(&mut opened, "turn-close", 1);
+        drain_frames += 1;
+        assert!(
+            drain_frames < DRAIN_FRAME_LIMIT,
+            "the turn close did not finish within {DRAIN_FRAME_LIMIT} frames"
+        );
     }
 
-    let player = app.state_ref().player_team();
-    app.universe_mut().end_local_turn(player);
-
+    // The battery's reaction fire kills the bomber after the halt; keep ticking.
     for _ in 0..260 {
-        app.tick();
-        app.update_visual_units(FRAME_SECONDS);
-        index += 1;
-        frames.push(Frame::capture(
-            &app,
-            bomber,
-            index,
-            "after-turn-close",
-            previous,
-        ));
-        previous = frames.last().expect("frame").visual;
+        opened.app.tick();
+        observe(&mut opened, "after-turn-close", 1);
     }
 
+    let frames = opened.frames;
     write_frames("frames-death", &frames);
     (frames, max_step)
 }
 
-/// The control flow: the order alone, the simulation ticks one cell per frame
+/// The control flow: the order alone, the simulation ticks one pixel step per frame
 /// until the intercept halts the bomber, then the sprite walks the queue.
 fn run_without_turn_close() -> (Vec<Frame>, f32) {
-    let mut app = mission_app();
-    let (bomber, _anti_air) = setup_intercept(&mut app, Some(500));
-    let max_step = max_frame_step(&app);
-
-    app.update_visual_units(0.0);
-    let mut previous = app.visual_position(bomber);
-    let mut frames = vec![Frame::capture(&app, bomber, 0, "start", previous)];
-
-    let order = max_app::hud::build_air_move_order(app.state_ref(), bomber, ANTI_AIR_CELL)
-        .expect("air move order");
-    app.submit(order);
-
-    let mut index = 0;
+    let mut opened = open_bomber_attack(Some(500));
+    let max_step = max_frame_step(&opened.app);
 
     // Fly until the reaction fire halts the aircraft (the intercept).
-    for _ in 0..120 {
-        app.tick();
-        app.update_visual_units(FRAME_SECONDS);
-        index += 1;
-        frames.push(Frame::capture(&app, bomber, index, "tick", previous));
-        previous = frames.last().expect("frame").visual;
+    for _ in 0..400 {
+        opened.app.tick();
+        observe(&mut opened, "tick", 1);
 
-        if !frames.last().expect("frame").path {
+        if !opened.frames.last().expect("frame").path {
             break;
         }
     }
 
-    // The simulation is frozen; the frame still walks the queued route.
     for _ in 0..400 {
-        app.update_visual_units(FRAME_SECONDS);
-        index += 1;
-        frames.push(Frame::capture(&app, bomber, index, "walk", previous));
-        previous = frames.last().expect("frame").visual;
+        observe(&mut opened, "walk", 1);
     }
 
+    let frames = opened.frames;
     write_frames("frames-natural", &frames);
     (frames, max_step)
 }
 
-/// The gate: the intercepted aircraft walks to the halt pixel after the turn
-/// close, exactly like a ground unit — no frame may jump.
-///
-/// The turn close drains the whole remaining route inside one `end_local_turn`
-/// (14.6 cells here), far past the `VISUAL_TELEPORT_CELLS` threshold. The drain
-/// reports the walked waypoints (`max_core::DrainedRoute`); the frame rebuilds
-/// the queue from the report, so the sprite walks to the halt pixel instead of
-/// snapping to it.
+/// The gate: while the turn close drains, the sprite is drawn on the simulation
+/// position every frame — the aircraft is never left behind the cell where the
+/// intercept happens.
 #[test]
-fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
+fn an_intercepted_aircraft_follows_the_simulation_at_the_turn_close() {
     let (frames, max_step) = run_turn_close();
 
     println!("frame, phase, sprite (cells), step, simulation cell / pixel");
@@ -555,18 +596,7 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
     }
     println!("max frame step: {max_step:.4} cells");
 
-    // The scenario must move the aircraft farther than the synchronization
-    // threshold, otherwise the frames do not exercise the defect.
-    let start = frames.first().expect("start");
-    let halt = frames.last().expect("last");
-    let gap = (halt.sprite().0 - start.sprite().0)
-        .abs()
-        .max((halt.sprite().1 - start.sprite().1).abs());
-    assert!(
-        gap > max_app::VISUAL_TELEPORT_CELLS as f32,
-        "the scenario must move the aircraft more than {} cells: {gap:.3}",
-        max_app::VISUAL_TELEPORT_CELLS
-    );
+    let halt = frames.last().expect("last frame");
 
     // The aircraft stopped (orders Await, no path) on the halt cell.
     assert_eq!(
@@ -576,65 +606,204 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_at_the_turn_close() {
     );
     assert!(!halt.path, "the intercept clears the air path");
 
-    // The drain must leave the sprite behind: the pre-turn-close frames are the
-    // "old" goal the frame compares against.
-    let last_before: Vec<&Frame> = frames
-        .iter()
-        .filter(|frame| frame.phase == "tick")
-        .collect();
-    let before = last_before.last().expect("pre-turn-close frame");
-    let gap_at_close = (halt.grid.x - before.grid.x)
+    // The scenario must move the aircraft far enough for the old bulk drain to land
+    // the intercept well ahead of the sprite.
+    let start = frames.first().expect("start");
+    let gap = (halt.grid.x - start.grid.x)
         .abs()
-        .max((halt.grid.y - before.grid.y).abs());
+        .max((halt.grid.y - start.grid.y).abs());
     assert!(
-        gap_at_close > max_app::VISUAL_TELEPORT_CELLS as i16,
-        "the turn-close drain must move the bomber more than {} cells: {:?} -> {:?}",
+        gap > max_app::VISUAL_TELEPORT_CELLS as i16,
+        "the scenario must move the bomber more than {} cells: {:?} -> {:?}",
         max_app::VISUAL_TELEPORT_CELLS,
-        before.grid,
+        start.grid,
         halt.grid
     );
 
-    let first_jump = frames.windows(2).position(|pair| pair[1].step > max_step);
+    // No frame may jump, except the first frame of the drain: there the sprite
+    // re-synchronizes with the simulation (the player's own turn walks the route at
+    // a cell per tick while the frame interpolates at
+    // [`max_app::VISUAL_CELLS_PER_SECOND`]). From that frame on the drawing follows
+    // the simulation.
+    assert_no_jumps_after_resync(&frames, max_step);
 
-    if let Some(index) = first_jump {
-        let previous = &frames[index];
-        let jumped = &frames[index + 1];
-        panic!(
-            "frame {} ({}): the sprite of the intercepted aircraft teleports {:.4} cells \
-             (a frame may move {:.4}): ({:.4},{:.4}) -> ({:.4},{:.4}); the simulation halted at \
-             cell ({},{}) pixel ({},{}). The turn-close drain moved the bomber into the \
-             anti-aircraft range inside one `end_local_turn`, and `App::update_visual_units` \
-             (`max_app/src/lib.rs:4305-4307`) treated the jump as a save/load synchronization \
-             (>{} cells) instead of queuing the air route.",
-            jumped.index,
-            jumped.phase,
-            jumped.step,
-            max_step,
-            previous.sprite().0,
-            previous.sprite().1,
-            jumped.sprite().0,
-            jumped.sprite().1,
-            jumped.grid.x,
-            jumped.grid.y,
-            jumped.pixel.0,
-            jumped.pixel.1,
-            max_app::VISUAL_TELEPORT_CELLS
+    // The property under test: during the drain the sprite **is** the simulation
+    // position — no interpolation, no lag, so the intercept happens where the player
+    // sees the aircraft.
+    let mut saw_drain = 0usize;
+    for frame in &frames {
+        if frame.phase != "turn-close" || !frame.drawn {
+            continue;
+        }
+
+        saw_drain += 1;
+        let target = air_target(frame);
+        assert!(
+            (frame.sprite().0 - target.0).abs() < 1e-3
+                && (frame.sprite().1 - target.1).abs() < 1e-3,
+            "frame {}: the sprite must be on the simulation pixel {target:?}: {:?}",
+            frame.index,
+            frame.visual
         );
     }
+    assert!(
+        saw_drain > 0,
+        "the turn close must have drained at the bomber's halt"
+    );
 
-    // No jump: the sprite must have arrived at the halt pixel by walking.
-    let target = air_target_of_last(&frames);
+    // The sprite arrived on the halt pixel, and the turn advanced only after the
+    // movement ended.
+    let target = air_target(halt);
     assert!(
         (halt.sprite().0 - target.0).abs() < 1e-3 && (halt.sprite().1 - target.1).abs() < 1e-3,
         "the sprite must stop on the halt pixel: {:?} != {target:?}",
         halt.visual
     );
+    assert_ne!(
+        halt.team,
+        frames.first().expect("start").team,
+        "the next team must start after the drain"
+    );
 }
 
-/// The control: without the turn close the same intercept walks smoothly, so the
-/// scenario is sound and the defect needs the bulk drain.
+/// The **death** gate: the aircraft the battery kills is presented on the cell
+/// where the attack lands — the sprite is already there when the killing shot
+/// arrives, and the blast is drawn on the same pixel.
+///
+/// Oracle: the battery reacts to the aircraft entering its range
+/// (`Access_UpdateMapStatus` → `UnitEventEmergencyStop` → `BlockedOnPathRequest`,
+/// `unitinfo.cpp:3628`; the reaction fire follows on the next order pass), so the
+/// bomber is stopped and killed **on the same cell**; the sprite is drawn at
+/// `UnitInfo::x/y`, which that stop never rewrites, and the blast at the same pixel
+/// (`UnitsManager_StartExplosion`, `units_manager.cpp:3991-3994`).
+///
+/// The mission bomber carries 18 hits and the battery deals less than that per
+/// turn, so this frame test pins a lethal hull (`hits = 2`): the first reaction shot
+/// kills it on the halt cell, which is the frame the owner sees in the real mission
+/// after a few battery turns.
 #[test]
-fn an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close() {
+fn an_intercepted_aircraft_dies_on_the_cell_of_the_first_attack() {
+    let (frames, max_step) = run_death_turn_close();
+
+    println!("frame, phase, sprite (cells), step, simulation cell / pixel");
+    for frame in &frames {
+        println!("{}", frame.line());
+    }
+    println!("max frame step: {max_step:.4} cells");
+
+    let mission_hits = frames.first().expect("start").hits;
+    assert!(
+        mission_hits > 0,
+        "the scenario needs a live bomber at the start: {mission_hits}"
+    );
+
+    // 1. The battery really kills the bomber (`hits = 2` in this run).
+    let death_index = frames
+        .iter()
+        .position(|frame| frame.hits == 0)
+        .unwrap_or_else(|| {
+            panic!(
+                "the battery must kill the bomber within {} frames",
+                frames.len()
+            )
+        });
+    let death = frames[death_index].clone();
+
+    // 2. The intercept: the frame after the last one with a route — the halt cell,
+    //    i.e. the cell the aircraft entered the battery's range on. The attack is
+    //    resolved there.
+    let last_path = frames[..death_index]
+        .iter()
+        .rposition(|frame| frame.path)
+        .expect("the bomber was walking before the kill");
+    let halt_index = last_path + 1;
+    assert!(halt_index < death_index, "the halt precedes the death");
+    let halt = frames[halt_index].clone();
+    assert!(!halt.path, "the halted aircraft has no route left");
+
+    // 3. The death happened on the halt cell, on the pixel the aircraft was drawn
+    //    at: it never walks on after the shot.
+    assert_eq!(
+        death.grid, halt.grid,
+        "the bomber dies where the attack landed: death cell {:?}, halt cell {:?}",
+        death.grid, halt.grid
+    );
+    assert_eq!(
+        death.pixel, halt.pixel,
+        "the bomber dies on the pixel of the halt: death pixel {:?}, halt pixel {:?}",
+        death.pixel, halt.pixel
+    );
+
+    // 4. The sprite never jumps, and it was on the simulation position when the
+    //    attack landed: the player saw the shot hit the aircraft.
+    assert_no_jumps_after_resync(&frames, max_step);
+
+    let halt_sprite = halt.sprite();
+    let halt_target = air_target(&halt);
+    assert!(
+        (halt_sprite.0 - halt_target.0).abs() < 1e-3
+            && (halt_sprite.1 - halt_target.1).abs() < 1e-3,
+        "the sprite must be on the simulation pixel when the attack lands: \
+         {halt_sprite:?} != {halt_target:?}"
+    );
+
+    // 5. The death pixel lies on the halt cell.
+    let tile = i32::from(max_core::unit_order::GFX_MAP_TILE_SIZE);
+    assert_eq!(
+        (
+            i32::from(death.pixel.0) / tile,
+            i32::from(death.pixel.1) / tile
+        ),
+        (i32::from(halt.grid.x), i32::from(halt.grid.y)),
+        "the death pixel lies in the halt cell"
+    );
+
+    // 6. The blast of the killed unit is drawn on the death pixel — the point the
+    //    sprite was drawn at — and stays there after the simulation removes the
+    //    hull (no frame-side offset is needed: the sprite followed the simulation).
+    let death_pixel = (i32::from(death.pixel.0), i32::from(death.pixel.1));
+    let mut blasts = frames
+        .iter()
+        .filter(|frame| frame.blast_drawn.is_some() && frame.hits == 0)
+        .peekable();
+    assert!(
+        blasts.peek().is_some(),
+        "the killing shot spawns an explosion effect"
+    );
+    for frame in blasts {
+        assert_eq!(
+            frame.blast_cell,
+            Some(death.grid),
+            "frame {}: the blast is spawned on the death cell",
+            frame.index
+        );
+        assert_eq!(
+            frame.blast_drawn,
+            Some(death_pixel),
+            "frame {}: the blast is drawn on the death pixel",
+            frame.index
+        );
+
+        // While the hull is still drawn, that pixel is exactly the sprite point.
+        if let Some(visual) = frame.visual {
+            let expected = (
+                (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+                (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
+            );
+            assert_eq!(
+                frame.blast_drawn,
+                Some(expected),
+                "frame {}: the blast is drawn where the sprite is",
+                frame.index
+            );
+        }
+    }
+}
+
+/// The control: without the turn close the same intercept walks the same way, so
+/// the scenario itself is sound.
+#[test]
+fn an_intercepted_aircraft_walks_without_the_turn_close() {
     let (frames, max_step) = run_without_turn_close();
 
     println!("frame, phase, sprite (cells), step, simulation cell / pixel");
@@ -666,188 +835,11 @@ fn an_intercepted_aircraft_walks_to_the_halt_cell_without_the_turn_close() {
     );
     assert!(!halt.path, "the intercept clears the air path");
 
-    let target = air_target_of_last(&frames);
+    let target = air_target(halt);
     assert!(
         (halt.sprite().0 - target.0).abs() < 1e-3 && (halt.sprite().1 - target.1).abs() < 1e-3,
         "the sprite must walk to the halt pixel: {:?} != {target:?}",
         halt.visual
-    );
-}
-
-/// The **death** gate: the aircraft the battery kills is presented on the cell
-/// where the attack started — no jump, no corpse frozen (or vanishing) in mid-air.
-///
-/// Oracle: the battery reacts to the aircraft entering its range
-/// (`Access_UpdateMapStatus` → `UnitEventEmergencyStop` → `BlockedOnPathRequest`,
-/// `unitinfo.cpp:3628`; the reaction fire follows on the next order pass), so the
-/// bomber is stopped and killed **on the same cell**; the sprite is drawn at
-/// `UnitInfo::x/y`, which that stop never rewrites, and the blast at the same pixel
-/// (`UnitsManager_StartExplosion`, `units_manager.cpp:3991-3994`).
-///
-/// The port's simulation resolves the killing shot while the frame still walks the
-/// drained route (a cell per tick against `VISUAL_CELLS_PER_SECOND`), so the frame
-/// has to finish that walk: the corpse keeps its route, arrives exactly on the
-/// death pixel — the cell of the first attack — and the blast rides it there. The
-/// frames captured here are the owner's: with the mission hits the bomber really
-/// dies, unlike QA's `hits = 500` run of the halt gate above.
-#[test]
-fn an_intercepted_aircraft_dies_on_the_cell_of_the_first_attack() {
-    let (frames, max_step) = run_death_turn_close();
-
-    println!("frame, phase, sprite (cells), step, simulation cell / pixel");
-    for frame in &frames {
-        println!("{}", frame.line());
-    }
-    println!("max frame step: {max_step:.4} cells");
-
-    let mission_hits = frames.first().expect("start").hits;
-    assert!(
-        mission_hits > 0,
-        "the scenario needs a live bomber at the start: {mission_hits}"
-    );
-
-    // 1. The battery really kills the bomber (no `hits = 500` in this run).
-    let death_index = frames
-        .iter()
-        .position(|frame| frame.hits == 0)
-        .unwrap_or_else(|| {
-            panic!(
-                "the battery must kill the bomber within {} frames",
-                frames.len()
-            )
-        });
-    let death = frames[death_index].clone();
-
-    // 2. The first attack: the reaction shot that first lowers the hits. It lands
-    //    while the bomber is halted by the interrupt — on the halt cell, i.e. the
-    //    cell the aircraft entered the battery's range on.
-    let attack_index = frames[..death_index]
-        .iter()
-        .position(|frame| frame.hits < mission_hits)
-        .expect("the battery opens fire before the kill");
-    let attack = frames[attack_index].clone();
-    assert_eq!(
-        attack.orders,
-        UnitOrder::Await,
-        "the battery engages the aircraft the moment the interrupt stops it"
-    );
-    assert!(!attack.path, "the halted aircraft has no route left");
-
-    // 3. The death happened on the cell of the first attack, not on a later one:
-    //    the aircraft never walks on after the shot (the simulation cell and pixel
-    //    of the death frame are the ones of the attack frame).
-    assert_eq!(
-        death.grid, attack.grid,
-        "the bomber dies where the first attack landed: death cell {:?}, attack cell {:?}",
-        death.grid, attack.grid
-    );
-    assert_eq!(
-        death.pixel, attack.pixel,
-        "the bomber dies on the pixel of the first attack: death pixel {:?}, attack pixel {:?}",
-        death.pixel, attack.pixel
-    );
-
-    // 4. The sprite never jumps — the walk to the death pixel is a normal frame
-    //    route (`VISUAL_CELLS_PER_SECOND`), not a snap and not a freeze.
-    if let Some(index) = frames.windows(2).position(|pair| pair[1].step > max_step) {
-        let previous = &frames[index];
-        let jumped = &frames[index + 1];
-        panic!(
-            "frame {} ({}): the sprite of the intercepted aircraft teleports {:.4} cells \
-             (a frame may move {:.4}): {:?} -> {:?}; the simulation killed it at cell ({},{}) \
-             pixel ({},{}).",
-            jumped.index,
-            jumped.phase,
-            jumped.step,
-            max_step,
-            previous.visual,
-            jumped.visual,
-            death.grid.x,
-            death.grid.y,
-            death.pixel.0,
-            death.pixel.1
-        );
-    }
-
-    // 5. The corpse — not only the simulation — ends on the cell of the first
-    //    attack. The sprite receives the last waypoint exactly (the halt pixel), then
-    //    the frame drops it: `max_frame_step` is the only tolerance of the walk.
-    let last_drawn = frames
-        .iter()
-        .filter(|frame| frame.drawn)
-        .last()
-        .expect("the corpse is drawn while it walks");
-    let death_point = (
-        f32::from(death.pixel.0) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
-        f32::from(death.pixel.1) / max_core::unit_order::GFX_MAP_TILE_SIZE as f32,
-    );
-    assert!(
-        (last_drawn.sprite().0 - death_point.0).abs() < f32::EPSILON
-            && (last_drawn.sprite().1 - death_point.1).abs() < f32::EPSILON,
-        "the corpse must end exactly on the death pixel {death_point:?}: {:?}",
-        last_drawn.sprite()
-    );
-    assert!(
-        !frames.last().expect("last frame").drawn,
-        "the corpse is gone once the walk is over"
-    );
-    // The death pixel lies inside the attack cell (the air path keeps the pixel,
-    // the cell is the pixel over the tile size — `UnitInfo::grid`).
-    let tile = i32::from(max_core::unit_order::GFX_MAP_TILE_SIZE);
-    assert_eq!(
-        (
-            i32::from(death.pixel.0) / tile,
-            i32::from(death.pixel.1) / tile
-        ),
-        (i32::from(attack.grid.x), i32::from(attack.grid.y)),
-        "the walk ends on the cell of the first attack"
-    );
-
-    // 6. The blast is drawn on the corpse while it walks (`OffsetDrawZones`) and
-    //    ends on the death pixel with it: `UnitsManager_StartExplosion` puts the
-    //    effect on the dying unit's pixel, and the burst never leaves the corpse.
-    //    (Only the **death** blast has the parent link in the state —
-    //    `start_explosion` sets `parent_unit` for a killed unit; the impact flash of
-    //    the first, non-lethal shot keeps its simulation pixel.)
-    let mut blast_on_corpse = 0usize;
-    for frame in frames
-        .iter()
-        .filter(|frame| frame.blast_drawn.is_some() && frame.hits == 0)
-    {
-        let Some(visual) = frame.visual else {
-            continue;
-        };
-        let expected = (
-            (visual.0 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
-            (visual.1 * max_core::unit_order::GFX_MAP_TILE_SIZE as f32).round() as i32,
-        );
-        assert_eq!(
-            frame.blast_drawn,
-            Some(expected),
-            "frame {}: the blast is drawn on the corpse: {:?} != {expected:?}",
-            frame.index,
-            frame.blast_drawn
-        );
-        blast_on_corpse += 1;
-    }
-    assert!(
-        blast_on_corpse > 0,
-        "the blast follows the corpse to the death pixel"
-    );
-    let last_blast = frames
-        .iter()
-        .filter(|frame| frame.blast_drawn.is_some() && frame.hits == 0)
-        .last()
-        .expect("the blast outlives the corpse's walk");
-    assert_eq!(
-        last_blast.blast_drawn,
-        Some((i32::from(death.pixel.0), i32::from(death.pixel.1))),
-        "the blast ends on the pixel where the simulation killed the bomber"
-    );
-    assert_eq!(
-        last_blast.blast_cell,
-        Some(death.grid),
-        "the blast is spawned on the death cell (`UnitsManager_StartExplosion`)"
     );
 }
 
@@ -874,11 +866,11 @@ fn free_row(app: &App, count: i16) -> Option<Point> {
 }
 
 /// The ground counterpart of [`run_turn_close`]: a tank walks a 20-cell route
-/// toward an enemy tank 22 cells away, so the turn-close drain leaves it more
-/// than `VISUAL_TELEPORT_CELLS` cells from the start before the intercept.
+/// toward an enemy tank 22 cells away.
 ///
-/// This is the same frame shape as `intercept_visual_halt.rs`; only the route is
-/// long enough for the drained gap to exceed the synchronization threshold.
+/// A ground cell is one budget window (`max_core::CLOSING_CELLS_PER_SECOND`), so
+/// the sprite steps a whole cell at a time — and is always on the cell the
+/// simulation is on.
 fn run_long_ground_route() -> (Vec<Frame>, f32) {
     let mut app = mission_app();
     let player = app.state_ref().player_team();
@@ -932,8 +924,9 @@ fn run_long_ground_route() -> (Vec<Frame>, f32) {
     app.update_visual_units(0.0);
     let mut previous = app.visual_position(mover);
     let mut frames = vec![Frame::capture(&app, mover, 0, "start", previous)];
-
     let mut index = 0;
+
+    // Five frames of the player's turn (the sprite interpolates the route there).
     for _ in 0..5 {
         app.tick();
         app.update_visual_units(FRAME_SECONDS);
@@ -944,7 +937,22 @@ fn run_long_ground_route() -> (Vec<Frame>, f32) {
 
     app.universe_mut().end_local_turn(player);
 
-    for _ in 0..220 {
+    let mut drain_frames = 0usize;
+    while app.universe_mut().turn_close_pending() {
+        app.tick();
+        app.update_visual_units(FRAME_SECONDS);
+        index += 1;
+        frames.push(Frame::capture(&app, mover, index, "turn-close", previous));
+        previous = frames.last().expect("frame").visual;
+        drain_frames += 1;
+        assert!(
+            drain_frames < DRAIN_FRAME_LIMIT,
+            "the turn close did not finish within {DRAIN_FRAME_LIMIT} frames"
+        );
+    }
+
+    for _ in 0..40 {
+        app.tick();
         app.update_visual_units(FRAME_SECONDS);
         index += 1;
         frames.push(Frame::capture(
@@ -961,22 +969,19 @@ fn run_long_ground_route() -> (Vec<Frame>, f32) {
     (frames, max_step)
 }
 
-/// The same gate for a ground route: a tank whose drained route is longer than
-/// the synchronization threshold must walk to the halt cell, not teleport.
-///
-/// It reproduces the defect for a non-air unit (which is why the existing
-/// `intercept_visual_halt.rs` scenario — a short drained route — is green) and
-/// proves the fix uses the drained cells, not the straight line the air path
-/// would allow.
+/// The ground gate: a tank whose route is longer than the old synchronization
+/// threshold is drawn on the simulation cell during the whole turn close — it
+/// steps a cell at a time (one budget window) instead of running ahead of the
+/// sprite, and it stops on the halt cell.
 #[test]
-fn a_long_ground_route_walks_to_the_halt_cell_at_the_turn_close() {
+fn a_long_ground_route_follows_the_simulation_at_the_turn_close() {
     let (frames, max_step) = run_long_ground_route();
 
     println!("frame, phase, sprite (cells), step, simulation cell / pixel");
     for frame in &frames {
         println!("{}", frame.line());
     }
-    println!("max frame step: {max_step:.4} cells");
+    println!("max frame step (visual budget): {max_step:.4} cells");
 
     let halt = frames.last().expect("last frame");
     assert_eq!(
@@ -986,42 +991,60 @@ fn a_long_ground_route_walks_to_the_halt_cell_at_the_turn_close() {
     );
     assert!(!halt.path, "the intercept clears the ground path");
 
-    let before = frames
-        .iter()
-        .filter(|frame| frame.phase == "tick")
-        .last()
-        .expect("pre-turn-close frame");
-    let drained = (halt.grid.x - before.grid.x)
-        .abs()
-        .max((halt.grid.y - before.grid.y).abs());
-    assert!(
-        drained > max_app::VISUAL_TELEPORT_CELLS as i16,
-        "the turn-close drain must move the tank more than {} cells: {:?} -> {:?}",
-        max_app::VISUAL_TELEPORT_CELLS,
-        before.grid,
-        halt.grid
-    );
+    // Every drain frame draws the tank on the simulation cell: the step is exactly
+    // one cell when a budget window opens and nothing in between.
+    //
+    // The **first** drain frame re-synchronizes the sprite with the simulation: the
+    // player's own turn still walks the route at one cell per tick while the frame
+    // interpolates at [`max_app::VISUAL_CELLS_PER_SECOND`], so the sprite is a few
+    // cells behind when the turn closes. From that frame on the drawing follows the
+    // simulation (`max_core::ClosingTurn`), which is the property under test.
+    let mut hops = 0usize;
+    let mut first_drain = true;
+    for frame in &frames {
+        if frame.phase != "turn-close" {
+            continue;
+        }
 
-    if let Some(index) = frames.windows(2).position(|pair| pair[1].step > max_step) {
-        let previous = &frames[index];
-        let jumped = &frames[index + 1];
-        panic!(
-            "frame {} ({}): the sprite of the halted tank teleports {:.4} cells (a frame may \
-             move {:.4}): ({:.4},{:.4}) -> ({:.4},{:.4}); halt cell ({},{}).",
-            jumped.index,
-            jumped.phase,
-            jumped.step,
-            max_step,
-            previous.sprite().0,
-            previous.sprite().1,
-            jumped.sprite().0,
-            jumped.sprite().1,
-            jumped.grid.x,
-            jumped.grid.y
+        assert!(
+            (frame.sprite().0 - f32::from(frame.grid.x)).abs() < 1e-3
+                && (frame.sprite().1 - f32::from(frame.grid.y)).abs() < 1e-3,
+            "frame {}: the sprite must be on the simulation cell ({},{}), got {:?}",
+            frame.index,
+            frame.grid.x,
+            frame.grid.y,
+            frame.visual
         );
-    }
 
-    // No jump: the ground sprite stops exactly on the halt cell.
+        if first_drain {
+            // The re-synchronization at the turn close (the lag of the player's own
+            // turn), never the old drained jump to the halt cell.
+            assert!(
+                frame.step <= 8.0 + 1e-3,
+                "frame {}: the re-synchronization may not exceed the player's turn \
+                 lag: {:.4} cells",
+                frame.index,
+                frame.step
+            );
+            first_drain = false;
+            continue;
+        }
+
+        assert!(
+            frame.step <= 1.0 + 1e-3,
+            "frame {}: a ground step is one cell, not {:.4}",
+            frame.index,
+            frame.step
+        );
+
+        if frame.step > 1e-3 {
+            hops += 1;
+        }
+    }
+    assert!(hops > 0, "the tank must actually walk during the drain");
+
+    // No teleport past the halt cell: the tank only ever moves one cell at a time,
+    // and it stops on the halt cell.
     let expected = (f32::from(halt.grid.x), f32::from(halt.grid.y));
     assert!(
         (halt.sprite().0 - expected.0).abs() < 1e-3 && (halt.sprite().1 - expected.1).abs() < 1e-3,

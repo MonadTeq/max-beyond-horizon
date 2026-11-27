@@ -327,6 +327,21 @@ fn end_turn_walks_the_remaining_route_of_the_closing_team() {
 
     app.local_end_turn();
 
+    // The turn close is incremental (`max_core::ClosingTurn`): `local_end_turn`
+    // marks the closing team and the local clock ticks the drain while the routes
+    // walk (`LocalPhase::Advancing`, one visual budget window per cell).
+    assert!(
+        app.turn_close_pending(),
+        "the turn close must wait for the queued route"
+    );
+
+    let mut frames = 0usize;
+    while app.turn_close_pending() {
+        app.local_update(1.0 / 60.0);
+        frames += 1;
+        assert!(frames < 400, "the turn close did not finish: {frames} frames");
+    }
+
     let unit = app.state_ref().unit(id).cloned().expect("unit");
     assert_eq!(
         unit.grid,
