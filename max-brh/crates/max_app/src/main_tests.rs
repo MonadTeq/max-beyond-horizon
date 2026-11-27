@@ -122,8 +122,8 @@ fn hd_flags_select_the_presentation_mode() {
 
 #[test]
 fn demo_flag_selects_headless_demo() {
-    let cli = parse(&["--demo", "max-original/SAVE1.CAM", "--turns", "7"])
-        .expect("--demo разбирается");
+    let cli =
+        parse(&["--demo", "max-original/SAVE1.CAM", "--turns", "7"]).expect("--demo разбирается");
 
     assert_eq!(cli.mode, Mode::Demo);
     assert_eq!(cli.config.mode, AppMode::Demo);
@@ -144,8 +144,8 @@ fn new_game_flag_selects_headless_new_game() {
 
 #[test]
 fn connect_flag_selects_headless_connect() {
-    let cli = parse(&["--connect", "127.0.0.1:8082", "--join", "demo"])
-        .expect("--connect разбирается");
+    let cli =
+        parse(&["--connect", "127.0.0.1:8082", "--join", "demo"]).expect("--connect разбирается");
 
     assert_eq!(cli.mode, Mode::Connect);
     assert_eq!(cli.config.mode, AppMode::Connect);
@@ -178,15 +178,15 @@ fn direct_connect_defaults_to_the_host_port() {
 #[test]
 fn host_flag_selects_the_server_lobby() {
     let cli = parse(&[
-            "--host",
-            "--listen",
-            "127.0.0.1",
-            "--host-port",
-            "31554",
-            "--min-players",
-            "3",
-            "--host-policy",
-            "eliminate",
+        "--host",
+        "--listen",
+        "127.0.0.1",
+        "--host-port",
+        "31554",
+        "--min-players",
+        "3",
+        "--host-policy",
+        "eliminate",
     ])
     .expect("--host разбирается");
 
@@ -242,6 +242,53 @@ fn record_is_accepted_in_the_default_gui_mode() {
 
     assert_eq!(cli.mode, Mode::Ui);
     assert_eq!(cli.record.as_deref(), Some(std::path::Path::new("run.qa")));
+}
+
+/// `--settings PATH` names the `settings.jsonc` read at launch; the default is
+/// the file in the working/repository directory (`None` here).
+#[test]
+fn settings_flag_selects_the_configuration_file() {
+    let cli = parse(&["--settings", "D:/cfg/settings.jsonc"]).expect("--settings разбирается");
+
+    assert_eq!(
+        cli.settings.as_deref(),
+        Some(std::path::Path::new("D:/cfg/settings.jsonc"))
+    );
+
+    let cli = parse(&[]).expect("пустой список аргументов разбирается");
+    assert_eq!(cli.settings, None);
+}
+
+/// `settings.jsonc` supplies the presentation the CLI did not name; the CLI
+/// flags replace the same parameter (`CLI > file > default`).
+#[test]
+fn settings_file_fills_in_the_presentation_unless_the_cli_overrides_it() {
+    use max_app::settings::Settings;
+    use max_render::render_scale::{PresentationMode, RenderScale};
+
+    let file = Settings::parse(r#"{ "display": { "scale": 4 } }"#).expect("settings parse");
+
+    let cli = parse(&[]).expect("пустой список аргументов разбирается");
+    let resolved = cli.presentation_settings(&file).expect("the file resolves");
+
+    assert_eq!(resolved.render_scale, RenderScale::Hd4);
+    assert_eq!(resolved.mode, PresentationMode::Hd);
+
+    let cli = parse(&["--hd-scale", "2"]).expect("--hd-scale разбирается");
+    let resolved = cli
+        .presentation_settings(&file)
+        .expect("the CLI overrides the file");
+
+    assert_eq!(resolved.render_scale, RenderScale::Hd2);
+
+    // No file and no CLI flags: the byte-for-byte default.
+    let cli = parse(&[]).expect("пустой список аргументов разбирается");
+    let resolved = cli
+        .presentation_settings(&Settings::default())
+        .expect("the default resolves");
+
+    assert_eq!(resolved.render_scale, RenderScale::PixelPerfect);
+    assert_eq!(resolved.mode, PresentationMode::PixelPerfect);
 }
 
 #[test]

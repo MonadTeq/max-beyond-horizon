@@ -40,6 +40,8 @@ use max_app::host::{
 #[cfg(feature = "sdl")]
 use max_app::local::LocalSetup;
 #[cfg(feature = "sdl")]
+use max_app::local::SessionLocal;
+#[cfg(feature = "sdl")]
 use max_app::music::{MusicDirector, MusicScene};
 #[cfg(feature = "sdl")]
 use max_app::net::run_network_with_sink;
@@ -51,6 +53,8 @@ use max_app::net::{
 #[cfg(feature = "sdl")]
 use max_app::qa::{RecordContext, Recorder};
 #[cfg(feature = "sdl")]
+use max_app::settings::Settings;
+#[cfg(feature = "sdl")]
 use max_app::story::{StoryContinuation, StoryKind, StoryScreen};
 #[cfg(feature = "sdl")]
 use max_app::subtitles::{SubtitleTrack, DEFAULT_LANGUAGE};
@@ -59,9 +63,13 @@ use max_app::ui::{
     handle_session_input, HorizonMenuClient, InputEvent, Key, Screen, ScreenView, SessionRequest,
     Transition, UiContext,
 };
+#[cfg(feature = "sdl")]
+use max_app::window_menu::{WindowMenu, WindowMenuAction};
 use max_app::{write_ppm, App, AppConfig, AppMode, NewGameConfig, NewGameReport};
 use max_core::enums::{Planet, TeamClan};
 use max_core::setup::ResourceLevel;
+#[cfg(feature = "sdl")]
+use max_core::universe::Dispatcher;
 use max_net::{DEFAULT_HEARTBEAT_PERIOD, DEFAULT_HOST_PORT};
 #[cfg(feature = "sdl")]
 use max_render::sdl_window::{WindowInput, WindowKey};
@@ -142,6 +150,9 @@ struct Cli {
     hd_scale: Option<u32>,
     /// `--remaster-dir DIR`: HD asset root (default `<workspace>/max-brh/target/remaster`).
     remaster_dir: Option<PathBuf>,
+    /// `--settings PATH`: the `settings.jsonc` file (default `settings.jsonc` in
+    /// the working directory or the repository root).
+    settings: Option<PathBuf>,
     /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
 }
@@ -151,14 +162,33 @@ impl Cli {
     /// (`remaster-hd.md` §R7). The default is pixel-perfect: the byte-for-byte
     /// 640×480 pipeline, which never loads a remaster asset.
     ///
-    /// `--hd` is a GUI presentation switch; the headless modes ignore it, so the
-    /// method is only called from `run_ui` behind the `sdl` feature.
-    #[cfg_attr(not(feature = "sdl"), allow(dead_code))]
-    fn presentation(
-        &self,
-    ) -> Result<(max_render::PresentationMode, max_render::RenderScale)> {
+    /// This is the CLI-only normalization used by the tests of the flags;
+    /// [`Self::presentation_settings`] adds the `settings.jsonc` layer.
+    #[cfg(test)]
+    fn presentation(&self) -> Result<(max_render::PresentationMode, max_render::RenderScale)> {
         max_render::PresentationMode::from_flags(self.hd, self.hd_scale)
             .map_err(|error| anyhow!("{error}"))
+    }
+
+    /// The effective presentation: `CLI > settings.jsonc > default`
+    /// (`max_app::settings`). The CLI flags are the same parameters
+    /// [`Self::presentation`] normalizes; the file supplies the values the
+    /// command line did not name.
+    #[cfg_attr(not(feature = "sdl"), allow(dead_code))]
+    fn presentation_settings(
+        &self,
+        settings: &max_app::settings::Settings,
+    ) -> Result<max_app::settings::PresentationSettings> {
+        max_app::settings::resolve(
+            max_app::settings::CliPresentation {
+                hd: self.hd,
+                hd_scale: self.hd_scale,
+                window_scale: self.window_scale,
+                fullscreen: self.fullscreen,
+            },
+            settings,
+        )
+        .map_err(|error| anyhow!("{error}"))
     }
 
     fn parse() -> Result<Self> {
@@ -205,6 +235,7 @@ impl Cli {
             hd: false,
             hd_scale: None,
             remaster_dir: None,
+            settings: None,
             record: None,
         };
         let mut mode_set = false;
@@ -259,8 +290,9 @@ impl Cli {
                 "--host-timeout" => {
                     let value = parse_u32(&mut args, "--host-timeout")?;
                     let timeout = Duration::from_secs(u64::from(value));
-                    max_net::validate_host_timeout(timeout)
-                        .map_err(|_| anyhow!("--host-timeout должен быть 5..=300 с, получено {value}"))?;
+                    max_net::validate_host_timeout(timeout).map_err(|_| {
+                        anyhow!("--host-timeout должен быть 5..=300 с, получено {value}")
+                    })?;
                     cli.host_timeout = Some(timeout);
                 }
                 "--host-heartbeat-ms" => {
@@ -336,6 +368,14 @@ impl Cli {
                 "--remaster-dir" => {
                     cli.remaster_dir = Some(PathBuf::from(
                         args.next().context("--remaster-dir требует каталог")?,
+                    ));
+                }
+                // `settings.jsonc` — the window/display settings (presentation
+                // only). Read once at launch; the CLI flags override it.
+                "--settings" => {
+                    cli.settings = Some(PathBuf::from(
+                        args.next()
+                            .context("--settings требует путь к settings.jsonc")?,
                     ));
                 }
                 "--record" => {
@@ -1041,6 +1081,315 @@ fn build_ui_runtime() -> Result<tokio::runtime::Runtime> {
         .context("tokio runtime (UI)")
 }
 
+/// Presentation resources of the interactive window.
+///
+/// One owner for the SDL window, the HD layers, the in-window menu and the
+/// buffers they draw into, so a resolution chosen in the menu can rebuild
+/// exactly these resources while the [`App`], the running session and the
+/// screen state stay untouched (presentation only).
+///
+/// The menu bar is **window chrome above the frame**, not an overlay over it:
+/// the presented image is `640 × (480 + 16)` logical pixels — the bar on top,
+/// the untouched 640×480 game frame below it. The game's top row (Files,
+/// Preferences, End Turn, counters) therefore stays visible and clickable, and
+/// the pixel-perfect frame is byte-for-byte what `Screen::render` produced.
+#[cfg(feature = "sdl")]
+struct WindowPresentation {
+    /// SDL window; recreated on a resolution change, never on a state change.
+    window: max_render::SdlWindow,
+    /// The running render scale (`S = 1` for [`max_render::RenderScale::PixelPerfect`]).
+    render_scale: max_render::RenderScale,
+    /// HD layers of the current scale; `None` in pixel-perfect (nothing loaded).
+    hd: Option<max_app::HdPresenter>,
+    /// `640·S × 480·S` game frame built for the HD presentation.
+    hd_buffer: max_render::buffer::RgbaBuffer,
+    /// What the window actually shows: menu bar + game frame, `640·S × 496·S`.
+    present_buffer: max_render::buffer::RgbaBuffer,
+    /// The in-window `File`/`Settings` menu bar (`window_menu`).
+    menu: WindowMenu,
+    /// Transparent `640 × 496` overlay the menu is drawn into.
+    menu_overlay: max_render::buffer::RgbaBuffer,
+    /// Logical **game** frame size (640×480 in the client; `--width/--height` otherwise).
+    base_size: (u32, u32),
+    /// Window integer scale (`None` — fit the desktop), kept across resolutions.
+    window_scale: Option<u32>,
+    /// HD asset root, reused when a resolution change reloads the HD layers.
+    remaster_root: PathBuf,
+    /// Window title, reused when the window is recreated.
+    title: String,
+}
+
+#[cfg(feature = "sdl")]
+impl WindowPresentation {
+    /// Opens the window at `render_scale` and loads the HD layers of that scale.
+    fn new(
+        title: &str,
+        base_size: (u32, u32),
+        render_scale: max_render::RenderScale,
+        window_scale: Option<u32>,
+        fullscreen: bool,
+        remaster_root: PathBuf,
+        assets: Option<&max_app::Assets>,
+    ) -> Result<Self> {
+        let frame_size = presentation_size(base_size);
+        let mut window = max_render::SdlWindow::new_with_render_scale(
+            title,
+            frame_size.0,
+            frame_size.1,
+            render_scale,
+            window_scale,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
+
+        if fullscreen {
+            // Presentation only: the 640×480 frame is unchanged, the geometry is
+            // recomputed for the display (task 1.4.2).
+            if let Err(error) = window.set_fullscreen(true) {
+                eprintln!("UI: полноэкранный режим недоступен ({error}); окно остаётся оконным");
+            }
+        }
+
+        let hd = load_hd_presenter(assets, render_scale, &remaster_root);
+        log_hd_mode(render_scale, &window, &remaster_root, hd.as_ref());
+
+        let factor = render_scale.scale();
+
+        Ok(Self {
+            window,
+            render_scale,
+            hd,
+            hd_buffer: max_render::buffer::RgbaBuffer::new(
+                base_size.0 * factor,
+                base_size.1 * factor,
+            ),
+            present_buffer: max_render::buffer::RgbaBuffer::new(
+                frame_size.0 * factor,
+                frame_size.1 * factor,
+            ),
+            menu: WindowMenu::new(),
+            menu_overlay: max_render::buffer::RgbaBuffer::new(frame_size.0, frame_size.1),
+            base_size,
+            window_scale,
+            remaster_root,
+            title: title.to_owned(),
+        })
+    }
+
+    /// Whether the HD presentation is active (`S > 1`).
+    fn is_hd(&self) -> bool {
+        self.render_scale.is_hd()
+    }
+
+    /// Builds the HD frame of `screen` into [`Self::hd_buffer`] (no-op in the
+    /// pixel-perfect mode).
+    ///
+    /// A match frame is rendered natively at `640·S × 480·S`
+    /// ([`max_app::ui::render_session_hd`]); every other screen — the menu, a
+    /// dialog, the "connecting" frame — is the nearest `×S` upscale of its 1:1
+    /// picture, the per-asset fallback of `remaster-hd.md` §R5.
+    fn render_hd<D: Dispatcher>(
+        &mut self,
+        screen: &Screen,
+        view: ScreenView<'_, D>,
+        frame: &max_render::buffer::RgbaBuffer,
+    ) where
+        App<D>: SessionLocal,
+    {
+        let Some(presenter) = self.hd.as_mut() else {
+            return;
+        };
+        let factor = self.render_scale.scale();
+
+        if matches!(screen, Screen::InSession { .. }) && view.app.is_some() {
+            max_app::ui::render_session_hd(&mut self.hd_buffer, view, presenter);
+        } else if self.hd_buffer.width() == frame.width() * factor
+            && self.hd_buffer.height() == frame.height() * factor
+        {
+            let upscaled =
+                max_render::upscale_nearest(frame, self.hd_buffer.width(), self.hd_buffer.height());
+
+            self.hd_buffer
+                .pixels_mut()
+                .copy_from_slice(upscaled.pixels());
+        }
+    }
+
+    /// Places the game frame below the menu bar and presents the result.
+    ///
+    /// The game frame (`frame`, 640×480 at `S = 1`, `640·S × 480·S` in HD) is
+    /// copied **unchanged** under a [`max_app::window_menu::BAR_HEIGHT`] band;
+    /// the menu overlay is then composited into that band (and, when a dropdown
+    /// is open, over the top of the game area — the menu is on top while open).
+    fn present(&mut self, frame: &max_render::buffer::RgbaBuffer) -> Result<()> {
+        let scale = self.render_scale.scale();
+        let bar_pixels = max_app::window_menu::BAR_HEIGHT as u32 * scale;
+        // The HD frame is built in `hd_buffer`; in pixel-perfect it is `frame`.
+        let game_frame = match self.hd.as_ref() {
+            Some(_) => &self.hd_buffer,
+            None => frame,
+        };
+
+        copy_buffer_at(game_frame, &mut self.present_buffer, 0, bar_pixels);
+        self.menu
+            .render_overlay(&mut self.menu_overlay, self.render_scale);
+        max_app::window_menu::composite_overlay(
+            &self.menu_overlay,
+            &mut self.present_buffer,
+            scale,
+        );
+        self.window
+            .present(&self.present_buffer)
+            .map_err(|error| anyhow!("{error}"))
+    }
+
+    /// Rebuilds the window and the render target at `scale`.
+    ///
+    /// Presentation only: the logical 640×480 coordinates, the [`App`] state,
+    /// the session and the screen machine are untouched. The window is recreated
+    /// at the render frame of the new scale (same `--scale` rule), the HD layers
+    /// are reloaded for it and the HD frame buffer is resized. A failure leaves
+    /// the current window in place.
+    fn apply_resolution(
+        &mut self,
+        scale: max_render::RenderScale,
+        assets: Option<&max_app::Assets>,
+    ) -> Result<()> {
+        if scale == self.render_scale {
+            return Ok(());
+        }
+
+        let frame_size = presentation_size(self.base_size);
+        let was_fullscreen = self.window.is_fullscreen();
+        let mut window = max_render::SdlWindow::new_with_render_scale(
+            &self.title,
+            frame_size.0,
+            frame_size.1,
+            scale,
+            self.window_scale,
+        )
+        .map_err(|error| anyhow!("{error}"))?;
+
+        if was_fullscreen {
+            window
+                .set_fullscreen(true)
+                .map_err(|error| anyhow!("{error}"))?;
+        }
+
+        let factor = scale.scale();
+
+        self.window = window;
+        self.render_scale = scale;
+        self.hd = load_hd_presenter(assets, scale, &self.remaster_root);
+        self.hd_buffer = max_render::buffer::RgbaBuffer::new(
+            self.base_size.0 * factor,
+            self.base_size.1 * factor,
+        );
+        self.present_buffer =
+            max_render::buffer::RgbaBuffer::new(frame_size.0 * factor, frame_size.1 * factor);
+
+        let (width, height) = self.base_size;
+        let (window_width, window_height) = self.window.size();
+
+        println!(
+            "UI: разрешение переключено на {} — кадр {width}x{height}, окно {window_width}x{window_height} точек",
+            scale.label()
+        );
+        log_hd_mode(scale, &self.window, &self.remaster_root, self.hd.as_ref());
+
+        Ok(())
+    }
+}
+
+/// Logical presentation size: the menu bar above the game frame.
+#[cfg(feature = "sdl")]
+fn presentation_size(base_size: (u32, u32)) -> (u32, u32) {
+    (
+        base_size.0,
+        base_size.1 + max_app::window_menu::BAR_HEIGHT as u32,
+    )
+}
+
+/// Copies `source` into `target` at `(x, y)`, row by row, clipped.
+///
+/// Both buffers use the same scale, so this is a plain block copy: no
+/// interpolation and no colour change — the game frame stays byte-identical.
+#[cfg(feature = "sdl")]
+fn copy_buffer_at(
+    source: &max_render::buffer::RgbaBuffer,
+    target: &mut max_render::buffer::RgbaBuffer,
+    x: u32,
+    y: u32,
+) {
+    let width = source.width().min(target.width().saturating_sub(x));
+
+    if width == 0 || y >= target.height() {
+        return;
+    }
+
+    let height = source.height().min(target.height().saturating_sub(y));
+    let source_row = source.width() as usize * max_render::BYTES_PER_PIXEL;
+    let target_row = target.width() as usize * max_render::BYTES_PER_PIXEL;
+    let copy_row = width as usize * max_render::BYTES_PER_PIXEL;
+    let target_pixels = target.pixels_mut();
+
+    for row in 0..height as usize {
+        let source_start = row * source_row;
+        let target_start =
+            (y as usize + row) * target_row + x as usize * max_render::BYTES_PER_PIXEL;
+
+        target_pixels[target_start..target_start + copy_row]
+            .copy_from_slice(&source.pixels()[source_start..source_start + copy_row]);
+    }
+}
+
+/// HD layers of `scale`; `None` in pixel-perfect (nothing is loaded then).
+#[cfg(feature = "sdl")]
+fn load_hd_presenter(
+    assets: Option<&max_app::Assets>,
+    scale: max_render::RenderScale,
+    root: &std::path::Path,
+) -> Option<max_app::HdPresenter> {
+    if !scale.is_hd() {
+        return None;
+    }
+
+    Some(match assets {
+        Some(assets) => max_app::HdPresenter::load(assets, scale, root),
+        None => max_app::HdPresenter::empty(scale),
+    })
+}
+
+/// One line with the resolved HD layer counts and VRAM (diagnostics).
+#[cfg(feature = "sdl")]
+fn log_hd_mode(
+    scale: max_render::RenderScale,
+    window: &max_render::SdlWindow,
+    root: &std::path::Path,
+    presenter: Option<&max_app::HdPresenter>,
+) {
+    let Some(presenter) = presenter else {
+        return;
+    };
+    let stats = presenter.stats();
+
+    println!(
+        "UI: HD-режим {} (кадр {}x{}, окно {}x{} точек), remaster={} — \
+         тайлы={} спрайты={} тени={} хром={} шрифты={}, VRAM {:.1} MiB",
+        scale.label(),
+        scale.render_size().0,
+        scale.render_size().1,
+        window.size().0,
+        window.size().1,
+        root.display(),
+        stats.hd_tiles,
+        stats.hd_sprites,
+        stats.hd_shadows,
+        stats.hd_chrome,
+        stats.hd_fonts,
+        stats.total_mib()
+    );
+}
+
 /// Loads the `Introduction` captions (C3).
 ///
 /// The oracle reads the `INTROSUB` resource (an ASCIIZ file name) and opens the JSON
@@ -1160,7 +1509,6 @@ fn finish_story_screen(
 #[cfg(feature = "sdl")]
 fn run_ui(cli: &Cli) -> Result<()> {
     use max_render::buffer::RgbaBuffer;
-    use max_render::sdl_window::SdlWindow;
 
     let config = &cli.config;
     let mut app = App::new(config.clone());
@@ -1189,74 +1537,61 @@ fn run_ui(cli: &Cli) -> Result<()> {
         println!("UI: режим отладки ИИ — туман войны отключён (--no-fow)");
     }
 
+    // `settings.jsonc`: the window/display settings, `CLI > file > default`
+    // (`max_app::settings`). It is read once at launch. A missing default file
+    // keeps the built-in defaults; an explicit `--settings` path or a malformed
+    // file must be visible instead of silently ignored.
+    let settings_path = match cli.settings.clone() {
+        Some(path) => path,
+        None => {
+            let local = max_app::settings::default_path();
+
+            if local.exists() {
+                local
+            } else {
+                repository_root()
+                    .map(|root| root.join(max_app::settings::SETTINGS_FILE_NAME))
+                    .unwrap_or(local)
+            }
+        }
+    };
+    let settings = match Settings::load(&settings_path)? {
+        Some(settings) => {
+            println!(
+                "UI: настройки окна загружены из {}",
+                settings_path.display()
+            );
+
+            settings
+        }
+        None if cli.settings.is_some() => {
+            bail!("--settings: файл {} не найден", settings_path.display())
+        }
+        None => Settings::default(),
+    };
+    let resolved = cli.presentation_settings(&settings)?;
+    let render_scale = resolved.render_scale;
+
     // Presentation switch (`remaster-hd.md` §R7). The window is sized on the
     // **render frame**: at HD the frame is `640·S × 480·S`, so the window opens
     // at least at the render frame size in points and the logical 640×480 frame
-    // keeps its own coordinates.
-    let (presentation, render_scale) = cli.presentation()?;
-    let hd_factor = render_scale.scale();
-    // The constructor takes the **logical** frame size and applies S itself: the
-    // window opens at the 640*S x 480*S render frame in points, so S is never
-    // applied twice. The old code passed 640*S here and the presentation switch
-    // multiplied it again: the geometry then laid out a 640*S^2 frame, which
-    // cropped the interface to its centre in the window and shifted every click.
-    let mut window = SdlWindow::new_with_render_scale(
+    // keeps its own coordinates. The constructor takes the **logical** frame
+    // size and applies S itself, so S is never applied twice.
+    //
+    // The presentation owns the window, the HD layers and the in-window menu:
+    // a resolution chosen in the menu rebuilds only these resources and leaves
+    // the `App`/session untouched.
+    let mut presentation = WindowPresentation::new(
         "M.A.X. — Rust client (M4.2 HUD)",
-        config.screen_width,
-        config.screen_height,
+        (config.screen_width, config.screen_height),
         render_scale,
-        normalized_window_scale(cli.window_scale),
-    )
-    .map_err(|error| anyhow!("{error}"))?;
-    // HD layers of the remaster (`remaster-hd.md` §R3–§R7), resolved once.
-    // `PixelPerfect` loads nothing: the historical path must not depend on the
-    // remaster being present. Every missing asset falls back per asset, so a
-    // partial remaster still runs.
-    let mut hd = if presentation.is_hd() {
-        let root = cli
-            .remaster_dir
+        resolved.window_scale,
+        resolved.fullscreen,
+        cli.remaster_dir
             .clone()
-            .unwrap_or_else(|| max_app::default_remaster_root(repository_root().as_deref()));
-        let presenter = match app.assets() {
-            Some(assets) => max_app::HdPresenter::load(assets, render_scale, &root),
-            None => max_app::HdPresenter::empty(render_scale),
-        };
-        let stats = presenter.stats();
-
-        println!(
-            "UI: HD-режим {} (кадр {}x{}, окно {}x{} точек), remaster={} — \
-             тайлы={} спрайты={} тени={} хром={} шрифты={}, VRAM {:.1} MiB",
-            render_scale.label(),
-            config.screen_width * hd_factor,
-            config.screen_height * hd_factor,
-            window.size().0,
-            window.size().1,
-            root.display(),
-            stats.hd_tiles,
-            stats.hd_sprites,
-            stats.hd_shadows,
-            stats.hd_chrome,
-            stats.hd_fonts,
-            stats.total_mib()
-        );
-
-        Some(presenter)
-    } else {
-        None
-    };
-    // The HD frame is `640·S × 480·S`; menus are the nearest `×S` upscale of
-    // the 1:1 screen (the per-asset fallback), the session is rendered natively.
-    let mut hd_buffer = RgbaBuffer::new(
-        config.screen_width * hd_factor,
-        config.screen_height * hd_factor,
-    );
-    if cli.fullscreen {
-        // Presentation only: the 640×480 frame is unchanged, the geometry is
-        // recomputed for the display (task 1.4.2).
-        if let Err(error) = window.set_fullscreen(true) {
-            eprintln!("UI: полноэкранный режим недоступен ({error}); окно остаётся оконным");
-        }
-    }
+            .unwrap_or_else(|| max_app::default_remaster_root(repository_root().as_deref())),
+        app.assets(),
+    )?;
     let mut ctx = UiContext::new(
         Box::new(HorizonMenuClient::new(
             &config.horizon_host,
@@ -1374,10 +1709,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
     }
     let mut reported_music_errors = 0usize;
     // `main.cpp:39-46`: the intro movie is the first screen when the data is present.
-    let mut screen = max_app::ui::startup_screen(
-        ctx.intro_mve_path.clone(),
-        ctx.intro_subtitles.clone(),
-    );
+    let mut screen =
+        max_app::ui::startup_screen(ctx.intro_mve_path.clone(), ctx.intro_subtitles.clone());
 
     if let Screen::Introduction(intro) = &screen {
         println!(
@@ -1411,7 +1744,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
     let mut step_clock = max_app::presentation::FixedStepClock::new();
     let mut pacer = max_app::presentation::FramePacer::at_60hz();
     let mut frame_stats = max_app::presentation::FrameStats::default();
-    let mut was_focused = window.is_focused();
+    let mut was_focused = presentation.window.is_focused();
     let mut logged_frames = 0u64;
     // The reconnect policy shared by `--connect` and `--ui`.
     let mut reconnect = ReconnectPolicy::default();
@@ -1429,16 +1762,16 @@ fn run_ui(cli: &Cli) -> Result<()> {
         "UI: кадр {}x{}, окно {}x{} точек / {}x{} пикселей (DPI×{:.2}, масштаб {}, \
          дисплей {:.0} Гц, fullscreen={}); меню — мышь/стрелки, Enter; \
          в игре — LMB выбор/движение/меню, RMB выбор/контекст, клик по врагу — атака, End Turn; Esc — выход",
-        config.screen_width * hd_factor,
-        config.screen_height * hd_factor,
-        window.size().0,
-        window.size().1,
-        window.output_size().0,
-        window.output_size().1,
-        window.dpi_scale(),
-        window.frame_scale().scale(),
-        window.display_refresh_rate(),
-        window.is_fullscreen()
+        render_scale.render_size().0,
+        render_scale.render_size().1,
+        presentation.window.size().0,
+        presentation.window.size().1,
+        presentation.window.output_size().0,
+        presentation.window.output_size().1,
+        presentation.window.dpi_scale(),
+        presentation.window.frame_scale().scale(),
+        presentation.window.display_refresh_rate(),
+        presentation.window.is_fullscreen()
     );
 
     // QA layer 2.5: recording a manual game into a `.qa` script. We write the same
@@ -1465,7 +1798,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
             recorder.begin_frame();
         }
 
-        let (running, events) = window.poll_input();
+        let (running, events) = presentation.window.poll_input();
 
         if !running {
             break;
@@ -1474,7 +1807,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // 1.4.2 alt-tab gate: focus is presentation only. On regain the step
         // clock and the frame cadence restart from "now", so the time spent
         // away neither resets the match nor turns into a burst of ticks.
-        let focused = window.is_focused();
+        let focused = presentation.window.is_focused();
 
         if focused && !was_focused {
             step_clock.reset();
@@ -1486,6 +1819,35 @@ fn run_ui(cli: &Cli) -> Result<()> {
 
         for event in events {
             let input = input_event(event);
+
+            // The in-window menu bar (`File`/`Settings`) works over every
+            // screen: it consumes only its own clicks/Esc and reports the two
+            // presentation actions. A resolution switch rebuilds the window and
+            // the render target only; `App`, the session and `screen` stay as
+            // they are.
+            let menu_response = presentation.menu.handle_input(input);
+
+            match menu_response.action {
+                WindowMenuAction::None => {}
+                WindowMenuAction::Quit => {
+                    finish_recording(&mut recorder)?;
+
+                    return Ok(());
+                }
+                WindowMenuAction::SetResolution(scale) => {
+                    if let Err(error) = presentation.apply_resolution(scale, app.assets()) {
+                        eprintln!("UI: смена разрешения: {error:#}");
+                    }
+                }
+            }
+
+            if menu_response.consumed {
+                continue;
+            }
+
+            // The window has the menu bar above the game frame; the screen
+            // machine works in the original 640×480 coordinates.
+            let input = max_app::window_menu::to_game_event(input);
 
             if std::env::var_os("MAX_DEBUG_INPUT").is_some() {
                 let name = match &screen {
@@ -1982,7 +2344,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // Mouse cursor: menu/panels — HANDPTR, map — MAP_PTR/orders/units
         // (`Cursor_SetCursor` + `GameManager_GetWindowCursor`). Without SDL cursors
         // (or without loaded resources) the system cursor remains.
-        update_window_cursor(&mut window, &app, &screen, mouse);
+        update_window_cursor(&mut presentation.window, &app, &screen, mouse);
 
         // C++ `settings["disable_fx"]`/`fx_sound_level`: the flag reaches
         // the audio layer in the same frame in which it was changed in Preferences.
@@ -2041,20 +2403,13 @@ fn run_ui(cli: &Cli) -> Result<()> {
             // "Connecting" frame: while Horizon/the lobby run, the window is not empty.
             ctx.status = format!("Connecting to {}…", request.game_id);
             screen.render(&mut buffer, ctx.view(Some(&app)));
-            let _ = present_ui_frame(
-                &mut window,
-                hd.as_mut(),
-                &screen,
-                &app,
-                &ctx,
-                &buffer,
-                &mut hd_buffer,
-            );
+            presentation.render_hd(&screen, ctx.view(Some(&app)), &buffer);
+            presentation.present(&buffer)?;
 
             let status = match run_ui_session(
                 runtime,
                 &mut app,
-                &mut window,
+                &mut presentation,
                 &screen,
                 &request,
                 cli.turns.unwrap_or(0),
@@ -2062,8 +2417,6 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 join_retry,
                 Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
                 recorder.as_mut(),
-                hd.as_mut(),
-                &mut hd_buffer,
             ) {
                 Ok(report) => {
                     print_network(&report);
@@ -2089,7 +2442,7 @@ fn run_ui(cli: &Cli) -> Result<()> {
         // exactly one side effect — it steps the button-press pulse
         // (`press::advance`) — which is kept here so the interface timing is
         // identical to the pixel-perfect path.
-        let hd_session = hd.is_some() && matches!(screen, Screen::InSession { .. });
+        let hd_session = presentation.is_hd() && matches!(screen, Screen::InSession { .. });
 
         if hd_session {
             max_app::press::advance();
@@ -2097,15 +2450,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
             screen.render(&mut buffer, ctx.view(Some(&app)));
         }
 
-        present_ui_frame(
-            &mut window,
-            hd.as_mut(),
-            &screen,
-            &app,
-            &ctx,
-            &buffer,
-            &mut hd_buffer,
-        )?;
+        presentation.render_hd(&screen, ctx.view(Some(&app)), &buffer);
+        presentation.present(&buffer)?;
 
         // 1.4.2: 60 Hz frame budget evidence. The pacer sleeps one period after
         // the frame; the stats count how many frames exceeded 16.67 ms.
@@ -2159,48 +2505,6 @@ fn run_ui(_cli: &Cli) -> Result<()> {
          (входит в default-features): cargo run -p max_app; \
          консольная сборка клиента — с --no-default-features"
     )
-}
-
-/// Presents one UI frame: the historical 640×480 buffer, or its HD rendering.
-///
-/// In the HD modes the session frame is rendered natively at `640·S × 480·S`
-/// ([`max_app::ui::render_session_hd`] — HD tiles/sprites/chrome and the HD
-/// message box); every other screen is the nearest `×S` upscale of its 1:1
-/// picture, because the interface is laid out in 640×480 (`remaster-hd.md`
-/// §R5) and an asset without an HD counterpart falls back to exactly that.
-///
-/// Presentation only: the UI state and the simulation are untouched.
-#[cfg(feature = "sdl")]
-fn present_ui_frame(
-    window: &mut max_render::SdlWindow,
-    hd: Option<&mut max_app::HdPresenter>,
-    screen: &Screen,
-    app: &App,
-    ctx: &UiContext,
-    buffer: &max_render::buffer::RgbaBuffer,
-    hd_buffer: &mut max_render::buffer::RgbaBuffer,
-) -> Result<()> {
-    match hd {
-        Some(presenter) => {
-            if matches!(screen, Screen::InSession { .. }) {
-                max_app::ui::render_session_hd(hd_buffer, ctx.view(Some(app)), presenter);
-            } else if hd_buffer.width() == buffer.width() * presenter.scale().scale()
-                && hd_buffer.height() == buffer.height() * presenter.scale().scale()
-            {
-                let upscaled =
-                    max_render::upscale_nearest(buffer, hd_buffer.width(), hd_buffer.height());
-
-                hd_buffer.pixels_mut().copy_from_slice(upscaled.pixels());
-            }
-
-            window
-                .present(hd_buffer)
-                .map_err(|error| anyhow!("{error}"))
-        }
-        None => window
-            .present(buffer)
-            .map_err(|error| anyhow!("{error}")),
-    }
 }
 
 /// Sets the window cursor by context (`Cursor_SetCursor`).
@@ -2275,7 +2579,7 @@ fn update_window_cursor(
 fn run_ui_session(
     runtime: &tokio::runtime::Runtime,
     app: &mut App,
-    window: &mut max_render::SdlWindow,
+    presentation: &mut WindowPresentation,
     screen: &Screen,
     request: &SessionRequest,
     max_turns: u32,
@@ -2283,8 +2587,6 @@ fn run_ui_session(
     join_retry: JoinRetryPolicy,
     turn_wait: Duration,
     recorder: Option<&mut Recorder>,
-    hd: Option<&mut max_app::HdPresenter>,
-    hd_buffer: &mut max_render::buffer::RgbaBuffer,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
         game_id: request.game_id.clone(),
@@ -2297,14 +2599,12 @@ fn run_ui_session(
     };
     let (width, height) = (app.config().screen_width, app.config().screen_height);
     let mut sink = UiSessionSink {
-        window,
+        presentation,
         screen: screen.clone(),
         buffer: max_render::buffer::RgbaBuffer::new(width, height),
         status: String::new(),
         game_id: request.game_id.clone(),
         recorder,
-        hd,
-        hd_buffer,
     };
 
     runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
@@ -2321,19 +2621,20 @@ fn run_ui_session(
 /// the order modes, the buttons End Turn/Menu. The session channel decides what
 /// happens to the orders (SDL/UI Stage C2): the network loop collects them itself
 /// (`net::flush_hud_orders`) — no `online` flag is passed.
+///
+/// The in-window menu bar (`File`/`Settings`) is handled first, exactly as in
+/// the menu loop: it consumes only its own clicks/Esc, and a resolution switch
+/// rebuilds the presentation resources while the session keeps running.
 #[cfg(feature = "sdl")]
 struct UiSessionSink<'a> {
-    window: &'a mut max_render::SdlWindow,
+    /// Window, HD layers and the menu bar; presentation only.
+    presentation: &'a mut WindowPresentation,
     screen: Screen,
     buffer: max_render::buffer::RgbaBuffer,
     status: String,
     game_id: String,
     /// QA layer 2.5: the same event stream that goes to the HUD.
     recorder: Option<&'a mut Recorder>,
-    /// HD layers of the remaster (`remaster-hd.md` §R7); `None` — pixel-perfect.
-    hd: Option<&'a mut max_app::HdPresenter>,
-    /// `640·S × 480·S` frame the HD presentation is built into.
-    hd_buffer: &'a mut max_render::buffer::RgbaBuffer,
 }
 
 #[cfg(feature = "sdl")]
@@ -2341,16 +2642,34 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
     fn poll_input(&mut self, app: &mut App<NetworkDispatcher>) -> bool {
         app.update_visual_units(1.0 / 60.0);
 
-        // 1. This frame's input → HUD (selection, orders, buttons).
+        // 1. This frame's input → menu bar, then HUD (selection, orders, buttons).
         if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.begin_frame();
         }
 
-        let (running, events) = self.window.poll_input();
+        let (running, events) = self.presentation.window.poll_input();
         let mut leave = false;
 
         for event in events {
             let input = input_event(event);
+            let menu_response = self.presentation.menu.handle_input(input);
+
+            match menu_response.action {
+                WindowMenuAction::None => {}
+                WindowMenuAction::Quit => leave = true,
+                WindowMenuAction::SetResolution(scale) => {
+                    if let Err(error) = self.presentation.apply_resolution(scale, app.assets()) {
+                        eprintln!("UI: смена разрешения: {error:#}");
+                    }
+                }
+            }
+
+            if menu_response.consumed {
+                continue;
+            }
+
+            // Presentation → game frame: the menu bar is above the 640×480 frame.
+            let input = max_app::window_menu::to_game_event(input);
 
             if let Some(recorder) = self.recorder.as_deref_mut() {
                 recorder.record(
@@ -2414,20 +2733,14 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
 
         // HD presentation: `640·S × 480·S` from the remaster layers, else the
         // nearest `×S` upscale of the 1:1 frame for the non-session screens.
-        if let Some(hd) = self.hd.as_deref_mut() {
-            max_app::ui::render_session_hd(self.hd_buffer, view, hd);
-        }
+        self.presentation
+            .render_hd(&self.screen, view, &self.buffer);
 
         // 1.4.2 alt-tab gate: while the window is minimized/occluded the frame
         // is not uploaded, but the network loop keeps ticking — barrier
         // timeouts and turn timers are not affected by focus.
-        if self.window.should_present() {
-            let frame = match self.hd.as_deref() {
-                Some(_) => &*self.hd_buffer,
-                None => &self.buffer,
-            };
-
-            if let Err(error) = self.window.present(frame) {
+        if self.presentation.window.should_present() {
+            if let Err(error) = self.presentation.present(&self.buffer) {
                 eprintln!("SDL: {error}");
                 return false;
             }
@@ -2451,33 +2764,11 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             missions: None,
         };
         self.screen.render(&mut self.buffer, view);
+        self.presentation
+            .render_hd(&self.screen, view, &self.buffer);
 
-        // HD: the menu screen is the nearest `×S` upscale of its 1:1 picture.
-        if let Some(hd) = self.hd.as_deref() {
-            let factor = hd.scale().scale();
-
-            if self.hd_buffer.width() == self.buffer.width() * factor
-                && self.hd_buffer.height() == self.buffer.height() * factor
-            {
-                let upscaled = max_render::upscale_nearest(
-                    &self.buffer,
-                    self.hd_buffer.width(),
-                    self.hd_buffer.height(),
-                );
-
-                self.hd_buffer
-                    .pixels_mut()
-                    .copy_from_slice(upscaled.pixels());
-            }
-        }
-
-        if self.window.should_present() {
-            let frame = match self.hd.as_deref() {
-                Some(_) => &*self.hd_buffer,
-                None => &self.buffer,
-            };
-
-            if let Err(error) = self.window.present(frame) {
+        if self.presentation.window.should_present() {
+            if let Err(error) = self.presentation.present(&self.buffer) {
                 eprintln!("SDL: {error}");
                 return false;
             }
@@ -2604,6 +2895,12 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          существующий файл не перезаписывается — суффикс -1;
                          без SDL запись доступна как API max_app::qa::Recorder)
 
+МЕНЮ ОКНА (работает в главном меню и в игре):
+    File → Exit          закрыть клиент
+    Settings → Resolutions → 640x480 (1:1) / 1280x960 (x2) / 2560x1920 (x4)
+                         смена разрешения на лету (презентация only: состояние
+                         партии, симуляция и сессия не меняются)
+
 ИГРА:
     --turns N            тиков в --demo (5) / лимит ходов в --connect и --host
                          (0 — без лимита)
@@ -2625,6 +2922,9 @@ max-brh — клиент M.A.X. (core + net + assets + render)
     --hd-scale N         кратность HD: 2 или 4 (включает --hd; 1 — pixel-perfect)
     --remaster-dir DIR   каталог HD-ассетов и remaster-manifest.json
                          (по умолчанию max-brh/target/remaster)
+    --settings PATH      settings.jsonc с разрешением/масштабом/полным экраном
+                         (приоритет CLI > settings.jsonc > дефолт; по умолчанию
+                         settings.jsonc в рабочем каталоге или корне репозитория)
     --fps                печатать статистику 60 Гц (`PRESENT: …`) в stderr
                           раз в 600 кадров (бюджет 16.67 мс)
     --seed N             seed ГПСЧ для --new-game

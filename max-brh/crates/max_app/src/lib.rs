@@ -80,6 +80,7 @@ pub mod saveload;
 pub mod scroll;
 pub mod selfdestruct;
 pub mod session;
+pub mod settings;
 pub mod setup;
 pub mod sfx;
 pub mod soak;
@@ -92,6 +93,7 @@ pub mod unitmenu;
 pub mod unitstats;
 pub mod upgrademenu;
 pub mod vision;
+pub mod window_menu;
 pub mod winloss;
 
 use std::fmt;
@@ -171,6 +173,11 @@ pub use saveload::{
     SaveConfirmAction, SaveLoadAction, SaveLoadAssets, SaveLoadMenu, SaveLoadMode, AUTOSAVE_SLOT,
     DEFAULT_SAVE_SLOT, LAST_SLOT, SLOTS_PER_PAGE,
 };
+pub use settings::{
+    default_path as default_settings_path, resolve as resolve_presentation, CliPresentation,
+    DisplaySettings, PresentationSettings, Settings, SettingsError, WindowSettings,
+    SETTINGS_FILE_NAME,
+};
 pub use soak::{run_soak, SoakOptions, SoakReport, SoakTurn};
 pub use subtitles::{SubtitleEntry, SubtitleError, SubtitleTrack};
 pub use transfermenu::{TransferAction, TransferMenu, TransferMenuAssets};
@@ -186,6 +193,10 @@ pub use unitmenu::{
 };
 pub use unitstats::{UnitStatsAction, UnitStatsAssets, UnitStatsMenu};
 pub use upgrademenu::{UpgradeAction, UpgradeFilter, UpgradeMenu, UpgradeMenuAssets};
+pub use window_menu::{
+    composite_overlay, resolution_label, to_game_event, MenuItem, MenuPage, MenuResponse,
+    WindowMenu, WindowMenuAction, BAR_HEIGHT, RESOLUTIONS,
+};
 
 /// Application mode (affects only the CLI and diagnostics, not the simulation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
