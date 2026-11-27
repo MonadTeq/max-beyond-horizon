@@ -156,7 +156,18 @@ impl HdImage {
 /// hit tests keep using them), and this is the only translation into render
 /// pixels. In [`RenderScale::PixelPerfect`] it is the identity.
 pub fn scaled_rect(rect: Rect, scale: RenderScale) -> PixelRect {
-    let factor = scale.scale() as i32;
+    scaled_rect_by(rect, scale.scale())
+}
+
+/// [`scaled_rect`] by a raw render factor.
+///
+/// The SSAA pass renders the frame at `S·aa`
+/// (`max-brh-docs/development/ssaa-design.md`), so the logical rectangle is
+/// multiplied by the render factor, not by `S` alone: the HD assets of the
+/// `×S` layers are then placed by their equal-block mapping, which expands every
+/// texel to an `aa × aa` block (the nearest `×aa` of the HD picture).
+pub fn scaled_rect_by(rect: Rect, factor: u32) -> PixelRect {
+    let factor = factor.max(1) as i32;
 
     PixelRect::new(
         rect.x * factor,
@@ -169,7 +180,13 @@ pub fn scaled_rect(rect: Rect, scale: RenderScale) -> PixelRect {
 /// The same translation for a 640×480-space [`PixelRect`] (e.g. a `layout`
 /// constant such as `MAIN_MAP`); identity in [`RenderScale::PixelPerfect`].
 pub fn scaled_pixel_rect(rect: PixelRect, scale: RenderScale) -> PixelRect {
-    let factor = scale.scale() as i32;
+    scaled_pixel_rect_by(rect, scale.scale())
+}
+
+/// [`scaled_pixel_rect`] by a raw render factor (the SSAA pass, see
+/// [`scaled_rect_by`]).
+pub fn scaled_pixel_rect_by(rect: PixelRect, factor: u32) -> PixelRect {
+    let factor = factor.max(1) as i32;
 
     PixelRect::new(
         rect.ulx * factor,
@@ -542,10 +559,23 @@ impl HdChrome {
         )
     }
 
+    /// The whole render frame at a raw render factor (`×S·aa` in the SSAA pass).
+    pub fn frame_rect_at(&self, factor: u32) -> PixelRect {
+        scaled_rect_by(
+            Rect::new(0, 0, layout::WINDOW_WIDTH, layout::WINDOW_HEIGHT),
+            factor,
+        )
+    }
+
     /// Render-pixel rectangle of a logical 640×480 rectangle at this bank's
     /// scale. This is the only place `S` changes layout.
     pub fn render_rect(&self, rect: Rect) -> PixelRect {
         scaled_rect(rect, self.scale)
+    }
+
+    /// [`Self::render_rect`] at a raw render factor (the SSAA pass).
+    pub fn render_rect_at(&self, rect: Rect, factor: u32) -> PixelRect {
+        scaled_rect_by(rect, factor)
     }
 
     /// Draws the HD `FRAMEPIC` over the whole render frame.
@@ -553,13 +583,20 @@ impl HdChrome {
     /// Returns `None` when there is no HD frame (or at `S = 1`): the caller then
     /// draws the original palette `BigImage`. `Some(painted)` on success.
     pub fn draw_frame(&self, dst: &mut RgbaBuffer) -> Option<u32> {
+        self.draw_frame_at(dst, self.scale.scale())
+    }
+
+    /// [`Self::draw_frame`] at a raw render factor: the `×S` HD texture is
+    /// stretched over the `×S·aa` frame, i.e. every texel becomes an `aa × aa`
+    /// block (the nearest `×aa` of the HD picture, SSAA pass).
+    pub fn draw_frame_at(&self, dst: &mut RgbaBuffer, factor: u32) -> Option<u32> {
         if !self.is_hd() {
             return None;
         }
 
         let image = self.frame.as_ref()?;
 
-        Some(stretch_into(dst, image, self.frame_rect()))
+        Some(stretch_into(dst, image, self.frame_rect_at(factor)))
     }
 
     /// Draws one HD panel half into its logical rectangle (`×S`).
@@ -567,6 +604,16 @@ impl HdChrome {
     /// `None` — no HD panel: the original `SimpleImage` over the window palette
     /// is the fallback.
     pub fn draw_panel(&self, dst: &mut RgbaBuffer, part: ChromePanel) -> Option<u32> {
+        self.draw_panel_at(dst, part, self.scale.scale())
+    }
+
+    /// [`Self::draw_panel`] at a raw render factor (the SSAA pass).
+    pub fn draw_panel_at(
+        &self,
+        dst: &mut RgbaBuffer,
+        part: ChromePanel,
+        factor: u32,
+    ) -> Option<u32> {
         if !self.is_hd() {
             return None;
         }
@@ -579,7 +626,7 @@ impl HdChrome {
         Some(stretch_into(
             dst,
             image,
-            self.render_rect(part.logical_rect()),
+            self.render_rect_at(part.logical_rect(), factor),
         ))
     }
 
@@ -589,13 +636,24 @@ impl HdChrome {
     /// `None` — no HD image for that name: the original palette image is the
     /// fallback.
     pub fn draw_image(&self, dst: &mut RgbaBuffer, name: &str, rect: Rect) -> Option<u32> {
+        self.draw_image_at(dst, name, rect, self.scale.scale())
+    }
+
+    /// [`Self::draw_image`] at a raw render factor (the SSAA pass).
+    pub fn draw_image_at(
+        &self,
+        dst: &mut RgbaBuffer,
+        name: &str,
+        rect: Rect,
+        factor: u32,
+    ) -> Option<u32> {
         if !self.is_hd() {
             return None;
         }
 
         let image = self.images.get(name)?;
 
-        Some(stretch_into(dst, image, self.render_rect(rect)))
+        Some(stretch_into(dst, image, self.render_rect_at(rect, factor)))
     }
 
     /// Draws the window background: the HD frame when loaded, else the original
@@ -604,7 +662,19 @@ impl HdChrome {
     /// Always paints (when the source frame is valid) and returns the number of
     /// written pixels — this is the per-asset fallback of the full frame.
     pub fn draw_frame_with_fallback(&self, dst: &mut RgbaBuffer, source: &ChromeSource) -> u32 {
-        if let Some(painted) = self.draw_frame(dst) {
+        self.draw_frame_with_fallback_at(dst, source, self.scale.scale())
+    }
+
+    /// [`Self::draw_frame_with_fallback`] at a raw render factor: both the HD
+    /// texture and the original palette fallback are stretched to `×S·aa`, so
+    /// the SSAA resolve sees the same picture either way.
+    pub fn draw_frame_with_fallback_at(
+        &self,
+        dst: &mut RgbaBuffer,
+        source: &ChromeSource,
+        factor: u32,
+    ) -> u32 {
+        if let Some(painted) = self.draw_frame_at(dst, factor) {
             return painted;
         }
 
@@ -612,7 +682,7 @@ impl HdChrome {
 
         stretch_sampled(
             dst,
-            self.frame_rect(),
+            self.frame_rect_at(factor),
             frame.width as u32,
             frame.height as u32,
             |x, y| frame.rgb(x, y).map(Rgba::from_rgb),

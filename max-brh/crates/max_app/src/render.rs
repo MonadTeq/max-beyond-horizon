@@ -22,8 +22,10 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
+use max_render::hd_chrome::scaled_pixel_rect_by;
 use max_render::map_render::{render_map_into, TileStyle};
 use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
+use max_render::render_scale::AaMode;
 use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
 use max_render::viewport::{draw_order, Viewport};
@@ -1589,19 +1591,36 @@ impl<D: Dispatcher> App<D> {
     /// In [`RenderScale::PixelPerfect`] the presenter cannot be HD and this
     /// method returns the historical frame: `S = 1` stays byte-for-byte
     /// [`App::render_frame_with_stats`].
-    pub fn render_frame_hd(&self, hd: &mut HdPresenter) -> RgbaBuffer {
-        self.render_frame_hd_with_stats(hd).0
+    ///
+    /// [`AaMode`] is the orthogonal super-sampling axis
+    /// (`max-brh-docs/development/ssaa-design.md`): at `aa > 1` the frame is
+    /// built at `640·S·aa × 480·S·aa` — the `×S` HD assets are placed by their
+    /// normal equal-block mapping, so every texel expands to an `aa × aa` block,
+    /// while the camera/geometry (`viewport.zoom = 64·S·aa`) and the UI
+    /// composites run at the full render factor. The caller resolves the result
+    /// with [`max_render::downscale_box`] — the frame is **not** resolved here,
+    /// so `aa = Off` is exactly the previous frame and the SSAA gate can compare
+    /// the two.
+    pub fn render_frame_hd(&self, hd: &mut HdPresenter, aa: AaMode) -> RgbaBuffer {
+        self.render_frame_hd_with_stats(hd, aa).0
     }
 
     /// [`App::render_frame_hd`] plus drawing statistics.
-    pub fn render_frame_hd_with_stats(&self, hd: &mut HdPresenter) -> (RgbaBuffer, RenderStats) {
+    pub fn render_frame_hd_with_stats(
+        &self,
+        hd: &mut HdPresenter,
+        aa: AaMode,
+    ) -> (RgbaBuffer, RenderStats) {
         let scale = hd.scale();
 
         if !scale.is_hd() {
             return self.render_frame_with_stats();
         }
 
-        let factor = scale.scale();
+        // `S` is the asset scale of the HD layers; `factor` is the render factor
+        // of this frame (`S·aa`). `aa = Off` keeps the historical `S` frame.
+        let scale_factor = scale.scale();
+        let factor = scale_factor * aa.factor();
         let (width, height) = self.viewport().screen();
         let style = TileStyle::default();
         let mut stats = RenderStats::default();
@@ -1609,11 +1628,11 @@ impl<D: Dispatcher> App<D> {
 
         if self.chrome_active() {
             // The HD window background (or the original palette `FRAMEPIC`
-            // nearest-scaled `×S`).
-            hd.draw_chrome_frame(&mut frame);
+            // nearest-scaled to the render factor).
+            hd.draw_chrome_frame_at(&mut frame, factor);
 
             let area = max_render::layout::MAIN_MAP;
-            let scaled_area = max_render::hd_chrome::scaled_pixel_rect(area, scale);
+            let scaled_area = scaled_pixel_rect_by(area, factor);
             let mut map = RgbaBuffer::filled(
                 scaled_area.width.max(1) as u32,
                 scaled_area.height.max(1) as u32,
@@ -1627,7 +1646,7 @@ impl<D: Dispatcher> App<D> {
             // Interface layers, bottom to top: panels, the message box over
             // the map, then the modal windows.
             self.composite_foreground(&mut frame, factor, Foreground::Panels);
-            self.draw_status_message_hd(&mut frame, scaled_area, hd.fonts());
+            self.draw_status_message_hd(&mut frame, scaled_area, hd.fonts(), aa);
             self.composite_foreground(&mut frame, factor, Foreground::Modals);
         } else {
             // Full-screen mode: the whole frame is the map.
@@ -1635,11 +1654,9 @@ impl<D: Dispatcher> App<D> {
 
             self.draw_map_hd(&mut frame, &viewport, &mut stats, hd, false);
             self.composite_foreground(&mut frame, factor, Foreground::Modals);
-            let whole = max_render::hd_chrome::scaled_pixel_rect(
-                PixelRect::new(0, 0, width as i32, height as i32),
-                scale,
-            );
-            self.draw_status_message_hd(&mut frame, whole, hd.fonts());
+            let whole =
+                scaled_pixel_rect_by(PixelRect::new(0, 0, width as i32, height as i32), factor);
+            self.draw_status_message_hd(&mut frame, whole, hd.fonts(), aa);
         }
 
         (frame, stats)
@@ -1741,6 +1758,7 @@ impl<D: Dispatcher> App<D> {
         frame: &mut RgbaBuffer,
         area: PixelRect,
         fonts: &max_render::hd_text::HdFonts,
+        aa: AaMode,
     ) {
         let Some(hint) = self.hud().hint.as_deref() else {
             return;
@@ -1763,6 +1781,7 @@ impl<D: Dispatcher> App<D> {
             self.hud().hint_style,
             snow,
             fonts.font(max_render::text::GnwFontId::Font5),
+            aa.factor(),
         );
     }
 

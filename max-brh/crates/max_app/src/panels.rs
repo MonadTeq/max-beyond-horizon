@@ -1907,6 +1907,13 @@ pub fn draw_status_message(
 /// The background is the same colour table applied to the already drawn pixels
 /// (`MessageManager_MessageBox_BgColorArray`), exactly like the 1:1 function:
 /// the box is transparent over the map, not an opaque fill.
+///
+/// `aa` is the SSAA multiplier of the frame (`ssaa-design.md`): the box and the
+/// text are laid out at `S·aa` and the `×S` font atlas is drawn as the nearest
+/// `×aa` upscale, so an `aa = 2/4` frame resolves back to exactly this message
+/// box at `S` (the raster text stays crisp, the geometry around it is
+/// anti-aliased).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_status_message_hd(
     frame: &mut RgbaBuffer,
     area: PixelRect,
@@ -1915,13 +1922,15 @@ pub fn draw_status_message_hd(
     style: MessageBoxStyle,
     snow: bool,
     font: &max_render::hd_text::HdFontAtlas,
+    aa: u32,
 ) -> u32 {
     if text.is_empty() || area.width <= 0 {
         return 0;
     }
 
-    let factor = font.scale().scale().max(1) as i32;
-    // `MessageManager_WrapText(text, width - 20)` at `×S`.
+    let aa = aa.max(1) as i32;
+    let factor = font.scale().scale().max(1) as i32 * aa;
+    // `MessageManager_WrapText(text, width - 20)` at `×S·aa`.
     let max_line = (area.width - 20 * factor).max(20 * factor);
     let mut lines: Vec<String> = Vec::new();
 
@@ -1935,7 +1944,7 @@ pub fn draw_status_message_hd(
                 format!("{current} {word}")
             };
 
-            if font.text_width(&candidate) > max_line && !current.is_empty() {
+            if font.text_width(&candidate) * aa > max_line && !current.is_empty() {
                 lines.push(std::mem::take(&mut current));
                 current.push_str(word);
             } else {
@@ -1948,7 +1957,7 @@ pub fn draw_status_message_hd(
 
     let width = (lines
         .iter()
-        .map(|line| font.text_width(line))
+        .map(|line| font.text_width(line) * aa)
         .max()
         .unwrap_or(0)
         + 20 * factor)
@@ -1985,13 +1994,14 @@ pub fn draw_status_message_hd(
             continue;
         }
 
-        // `MessageManager_DrawMessageBoxText`: the black copy at `+S, +S` first,
-        // the white fill on top.
-        let drawn = max_render::hd_text::draw_text_hd_outlined(
+        // `MessageManager_DrawMessageBoxText`: the black copy at `+S·aa, +S·aa`
+        // first, the white fill on top.
+        let drawn = max_render::hd_text::draw_text_hd_outlined_scaled(
             frame,
             rect.ulx + 10 * factor,
             rect.uly + 10 * factor + 10 * factor * index as i32,
             font,
+            aa as u32,
             line,
             palette.rgba(0xFF),
             palette.rgba(0),

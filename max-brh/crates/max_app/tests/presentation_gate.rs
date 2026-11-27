@@ -35,7 +35,7 @@ use max_core::team::TeamKind;
 use max_core::universe::{Dispatcher, LocalDispatcher};
 use max_render::buffer::RgbaBuffer;
 use max_render::presentation::ScreenGeometry;
-use max_render::render_scale::RenderScale;
+use max_render::render_scale::{AaMode, RenderScale};
 use max_render::{FRAME_HEIGHT, FRAME_WIDTH};
 
 /// Steps executed after the player's turn starts: enough to close orders, move
@@ -521,7 +521,7 @@ fn hd_presentation_gate_body() {
             app.local_update(SIMULATION_DT);
         }
 
-        let frame = app.render_frame_hd(&mut hd);
+        let frame = app.render_frame_hd(&mut hd, AaMode::Off);
 
         assert_eq!(
             frame.width(),
@@ -583,6 +583,76 @@ fn hd_geometry_keeps_the_logical_frame_and_the_mouse_transform() {
         assert_eq!(
             geometry.window_to_frame(0, (FRAME_HEIGHT * factor) as i32),
             None
+        );
+    }
+}
+
+/// The SSAA multiplier is presentation only (`ssaa-design.md`): rendering the
+/// same fixed 60 Hz steps at `S ∈ {2, 4}` with `aa ∈ {2, 4}` must produce the
+/// byte-identical `snapshot_bytes` and `state_digest` of the plain run.
+///
+/// The frame is rendered at the end of the run rather than on every step (a
+/// debug-build `S·aa = 16` frame costs seconds); the anti-aliasing itself is
+/// covered by `hd_presentation.rs`.
+#[test]
+fn ssaa_does_not_change_the_snapshot_or_digest() {
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(ssaa_gate_body)
+        .expect("test thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+}
+
+fn ssaa_gate_body() {
+    let (expected_bytes, expected_digest) = {
+        let mut reference =
+            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+
+        for _ in 0..STEP_BUDGET {
+            reference.local_update(SIMULATION_DT);
+        }
+
+        (reference.state_ref().snapshot_bytes(), reference.digest())
+    };
+
+    for (scale, aa) in [
+        (RenderScale::Hd2, AaMode::X2),
+        (RenderScale::Hd2, AaMode::X4),
+    ] {
+        let mut app =
+            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        let mut hd = HdPresenter::empty(scale);
+
+        for _ in 0..STEP_BUDGET {
+            app.local_update(SIMULATION_DT);
+        }
+
+        let factor = scale.scale() * aa.factor();
+        let frame = app.render_frame_hd(&mut hd, aa);
+
+        assert_eq!(
+            (frame.width(), frame.height()),
+            (FRAME_WIDTH * factor, FRAME_HEIGHT * factor),
+            "[{} {}] the SSAA frame size",
+            scale.label(),
+            aa.label()
+        );
+        assert_same_snapshot(
+            &app.state_ref().snapshot_bytes(),
+            &expected_bytes,
+            &format!(
+                "[{} {}] {STEP_BUDGET} steps with SSAA rendering",
+                scale.label(),
+                aa.label()
+            ),
+        );
+        assert_eq!(
+            app.digest(),
+            expected_digest,
+            "[{} {}] state_digest changed with the SSAA multiplier",
+            scale.label(),
+            aa.label()
         );
     }
 }

@@ -4906,12 +4906,18 @@ where
 /// sprites from the remaster layers, the window background from the HD
 /// `FRAMEPIC`. The 1:1 overlays `render_session` adds on top — the HUD when
 /// there is no window chrome, the hot-seat turn notice — are drawn into an
-/// empty buffer and composited as the nearest `×S` upscale, the per-asset
+/// empty buffer and composited as the nearest `×S·aa` upscale, the per-asset
 /// fallback of the plan.
+///
+/// `aa` is the SSAA multiplier (`ssaa-design.md`): the buffer is
+/// `640·S·aa × 480·S·aa`, the HUD/notice overlay is composited at the same
+/// factor, and the caller resolves it with [`max_render::downscale_box`].
+/// `aa = Off` keeps the historical `640·S × 480·S` frame byte-for-byte.
 pub fn render_session_hd<D: Dispatcher>(
     buffer: &mut RgbaBuffer,
     view: ScreenView<'_, D>,
     hd: &mut crate::hd::HdPresenter,
+    aa: max_render::render_scale::AaMode,
 ) where
     App<D>: SessionLocal,
 {
@@ -4920,8 +4926,8 @@ pub fn render_session_hd<D: Dispatcher>(
 
         return;
     };
-    let factor = hd.scale().scale().max(1);
-    let frame = app.render_frame_hd(hd);
+    let factor = hd.scale().scale().max(1) * aa.factor();
+    let frame = app.render_frame_hd(hd, aa);
 
     blit(buffer, &frame);
 

@@ -329,3 +329,112 @@ fn invalid_cli_scale_is_reported_by_the_presentation_switch() {
         SettingsError::Presentation(PresentationModeError::UnsupportedScale(3))
     ));
 }
+
+// ---------------------------------------------------------------------------
+// display.aa — SSAA (ssaa-design.md)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_display_aa_value_is_parsed_and_defaults_to_off() {
+    use max_render::render_scale::AaMode;
+
+    assert_eq!(Settings::default().display.aa, None);
+    assert_eq!(
+        parse("{}").display.aa,
+        None,
+        "a file without aa keeps the built-in default"
+    );
+
+    for (value, expected) in [
+        (0, AaMode::Off),
+        (1, AaMode::Off),
+        (2, AaMode::X2),
+        (4, AaMode::X4),
+    ] {
+        let settings = parse(&format!(r#"{{ "display": {{ "aa": {value} }} }}"#));
+
+        assert_eq!(settings.display.aa, Some(expected), "display.aa = {value}");
+    }
+}
+
+#[test]
+fn unsupported_display_aa_values_are_rejected() {
+    for value in [3, 5, 8, 16] {
+        let error = Settings::parse(&format!(r#"{{ "display": {{ "aa": {value} }} }}"#))
+            .expect_err("an unsupported SSAA multiplier is an error");
+
+        assert!(
+            matches!(error, SettingsError::UnsupportedAa { value: got } if got == value),
+            "{error}"
+        );
+        assert!(error.to_string().contains("×2"), "{error}");
+    }
+}
+
+#[test]
+fn ssaa_follows_cli_then_the_file() {
+    use max_render::render_scale::{AaMode, RenderScale};
+
+    // The file at S=2 with aa=2.
+    let file = parse(r#"{ "display": { "scale": 2, "aa": 2 } }"#);
+    let resolved = resolve(CliPresentation::default(), &file).expect("resolve");
+    assert_eq!(resolved.render_scale, RenderScale::Hd2);
+    assert_eq!(resolved.aa, AaMode::X2);
+    assert_eq!(resolved.render_factor(), 4, "the frame is S*aa");
+
+    // `--aa 4` wins over the file, `--aa off` disables it.
+    let resolved = resolve(
+        CliPresentation {
+            aa: Some(AaMode::X4),
+            ..CliPresentation::default()
+        },
+        &file,
+    )
+    .expect("resolve");
+    assert_eq!(resolved.aa, AaMode::X4);
+
+    let resolved = resolve(
+        CliPresentation {
+            aa: Some(AaMode::Off),
+            ..CliPresentation::default()
+        },
+        &file,
+    )
+    .expect("resolve");
+    assert_eq!(resolved.aa, AaMode::Off);
+
+    // A file without aa and no flag is off.
+    let resolved = resolve(
+        CliPresentation::default(),
+        &parse(r#"{ "display": { "scale": 4 } }"#),
+    )
+    .expect("resolve");
+    assert_eq!(resolved.aa, AaMode::Off);
+    assert_eq!(resolved.render_factor(), 4);
+}
+
+/// `S = 1` forces the SSAA off, whatever the CLI or the file says: the
+/// pixel-perfect frame and its golden stay byte-for-byte.
+#[test]
+fn pixel_perfect_forces_ssaa_off() {
+    use max_render::render_scale::AaMode;
+
+    let file = parse(r#"{ "display": { "scale": 1, "aa": 4 } }"#);
+    let resolved = resolve(CliPresentation::default(), &file).expect("resolve");
+
+    assert_eq!(resolved.render_scale, RenderScale::PixelPerfect);
+    assert_eq!(resolved.aa, AaMode::Off, "S=1 must ignore display.aa=4");
+    assert_eq!(resolved.render_factor(), 1);
+
+    // A CLI `--aa 2` cannot turn it on either.
+    let resolved = resolve(
+        CliPresentation {
+            aa: Some(AaMode::X2),
+            ..CliPresentation::default()
+        },
+        &Settings::default(),
+    )
+    .expect("resolve");
+    assert_eq!(resolved.aa, AaMode::Off);
+    assert_eq!(resolved.render_factor(), 1);
+}

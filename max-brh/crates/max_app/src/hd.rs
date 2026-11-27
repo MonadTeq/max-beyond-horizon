@@ -298,13 +298,26 @@ impl HdPresenter {
     /// has). The fallback is the per-asset rule of the remaster: a partial
     /// remaster still renders.
     pub fn draw_chrome_frame(&self, frame: &mut RgbaBuffer) -> bool {
+        self.draw_chrome_frame_at(frame, self.scale.scale())
+    }
+
+    /// [`Self::draw_chrome_frame`] at a raw render factor (`S·aa` in the SSAA
+    /// pass): the `×S` chrome picture is stretched over the whole frame, so each
+    /// texel becomes an `aa × aa` block and the box resolve returns the exact
+    /// `×S` picture — the raster interface chrome stays crisp
+    /// (`max-brh-docs/development/ssaa-design.md`).
+    pub fn draw_chrome_frame_at(&self, frame: &mut RgbaBuffer, factor: u32) -> bool {
         if !self.is_hd() {
             return false;
         }
 
         match self.chrome_source.as_ref() {
-            Some(source) => self.chrome.draw_frame_with_fallback(frame, source) > 0,
-            None => self.chrome.draw_frame(frame).is_some(),
+            Some(source) => {
+                self.chrome
+                    .draw_frame_with_fallback_at(frame, source, factor)
+                    > 0
+            }
+            None => self.chrome.draw_frame_at(frame, factor).is_some(),
         }
     }
 

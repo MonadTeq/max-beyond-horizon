@@ -27,6 +27,15 @@
 //! tile sampler is not affected — it keeps the exact `Gfx_DecodeMapTile`
 //! coordinate mapping; the filter belongs to the final texture upload in the
 //! SDL layer.
+//!
+//! # Super-sampling (`AaMode`)
+//!
+//! [`AaMode`] is an orthogonal presentation axis on top of `S`
+//! (`max-brh-docs/development/ssaa-design.md`): the HD frame is rendered at
+//! `640·S·aa × 480·S·aa` and resolved back to `640·S × 480·S` by the integer
+//! box filter [`crate::frame_scale::downscale_box`]. `aa = 1` is
+//! [`AaMode::Off`] — the exact historical HD frame — and `S = 1` forces it off,
+//! so the pixel-perfect frame and its golden stay byte-for-byte.
 
 use crate::frame_scale::{FRAME_HEIGHT, FRAME_WIDTH};
 
@@ -40,6 +49,144 @@ pub const HD_SCALE_X4: u32 = 4;
 /// of 2026-11-26; `×3` is not an asset scale and is rejected by
 /// [`RenderScale::from_scale`]).
 pub const HD_SCALES: [u32; 2] = [HD_SCALE_X2, HD_SCALE_X4];
+
+/// SSAA multiplier of [`AaMode::Off`] (`aa = 1`, no super-sampling).
+pub const AA_OFF_FACTOR: u32 = 1;
+/// First SSAA multiplier (`aa = 2`, a 2×2 box filter).
+pub const AA_X2_FACTOR: u32 = 2;
+/// Second SSAA multiplier (`aa = 4`, a 4×4 box filter).
+pub const AA_X4_FACTOR: u32 = 4;
+/// Every SSAA multiplier the remaster ships — `×2` and `×4` only (owner
+/// decision of 2026-11-27: an integer box, `×3`/non-integers are launch
+/// errors).
+pub const AA_FACTORS: [u32; 2] = [AA_X2_FACTOR, AA_X4_FACTOR];
+
+/// Anti-aliasing mode: the super-sampling multiplier `aa` of the presentation.
+///
+/// SSAA is an **orthogonal axis on top of** [`RenderScale`], not another scale:
+/// the HD frame is rendered at `640·S·aa × 480·S·aa` and then resolved to
+/// `640·S × 480·S` by the integer box filter
+/// [`crate::frame_scale::downscale_box`]. The window size does not depend on
+/// `aa`, the simulation, the snapshot/CRC and the golden 1:1 frame do not
+/// either (presentation only, `ssaa-design.md`).
+///
+/// `S = 1` forces [`Self::Off`]: the pixel-perfect frame is byte-for-byte and
+/// an `S = 1` frame has no HD geometry that could be super-sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AaMode {
+    /// `aa = 1`: no super-sampling (default; the historical HD frame).
+    #[default]
+    Off,
+    /// `aa = 2`: a 2×2 box filter.
+    X2,
+    /// `aa = 4`: a 4×4 box filter.
+    X4,
+}
+
+/// Why an `--aa` / `display.aa` value was rejected
+/// ([`AaMode::parse_flag`]/[`AaMode::from_factor`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AaModeError {
+    /// The flag is neither `off` nor an integer multiplier.
+    InvalidFlag(String),
+    /// The multiplier is neither 0/1 (off) nor a shipped box size.
+    UnsupportedFactor(u32),
+}
+
+impl std::fmt::Display for AaModeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFlag(value) => write!(
+                f,
+                "antialiasing: expected 0, 1, 2, 4 or \"off\", got \"{value}\""
+            ),
+            Self::UnsupportedFactor(factor) => write!(
+                f,
+                "unsupported antialiasing multiplier {factor}: the SSAA box filter \
+                 ships with ×2 and ×4 (0, 1 and \"off\" disable it)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AaModeError {}
+
+impl AaMode {
+    /// Every mode, in menu order.
+    pub const ALL: [Self; 3] = [Self::Off, Self::X2, Self::X4];
+
+    /// The super-sampling multiplier `aa` (`1`, `2` or `4`).
+    pub const fn factor(self) -> u32 {
+        match self {
+            Self::Off => AA_OFF_FACTOR,
+            Self::X2 => AA_X2_FACTOR,
+            Self::X4 => AA_X4_FACTOR,
+        }
+    }
+
+    /// No super-sampling (`aa = 1`).
+    pub const fn is_off(self) -> bool {
+        matches!(self, Self::Off)
+    }
+
+    /// Super-sampling is active (`aa > 1`).
+    pub const fn is_on(self) -> bool {
+        !self.is_off()
+    }
+
+    /// Side of the box filter (`aa × aa` texels per resolved pixel).
+    pub const fn box_size(self) -> u32 {
+        self.factor()
+    }
+
+    /// Mode from a raw multiplier: `0` and `1` are [`Self::Off`]; `None` for an
+    /// unsupported value (`3`, `5`, `8`, …).
+    pub const fn from_factor(factor: u32) -> Option<Self> {
+        match factor {
+            0 | AA_OFF_FACTOR => Some(Self::Off),
+            AA_X2_FACTOR => Some(Self::X2),
+            AA_X4_FACTOR => Some(Self::X4),
+            _ => None,
+        }
+    }
+
+    /// Mode from a CLI/jsonc value: `off`, `0`, `1`, `2` or `4`.
+    ///
+    /// `off` is case-insensitive; everything else is parsed as the integer
+    /// multiplier and validated by [`Self::from_factor`], so `3`, `8` or a word
+    /// are launch errors instead of a silent fallback.
+    pub fn parse_flag(value: &str) -> Result<Self, AaModeError> {
+        let value = value.trim();
+
+        if value.eq_ignore_ascii_case("off") {
+            return Ok(Self::Off);
+        }
+
+        let factor: u32 = value
+            .parse()
+            .map_err(|_| AaModeError::InvalidFlag(value.to_string()))?;
+
+        Self::from_factor(factor).ok_or(AaModeError::UnsupportedFactor(factor))
+    }
+
+    /// Name of the mode for logs/diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::X2 => "aa-2x",
+            Self::X4 => "aa-4x",
+        }
+    }
+
+    /// Caption of the GUI menu row (`Off`, `2x`, `4x`).
+    pub const fn menu_label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::X2 => "2x",
+            Self::X4 => "4x",
+        }
+    }
+}
 
 /// Texture filtering of the final frame upload.
 ///

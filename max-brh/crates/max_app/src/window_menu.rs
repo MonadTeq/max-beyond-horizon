@@ -1,5 +1,6 @@
 //! In-window menu bar of the SDL client: **File → Exit**, **Settings →
-//! Resolutions → 640×480 (1:1) / 1280×960 (x2) / 2560×1920 (x4)**.
+//! Resolutions → 640×480 (1:1) / 1280×960 (x2) / 2560×1920 (x4)** and
+//! **Settings → Antialiasing → Off / 2x / 4x**.
 //!
 //! The bar is drawn over the logical 640×480 frame (the same coordinate space
 //! as the game UI and mouse hit tests), so it works in the main menu and in a
@@ -9,21 +10,23 @@
 //!   an open or just-clicked menu; everything else is passed to the screen;
 //! * [`WindowMenu::render_overlay`] draws the bar into a transparent overlay,
 //!   and [`composite_overlay`] puts it on top of the final presentation frame
-//!   (nearest `×S` in HD modes) — the game frame underneath is not modified;
-//! * the only side effects are [`WindowMenuAction::Quit`] and
-//!   [`WindowMenuAction::SetResolution`], which `main.rs` applies to the window
-//!   presentation. Nothing here reads or writes the simulation.
+//!   (nearest `×factor` in HD/SSAA modes) — the game frame underneath is not
+//!   modified;
+//! * the only side effects are [`WindowMenuAction::Quit`],
+//!   [`WindowMenuAction::SetResolution`] and [`WindowMenuAction::SetAa`], which
+//!   `main.rs` applies to the window presentation. Nothing here reads or writes
+//!   the simulation.
 //!
 //! The bar is intentionally independent of [`crate::ui::Screen`]: a menu can be
-//! opened in the main menu, a dialog or a running match, and a resolution change
-//! keeps the same `App`/session (presentation only).
+//! opened in the main menu, a dialog or a running match, and a resolution or
+//! anti-aliasing change keeps the same `App`/session (presentation only).
 //!
 //! Layout is in logical frame pixels; the longest label — `2560x1920 (x4)` — is
 //! drawn with the embedded `FONT5` GNW font (10 px), so the menu needs no game
 //! assets and stays readable at every scale.
 
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
-use max_render::render_scale::RenderScale;
+use max_render::render_scale::{AaMode, RenderScale};
 use max_render::text::{draw_text_gnw, GnwFontId};
 
 use crate::ui::{InputEvent, Key};
@@ -43,6 +46,9 @@ pub const RESOLUTIONS: [RenderScale; 3] = [
     RenderScale::Hd2,
     RenderScale::Hd4,
 ];
+
+/// The SSAA rows of the `Antialiasing` flyout, in menu order (`Off`, `2x`, `4x`).
+pub const AA_MODES: [AaMode; 3] = AaMode::ALL;
 
 /// Opaque bar background.
 pub const BAR_BACKGROUND: Rgba = Rgba::rgb(18, 22, 30);
@@ -95,7 +101,7 @@ impl MenuPage {
     pub const fn row_count(self) -> i32 {
         match self {
             Self::File => 1,
-            Self::Settings => 1,
+            Self::Settings => 2,
         }
     }
 }
@@ -107,8 +113,17 @@ pub enum MenuItem {
     Exit,
     /// `Settings → Resolutions`: open the resolution flyout.
     Resolutions,
-    /// One row of the flyout.
+    /// `Settings → Antialiasing`: open the SSAA flyout.
+    Antialiasing,
+    /// One row of the resolutions flyout.
     Resolution(RenderScale),
+    /// One row of the antialiasing flyout.
+    Aa(AaMode),
+}
+
+impl MenuItem {
+    /// The two parent rows of the `Settings` dropdown (the flyout anchors).
+    pub const PARENTS: [Self; 2] = [Self::Resolutions, Self::Antialiasing];
 }
 
 /// What the driver must apply after an input event.
@@ -121,6 +136,9 @@ pub enum WindowMenuAction {
     Quit,
     /// A resolution was chosen: rebuild the window/render target at this scale.
     SetResolution(RenderScale),
+    /// An anti-aliasing mode was chosen: switch the SSAA multiplier on the fly
+    /// (no window reopen).
+    SetAa(AaMode),
 }
 
 /// Result of [`WindowMenu::handle_input`].
@@ -143,7 +161,8 @@ enum Hover {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WindowMenu {
     open: Option<MenuPage>,
-    flyout: bool,
+    /// The parent row (`Resolutions`/`Antialiasing`) whose flyout is open.
+    flyout: Option<MenuItem>,
     hover: Option<Hover>,
 }
 
@@ -163,15 +182,20 @@ impl WindowMenu {
         self.open
     }
 
-    /// Whether the `Resolutions` flyout is open.
+    /// Whether a flyout (resolutions or antialiasing) is open.
     pub fn is_flyout_open(&self) -> bool {
+        self.flyout.is_some()
+    }
+
+    /// The parent row whose flyout is open, if any.
+    pub fn flyout_parent(&self) -> Option<MenuItem> {
         self.flyout
     }
 
     /// Closes every dropdown, the flyout and the hover.
     pub fn close(&mut self) {
         self.open = None;
-        self.flyout = false;
+        self.flyout = None;
         self.hover = None;
     }
 
@@ -212,8 +236,8 @@ impl WindowMenu {
         }
     }
 
-    /// Mouse move: bar titles and open dropdown rows are highlighted; hovering
-    /// `Resolutions` opens its flyout.
+    /// Mouse move: bar titles and open dropdown rows are highlighted; hovering a
+    /// `Resolutions`/`Antialiasing` row opens its flyout.
     fn update_hover(&mut self, x: i32, y: i32) {
         self.hover = None;
 
@@ -234,19 +258,23 @@ impl WindowMenu {
                 }
             }
             MenuPage::Settings => {
-                if item_rect(MenuItem::Resolutions).contains(x, y) {
-                    self.hover = Some(Hover::Item(MenuItem::Resolutions));
-                    self.flyout = true;
-                } else if let Some(scale) = resolution_at(x, y) {
-                    if self.flyout {
-                        self.hover = Some(Hover::Item(MenuItem::Resolution(scale)));
+                if let Some(parent) = MenuItem::PARENTS
+                    .into_iter()
+                    .find(|parent| item_rect(*parent).contains(x, y))
+                {
+                    self.hover = Some(Hover::Item(parent));
+                    self.flyout = Some(parent);
+                } else if let Some(parent) = self.flyout {
+                    if let Some(item) = flyout_item_at(parent, x, y) {
+                        self.hover = Some(Hover::Item(item));
                     }
-                }
 
-                // The flyout stays open while the pointer is over the Settings
-                // dropdown or the flyout itself; elsewhere it folds away.
-                if self.flyout && !in_settings_menus(x, y) {
-                    self.flyout = false;
+                    // The flyout stays open while the pointer is over the
+                    // Settings dropdown or the flyout itself; elsewhere it folds
+                    // away.
+                    if !in_settings_menus(self.flyout, x, y) {
+                        self.flyout = None;
+                    }
                 }
             }
         }
@@ -259,7 +287,7 @@ impl WindowMenu {
                 self.close();
             } else {
                 self.open = Some(page);
-                self.flyout = false;
+                self.flyout = None;
                 self.hover = Some(Hover::Title(page));
             }
 
@@ -277,39 +305,43 @@ impl WindowMenu {
             };
         };
 
-        let action = match page {
+        let mut action = WindowMenuAction::None;
+
+        match page {
             MenuPage::File => {
                 if item_rect(MenuItem::Exit).contains(x, y) {
                     self.close();
 
-                    WindowMenuAction::Quit
-                } else {
-                    WindowMenuAction::None
+                    action = WindowMenuAction::Quit;
                 }
             }
             MenuPage::Settings => {
-                if item_rect(MenuItem::Resolutions).contains(x, y) {
-                    self.flyout = true;
-
-                    WindowMenuAction::None
-                } else if self.flyout {
-                    match resolution_at(x, y) {
-                        Some(scale) => {
+                if let Some(parent) = MenuItem::PARENTS
+                    .into_iter()
+                    .find(|parent| item_rect(*parent).contains(x, y))
+                {
+                    self.flyout = Some(parent);
+                } else if let Some(parent) = self.flyout {
+                    action = match flyout_item_at(parent, x, y) {
+                        Some(MenuItem::Resolution(scale)) => {
                             self.close();
 
                             WindowMenuAction::SetResolution(scale)
                         }
-                        None => WindowMenuAction::None,
-                    }
-                } else {
-                    WindowMenuAction::None
+                        Some(MenuItem::Aa(aa)) => {
+                            self.close();
+
+                            WindowMenuAction::SetAa(aa)
+                        }
+                        _ => WindowMenuAction::None,
+                    };
                 }
             }
-        };
+        }
 
         // A click inside the open dropdown keeps it open (an empty row area is
         // inert); a click outside dismisses the menu.
-        if action == WindowMenuAction::None && !in_open_menu(page, x, y) {
+        if action == WindowMenuAction::None && !in_open_menu(self.flyout, page, x, y) {
             self.close();
         }
 
@@ -323,8 +355,14 @@ impl WindowMenu {
     ///
     /// The overlay keeps every pixel outside the menu transparent; the caller
     /// composites it over the final frame ([`composite_overlay`]). `current` is
-    /// the running [`RenderScale`], marked with `*` in the flyout.
-    pub fn render_overlay(&self, overlay: &mut RgbaBuffer, current: RenderScale) {
+    /// the running [`RenderScale`] and `current_aa` the running [`AaMode`], both
+    /// marked with `*` in their flyouts.
+    pub fn render_overlay(
+        &self,
+        overlay: &mut RgbaBuffer,
+        current: RenderScale,
+        current_aa: AaMode,
+    ) {
         overlay.fill(Rgba::TRANSPARENT);
 
         let width = overlay.width() as i32;
@@ -366,40 +404,38 @@ impl WindowMenu {
                 draw_label(overlay, row, "Exit", TEXT_COLOR);
             }
             MenuPage::Settings => {
-                let row = item_rect(MenuItem::Resolutions);
+                for parent in MenuItem::PARENTS {
+                    let row = item_rect(parent);
 
-                if self.hover == Some(Hover::Item(MenuItem::Resolutions)) {
-                    overlay.fill_rect(row, HIGHLIGHT);
+                    if self.hover == Some(Hover::Item(parent)) {
+                        overlay.fill_rect(row, HIGHLIGHT);
+                    }
+
+                    draw_label(overlay, row, parent_label(parent), TEXT_COLOR);
+                    draw_arrow(overlay, row);
                 }
 
-                draw_label(overlay, row, "Resolutions", TEXT_COLOR);
-
-                // The submenu marker, right-aligned in the row.
-                let arrow_width = GnwFontId::Font5.font().text_width(">");
-                let arrow_rect = PixelRect::new(
-                    row.lrx() - DROPDOWN_PADDING - arrow_width,
-                    row.uly,
-                    arrow_width,
-                    row.height,
-                );
-
-                draw_label(overlay, arrow_rect, ">", TEXT_COLOR);
-
-                if self.flyout {
-                    self.render_flyout(overlay, current);
+                match self.flyout {
+                    Some(MenuItem::Resolutions) => {
+                        self.render_resolutions_flyout(overlay, current);
+                    }
+                    Some(MenuItem::Antialiasing) => {
+                        self.render_aa_flyout(overlay, current_aa);
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
     /// Draws the `Resolutions` flyout under its parent row.
-    fn render_flyout(&self, overlay: &mut RgbaBuffer, current: RenderScale) {
-        let flyout = flyout_rect();
+    fn render_resolutions_flyout(&self, overlay: &mut RgbaBuffer, current: RenderScale) {
+        let flyout = flyout_rect(MenuItem::Resolutions);
 
         draw_panel(overlay, flyout);
 
         for (index, scale) in RESOLUTIONS.into_iter().enumerate() {
-            let row = resolution_row_rect(index);
+            let row = flyout_row_rect(MenuItem::Resolutions, index);
             let selected = scale == current;
 
             if self.hover == Some(Hover::Item(MenuItem::Resolution(scale))) {
@@ -411,6 +447,27 @@ impl WindowMenu {
                 if selected { '*' } else { ' ' },
                 resolution_label(scale)
             );
+            let color = if selected { CURRENT_COLOR } else { TEXT_COLOR };
+
+            draw_label(overlay, row, &label, color);
+        }
+    }
+
+    /// Draws the `Antialiasing` flyout under its parent row.
+    fn render_aa_flyout(&self, overlay: &mut RgbaBuffer, current: AaMode) {
+        let flyout = flyout_rect(MenuItem::Antialiasing);
+
+        draw_panel(overlay, flyout);
+
+        for (index, aa) in AA_MODES.into_iter().enumerate() {
+            let row = flyout_row_rect(MenuItem::Antialiasing, index);
+            let selected = aa == current;
+
+            if self.hover == Some(Hover::Item(MenuItem::Aa(aa))) {
+                overlay.fill_rect(row, HIGHLIGHT);
+            }
+
+            let label = format!("{} {}", if selected { '*' } else { ' ' }, aa_label(aa));
             let color = if selected { CURRENT_COLOR } else { TEXT_COLOR };
 
             draw_label(overlay, row, &label, color);
@@ -428,6 +485,20 @@ pub fn resolution_label(scale: RenderScale) -> String {
     };
 
     format!("{width}x{height} ({tag})")
+}
+
+/// The caption of one antialiasing row (`Off`, `2x`, `4x`).
+pub fn aa_label(aa: AaMode) -> &'static str {
+    aa.menu_label()
+}
+
+/// Caption of a `Settings` dropdown row.
+fn parent_label(parent: MenuItem) -> &'static str {
+    match parent {
+        MenuItem::Resolutions => "Resolutions",
+        MenuItem::Antialiasing => "Antialiasing",
+        _ => "",
+    }
 }
 
 /// Rect of a bar title in logical frame pixels.
@@ -466,46 +537,53 @@ pub fn item_rect(item: MenuItem) -> PixelRect {
         MenuItem::Exit => {
             let dropdown = dropdown_rect(MenuPage::File);
 
-            PixelRect::new(
-                dropdown.ulx + 1,
-                dropdown.uly + 1,
-                dropdown.width - 2,
-                ROW_HEIGHT,
-            )
+            dropdown_row_rect(dropdown, 0)
         }
-        MenuItem::Resolutions => {
-            let dropdown = dropdown_rect(MenuPage::Settings);
-
-            PixelRect::new(
-                dropdown.ulx + 1,
-                dropdown.uly + 1,
-                dropdown.width - 2,
-                ROW_HEIGHT,
-            )
-        }
+        MenuItem::Resolutions => dropdown_row_rect(dropdown_rect(MenuPage::Settings), 0),
+        MenuItem::Antialiasing => dropdown_row_rect(dropdown_rect(MenuPage::Settings), 1),
         MenuItem::Resolution(scale) => {
             let index = resolution_index(scale).unwrap_or(0);
 
-            resolution_row_rect(index)
+            flyout_row_rect(MenuItem::Resolutions, index)
+        }
+        MenuItem::Aa(aa) => {
+            let index = aa_index(aa).unwrap_or(0);
+
+            flyout_row_rect(MenuItem::Antialiasing, index)
         }
     }
 }
 
-/// The flyout panel (to the right of the Settings dropdown).
-pub fn flyout_rect() -> PixelRect {
-    let dropdown = dropdown_rect(MenuPage::Settings);
-
+/// One row of a dropdown panel.
+fn dropdown_row_rect(dropdown: PixelRect, index: i32) -> PixelRect {
     PixelRect::new(
-        dropdown.lrx(),
-        item_rect(MenuItem::Resolutions).uly,
-        FLYOUT_WIDTH,
-        RESOLUTIONS.len() as i32 * ROW_HEIGHT + 2,
+        dropdown.ulx + 1,
+        dropdown.uly + 1 + index * ROW_HEIGHT,
+        dropdown.width - 2,
+        ROW_HEIGHT,
     )
 }
 
-/// One row of the resolutions flyout.
-fn resolution_row_rect(index: usize) -> PixelRect {
-    let flyout = flyout_rect();
+/// The flyout panel of `parent`, to the right of the `Settings` dropdown and
+/// aligned with its parent row.
+pub fn flyout_rect(parent: MenuItem) -> PixelRect {
+    let dropdown = dropdown_rect(MenuPage::Settings);
+    let rows = match parent {
+        MenuItem::Antialiasing => AA_MODES.len(),
+        _ => RESOLUTIONS.len(),
+    };
+
+    PixelRect::new(
+        dropdown.lrx(),
+        item_rect(parent).uly,
+        FLYOUT_WIDTH,
+        rows as i32 * ROW_HEIGHT + 2,
+    )
+}
+
+/// One row of a flyout panel.
+fn flyout_row_rect(parent: MenuItem, index: usize) -> PixelRect {
+    let flyout = flyout_rect(parent);
 
     PixelRect::new(
         flyout.ulx + 1,
@@ -522,6 +600,26 @@ fn resolution_index(scale: RenderScale) -> Option<usize> {
         .position(|candidate| candidate == scale)
 }
 
+/// Index of `aa` in [`AA_MODES`].
+fn aa_index(aa: AaMode) -> Option<usize> {
+    AA_MODES.into_iter().position(|candidate| candidate == aa)
+}
+
+/// One flyout row under the point, for the open `parent` flyout.
+fn flyout_item_at(parent: MenuItem, x: i32, y: i32) -> Option<MenuItem> {
+    match parent {
+        MenuItem::Resolutions => RESOLUTIONS
+            .into_iter()
+            .find(|scale| item_rect(MenuItem::Resolution(*scale)).contains(x, y))
+            .map(MenuItem::Resolution),
+        MenuItem::Antialiasing => AA_MODES
+            .into_iter()
+            .find(|aa| item_rect(MenuItem::Aa(*aa)).contains(x, y))
+            .map(MenuItem::Aa),
+        _ => None,
+    }
+}
+
 /// Title under the point, if any.
 fn title_at(x: i32, y: i32) -> Option<MenuPage> {
     if !(0..BAR_HEIGHT).contains(&y) {
@@ -533,25 +631,19 @@ fn title_at(x: i32, y: i32) -> Option<MenuPage> {
         .find(|page| title_rect(*page).contains(x, y))
 }
 
-/// Resolution row under the point (the flyout is only live while open).
-fn resolution_at(x: i32, y: i32) -> Option<RenderScale> {
-    RESOLUTIONS
-        .into_iter()
-        .find(|scale| item_rect(MenuItem::Resolution(*scale)).contains(x, y))
-}
-
-/// The point is inside the Settings dropdown or the resolutions flyout.
-fn in_settings_menus(x: i32, y: i32) -> bool {
-    dropdown_rect(MenuPage::Settings).contains(x, y) || flyout_rect().contains(x, y)
+/// The point is inside the Settings dropdown or the open flyout.
+fn in_settings_menus(flyout: Option<MenuItem>, x: i32, y: i32) -> bool {
+    dropdown_rect(MenuPage::Settings).contains(x, y)
+        || flyout.is_some_and(|parent| flyout_rect(parent).contains(x, y))
 }
 
 /// The point is inside the open page (dropdown, and the live flyout).
-fn in_open_menu(page: MenuPage, x: i32, y: i32) -> bool {
+fn in_open_menu(flyout: Option<MenuItem>, page: MenuPage, x: i32, y: i32) -> bool {
     if dropdown_rect(page).contains(x, y) {
         return true;
     }
 
-    page == MenuPage::Settings && flyout_rect().contains(x, y)
+    page == MenuPage::Settings && flyout.is_some_and(|parent| flyout_rect(parent).contains(x, y))
 }
 
 /// Draws a one-pixel-border panel.
@@ -581,6 +673,19 @@ fn draw_label(buffer: &mut RgbaBuffer, rect: PixelRect, text: &str, color: Rgba)
     let y = rect.uly + (rect.height - font.height()).max(0) / 2;
 
     draw_text_gnw(buffer, rect.ulx + DROPDOWN_PADDING, y, font, text, color);
+}
+
+/// Draws the submenu marker (`>`) right-aligned in a dropdown row.
+fn draw_arrow(buffer: &mut RgbaBuffer, row: PixelRect) {
+    let arrow_width = GnwFontId::Font5.font().text_width(">");
+    let arrow_rect = PixelRect::new(
+        row.lrx() - DROPDOWN_PADDING - arrow_width,
+        row.uly,
+        arrow_width,
+        row.height,
+    );
+
+    draw_label(buffer, arrow_rect, ">", TEXT_COLOR);
 }
 
 /// Composites the transparent menu overlay over `target` at the presentation

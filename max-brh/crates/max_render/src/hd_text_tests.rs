@@ -323,3 +323,33 @@ fn line_width_hd_is_the_8x8_width_times_s() {
         assert_eq!(line_width_hd("", scale), 0);
     }
 }
+
+/// SSAA pass (`ssaa-design.md`): the font atlas is the `×S` one, so the text at
+/// the `S·aa` render frame is exactly the nearest `×aa` upscale of the `×S`
+/// line. After the box resolve the glyph is byte-identical to the `S` text —
+/// the raster interface text does not become blurry.
+#[test]
+fn the_scaled_draw_is_the_nearest_upscale_of_the_s_line() {
+    let scale = RenderScale::Hd2;
+    let font = HdFontAtlas::new(GnwFontId::Font5, scale);
+    let text = "End Turn";
+    let base = Rgba::WHITE;
+    let outline = Rgba::rgb(1, 2, 3);
+    let width = font.text_width(text) as u32 + scale.scale();
+    let height = font.height() as u32 + scale.scale();
+
+    for aa in [2u32, 4] {
+        let mut plain = RgbaBuffer::new(width, height);
+        draw_text_hd_outlined(&mut plain, 0, 0, &font, text, base, outline);
+
+        let expected = crate::upscale_nearest(&plain, width * aa, height * aa);
+        let mut scaled = RgbaBuffer::new(width * aa, height * aa);
+        draw_text_hd_outlined_scaled(&mut scaled, 0, 0, &font, aa, text, base, outline);
+
+        assert!(
+            scaled.pixels() == expected.pixels(),
+            "aa={aa}: the scaled text must be the nearest upscale of the x{} line",
+            scale.scale()
+        );
+    }
+}

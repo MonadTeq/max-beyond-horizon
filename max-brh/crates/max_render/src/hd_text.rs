@@ -495,11 +495,36 @@ pub fn draw_text_hd(
     text: &str,
     color: Rgba,
 ) -> i32 {
+    draw_text_hd_scaled(buffer, x, y, font, 1, text, color)
+}
+
+/// [`draw_text_hd`] with every atlas texel expanded to an `aa × aa` block.
+///
+/// This is the SSAA pass
+/// (`max-brh-docs/development/ssaa-design.md`): the frame is rendered at
+/// `S·aa`, the font atlas is still the `×S` one, so the text is the nearest
+/// `×aa` upscale of the `×S` line. After the box resolve
+/// ([`crate::frame_scale::downscale_box`]) the glyph is byte-identical to the
+/// text drawn at `S` — the text itself is raster and stays crisp; only geometry
+/// rendered at `S·aa` gains intermediate edge pixels.
+///
+/// `aa = 1` is exactly [`draw_text_hd`].
+pub fn draw_text_hd_scaled(
+    buffer: &mut RgbaBuffer,
+    x: i32,
+    y: i32,
+    font: &HdFontAtlas,
+    aa: u32,
+    text: &str,
+    color: Rgba,
+) -> i32 {
+    let aa = aa.max(1);
+    let aa_i = aa as i32;
     let mut pen_x = x;
-    let height = font.height();
+    let height = font.height() * aa_i;
 
     for ch in text.chars() {
-        let advance = font.advance(ch);
+        let advance = font.advance(ch) * aa_i;
 
         if pen_x >= buffer.width() as i32 {
             // The pen only moves right: nothing further will be visible.
@@ -514,7 +539,7 @@ pub fn draw_text_hd(
             }
 
             for column in 0..advance {
-                if font.ink(ch, column, row) {
+                if font.ink(ch, column / aa_i, row / aa_i) {
                     buffer.set(pen_x + column, pixel_y, color);
                 }
             }
@@ -523,7 +548,7 @@ pub fn draw_text_hd(
         pen_x += advance;
     }
 
-    font.text_width(text)
+    font.text_width(text) * aa_i
 }
 
 /// The HD [`crate::text::draw_text_gnw_shadowed`]: the `Text_TextLine` relief.
@@ -621,10 +646,27 @@ pub fn draw_text_hd_outlined(
     base: Rgba,
     outline: Rgba,
 ) -> i32 {
-    let shift = font.scale().scale() as i32;
+    draw_text_hd_outlined_scaled(buffer, x, y, font, 1, text, base, outline)
+}
 
-    draw_text_hd(buffer, x + shift, y + shift, font, text, outline);
-    draw_text_hd(buffer, x, y, font, text, base)
+/// [`draw_text_hd_outlined`] at the SSAA pass factor `aa` (see
+/// [`draw_text_hd_scaled`]): the outline copy is shifted by `S·aa` render
+/// pixels instead of `S`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text_hd_outlined_scaled(
+    buffer: &mut RgbaBuffer,
+    x: i32,
+    y: i32,
+    font: &HdFontAtlas,
+    aa: u32,
+    text: &str,
+    base: Rgba,
+    outline: Rgba,
+) -> i32 {
+    let shift = font.scale().scale() as i32 * aa.max(1) as i32;
+
+    draw_text_hd_scaled(buffer, x + shift, y + shift, font, aa, text, outline);
+    draw_text_hd_scaled(buffer, x, y, font, aa, text, base)
 }
 
 /// Draws one line of the built-in 8×8 ASCII font at `scale` in render pixels.

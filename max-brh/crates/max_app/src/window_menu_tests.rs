@@ -170,19 +170,21 @@ fn labels_name_the_three_resolutions_as_the_requirement_does() {
 
 #[test]
 fn the_flyout_fits_the_logical_frame() {
-    let flyout = flyout_rect();
+    for parent in [MenuItem::Resolutions, MenuItem::Antialiasing] {
+        let flyout = flyout_rect(parent);
 
-    assert!(flyout.ulx > 0);
-    assert!(
-        flyout.lrx() <= 640,
-        "flyout right edge {} exceeds 640",
-        flyout.lrx()
-    );
-    assert!(
-        flyout.lry() <= 480,
-        "flyout bottom edge {} exceeds 480",
-        flyout.lry()
-    );
+        assert!(flyout.ulx > 0);
+        assert!(
+            flyout.lrx() <= 640,
+            "{parent:?}: flyout right edge {} exceeds 640",
+            flyout.lrx()
+        );
+        assert!(
+            flyout.lry() <= 480,
+            "{parent:?}: flyout bottom edge {} exceeds 480",
+            flyout.lry()
+        );
+    }
 }
 
 #[test]
@@ -205,20 +207,44 @@ fn the_resolution_rows_are_stacked() {
 }
 
 #[test]
+fn the_settings_dropdown_has_the_two_flyout_rows() {
+    let resolutions = item_rect(MenuItem::Resolutions);
+    let antialiasing = item_rect(MenuItem::Antialiasing);
+
+    assert!(
+        resolutions.lry() <= antialiasing.uly,
+        "the Settings rows overlap"
+    );
+    assert_eq!(
+        dropdown_rect(MenuPage::Settings).height,
+        2 * ROW_HEIGHT + 2,
+        "the dropdown grows with the second row"
+    );
+    // Both flyouts open next to the Settings dropdown, under their own row.
+    for parent in MenuItem::PARENTS {
+        let flyout = flyout_rect(parent);
+
+        assert_eq!(flyout.ulx, dropdown_rect(MenuPage::Settings).lrx());
+        assert_eq!(flyout.uly, item_rect(parent).uly, "{parent:?}");
+    }
+}
+
+#[test]
 fn the_overlay_is_transparent_outside_the_menu() {
     let mut menu = WindowMenu::new();
     open_resolutions(&mut menu);
 
     let mut overlay = RgbaBuffer::new(640, 480);
-    menu.render_overlay(&mut overlay, RenderScale::Hd2);
+    menu.render_overlay(&mut overlay, RenderScale::Hd2, AaMode::Off);
 
     // The bar is opaque.
     assert_eq!(overlay.get(500, 5), Some(BAR_BACKGROUND));
     // The game under the dropdowns stays transparent.
     assert!(overlay.get(320, 300).expect("inside").is_transparent());
     // The flyout is opaque and names three rows.
+    let flyout = flyout_rect(MenuItem::Resolutions);
     assert_eq!(
-        overlay.get(flyout_rect().ulx + 4, flyout_rect().uly + 2),
+        overlay.get(flyout.ulx + 4, flyout.uly + 2),
         Some(MENU_BACKGROUND)
     );
 }
@@ -230,7 +256,7 @@ fn the_current_resolution_is_marked() {
         open_resolutions(&mut menu);
 
         let mut overlay = RgbaBuffer::new(640, 480);
-        menu.render_overlay(&mut overlay, current);
+        menu.render_overlay(&mut overlay, current, AaMode::Off);
 
         let index = RESOLUTIONS
             .into_iter()
@@ -238,7 +264,7 @@ fn the_current_resolution_is_marked() {
             .expect("shipped scale");
 
         for (row, scale) in RESOLUTIONS.into_iter().enumerate() {
-            let rect = resolution_row_rect(row);
+            let rect = flyout_row_rect(MenuItem::Resolutions, row);
             let marked = count_color(&overlay, rect, CURRENT_COLOR);
 
             if row == index {
@@ -259,7 +285,7 @@ fn the_current_resolution_is_marked() {
 #[test]
 fn the_bar_is_drawn_near_the_top_edge() {
     let mut overlay = RgbaBuffer::new(640, 480);
-    WindowMenu::new().render_overlay(&mut overlay, RenderScale::PixelPerfect);
+    WindowMenu::new().render_overlay(&mut overlay, RenderScale::PixelPerfect, AaMode::Off);
 
     for x in [0, 200, 639] {
         assert_eq!(
@@ -349,4 +375,112 @@ fn composite_overlay_with_scale_one_writes_exactly() {
 
     assert_eq!(target.get(2, 1), Some(Rgba::rgb(1, 2, 3)));
     assert_eq!(target.get(0, 0), Some(Rgba::BLACK));
+}
+
+// ---------------------------------------------------------------------------
+// Settings → Antialiasing (SSAA, ssaa-design.md)
+// ---------------------------------------------------------------------------
+
+/// Opens `Settings → Antialiasing` with the pointer, without picking a row.
+fn open_antialiasing(menu: &mut WindowMenu) {
+    let (x, y) = center(title_rect(MenuPage::Settings));
+    click(menu, x, y);
+    let (x, y) = center(item_rect(MenuItem::Antialiasing));
+    click(menu, x, y);
+}
+
+#[test]
+fn settings_antialiasing_applies_every_shipped_mode() {
+    for aa in AA_MODES {
+        let mut menu = WindowMenu::new();
+        open_antialiasing(&mut menu);
+
+        assert!(menu.is_flyout_open(), "the flyout is open for {aa:?}");
+        assert_eq!(menu.flyout_parent(), Some(MenuItem::Antialiasing));
+
+        let (x, y) = center(item_rect(MenuItem::Aa(aa)));
+        let response = click(&mut menu, x, y);
+
+        assert_eq!(
+            response.action,
+            WindowMenuAction::SetAa(aa),
+            "row {aa:?} must select exactly that SSAA mode"
+        );
+        assert!(response.consumed);
+        assert!(!menu.is_open());
+        assert!(!menu.is_flyout_open());
+    }
+}
+
+#[test]
+fn the_aa_rows_are_off_2x_4x_and_stacked() {
+    assert_eq!(aa_label(AaMode::Off), "Off");
+    assert_eq!(aa_label(AaMode::X2), "2x");
+    assert_eq!(aa_label(AaMode::X4), "4x");
+
+    let rows: Vec<PixelRect> = AA_MODES
+        .into_iter()
+        .map(|aa| item_rect(MenuItem::Aa(aa)))
+        .collect();
+
+    for pair in rows.windows(2) {
+        assert!(pair[0].lry() <= pair[1].uly, "the AA rows overlap");
+    }
+}
+
+#[test]
+fn the_current_antialiasing_mode_is_marked() {
+    for current in AA_MODES {
+        let mut menu = WindowMenu::new();
+        open_antialiasing(&mut menu);
+
+        let mut overlay = RgbaBuffer::new(640, 480);
+        menu.render_overlay(&mut overlay, RenderScale::Hd2, current);
+
+        let index = AA_MODES
+            .into_iter()
+            .position(|aa| aa == current)
+            .expect("a shipped mode");
+
+        for (row, aa) in AA_MODES.into_iter().enumerate() {
+            let marked = count_color(
+                &overlay,
+                flyout_row_rect(MenuItem::Antialiasing, row),
+                CURRENT_COLOR,
+            );
+
+            if row == index {
+                assert!(marked > 0, "{aa:?} must be marked as current");
+            } else {
+                assert_eq!(marked, 0, "{aa:?} must not be marked while {current:?}");
+            }
+        }
+    }
+}
+
+/// Hovering `Resolutions` and then `Antialiasing` moves the open flyout instead
+/// of leaving both live; the folded-away resolution flyout is not hit-testable.
+///
+/// The two flyouts share the screen area to the right of the dropdown (only one
+/// is drawn at a time), so the test picks the only resolution row that lies
+/// above the antialiasing flyout: a click there is outside the open menu and
+/// dismisses it without selecting anything.
+#[test]
+fn only_one_flyout_is_open_at_a_time() {
+    let mut menu = WindowMenu::new();
+    open_resolutions(&mut menu);
+    assert_eq!(menu.flyout_parent(), Some(MenuItem::Resolutions));
+
+    let (x, y) = center(item_rect(MenuItem::Antialiasing));
+    menu.handle_input(InputEvent::MouseMove(x, y));
+
+    assert_eq!(menu.flyout_parent(), Some(MenuItem::Antialiasing));
+
+    // The first resolution row is above `flyout_rect(Antialiasing)`: the click
+    // lands outside the open menu and dismisses it instead of selecting 1:1.
+    let (x, y) = center(item_rect(MenuItem::Resolution(RenderScale::PixelPerfect)));
+    let response = click(&mut menu, x, y);
+
+    assert_eq!(response.action, WindowMenuAction::None);
+    assert!(!menu.is_flyout_open());
 }

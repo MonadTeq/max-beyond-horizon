@@ -15,17 +15,21 @@
 //! * `display` — the presentation resolution of the SDL window:
 //!   `scale` (`1`/`2`/`4`) and/or `resolution` (`"640x480"`, `"1280x960"`,
 //!   `"2560x1920"`). The two are aliases; naming both with different values is
-//!   an error.
+//!   an error. `aa` (`0`/`1`/`2`/`4`, `ssaa-design.md`) is the super-sampling
+//!   multiplier of the HD presentation: the frame is rendered at `S·aa` and
+//!   resolved by an integer box filter; `0`/`1` are "off" (the default), `3`,
+//!   `8` and any other value are an error. At `S = 1` the multiplier is forced
+//!   to `Off` — the pixel-perfect frame stays byte-for-byte.
 //! * `window` — the window presentation: `scale` (`0` — fit the desktop,
 //!   otherwise `1..=8`) and `fullscreen` (`true`/`false`).
 //!
 //! # Priority
 //!
 //! **CLI > `settings.jsonc` > default** ([`resolve`]). A CLI presentation flag
-//! (`--hd`/`--hd-scale`, `--scale`, `--fullscreen`) replaces the value of the
-//! same parameter from the file; a parameter absent from the file keeps the
-//! built-in default ([`RenderScale::PixelPerfect`], auto window scale,
-//! windowed).
+//! (`--hd`/`--hd-scale`, `--aa`, `--scale`, `--fullscreen`) replaces the value
+//! of the same parameter from the file; a parameter absent from the file keeps
+//! the built-in default (`RenderScale::PixelPerfect`, `AaMode::Off`, auto window
+//! scale, windowed).
 //!
 //! The file is read once at launch ([`Settings::load`]). The in-window menu
 //! (`crate::window_menu`) changes the running presentation only; it does not
@@ -42,7 +46,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use max_render::frame_scale::MAX_SCALE;
-use max_render::render_scale::{PresentationMode, PresentationModeError, RenderScale};
+use max_render::render_scale::{AaMode, PresentationMode, PresentationModeError, RenderScale};
 
 /// File name of the client window settings.
 pub const SETTINGS_FILE_NAME: &str = "settings.jsonc";
@@ -65,6 +69,8 @@ pub struct DisplaySettings {
     pub scale: Option<RenderScale>,
     /// `display.resolution` — the render-frame size (`"1280x960"` → `S = 2`).
     pub resolution: Option<RenderScale>,
+    /// `display.aa` — the SSAA multiplier (`0`/`1` off, `2`, `4`).
+    pub aa: Option<AaMode>,
 }
 
 /// The `window` section: window scale and fullscreen.
@@ -153,6 +159,8 @@ pub struct CliPresentation {
     pub hd: bool,
     /// `--hd-scale N`.
     pub hd_scale: Option<u32>,
+    /// `--aa 0|off|1|2|4`.
+    pub aa: Option<AaMode>,
     /// `--scale N` (`0` — fit the desktop).
     pub window_scale: Option<u32>,
     /// `--fullscreen`.
@@ -166,6 +174,8 @@ pub struct PresentationSettings {
     pub mode: PresentationMode,
     /// The render scale `S` (`1`/`2`/`4`).
     pub render_scale: RenderScale,
+    /// The SSAA multiplier `aa` of the HD frame (`Off` at `S = 1`).
+    pub aa: AaMode,
     /// Window scale; `None` — fit the desktop.
     pub window_scale: Option<u32>,
     /// Borderless desktop fullscreen at launch.
@@ -177,11 +187,22 @@ impl PresentationSettings {
     pub const fn is_hd(self) -> bool {
         self.mode.is_hd()
     }
+
+    /// The render factor of one frame: `S·aa`.
+    ///
+    /// `S = 1` is forced to [`AaMode::Off`], so the pixel-perfect path always
+    /// reports `1` and the historical frame stays byte-for-byte.
+    pub const fn render_factor(self) -> u32 {
+        self.render_scale.scale() * self.aa.factor()
+    }
 }
 
 /// The effective presentation: `CLI > settings.jsonc > default`.
 ///
 /// * a CLI presentation flag (`--hd`, `--hd-scale`) wins over `display`;
+/// * `--aa` wins over `display.aa`; the SSAA multiplier is forced to
+///   [`AaMode::Off`] when the resolved scale is `S = 1` — the pixel-perfect
+///   frame and its golden stay byte-for-byte (`ssaa-design.md`);
 /// * `--scale` wins over `window.scale` (`--scale 0` is "fit the desktop");
 /// * `--fullscreen` wins over `window.fullscreen` (a bare `false` in the file is
 ///   the default and can only be turned on by the flag).
@@ -199,6 +220,13 @@ pub fn resolve(
     } else {
         PresentationMode::PixelPerfect
     };
+    // `S = 1` forces the SSAA off: a pixel-perfect frame has no HD geometry to
+    // super-sample and must stay byte-for-byte.
+    let aa = if render_scale.is_hd() {
+        cli.aa.or(settings.display.aa).unwrap_or(AaMode::Off)
+    } else {
+        AaMode::Off
+    };
     let window_scale = match cli.window_scale {
         Some(0) => None,
         Some(value) => Some(value.clamp(1, MAX_SCALE)),
@@ -209,6 +237,7 @@ pub fn resolve(
     Ok(PresentationSettings {
         mode,
         render_scale,
+        aa,
         window_scale,
         fullscreen,
     })
@@ -231,6 +260,8 @@ struct DisplayFile {
     scale: Option<u32>,
     #[serde(default)]
     resolution: Option<String>,
+    #[serde(default)]
+    aa: Option<u32>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -255,6 +286,11 @@ impl SettingsFile {
             .as_deref()
             .map(render_scale_from_resolution)
             .transpose()?;
+        let aa = self
+            .display
+            .aa
+            .map(|value| AaMode::from_factor(value).ok_or(SettingsError::UnsupportedAa { value }))
+            .transpose()?;
 
         if let (Some(scale), Some(resolution)) = (scale, resolution) {
             if scale != resolution {
@@ -274,7 +310,11 @@ impl SettingsFile {
         };
 
         Ok(Settings {
-            display: DisplaySettings { scale, resolution },
+            display: DisplaySettings {
+                scale,
+                resolution,
+                aa,
+            },
             window: WindowSettings {
                 scale: window_scale,
                 fullscreen: self.window.fullscreen,
@@ -372,6 +412,15 @@ pub enum SettingsError {
         scale: u32,
         /// The raw value of `display.resolution`.
         resolution: String,
+    },
+    /// `display.aa` names an unsupported SSAA multiplier.
+    #[error(
+        "display.aa: unsupported antialiasing multiplier {value}; supported values are \
+         0/1 (off), 2 and 4 (the SSAA box filter ships with ×2 and ×4)"
+    )]
+    UnsupportedAa {
+        /// The rejected value.
+        value: u32,
     },
     /// `window.scale` is outside `0..=MAX_SCALE`.
     #[error("window.scale: expected 1..={max} (or 0 to fit the desktop), got {value}")]

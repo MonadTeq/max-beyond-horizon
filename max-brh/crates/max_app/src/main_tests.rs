@@ -291,6 +291,57 @@ fn settings_file_fills_in_the_presentation_unless_the_cli_overrides_it() {
     assert_eq!(resolved.mode, PresentationMode::PixelPerfect);
 }
 
+/// SSAA switch (`ssaa-design.md`): `--aa 0|off|1|2|4`; the multiplier is
+/// presentation-only and belongs to the GUI window, like `--hd`.
+#[test]
+fn aa_flag_accepts_off_and_the_shipped_multipliers() {
+    use max_render::render_scale::AaMode;
+
+    let cli = parse(&[]).expect("пустой список аргументов разбирается");
+    assert_eq!(cli.aa, None);
+
+    for (value, expected) in [
+        ("0", AaMode::Off),
+        ("off", AaMode::Off),
+        ("OFF", AaMode::Off),
+        ("1", AaMode::Off),
+        ("2", AaMode::X2),
+        ("4", AaMode::X4),
+    ] {
+        let cli = parse(&["--aa", value]).expect("--aa разбирается");
+
+        assert_eq!(cli.aa, Some(expected), "--aa {value}");
+        assert_eq!(cli.mode, Mode::Ui, "the flag keeps the interactive mode");
+    }
+
+    // The CLI value replaces the file value (`CLI > file`).
+    let file = max_app::settings::Settings::parse(r#"{ "display": { "scale": 2, "aa": 2 } }"#)
+        .expect("settings parse");
+    let cli = parse(&["--aa", "4"]).expect("--aa разбирается");
+    let resolved = cli.presentation_settings(&file).expect("resolves");
+
+    assert_eq!(resolved.aa, AaMode::X4);
+    assert_eq!(resolved.render_factor(), 8, "S=2 x aa=4");
+}
+
+#[test]
+fn aa_flag_rejects_unsupported_multipliers_and_headless_modes() {
+    for value in ["3", "8", "16", "x2", "two"] {
+        let error = parse(&["--aa", value]).expect_err("неподдерживаемое значение");
+
+        assert!(error.to_string().contains("--aa"), "{error:#}");
+    }
+
+    assert!(parse(&["--aa"]).is_err(), "--aa без значения");
+
+    // Like `--hd`, the switch belongs to the GUI window: the headless modes and
+    // the direct `--connect --sdl` window would silently ignore it.
+    assert!(parse(&["--demo", "save.cam", "--aa", "2"]).is_err());
+    assert!(parse(&["--new-game", "--aa", "2"]).is_err());
+    assert!(parse(&["--host", "--aa", "2"]).is_err());
+    assert!(parse(&["--connect", "127.0.0.1:8082", "--join", "g", "--aa", "2"]).is_err());
+}
+
 #[test]
 fn record_is_rejected_in_headless_modes() {
     let error = parse(&["--demo", "save.cam", "--record", "run.qa"])

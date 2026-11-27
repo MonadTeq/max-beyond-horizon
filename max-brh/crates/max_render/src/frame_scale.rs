@@ -21,8 +21,18 @@
 //! in `max-cpp-port/src/window_manager.cpp`. Our variant was chosen because it gives
 //! a strict "pixel-for-pixel" criterion: the source frame is not interpolated, and all
 //! UI coordinates stay 640×480 constants.
+//!
+//! # SSAA resolve
+//!
+//! [`downscale_box`] is the other direction: the super-sampled presentation frame
+//! (`640·S·aa × 480·S·aa`, `max-brh-docs/development/ssaa-design.md`) is resolved
+//! back to `640·S × 480·S` by an **integer box filter** — every output pixel is
+//! the truncated mean of its `aa × aa` input block. The filter is a pure integer
+//! function, so the resolved picture is a deterministic function of the render
+//! frame and nothing else (no SDL linear filtering, no float rounding, no
+//! window/DPI influence).
 
-use crate::buffer::{PixelRect, Rgba, RgbaBuffer};
+use crate::buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 
 /// Width of the original logical frame.
 pub const FRAME_WIDTH: u32 = 640;
@@ -203,6 +213,98 @@ pub fn upscale_nearest(source: &RgbaBuffer, width: u32, height: u32) -> RgbaBuff
     }
 
     output
+}
+
+/// Box downsample of the whole frame by an integer factor (SSAA resolve).
+///
+/// Every output pixel is the **truncated mean** of its `factor × factor` block of
+/// input pixels, per RGBA channel:
+///
+/// ```text
+/// out[x, y] = sum(source[x·f + dx, y·f + dy]) / (f · f)
+/// ```
+///
+/// The filter is an integer box on purpose (the owner decision of 2026-11-27,
+/// `ssaa-design.md`):
+///
+/// * deterministic — the same input bytes always give the same output bytes, with
+///   no float rounding and no SDL/graphics-driver filter;
+/// * exact on flat areas — a block of one colour resolves to that colour, so the
+///   interiors of sprites, tiles and UI chrome do not change;
+/// * a true anti-aliaser on edges — a block that straddles two colours yields
+///   their mean, so sub-pixel geometry drawn at `S·aa` comes out with
+///   intermediate colours.
+///
+/// `factor <= 1` is the identity (a copy): [`AaMode::Off`](crate::render_scale::AaMode::Off)
+/// must not touch the frame. The output size is `source / factor` (integer
+/// division; a source whose size is not a multiple of `factor` is cropped at the
+/// right/bottom edge — the SSAA frame is always an exact multiple).
+pub fn downscale_box(source: &RgbaBuffer, factor: u32) -> RgbaBuffer {
+    if factor <= 1 {
+        return source.clone();
+    }
+
+    let width = source.width() / factor;
+    let height = source.height() / factor;
+    let mut output = RgbaBuffer::new(width, height);
+
+    downscale_box_into(source, factor, &mut output);
+
+    output
+}
+
+/// [`downscale_box`] into a caller-owned buffer (the per-frame presentation path).
+///
+/// `target` must be exactly `source / factor`; a differently sized target is
+/// resized by the same rule ([`downscale_box`] allocates a correctly sized one
+/// for one-shot callers). Returns the number of resolved pixels written.
+pub fn downscale_box_into(source: &RgbaBuffer, factor: u32, target: &mut RgbaBuffer) -> u32 {
+    if factor <= 1 {
+        *target = source.clone();
+
+        return target.len() as u32;
+    }
+
+    let width = source.width() / factor;
+    let height = source.height() / factor;
+
+    if target.width() != width || target.height() != height {
+        *target = RgbaBuffer::new(width, height);
+    }
+
+    let box_pixels = factor * factor;
+    let source_width = source.width() as usize;
+    let source_pixels = source.pixels();
+    let target_pixels = target.pixels_mut();
+    let mut written = 0u32;
+
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let mut sum = [0u32; 4];
+
+            for dy in 0..factor as usize {
+                let row = (y * factor as usize + dy) * source_width;
+
+                for dx in 0..factor as usize {
+                    let offset = (row + x * factor as usize + dx) * BYTES_PER_PIXEL;
+
+                    for (channel, value) in sum.iter_mut().enumerate() {
+                        *value += u32::from(source_pixels[offset + channel]);
+                    }
+                }
+            }
+
+            let offset = (y * width as usize + x) * BYTES_PER_PIXEL;
+
+            for (channel, value) in sum.iter().enumerate() {
+                target_pixels[offset + channel] = (value / box_pixels) as u8;
+            }
+
+            written += 1;
+        }
+    }
+
+    written
 }
 
 #[cfg(test)]

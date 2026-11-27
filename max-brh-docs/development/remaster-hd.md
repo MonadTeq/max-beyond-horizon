@@ -186,6 +186,33 @@ R3–R6 — слои подмены; R7 собирает их в один кад
 клики/мышь остаются в 640×480 (`ScreenGeometry::window_to_frame` делит на `S`).
 Меню (не игровой экран) в HD-режиме — nearest-апскейл 1:1-кадра.
 
+**SSAA (`--aa`).** Сглаживание — ортогональная ось поверх `S`
+(`development/ssaa-design.md`, решение владельца 2026-11-27): множитель
+`aa ∈ {Off, 2, 4}` (`AaMode`), кадр рисуется в `640·S·aa × 480·S·aa` и
+сводится **целочисленным box-фильтром** `aa×aa` обратно в `640·S × 480·S`
+(`max_render::frame_scale::downscale_box`, CPU, детерминирован). Ключевое:
+
+- `aa` — только презентация: `SdlWindow`/`max_core`/snapshot/CRC/golden 1:1 не
+  трогаются; при `S = 1` множитель **принудительно Off** (golden 1:1
+  байт-в-байт);
+- геометрия (`viewport.zoom = 64·S·aa`, `MAIN_MAP` и слои UI) считается в
+  `S·aa`, а `×S`-ассеты HD-слоёв (тайлы/спрайты/хром/шрифты) раскладываются
+  своим equal-block маппингом — каждый тексел становится блоком `aa×aa`
+  (nearest `×aa`). Поэтому сплошные участки не меняются, а края, попавшие
+  внутрь box-блока, получают промежуточный цвет;
+- **uniform (whole-frame resolve)**: в SSAA-буфер `640·S·aa × 496·S·aa`
+  композитится весь кадр (игра + полоса меню), затем один box-фильтр сводит его
+  в `present_buffer`; окно по-прежнему показывает `640·S × 496·S` и не
+  переоткрывается при смене `aa`;
+- `settings.jsonc` — `display.aa` (`0`/`1` = off, `2`, `4`; прочее — ошибка
+  запуска), CLI — `--aa 0|off|1|2|4`, GUI — `Settings → Antialiasing`
+  (`WindowMenuAction::SetAa`, без переоткрытия окна); приоритет
+  **CLI > jsonc > дефолт Off**;
+- буфер SSAA — CPU RAM, не VRAM: квота `HdStats` остаётся `×S`-слоями, а
+  `hd_frame_bench --aa N` печатает отдельно время рендера и резолва;
+- 60 fps: при `S = 2` + `aa` CPU-рендер выходит за бюджет, поэтому `aa` —
+  опциональный пресет качества (скриншоты), дефолт `Off`.
+
 **Гейты (DoD R7).**
 
 - `PixelPerfect` — байт-в-байт: golden 1:1 и `presentation_gate` не меняются;
@@ -199,10 +226,16 @@ R3–R6 — слои подмены; R7 собирает их в один кад
 - VRAM/soak: `HdStats::fits_quota` против квоты R0 (105 MiB при `S=2`, 420 MiB
   при `S=4`), ограниченный кэш реколора, прогон HD-кадров не трогает состояние;
   замер кадра — `examples/hd_frame_bench` (`cargo run -p max_app
-  --no-default-features --release --example hd_frame_bench -- --scale 2`).
-- Тесты: `max_app/tests/hd_presentation.rs` (HD-golden/VRAM/soak),
-  `max_app/tests/presentation_gate.rs` (+HD-профиль), unit-тесты
-  `max_render::render_scale`/`viewport` и `max_app::hd`.
+  --no-default-features --release --example hd_frame_bench -- --scale 2 [--aa 2]`).
+- SSAA: `aa = Off` — байт-в-байт текущий HD-кадр (`aa_off_is_the_current_hd_frame`),
+  box-резолв `S·aa`-кадра равен `S`-кадру (`the_box_resolve_of_the_ssaa_frame_is_the_hd_frame`),
+  `aa > 1` сглаживает края и не меняет сплошные участки
+  (`ssaa_smooths_edges_and_keeps_flat_interiors`), `snapshot_bytes`/`state_digest`
+  не зависят от `aa` (`presentation_gate::ssaa_does_not_change_the_snapshot_or_digest`).
+  `S = 1` принудительно Off (`settings::resolve`), поэтому golden 1:1 не меняется.
+- Тесты: `max_app/tests/hd_presentation.rs` (HD-golden/VRAM/soak/SSAA),
+  `max_app/tests/presentation_gate.rs` (+HD/SSAA-профили), unit-тесты
+  `max_render::render_scale`/`frame_scale`/`hd_text`/`viewport` и `max_app::hd`.
 
 **Ограничение фазы.** Интерфейс (панели, меню, диалоги) остаётся 640×480 и
 попадает в HD-кадр nearest-апскейлом: покадровый HD-UI — отдельная фаза (GPU/

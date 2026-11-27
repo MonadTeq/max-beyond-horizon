@@ -19,7 +19,7 @@ use max_app::window_menu::{
 use max_app::{App, AppConfig};
 use max_render::buffer::{PixelRect, Rgba, RgbaBuffer};
 use max_render::presentation::window_points_for;
-use max_render::render_scale::{PresentationMode, RenderScale};
+use max_render::render_scale::{AaMode, PresentationMode, RenderScale};
 
 fn center(rect: PixelRect) -> (i32, i32) {
     (rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
@@ -31,7 +31,7 @@ fn click(menu: &mut WindowMenu, rect: PixelRect) -> max_app::window_menu::MenuRe
     menu.handle_input(InputEvent::MouseClick(x, y))
 }
 
-/// `Settings → Resolutions → row(scale)` through the real hit tests.
+/// `Settings в†’ Resolutions в†’ row(scale)` through the real hit tests.
 fn choose_resolution_in_the_menu(scale: RenderScale) -> WindowMenuAction {
     let mut menu = WindowMenu::new();
 
@@ -191,7 +191,7 @@ fn the_menu_bar_keeps_the_underlying_screen_intact() {
 
         let mut present = present_game_frame(&frame, BAR_HEIGHT as u32);
         let mut overlay = RgbaBuffer::new(640, 480 + BAR_HEIGHT as u32);
-        menu.render_overlay(&mut overlay, RenderScale::PixelPerfect);
+        menu.render_overlay(&mut overlay, RenderScale::PixelPerfect, AaMode::Off);
         composite_overlay(&overlay, &mut present, 1);
 
         assert_eq!(
@@ -211,7 +211,7 @@ fn the_menu_bar_keeps_the_underlying_screen_intact() {
     }
 }
 
-/// HD modes composite the bar as a crisp nearest `×S` block; the HD game frame
+/// HD modes composite the bar as a crisp nearest `Г—S` block; the HD game frame
 /// below it keeps its pixels.
 #[test]
 fn the_menu_bar_scales_with_the_hd_frame() {
@@ -223,10 +223,10 @@ fn the_menu_bar_scales_with_the_hd_frame() {
 
     let mut present = present_game_frame(&frame, BAR_HEIGHT as u32 * 2);
     let mut overlay = RgbaBuffer::new(640, 480 + BAR_HEIGHT as u32);
-    menu.render_overlay(&mut overlay, RenderScale::Hd2);
+    menu.render_overlay(&mut overlay, RenderScale::Hd2, AaMode::Off);
     composite_overlay(&overlay, &mut present, 2);
 
-    // (500,5) logical → (1000,10) pixels: the bar is a 2×2 block there.
+    // (500,5) logical в†’ (1000,10) pixels: the bar is a 2Г—2 block there.
     assert_eq!(present.get(1000, 10), Some(BAR_BACKGROUND));
     assert_eq!(present.get(1001, 11), Some(BAR_BACKGROUND));
     // Below the bar the HD frame is untouched.
@@ -260,5 +260,11 @@ fn the_repository_settings_template_parses() {
     assert!(
         [1, 2, 4].contains(&settings.render_scale().scale()),
         "the template selects a shipped resolution"
+    );
+    // The template documents the SSAA axis and ships it off (the default).
+    assert_eq!(
+        settings.display.aa,
+        Some(AaMode::Off),
+        "the template must keep display.aa = 0 (off)"
     );
 }

@@ -42,9 +42,9 @@ use max_render::layout::{
     END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON, HELP_BUTTON, PREFS_BUTTON, ZOOM_PLUS,
 };
 use max_render::presentation::{window_points_for, ScreenGeometry};
-use max_render::render_scale::RenderScale;
+use max_render::render_scale::{AaMode, RenderScale};
 use max_render::text::GnwFontId;
-use max_render::{upscale_nearest, PixelRect, FRAME_HEIGHT, FRAME_WIDTH};
+use max_render::{downscale_box, upscale_nearest, PixelRect, FRAME_HEIGHT, FRAME_WIDTH};
 
 /// Frame of a logical map area (`layout::MAIN_MAP` is 448×448).
 const MAP_AREA: i32 = 448;
@@ -298,7 +298,7 @@ fn hd_fallback_frame_is_the_nearest_upscale_of_the_1to1_frame() {
 
         let pp = app.render_frame();
         let mut hd = fallback_presenter(&app, scale);
-        let hd_frame = app.render_frame_hd(&mut hd);
+        let hd_frame = app.render_frame_hd(&mut hd, AaMode::Off);
 
         assert_eq!(pp.width(), FRAME_WIDTH);
         assert_eq!(pp.height(), FRAME_HEIGHT);
@@ -356,7 +356,7 @@ fn exact_upscale_hd_assets_reproduce_the_pixel_perfect_frame() {
     assert_eq!(stats.hd_chrome, 1, "the window background was substituted");
     assert_eq!(stats.hd_fonts, 1, "the Font5 atlas was substituted");
 
-    let hd_frame = app.render_frame_hd(&mut hd);
+    let hd_frame = app.render_frame_hd(&mut hd, AaMode::Off);
 
     assert_upscaled(&hd_frame, &pp, factor, "exact-upscale remaster");
     assert!(
@@ -417,7 +417,7 @@ fn hd_frame_is_a_function_of_the_sources_not_of_the_window() {
 
         let mut hd = fallback_presenter(&app, scale);
 
-        frames.push(app.render_frame_hd(&mut hd));
+        frames.push(app.render_frame_hd(&mut hd, AaMode::Off));
     }
 
     assert!(
@@ -616,7 +616,7 @@ fn hd_vram_stays_inside_the_r0_quota() {
 
     assert_eq!(empty.vram_bytes(), 0);
     assert!(empty.stats().fits_quota(RenderScale::Hd2));
-    let _ = app.render_frame_hd(&mut empty);
+    let _ = app.render_frame_hd(&mut empty, AaMode::Off);
     assert_eq!(empty.sprite_cache().len(), 0, "no sprite was recolored");
 
     // With exact-upscale layers the accounting adds up and stays in the quota.
@@ -660,7 +660,7 @@ fn hd_soak_renders_frames_without_touching_the_state() {
     // stay pixel-perfect identical — rendering is presentation only.
     for frame in 0..12u32 {
         app.local_update(max_app::SIMULATION_DT);
-        let buffer = app.render_frame_hd(&mut hd);
+        let buffer = app.render_frame_hd(&mut hd, AaMode::Off);
 
         assert_eq!(buffer.width(), FRAME_WIDTH * scale.scale(), "frame {frame}");
         assert_eq!(
@@ -755,4 +755,287 @@ fn hd_window_shows_the_whole_interface_and_hit_tests_logical_buttons() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 6: SSAA (ssaa-design.md)
+// ---------------------------------------------------------------------------
+
+/// The `xS` nearest upscale of unit `unit_type`'s whole sprite sheet as an HD
+/// bank: the adapter then has to expand every texel by the SSAA multiplier.
+fn exact_upscale_bank(
+    app: &App,
+    unit_type: max_core::enums::UnitType,
+    scale: RenderScale,
+) -> Option<HdSpriteBank> {
+    let assets = app.assets()?;
+    let sprite = assets.sprite(unit_type)?;
+    let factor = scale.scale();
+    let frames: Vec<Option<HdIndexFrame>> = (0..sprite.sheet.len())
+        .map(|index| {
+            sprite
+                .sheet
+                .frame(index)
+                .map(|frame| upscaled_index_frame(frame, factor))
+        })
+        .collect();
+    let shadows: Vec<Option<HdShadowFrame>> = (0..sprite.sheet.len())
+        .map(|index| {
+            sprite
+                .shadow
+                .as_ref()
+                .and_then(|shadow| shadow.frame(index))
+                .map(|frame| upscaled_shadow_frame(frame, factor))
+        })
+        .collect();
+
+    Some(HdSpriteBank::with_frames(
+        sprite.sheet.clone(),
+        sprite.shadow.clone(),
+        scale,
+        frames,
+        shadows,
+    ))
+}
+
+/// `aa = Off` is exactly the historical HD frame: the same `xS` picture as
+/// before the SSAA axis existed, and therefore the `xS` upscale of the 1:1
+/// frame on a fallback checkout. This is the identity side of DoD.
+#[test]
+fn aa_off_is_the_current_hd_frame() {
+    let Some(mut app) = started_app() else {
+        return;
+    };
+
+    for _ in 0..30 {
+        app.local_update(max_app::SIMULATION_DT);
+    }
+
+    let pp = app.render_frame();
+
+    for scale in [RenderScale::Hd2, RenderScale::Hd4] {
+        let mut hd = fallback_presenter(&app, scale);
+        let frame = app.render_frame_hd(&mut hd, AaMode::Off);
+
+        assert_eq!(
+            (frame.width(), frame.height()),
+            (FRAME_WIDTH * scale.scale(), FRAME_HEIGHT * scale.scale()),
+            "[{}] aa=off must keep the xS frame",
+            scale.label()
+        );
+        assert_upscaled(&frame, &pp, scale.scale(), "aa=off identity");
+    }
+}
+
+/// SSAA-golden: the `S*aa` frame resolved by the integer box filter is exactly
+/// the `S` HD frame when the picture is block-aligned — the resolve adds no
+/// drift, and `aa` is a pure presentation multiplier.
+#[test]
+fn the_box_resolve_of_the_ssaa_frame_is_the_hd_frame() {
+    let Some(mut app) = started_app() else {
+        return;
+    };
+
+    for _ in 0..30 {
+        app.local_update(max_app::SIMULATION_DT);
+    }
+
+    // `S·aa` stays <= 8: a debug-build frame at `S·aa = 16` is ~78 Mpx and costs
+    // far more than the property is worth (the gate is about the resolve).
+    for (scale, aa) in [
+        (RenderScale::Hd2, AaMode::X2),
+        (RenderScale::Hd2, AaMode::X4),
+        (RenderScale::Hd4, AaMode::X2),
+    ] {
+        let mut hd = fallback_presenter(&app, scale);
+        let reference = app.render_frame_hd(&mut hd, AaMode::Off);
+        let factor = scale.scale() * aa.factor();
+        let ssaa = app.render_frame_hd(&mut hd, aa);
+
+        assert_eq!(
+            (ssaa.width(), ssaa.height()),
+            (FRAME_WIDTH * factor, FRAME_HEIGHT * factor),
+            "[{} {}] the render frame must be S*aa",
+            scale.label(),
+            aa.label()
+        );
+
+        let resolved = downscale_box(&ssaa, aa.factor());
+
+        assert_eq!(
+            (resolved.width(), resolved.height()),
+            (reference.width(), reference.height()),
+            "[{} {}] the resolve must return the S size",
+            scale.label(),
+            aa.label()
+        );
+        assert!(
+            resolved.pixels() == reference.pixels(),
+            "[{} {}] the box resolve of the SSAA frame is not the HD frame",
+            scale.label(),
+            aa.label()
+        );
+
+        // Rendering is deterministic: the same scene yields the same bytes.
+        let again = downscale_box(&app.render_frame_hd(&mut hd, aa), aa.factor());
+
+        assert!(
+            again.pixels() == resolved.pixels(),
+            "[{} {}] the SSAA frame is not deterministic",
+            scale.label(),
+            aa.label()
+        );
+    }
+}
+
+/// Anti-aliasing property: at a sub-pixel offset the box resolve blends the
+/// sprite edges into colours the `xS` drawing does not contain, while every
+/// flat interior pixel (a uniform 3x3 neighbourhood at `S`) stays unchanged.
+#[test]
+fn ssaa_smooths_edges_and_keeps_flat_interiors() {
+    use std::collections::HashSet;
+
+    let scale = RenderScale::Hd2;
+    let aa = AaMode::X2;
+    let Some(app) = started_app() else {
+        return;
+    };
+    let Some(assets) = app.assets() else {
+        return;
+    };
+    let state = app.state_ref();
+    let Some(unit) = state
+        .unit_ids_in_order()
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .find(|unit| unit.unit_type != max_core::enums::UnitType::MasterBuilder)
+    else {
+        return;
+    };
+    let Some(bank) = exact_upscale_bank(&app, unit.unit_type, scale) else {
+        return;
+    };
+
+    let mut hd =
+        HdPresenter::with_layers(scale, None, HdChrome::empty(scale), HdFonts::empty(scale))
+            .with_bank(unit.unit_type, bank);
+
+    let presentation = state.presentation(unit.id).cloned().unwrap_or_default();
+    let image_base = max_app::render::image_base_for(
+        unit,
+        state
+            .teams()
+            .get(unit.team.0 as usize)
+            .map(|team| team.team_clan),
+    );
+    let palette = &assets.system_palette;
+    let cycles = max_render::palette::ColorCycles::new();
+    let anchor = (MAP_AREA / 2, MAP_AREA / 2);
+    let scale_factor = scale.scale();
+    let factor = scale_factor * aa.factor();
+
+    // The reference `S` frame.
+    let mut s_frame = RgbaBuffer::filled(
+        (MAP_AREA * scale_factor as i32) as u32,
+        (MAP_AREA * scale_factor as i32) as u32,
+        Rgba::BLACK,
+    );
+    let drawn_s = draw_unit_sprites_with_animation_hd(
+        assets,
+        palette,
+        unit,
+        &presentation,
+        image_base,
+        unit.angle,
+        Default::default(),
+        true,
+        unit.connectors,
+        &mut s_frame,
+        (
+            anchor.0 * scale_factor as i32,
+            anchor.1 * scale_factor as i32,
+        ),
+        64 * scale_factor,
+        &mut hd,
+        &cycles,
+    )
+    .expect("the type has a sprite");
+
+    // The SSAA frame: the same picture shifted by one render pixel — geometry
+    // the `S` frame cannot express.
+    let mut r_frame = RgbaBuffer::filled(
+        (MAP_AREA * factor as i32) as u32,
+        (MAP_AREA * factor as i32) as u32,
+        Rgba::BLACK,
+    );
+    let drawn_r = draw_unit_sprites_with_animation_hd(
+        assets,
+        palette,
+        unit,
+        &presentation,
+        image_base,
+        unit.angle,
+        Default::default(),
+        true,
+        unit.connectors,
+        &mut r_frame,
+        (anchor.0 * factor as i32 + 1, anchor.1 * factor as i32 + 1),
+        64 * factor,
+        &mut hd,
+        &cycles,
+    )
+    .expect("the type has a sprite");
+
+    assert!(drawn_s.unit > 0, "the 1:1-size path drew the body");
+    assert!(drawn_r.unit > 0, "the SSAA path drew the body");
+
+    let resolved = downscale_box(&r_frame, aa.factor());
+
+    assert_eq!(
+        (resolved.width(), resolved.height()),
+        (s_frame.width(), s_frame.height())
+    );
+
+    // Interiors are untouched: a flat 3x3 neighbourhood at `S` stays that colour.
+    let mut flat = 0usize;
+
+    for y in 1..s_frame.height() as i32 - 1 {
+        for x in 1..s_frame.width() as i32 - 1 {
+            let Some(center) = s_frame.get(x, y) else {
+                continue;
+            };
+            let uniform =
+                (-1..=1).all(|dy| (-1..=1).all(|dx| s_frame.get(x + dx, y + dy) == Some(center)));
+
+            if uniform {
+                flat += 1;
+
+                assert_eq!(
+                    resolved.get(x, y),
+                    Some(center),
+                    "aa changed a flat interior pixel at {x},{y}"
+                );
+            }
+        }
+    }
+
+    assert!(flat > 0, "the drawing has a flat interior");
+
+    // Edges are smoothed: the resolve produces colours the `S` drawing lacks.
+    let source_colors: HashSet<[u8; 4]> = s_frame
+        .pixels()
+        .chunks_exact(4)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2], pixel[3]])
+        .collect();
+    let smoothed = resolved
+        .pixels()
+        .chunks_exact(4)
+        .filter(|pixel| !source_colors.contains(&[pixel[0], pixel[1], pixel[2], pixel[3]]))
+        .count();
+
+    assert!(
+        smoothed > 0,
+        "aa={} does not blend any edge pixel of a sub-pixel-shifted sprite",
+        aa.label()
+    );
 }

@@ -67,11 +67,14 @@ pub mod viewport;
 pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
-pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use frame_scale::{
+    downscale_box, downscale_box_into, upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH,
+    MAX_SCALE,
+};
 pub use hd_chrome::{
-    scaled_pixel_rect, scaled_rect, stretch_into, ChromePanel, ChromeSource, HdChrome, HdImage,
-    HdUiSkin, CHROME_FRAME, CHROME_PANEL_BOTTOM, CHROME_PANEL_TOP, PANEL_BOTTOM_RECT,
-    PANEL_TOP_RECT,
+    scaled_pixel_rect, scaled_pixel_rect_by, scaled_rect, scaled_rect_by, stretch_into,
+    ChromePanel, ChromeSource, HdChrome, HdImage, HdUiSkin, CHROME_FRAME, CHROME_PANEL_BOTTOM,
+    CHROME_PANEL_TOP, PANEL_BOTTOM_RECT, PANEL_TOP_RECT,
 };
 pub use hd_sprites::{
     is_silhouette_zoom, scaled_offset, HdIndexFrame, HdIndexMap, HdRecolorState, HdShadowFrame,
@@ -80,8 +83,9 @@ pub use hd_sprites::{
 };
 pub use hd_terrain::{HdTerrainAtlas, HdTile};
 pub use hd_text::{
-    draw_text_hd, draw_text_hd_outlined, draw_text_hd_shadowed, draw_text_line_hd, line_width_hd,
-    HdFontAtlas, HdFonts, HdGlyphAtlas, FONT_COVERAGE_CHANNEL, GLYPH_COUNT, INK_THRESHOLD,
+    draw_text_hd, draw_text_hd_outlined, draw_text_hd_outlined_scaled, draw_text_hd_scaled,
+    draw_text_hd_shadowed, draw_text_line_hd, line_width_hd, HdFontAtlas, HdFonts, HdGlyphAtlas,
+    FONT_COVERAGE_CHANNEL, GLYPH_COUNT, INK_THRESHOLD,
 };
 pub use layout::{
     AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,
@@ -102,8 +106,9 @@ pub use palette::{
 };
 pub use presentation::{window_points_for, PresentationState, ScreenGeometry};
 pub use render_scale::{
-    FilterMode, PresentationMode, PresentationModeError, RenderScale, HD_SCALES, HD_SCALE_X2,
-    HD_SCALE_X4, PIXEL_PERFECT_SCALE,
+    AaMode, AaModeError, FilterMode, PresentationMode, PresentationModeError, RenderScale,
+    AA_FACTORS, AA_OFF_FACTOR, AA_X2_FACTOR, AA_X4_FACTOR, HD_SCALES, HD_SCALE_X2, HD_SCALE_X4,
+    PIXEL_PERFECT_SCALE,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};
