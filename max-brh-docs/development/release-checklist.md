@@ -825,3 +825,35 @@ Enter или Esc. **Другого экрана перехода в оригин
 (`CLAN_TRADEOFFS`, `ClanSelectMenu::DrawClanUpgrades`); запись V70 отсутствует
 (общий пункт M-SP), контейнер `MXLS` — версия 3 (флаг `hot_seat` + `team_clans`).
 
+## Приложение E. HD-ремастер (R7: режим `--hd`, HD-golden, VRAM-гейт)
+
+Ремастер — **только презентация** (`development/remaster-hd.md` §R7): симуляция,
+сеть, `snapshot_bytes`/`state_digest`/CRC и golden 1:1 не меняются ни на байт.
+Режим по умолчанию — `PixelPerfect` (`S=1`); HD включается явно.
+
+```sh
+# HD-слой: флаги клиента (GUI)
+max-brh.exe --ui --hd                 # S=2 — рекомендация R0
+max-brh.exe --ui --hd --hd-scale 4    # S=4 (CPU-рендерер: ~12 fps в R0)
+max-brh.exe --ui --hd --remaster-dir D:\hd   # свой каталог ассетов/манифеста
+# по умолчанию remaster-dir = max-brh/target/remaster; нет ассетов — по-ассетный fallback
+```
+
+| Гейт | Команда | Результат (что должно быть) | Ссылка |
+|---|---|---|---|
+| Живой запуск | `max-brh.exe --ui --hd` | окно `1280×960` точек/пикселей, лог `UI: HD-режим hd-2x (кадр 1280x960 …), remaster=… — тайлы=… VRAM … MiB`, клиент живёт в цикле; без ассетов — тайлы/спрайты/хром/шрифты = 0 и VRAM 0 МиБ | `build/hd-live-smoke.log` |
+| `PixelPerfect` байт-в-байт | `cargo nextest run -p max_app --no-default-features --test presentation_gate` | 10/10; HD-профиль (`Hd2`/`Hd4`) даёт тот же `snapshot_bytes`/`state_digest`, что 1:1 | — |
+| HD-golden «по источникам» | `cargo nextest run -p max_app --no-default-features --test hd_presentation` | 6/6: без ассетов HD-кадр = nearest-`×S` 1:1-кадра; ассеты-апскейлы — тот же байт-в-байт кадр; HD-спрайты = `×S` 1:1-спрайта; кадр детерминирован и не зависит от окна | — |
+| 1:1 golden не тронут | `qa_run` + `qa_golden_check` (`build/run_qa.ps1`) | все сценарии exit 0, эталоны в пределах штатного порога | `build/qa-*.log`, `build/golden-*.log` |
+| VRAM-квота | `cargo run -p max_app --no-default-features --release --example hd_frame_bench -- --scale 2 --frames 30` | `HD-BENCH VRAM … ok` и `mib` ≤ квоты R0 (105 MiB при `S=2`, 420 MiB при `S=4`) | stdout бенча |
+| Кадровое время | тот же бенч с `--scale 2/4` | медиана кадра; `fps` — для отчёта: R0 измерил CPU-рендерер `S=2` ~21 мс (47 fps), `S=4` ~83 мс (12 fps) на референсной машине, GPU-путь — после R7 | stdout бенча |
+| Soak | `cargo nextest run -p max_app --no-default-features -E 'test(hd_soak)'` | HD-кадры идут, состояние не меняется, кэш реколора ограничен | — |
+| Host-smoke не затронут | `powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\host-smoke.ps1 -Clients all -Turns 3` | `HOST-SMOKE PASS` для 2 и 3 клиентов: HD — презентация, headless-путь не меняется | `build/host-smoke/**` |
+
+Ограничения R7: интерфейс (панели, меню, диалоги) остаётся 640×480 и входит в
+HD-кадр nearest-апскейлом (покадровый HD-UI и сырой GPU-бэкенд — отдельная фаза);
+живая проверка «60 fps» зависит от машины и GPU-фазы. Замер на машине R0
+(релизная сборка) даёт `S=2` ≈21 мс на кадр (47 fps), `S=4` ≈83 мс (12 fps) —
+поэтому `S=4` в CPU-пути неиграбелен и остаётся опцией для скриншотов/golden.
+
+

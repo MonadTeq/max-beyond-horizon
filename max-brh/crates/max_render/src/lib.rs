@@ -102,7 +102,8 @@ pub use palette::{
 };
 pub use presentation::{PresentationState, ScreenGeometry};
 pub use render_scale::{
-    FilterMode, RenderScale, HD_SCALES, HD_SCALE_X2, HD_SCALE_X4, PIXEL_PERFECT_SCALE,
+    FilterMode, PresentationMode, PresentationModeError, RenderScale, HD_SCALES, HD_SCALE_X2,
+    HD_SCALE_X4, PIXEL_PERFECT_SCALE,
 };
 pub use sprite_atlas::{DrawStats, SpriteRenderer};
 pub use terrain::{palette_from_wrl, PaletteRgba, TerrainAtlas};

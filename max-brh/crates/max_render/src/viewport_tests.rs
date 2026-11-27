@@ -260,3 +260,47 @@ fn grid_lines_of_an_empty_viewport_are_empty() {
     assert!(viewport.grid_lines(640, 0).is_empty());
     assert!(viewport.grid_lines(-1, -1).is_empty());
 }
+
+#[test]
+fn scaled_viewport_keeps_the_world_view_at_s_times_the_pixels() {
+    let viewport = Viewport::with_center(448, 448, (3584, 3584), 64);
+
+    for factor in [2u32, 4] {
+        let hd = viewport.scaled(factor);
+
+        assert_eq!(hd.screen(), (448 * factor, 448 * factor));
+        assert_eq!(hd.zoom(), 64 * factor);
+        assert_eq!(hd.center(), viewport.center(), "the camera center is unchanged");
+
+        // A cell corner maps to exactly `factor` times the logical pixel.
+        let logical = viewport.grid_to_screen(52, 53);
+        let scaled = hd.grid_to_screen(52, 53);
+
+        assert_eq!(
+            scaled,
+            (logical.0 * factor as i32, logical.1 * factor as i32)
+        );
+        // The view shows the same cells: only the resolution changed.
+        assert_eq!(hd.visible_tiles(), viewport.visible_tiles());
+        // A cell is `64 * factor` render pixels wide.
+        assert_eq!(hd.tile_rect(52, 53).width, 64 * factor as i32);
+    }
+}
+
+#[test]
+fn scaled_by_one_is_the_identity_and_zero_is_ignored() {
+    let viewport = test_viewport();
+
+    assert_eq!(viewport.scaled(1), viewport);
+    assert_eq!(viewport.scaled(0), viewport);
+}
+
+#[test]
+fn scaled_zoom_is_not_clamped_by_max_zoom() {
+    let viewport = Viewport::with_center(448, 448, (3584, 3584), MAX_ZOOM);
+    let hd = viewport.scaled(4);
+
+    // The HD multiplier is a presentation scale, not a zoom level the player
+    // reaches: `S = 4` at the maximum 1:1 zoom needs 512.
+    assert_eq!(hd.zoom(), MAX_ZOOM * 4);
+}

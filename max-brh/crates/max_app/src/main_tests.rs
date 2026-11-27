@@ -49,6 +49,77 @@ fn no_fow_flag_is_parsed() {
     assert!(!cli.no_fow);
 }
 
+/// R7 presentation switch: `--hd` / `--hd-scale N` / `--remaster-dir DIR`.
+///
+/// The default is pixel-perfect, `--hd` alone is the R0-recommended `S = 2`,
+/// `--hd-scale` implies `--hd`, and `--hd-scale 1` is the historical pipeline
+/// through the same switch. An unsupported multiplier is a launch error: an
+/// asset tag exists only for the shipped `×2`/`×4`.
+#[test]
+fn hd_flags_select_the_presentation_mode() {
+    use max_render::render_scale::{PresentationMode, RenderScale};
+
+    let cli = parse(&[]).expect("пустой список аргументов разбирается");
+    assert!(!cli.hd);
+    assert_eq!(cli.hd_scale, None);
+    assert_eq!(
+        cli.presentation().expect("the default mode resolves"),
+        (PresentationMode::PixelPerfect, RenderScale::PixelPerfect)
+    );
+
+    let cli = parse(&["--hd"]).expect("--hd разбирается");
+    assert!(cli.hd);
+    assert_eq!(
+        cli.presentation().expect("--hd resolves"),
+        (PresentationMode::Hd, RenderScale::Hd2),
+        "the default HD multiplier is the R0 recommendation"
+    );
+
+    for (value, expected) in [("2", RenderScale::Hd2), ("4", RenderScale::Hd4)] {
+        let cli = parse(&["--hd", "--hd-scale", value]).expect("--hd-scale разбирается");
+
+        assert_eq!(cli.hd_scale, Some(expected.scale()));
+        assert_eq!(
+            cli.presentation().expect("--hd-scale resolves"),
+            (PresentationMode::Hd, expected)
+        );
+        // `--hd-scale` implies `--hd`.
+        let cli = parse(&["--hd-scale", value]).expect("--hd-scale без --hd разбирается");
+        assert_eq!(
+            cli.presentation().expect("--hd-scale implies --hd"),
+            (PresentationMode::Hd, expected)
+        );
+    }
+
+    // `S = 1` is the historical pipeline via the same switch.
+    let cli = parse(&["--hd", "--hd-scale", "1"]).expect("--hd-scale 1 разбирается");
+    assert_eq!(
+        cli.presentation().expect("S=1 resolves"),
+        (PresentationMode::PixelPerfect, RenderScale::PixelPerfect)
+    );
+
+    // Any other multiplier is rejected at parse time.
+    for value in ["0", "3", "8"] {
+        assert!(
+            parse(&["--hd", "--hd-scale", value]).is_err(),
+            "--hd-scale {value} must be rejected"
+        );
+    }
+
+    let cli = parse(&["--hd", "--remaster-dir", "D:/hd"]).expect("--remaster-dir разбирается");
+    assert_eq!(
+        cli.remaster_dir.as_deref(),
+        Some(std::path::Path::new("D:/hd"))
+    );
+
+    // The switch belongs to the GUI window: headless modes and the direct
+    // `--connect --sdl` window reject it instead of silently ignoring it.
+    assert!(parse(&["--demo", "save.cam", "--hd"]).is_err());
+    assert!(parse(&["--new-game", "--hd"]).is_err());
+    assert!(parse(&["--host", "--hd"]).is_err());
+    assert!(parse(&["--connect", "127.0.0.1:8082", "--join", "game", "--hd"]).is_err());
+}
+
 #[test]
 fn demo_flag_selects_headless_demo() {
     let cli = parse(&["--demo", "max-original/SAVE1.CAM", "--turns", "7"])

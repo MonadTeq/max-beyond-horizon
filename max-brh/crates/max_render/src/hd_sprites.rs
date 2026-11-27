@@ -675,6 +675,18 @@ impl HdSpriteCache {
         self.order.clear();
     }
 
+    /// Resident bytes of the recolored textures held by the cache (RGBA8).
+    ///
+    /// The remaster VRAM budget (`remaster-hd.md` §R7) counts the recolor cache
+    /// as part of the working set: the cache is bounded by [`Self::limit`], so
+    /// this is bounded too.
+    pub fn bytes(&self) -> usize {
+        self.entries
+            .values()
+            .map(|texture| texture.pixels().len())
+            .sum()
+    }
+
     /// A cached texture, if the key is present.
     pub fn get(&self, key: &HdSpriteKey) -> Option<&HdSpriteTexture> {
         self.entries.get(key)

@@ -136,11 +136,31 @@ struct Cli {
     /// Debug observation mode (`--no-fow`): draw the game without the fog of war
     /// (presentation only — the simulation state and the CRC are unchanged).
     no_fow: bool,
+    /// `--hd`: draw through the HD remaster pipeline (`remaster-hd.md` §R7).
+    hd: bool,
+    /// `--hd-scale N`: HD multiplier (`2`/`4`); implies `--hd`.
+    hd_scale: Option<u32>,
+    /// `--remaster-dir DIR`: HD asset root (default `<workspace>/max-brh/target/remaster`).
+    remaster_dir: Option<PathBuf>,
     /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
 }
 
 impl Cli {
+    /// The presentation mode and render scale of `--hd` / `--hd-scale`
+    /// (`remaster-hd.md` §R7). The default is pixel-perfect: the byte-for-byte
+    /// 640×480 pipeline, which never loads a remaster asset.
+    ///
+    /// `--hd` is a GUI presentation switch; the headless modes ignore it, so the
+    /// method is only called from `run_ui` behind the `sdl` feature.
+    #[cfg_attr(not(feature = "sdl"), allow(dead_code))]
+    fn presentation(
+        &self,
+    ) -> Result<(max_render::PresentationMode, max_render::RenderScale)> {
+        max_render::PresentationMode::from_flags(self.hd, self.hd_scale)
+            .map_err(|error| anyhow!("{error}"))
+    }
+
     fn parse() -> Result<Self> {
         let cli = Self::parse_from(std::env::args().skip(1))?;
         cli.ensure_gui_available()?;
@@ -182,6 +202,9 @@ impl Cli {
             fullscreen: false,
             fps_stats: false,
             no_fow: false,
+            hd: false,
+            hd_scale: None,
+            remaster_dir: None,
             record: None,
         };
         let mut mode_set = false;
@@ -294,6 +317,26 @@ impl Cli {
                 // (live AI observation; presentation only, the CRC is unchanged).
                 "--no-fow" => {
                     cli.no_fow = true;
+                }
+                // HD presentation (`remaster-hd.md` §R7): the frame is drawn at
+                // `640·S × 480·S` from the remaster layers. Presentation only.
+                "--hd" => {
+                    cli.hd = true;
+                }
+                "--hd-scale" => {
+                    let value = parse_u32(&mut args, "--hd-scale")?;
+                    if max_render::RenderScale::from_scale(value).is_none() {
+                        bail!(
+                            "--hd-scale: ожидалось 1, 2 или 4 (ремастер поставляется в ×2/×4), \
+                             получено {value}"
+                        );
+                    }
+                    cli.hd_scale = Some(value);
+                }
+                "--remaster-dir" => {
+                    cli.remaster_dir = Some(PathBuf::from(
+                        args.next().context("--remaster-dir требует каталог")?,
+                    ));
                 }
                 "--record" => {
                     cli.record = Some(PathBuf::from(
@@ -435,6 +478,15 @@ impl Cli {
             bail!(
                 "--record работает только с GUI (запись ручной игры); \
                  без SDL доступен API max_app::qa::Recorder"
+            );
+        }
+        // `--hd` is a presentation switch of the GUI window (`--ui`). The
+        // headless modes and the direct `--connect --sdl` window do not build
+        // the HD frame, so asking for it there would be a silent no-op.
+        if cli.hd && cli.mode != Mode::Ui {
+            bail!(
+                "--hd/--hd-scale работают только в GUI (без флагов или --ui): \
+                 остальные режимы headless, а прямой --connect --sdl рисует 1:1-окно"
             );
         }
 
@@ -1137,13 +1189,64 @@ fn run_ui(cli: &Cli) -> Result<()> {
         println!("UI: режим отладки ИИ — туман войны отключён (--no-fow)");
     }
 
+    // Presentation switch (`remaster-hd.md` §R7). The window is sized on the
+    // **render frame**: at HD the frame is `640·S × 480·S`, so the window opens
+    // at least at the render frame size in points and the logical 640×480 frame
+    // keeps its own coordinates.
+    let (presentation, render_scale) = cli.presentation()?;
+    let hd_factor = render_scale.scale();
     let mut window = SdlWindow::new_scaled(
         "M.A.X. — Rust client (M4.2 HUD)",
-        config.screen_width,
-        config.screen_height,
+        config.screen_width * hd_factor,
+        config.screen_height * hd_factor,
         normalized_window_scale(cli.window_scale),
     )
     .map_err(|error| anyhow!("{error}"))?;
+    if presentation.is_hd() {
+        window.set_render_scale(render_scale);
+    }
+    // HD layers of the remaster (`remaster-hd.md` §R3–§R7), resolved once.
+    // `PixelPerfect` loads nothing: the historical path must not depend on the
+    // remaster being present. Every missing asset falls back per asset, so a
+    // partial remaster still runs.
+    let mut hd = if presentation.is_hd() {
+        let root = cli
+            .remaster_dir
+            .clone()
+            .unwrap_or_else(|| max_app::default_remaster_root(repository_root().as_deref()));
+        let presenter = match app.assets() {
+            Some(assets) => max_app::HdPresenter::load(assets, render_scale, &root),
+            None => max_app::HdPresenter::empty(render_scale),
+        };
+        let stats = presenter.stats();
+
+        println!(
+            "UI: HD-режим {} (кадр {}x{}, окно {}x{} точек), remaster={} — \
+             тайлы={} спрайты={} тени={} хром={} шрифты={}, VRAM {:.1} MiB",
+            render_scale.label(),
+            config.screen_width * hd_factor,
+            config.screen_height * hd_factor,
+            window.size().0,
+            window.size().1,
+            root.display(),
+            stats.hd_tiles,
+            stats.hd_sprites,
+            stats.hd_shadows,
+            stats.hd_chrome,
+            stats.hd_fonts,
+            stats.total_mib()
+        );
+
+        Some(presenter)
+    } else {
+        None
+    };
+    // The HD frame is `640·S × 480·S`; menus are the nearest `×S` upscale of
+    // the 1:1 screen (the per-asset fallback), the session is rendered natively.
+    let mut hd_buffer = RgbaBuffer::new(
+        config.screen_width * hd_factor,
+        config.screen_height * hd_factor,
+    );
     if cli.fullscreen {
         // Presentation only: the 640×480 frame is unchanged, the geometry is
         // recomputed for the display (task 1.4.2).
@@ -1935,7 +2038,15 @@ fn run_ui(cli: &Cli) -> Result<()> {
             // "Connecting" frame: while Horizon/the lobby run, the window is not empty.
             ctx.status = format!("Connecting to {}…", request.game_id);
             screen.render(&mut buffer, ctx.view(Some(&app)));
-            let _ = window.present(&buffer);
+            let _ = present_ui_frame(
+                &mut window,
+                hd.as_mut(),
+                &screen,
+                &app,
+                &ctx,
+                &buffer,
+                &mut hd_buffer,
+            );
 
             let status = match run_ui_session(
                 runtime,
@@ -1948,6 +2059,8 @@ fn run_ui(cli: &Cli) -> Result<()> {
                 join_retry,
                 Duration::from_secs(u64::from(cli.turn_wait_secs.unwrap_or(0))),
                 recorder.as_mut(),
+                hd.as_mut(),
+                &mut hd_buffer,
             ) {
                 Ok(report) => {
                     print_network(&report);
@@ -1967,10 +2080,29 @@ fn run_ui(cli: &Cli) -> Result<()> {
             continue;
         }
 
-        screen.render(&mut buffer, ctx.view(Some(&app)));
-        window
-            .present(&buffer)
-            .map_err(|error| anyhow!("{error}"))?;
+        // In the HD mode the session frame is rendered at `640·S × 480·S` by
+        // `render_session_hd`; the 1:1 frame would be discarded, so it is not
+        // built (that halves the CPU cost of an HD frame). `Screen::render` has
+        // exactly one side effect — it steps the button-press pulse
+        // (`press::advance`) — which is kept here so the interface timing is
+        // identical to the pixel-perfect path.
+        let hd_session = hd.is_some() && matches!(screen, Screen::InSession { .. });
+
+        if hd_session {
+            max_app::press::advance();
+        } else {
+            screen.render(&mut buffer, ctx.view(Some(&app)));
+        }
+
+        present_ui_frame(
+            &mut window,
+            hd.as_mut(),
+            &screen,
+            &app,
+            &ctx,
+            &buffer,
+            &mut hd_buffer,
+        )?;
 
         // 1.4.2: 60 Hz frame budget evidence. The pacer sleeps one period after
         // the frame; the stats count how many frames exceeded 16.67 ms.
@@ -2024,6 +2156,48 @@ fn run_ui(_cli: &Cli) -> Result<()> {
          (входит в default-features): cargo run -p max_app; \
          консольная сборка клиента — с --no-default-features"
     )
+}
+
+/// Presents one UI frame: the historical 640×480 buffer, or its HD rendering.
+///
+/// In the HD modes the session frame is rendered natively at `640·S × 480·S`
+/// ([`max_app::ui::render_session_hd`] — HD tiles/sprites/chrome and the HD
+/// message box); every other screen is the nearest `×S` upscale of its 1:1
+/// picture, because the interface is laid out in 640×480 (`remaster-hd.md`
+/// §R5) and an asset without an HD counterpart falls back to exactly that.
+///
+/// Presentation only: the UI state and the simulation are untouched.
+#[cfg(feature = "sdl")]
+fn present_ui_frame(
+    window: &mut max_render::SdlWindow,
+    hd: Option<&mut max_app::HdPresenter>,
+    screen: &Screen,
+    app: &App,
+    ctx: &UiContext,
+    buffer: &max_render::buffer::RgbaBuffer,
+    hd_buffer: &mut max_render::buffer::RgbaBuffer,
+) -> Result<()> {
+    match hd {
+        Some(presenter) => {
+            if matches!(screen, Screen::InSession { .. }) {
+                max_app::ui::render_session_hd(hd_buffer, ctx.view(Some(app)), presenter);
+            } else if hd_buffer.width() == buffer.width() * presenter.scale().scale()
+                && hd_buffer.height() == buffer.height() * presenter.scale().scale()
+            {
+                let upscaled =
+                    max_render::upscale_nearest(buffer, hd_buffer.width(), hd_buffer.height());
+
+                hd_buffer.pixels_mut().copy_from_slice(upscaled.pixels());
+            }
+
+            window
+                .present(hd_buffer)
+                .map_err(|error| anyhow!("{error}"))
+        }
+        None => window
+            .present(buffer)
+            .map_err(|error| anyhow!("{error}")),
+    }
 }
 
 /// Sets the window cursor by context (`Cursor_SetCursor`).
@@ -2106,6 +2280,8 @@ fn run_ui_session(
     join_retry: JoinRetryPolicy,
     turn_wait: Duration,
     recorder: Option<&mut Recorder>,
+    hd: Option<&mut max_app::HdPresenter>,
+    hd_buffer: &mut max_render::buffer::RgbaBuffer,
 ) -> Result<NetworkReport> {
     let options = NetworkOptions {
         game_id: request.game_id.clone(),
@@ -2124,6 +2300,8 @@ fn run_ui_session(
         status: String::new(),
         game_id: request.game_id.clone(),
         recorder,
+        hd,
+        hd_buffer,
     };
 
     runtime.block_on(run_network_with_sink(app, &options, Some(&mut sink)))
@@ -2149,6 +2327,10 @@ struct UiSessionSink<'a> {
     game_id: String,
     /// QA layer 2.5: the same event stream that goes to the HUD.
     recorder: Option<&'a mut Recorder>,
+    /// HD layers of the remaster (`remaster-hd.md` §R7); `None` — pixel-perfect.
+    hd: Option<&'a mut max_app::HdPresenter>,
+    /// `640·S × 480·S` frame the HD presentation is built into.
+    hd_buffer: &'a mut max_render::buffer::RgbaBuffer,
 }
 
 #[cfg(feature = "sdl")]
@@ -2223,13 +2405,26 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
             app: Some(app),
             missions: None,
         };
-        self.screen.render(&mut self.buffer, view);
+        // The 1:1 frame is always built: `Screen::render` steps the
+        // button-press pulse (its only side effect), which the HD path keeps.
+        self.screen.render(&mut self.buffer, view.clone());
+
+        // HD presentation: `640·S × 480·S` from the remaster layers, else the
+        // nearest `×S` upscale of the 1:1 frame for the non-session screens.
+        if let Some(hd) = self.hd.as_deref_mut() {
+            max_app::ui::render_session_hd(self.hd_buffer, view, hd);
+        }
 
         // 1.4.2 alt-tab gate: while the window is minimized/occluded the frame
         // is not uploaded, but the network loop keeps ticking — barrier
         // timeouts and turn timers are not affected by focus.
         if self.window.should_present() {
-            if let Err(error) = self.window.present(&self.buffer) {
+            let frame = match self.hd.as_deref() {
+                Some(_) => &*self.hd_buffer,
+                None => &self.buffer,
+            };
+
+            if let Err(error) = self.window.present(frame) {
                 eprintln!("SDL: {error}");
                 return false;
             }
@@ -2254,8 +2449,32 @@ impl max_app::net::FrameSink for UiSessionSink<'_> {
         };
         self.screen.render(&mut self.buffer, view);
 
+        // HD: the menu screen is the nearest `×S` upscale of its 1:1 picture.
+        if let Some(hd) = self.hd.as_deref() {
+            let factor = hd.scale().scale();
+
+            if self.hd_buffer.width() == self.buffer.width() * factor
+                && self.hd_buffer.height() == self.buffer.height() * factor
+            {
+                let upscaled = max_render::upscale_nearest(
+                    &self.buffer,
+                    self.hd_buffer.width(),
+                    self.hd_buffer.height(),
+                );
+
+                self.hd_buffer
+                    .pixels_mut()
+                    .copy_from_slice(upscaled.pixels());
+            }
+        }
+
         if self.window.should_present() {
-            if let Err(error) = self.window.present(&self.buffer) {
+            let frame = match self.hd.as_deref() {
+                Some(_) => &*self.hd_buffer,
+                None => &self.buffer,
+            };
+
+            if let Err(error) = self.window.present(frame) {
                 eprintln!("SDL: {error}");
                 return false;
             }
@@ -2396,6 +2615,13 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          подобрать под рабочий стол, nearest-neighbour)
     --fullscreen         окно в безрамочном полноэкранном режиме на весь монитор
                          (Alt+Enter переключает в игре; рендер тот же кадр)
+    --hd                 HD-режим ремастера (`remaster-hd.md` §R7): кадр 640x480·S,
+                         тайлы/спрайты/хром/шрифты из HD-слоёв (по умолчанию S=2);
+                         презентация only — симуляция, snapshot/CRC и golden 1:1
+                         не меняются, без ассетов — по-ассетный fallback
+    --hd-scale N         кратность HD: 2 или 4 (включает --hd; 1 — pixel-perfect)
+    --remaster-dir DIR   каталог HD-ассетов и remaster-manifest.json
+                         (по умолчанию max-brh/target/remaster)
     --fps                печатать статистику 60 Гц (`PRESENT: …`) в stderr
                           раз в 600 кадров (бюджет 16.67 мс)
     --seed N             seed ГПСЧ для --new-game

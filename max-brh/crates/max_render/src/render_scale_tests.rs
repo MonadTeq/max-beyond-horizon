@@ -61,3 +61,78 @@ fn labels_are_distinct() {
 
     assert_eq!(labels, ["pixel-perfect", "hd-2x", "hd-4x"]);
 }
+
+// ---------------------------------------------------------------------------
+// PresentationMode (§R7 switch)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_default_presentation_mode_is_pixel_perfect() {
+    let mode = PresentationMode::default();
+
+    assert_eq!(mode, PresentationMode::PixelPerfect);
+    assert!(!mode.is_hd());
+    assert_eq!(mode.label(), "pixel-perfect");
+    // Even with an HD scale in hand the pixel-perfect mode never uses it.
+    assert_eq!(
+        mode.render_scale(RenderScale::Hd4),
+        RenderScale::PixelPerfect
+    );
+}
+
+#[test]
+fn hd_mode_resolves_to_the_chosen_hd_scale() {
+    let mode = PresentationMode::Hd;
+
+    assert!(mode.is_hd());
+    assert_eq!(mode.label(), "hd");
+    assert_eq!(mode.render_scale(RenderScale::Hd2), RenderScale::Hd2);
+    assert_eq!(mode.render_scale(RenderScale::Hd4), RenderScale::Hd4);
+    // The default is the multiplier R0 measured as affordable (×2).
+    assert_eq!(PresentationMode::DEFAULT_HD_SCALE, RenderScale::Hd2);
+}
+
+#[test]
+fn cli_flags_select_the_mode_and_scale() {
+    // No flag: the historical pipeline.
+    assert_eq!(
+        PresentationMode::from_flags(false, None),
+        Ok((PresentationMode::PixelPerfect, RenderScale::PixelPerfect))
+    );
+    // `--hd` alone: the default HD scale.
+    assert_eq!(
+        PresentationMode::from_flags(true, None),
+        Ok((PresentationMode::Hd, RenderScale::Hd2))
+    );
+    // `--hd --hd-scale N`.
+    for (scale, expected) in [(2u32, RenderScale::Hd2), (4, RenderScale::Hd4)] {
+        assert_eq!(
+            PresentationMode::from_flags(true, Some(scale)),
+            Ok((PresentationMode::Hd, expected)),
+            "--hd-scale {scale}"
+        );
+        // `--hd-scale` implies HD: naming a multiplier asks for the HD mode.
+        assert_eq!(
+            PresentationMode::from_flags(false, Some(scale)),
+            Ok((PresentationMode::Hd, expected)),
+            "--hd-scale {scale} without --hd"
+        );
+    }
+    // `--hd-scale 1` is the pixel-perfect mode through the same switch.
+    assert_eq!(
+        PresentationMode::from_flags(true, Some(1)),
+        Ok((PresentationMode::PixelPerfect, RenderScale::PixelPerfect))
+    );
+}
+
+#[test]
+fn unsupported_cli_scales_are_rejected() {
+    for scale in [0u32, 3, 5, 8, u32::MAX] {
+        let error = PresentationMode::from_flags(true, Some(scale))
+            .expect_err(&format!("S={scale} must be rejected"));
+
+        assert_eq!(error, PresentationModeError::UnsupportedScale(scale));
+        assert_eq!(error.scale(), scale);
+        assert!(!error.to_string().is_empty());
+    }
+}

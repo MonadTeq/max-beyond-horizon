@@ -33,6 +33,7 @@ use max_core::geo::Point;
 use max_core::unit::UnitPresentation;
 use max_core::universe::{Dispatcher, StateRef};
 
+use crate::hd::HdPresenter;
 use crate::panels::UiPalette;
 use crate::App;
 
@@ -1250,6 +1251,139 @@ pub fn draw_unit_sprites_with_animation(
     Some(stats)
 }
 
+/// The HD counterpart of [`draw_unit_sprites_with_animation`]
+/// (`max-brh-docs/development/remaster-hd.md` §R4/§R7).
+///
+/// The frame indices, the team colour, the brightness level and the palette
+/// cycle frame are resolved exactly like the 1:1 path ([`unit_frame_index_with_animation`],
+/// the firing flash, [`connector_frame_indices`], the turret frames and the
+/// `angle_offsets` shift). The drawing itself goes through
+/// [`max_render::hd_sprites::HdSpriteRenderer`]: the body, the connector frames
+/// and the turret use the HD index map of their frame when the remaster has one
+/// and the original [`SpriteRenderer`] geometry otherwise, so a partial remaster
+/// still renders.
+///
+/// At `zoom = 64·S` (the HD camera) an asset authored `×S` covers exactly the
+/// `×S` nearest upscale of the 1:1 sprite, which is what makes the HD frame and
+/// the upscaled 1:1 frame agree when every asset is an exact upscale.
+///
+/// `palette` is the frame palette (the animated snapshot or the system palette),
+/// like in the 1:1 path; the palette cycle frame is passed separately because
+/// the HD recolor LUT is keyed by it.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_unit_sprites_with_animation_hd(
+    assets: &crate::assets::Assets,
+    palette: &max_render::palette::Palette,
+    unit: &max_core::unit::UnitInfo,
+    presentation: &UnitPresentation,
+    image_base: i16,
+    body_angle: u8,
+    animation: FrameAnimation,
+    effects: bool,
+    connectors: u16,
+    frame: &mut RgbaBuffer,
+    anchor: (i32, i32),
+    zoom: u32,
+    hd: &mut HdPresenter,
+    cycles: &max_render::palette::ColorCycles,
+) -> Option<UnitSpriteStats> {
+    let sprite = assets.sprite(unit.unit_type)?;
+    // `D_*` `FrameInfo` bounds the animation block (RADAR: 16 of 20 frames).
+    let sentry_frames = sprite
+        .frame_info
+        .map(|info| usize::from(info.image_count))
+        .filter(|frames| *frames > 0)
+        .unwrap_or(sprite.sheet.len());
+    let mut image_index = unit_frame_index_with_animation(
+        unit,
+        image_base,
+        sprite.sheet.len(),
+        sentry_frames,
+        body_angle,
+        animation,
+        effects,
+    );
+
+    // Shot flash (`UnitInfo::PrepareFire`/`ProgressFire`), as in the 1:1 path.
+    if let Some(info) = sprite.frame_info.as_ref() {
+        if let Some(fire) = firing_body_frame_index(info, unit, body_angle) {
+            image_index = fire.min(sprite.sheet.len().saturating_sub(1));
+        }
+    }
+
+    // Without a source frame there is nothing to draw in either path.
+    sprite.frame_at(image_index)?;
+
+    let colors = TeamColors::ALL
+        .get(unit.team.0 as usize)
+        .copied()
+        .unwrap_or(TeamColors::Derelict);
+    let level = presentation.brightness.min(FULL_BRIGHTNESS_LEVEL);
+    let state = max_render::hd_sprites::HdRecolorState::new(colors, level).with_cycles(cycles);
+    let (renderer, cache) =
+        hd.sprite_render_context(unit.unit_type, palette, &assets.brightness, state)?;
+
+    let shadow_offset = shadow_render_offset(presentation);
+    let mut stats = UnitSpriteStats::default();
+
+    stats.unit = renderer
+        .draw_unit_scaled(frame, cache, image_index, anchor, shadow_offset, zoom)
+        .drawn;
+
+    for index in connector_frame_indices(sprite, connectors) {
+        stats.connectors += renderer
+            .draw_unit_scaled(frame, cache, index, anchor, shadow_offset, zoom)
+            .drawn;
+    }
+
+    if unit.flags & (unit_flags::TURRET_SPRITE | unit_flags::SPINNING_TURRET) != 0 {
+        let firing_index = sprite
+            .frame_info
+            .as_ref()
+            .and_then(|info| firing_turret_frame_index(info, unit))
+            .filter(|index| *index < sprite.sheet.len());
+        let spinning_index = if effects && spinning_turret_animation_active(unit) {
+            sprite
+                .frame_info
+                .as_ref()
+                .and_then(|info| spinning_turret_frame_index(info, unit, animation))
+                .filter(|index| *index < sprite.sheet.len())
+        } else {
+            None
+        };
+        // The firing frame wins over the rotation; otherwise the stored
+        // `turret_image_base + turret_angle` frame of `D_*` (the same index
+        // `LoadedSprite::turret_frame` uses).
+        let turret_index = firing_index.or(spinning_index).or_else(|| {
+            sprite
+                .frame_info
+                .as_ref()
+                .filter(|info| info.turret_image_count > 0)
+                .map(|info| info.turret_frame_index(unit.turret_angle))
+        });
+
+        if let Some(index) = turret_index {
+            // `angle_offsets[body_angle]`, scaled in source-sprite pixels like
+            // `SpriteRenderer::draw_turret_scaled`.
+            let offset =
+                max_render::hd_sprites::scaled_offset(sprite.turret_offset(body_angle), zoom);
+
+            stats.turret = renderer
+                .draw_unit_scaled(
+                    frame,
+                    cache,
+                    index,
+                    (anchor.0 + offset.0, anchor.1 + offset.1),
+                    shadow_offset,
+                    zoom,
+                )
+                .drawn;
+        }
+    }
+
+    Some(stats)
+}
+
 /// Team marker colors (fallback without sprites): the original team order РІР‚вЂќ
 /// `RED, GREEN, BLUE, GRAY, ALIEN`.
 pub const MARKER_COLORS: [Rgba; 5] = [
@@ -1373,7 +1507,265 @@ pub fn draw_unit_selector(
     painted
 }
 
+/// A 1:1 UI layer composited over the HD frame ([`App::render_frame_hd`]).
+///
+/// The remaster keeps the 640×480 layout for the interface (`remaster-hd.md`
+/// §R5): these layers are drawn by the historical code and enter the HD frame
+/// as the nearest `×S` upscale, the per-asset fallback of the plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Foreground {
+    /// The in-game panels (`Panels::draw`): buttons, counters, minimap.
+    Panels,
+    /// The modal windows and dialogs (`App::draw_modals`).
+    Modals,
+}
+
+/// Copies `source` into `frame` at `(ulx, uly)` with clipping.
+fn blit_at(frame: &mut RgbaBuffer, source: &RgbaBuffer, ulx: i32, uly: i32) -> u32 {
+    let mut painted = 0;
+
+    for y in 0..source.height() as i32 {
+        for x in 0..source.width() as i32 {
+            let Some(color) = source.get(x, y) else {
+                continue;
+            };
+
+            if frame.set(ulx + x, uly + y, color) {
+                painted += 1;
+            }
+        }
+    }
+
+    painted
+}
+
+/// Composites a 640×480 UI layer over an HD frame as the nearest `×S` upscale.
+///
+/// Only pixels the layer actually painted are copied (`A = 0` is "untouched"):
+/// the layer was drawn into an empty buffer, so the HD frame — chrome, map,
+/// sprites — stays visible everywhere the UI did not draw. That is the
+/// per-asset fallback: an interface asset without an HD counterpart is the
+/// `×S` upscale of its 1:1 picture.
+pub(crate) fn composite_upscaled(frame: &mut RgbaBuffer, layer: &RgbaBuffer, factor: u32) {
+    let factor = factor.max(1) as i32;
+
+    for y in 0..layer.height() as i32 {
+        for x in 0..layer.width() as i32 {
+            let Some(color) = layer.get(x, y) else {
+                continue;
+            };
+
+            if color.is_transparent() {
+                continue;
+            }
+
+            for dy in 0..factor {
+                for dx in 0..factor {
+                    frame.set(x * factor + dx, y * factor + dy, color);
+                }
+            }
+        }
+    }
+}
+
 impl<D: Dispatcher> App<D> {
+    /// Draws a frame at the HD presentation scale of `hd`
+    /// (`max-brh-docs/development/remaster-hd.md` §R7).
+    ///
+    /// Presentation only: the camera, the simulation and every UI coordinate
+    /// stay in 640×480. The frame is `640·S × 480·S`:
+    ///
+    /// * the map is drawn with the `×S` camera ([`Viewport::scaled`]) — terrain
+    ///   tiles from [`max_render::hd_terrain`] and unit sprites from
+    ///   [`max_render::hd_sprites`] where the remaster has an asset, the
+    ///   original data otherwise (per-asset fallback);
+    /// * the window background is the HD `FRAMEPIC` when resolved, else the
+    ///   original palette picture nearest-scaled `×S`;
+    /// * the layers that are laid out in 640×480 (panels, dialogs) are drawn at
+    ///   1:1 and composited as the nearest `×S` upscale;
+    /// * the message box is laid out natively at `×S` with the HD `Font5`
+    ///   atlas ([`max_render::hd_text`]).
+    ///
+    /// In [`RenderScale::PixelPerfect`] the presenter cannot be HD and this
+    /// method returns the historical frame: `S = 1` stays byte-for-byte
+    /// [`App::render_frame_with_stats`].
+    pub fn render_frame_hd(&self, hd: &mut HdPresenter) -> RgbaBuffer {
+        self.render_frame_hd_with_stats(hd).0
+    }
+
+    /// [`App::render_frame_hd`] plus drawing statistics.
+    pub fn render_frame_hd_with_stats(&self, hd: &mut HdPresenter) -> (RgbaBuffer, RenderStats) {
+        let scale = hd.scale();
+
+        if !scale.is_hd() {
+            return self.render_frame_with_stats();
+        }
+
+        let factor = scale.scale();
+        let (width, height) = self.viewport().screen();
+        let style = TileStyle::default();
+        let mut stats = RenderStats::default();
+        let mut frame = RgbaBuffer::filled(width * factor, height * factor, style.unknown);
+
+        if self.chrome_active() {
+            // The HD window background (or the original palette `FRAMEPIC`
+            // nearest-scaled `×S`).
+            hd.draw_chrome_frame(&mut frame);
+
+            let area = max_render::layout::MAIN_MAP;
+            let scaled_area = max_render::hd_chrome::scaled_pixel_rect(area, scale);
+            let mut map = RgbaBuffer::filled(
+                scaled_area.width.max(1) as u32,
+                scaled_area.height.max(1) as u32,
+                style.unknown,
+            );
+            let viewport = self.map_viewport().scaled(factor);
+
+            self.draw_map_hd(&mut map, &viewport, &mut stats, hd, true);
+            blit_at(&mut frame, &map, scaled_area.ulx, scaled_area.uly);
+
+            // Interface layers, bottom to top: panels, the message box over
+            // the map, then the modal windows.
+            self.composite_foreground(&mut frame, factor, Foreground::Panels);
+            self.draw_status_message_hd(&mut frame, scaled_area, hd.fonts());
+            self.composite_foreground(&mut frame, factor, Foreground::Modals);
+        } else {
+            // Full-screen mode: the whole frame is the map.
+            let viewport = self.viewport().scaled(factor);
+
+            self.draw_map_hd(&mut frame, &viewport, &mut stats, hd, false);
+            self.composite_foreground(&mut frame, factor, Foreground::Modals);
+            let whole = max_render::hd_chrome::scaled_pixel_rect(
+                PixelRect::new(0, 0, width as i32, height as i32),
+                scale,
+            );
+            self.draw_status_message_hd(&mut frame, whole, hd.fonts());
+        }
+
+        (frame, stats)
+    }
+
+    /// The map of the HD frame, drawn with the `×S` camera.
+    ///
+    /// The draw order is the one of the 1:1 windowed renderer; every overlay
+    /// takes its geometry from the camera ([`Viewport::tile_rect`],
+    /// [`Viewport::world_to_screen`]), so passing the scaled camera places it at
+    /// `×S` without touching the drawing code.
+    fn draw_map_hd(
+        &self,
+        frame: &mut RgbaBuffer,
+        viewport: &Viewport,
+        stats: &mut RenderStats,
+        hd: &mut HdPresenter,
+        selected_path: bool,
+    ) {
+        let style = TileStyle::default();
+        let has_hd_terrain = hd
+            .terrain()
+            .is_some_and(|terrain| terrain.hd_tile_count() > 0);
+
+        if has_hd_terrain {
+            if let Some(terrain) = hd.terrain() {
+                stats.map_tiles = terrain.render_into(frame, viewport);
+            }
+        } else if let Some(assets) = self.assets().filter(|assets| !assets.terrain.is_empty()) {
+            stats.map_tiles = assets.terrain.render_into(frame, viewport);
+        } else {
+            stats.map_tiles = render_map_into(frame, &self.state_ref().map(), viewport, &style);
+        }
+
+        self.draw_grid_overlay(frame, viewport, stats);
+        self.draw_units(frame, viewport, stats, Some(hd));
+        self.draw_toggle_overlays(frame, viewport, stats);
+        self.draw_resource_icons(frame, viewport, stats);
+        self.draw_build_markers(frame, viewport, stats);
+        self.draw_build_site_ghost(frame, viewport, stats);
+
+        if selected_path {
+            self.draw_selected_unit_path(frame, viewport, stats);
+        }
+    }
+
+    /// The modal windows over the map, in the original draw order.
+    fn draw_modals(&self, frame: &mut RgbaBuffer) {
+        self.draw_build_menu(frame);
+        self.draw_save_load(frame);
+        self.draw_save_confirm(frame);
+        self.draw_upgrade_menu(frame);
+        self.draw_research_menu(frame);
+        self.draw_alloc_menu(frame);
+        self.draw_transfer_menu(frame);
+        self.draw_unit_menu(frame);
+        self.draw_repair_shop(frame);
+        self.draw_unit_stats(frame);
+        self.draw_preferences(frame);
+        self.draw_help(frame);
+        self.draw_self_destruct(frame);
+        self.draw_pause_dialog(frame);
+    }
+
+    /// Draws one 1:1 UI layer into an empty buffer and composites it over the
+    /// HD frame as the nearest `×S` upscale.
+    ///
+    /// The layer is drawn by the historical code at 640×480; an untouched pixel
+    /// stays transparent and keeps the HD frame visible. Drawings that read the
+    /// destination back ([`crate::panels::draw_status_message`]) are not part of
+    /// these layers — the message box is redrawn natively at `×S` by
+    /// [`App::draw_status_message_hd`].
+    fn composite_foreground(&self, frame: &mut RgbaBuffer, factor: u32, layer: Foreground) {
+        let (width, height) = self.viewport().screen();
+        let mut foreground = RgbaBuffer::filled(width, height, Rgba::TRANSPARENT);
+
+        match layer {
+            Foreground::Panels => {
+                if let Some(panels) = self.assets().and_then(|assets| assets.panels.as_ref()) {
+                    panels.draw(&mut foreground, self);
+                }
+            }
+            Foreground::Modals => self.draw_modals(&mut foreground),
+        }
+
+        composite_upscaled(frame, &foreground, factor);
+    }
+
+    /// The HD [`App::draw_status_message`]: the message box laid out and drawn
+    /// at the render scale with the HD `Font5` atlas (`R6`).
+    ///
+    /// With an HD atlas that is the exact `×S` upscale of the original bitmap
+    /// this is byte-identical to the `×S` upscale of the 1:1 message box (the R6
+    /// golden invariant): the metrics scale exactly, the box geometry is the
+    /// `×S` of the logical one and the colour table is applied to the already
+    /// upscaled pixels.
+    fn draw_status_message_hd(
+        &self,
+        frame: &mut RgbaBuffer,
+        area: PixelRect,
+        fonts: &max_render::hd_text::HdFonts,
+    ) {
+        let Some(hint) = self.hud().hint.as_deref() else {
+            return;
+        };
+        let Some(assets) = self.assets() else {
+            return;
+        };
+        let palette = crate::panels::UiPalette::from_assets(assets)
+            .or_else(|| assets.menu.as_ref().map(|menu| menu.palette));
+        let Some(palette) = palette else {
+            return;
+        };
+        let snow = (self.config().planet as usize) < 6;
+
+        crate::panels::draw_status_message_hd(
+            frame,
+            area,
+            &palette,
+            hint,
+            self.hud().hint_style,
+            snow,
+            fonts.font(max_render::text::GnwFontId::Font5),
+        );
+    }
+
     /// Draws a frame of the current state into the `screen_width Р“вЂ” screen_height` buffer.
     pub fn render_frame(&self) -> RgbaBuffer {
         self.render_frame_with_stats().0
@@ -1415,7 +1807,7 @@ impl<D: Dispatcher> App<D> {
         }
 
         self.draw_grid_overlay(&mut frame, self.viewport(), &mut stats);
-        self.draw_units(&mut frame, self.viewport(), &mut stats);
+        self.draw_units(&mut frame, self.viewport(), &mut stats, None);
         // 3Р“вЂ”3 buttons of the left panel (`game_manager.cpp`): COLORS/STATUS/HITS/
         // AMMO/NAMES РІР‚вЂќ over the sprites, RANGE/SCAN РІР‚вЂќ circles over everything.
         self.draw_toggle_overlays(&mut frame, self.viewport(), &mut stats);
@@ -1520,7 +1912,7 @@ impl<D: Dispatcher> App<D> {
         }
 
         self.draw_grid_overlay(&mut map, &viewport, &mut stats);
-        self.draw_units(&mut map, &viewport, &mut stats);
+        self.draw_units(&mut map, &viewport, &mut stats, None);
         // 3Р“вЂ”3 buttons of the left panel: overlays over the sprites, like
         // `DrawMap_RenderUnitDisplays`/`GameManager_RenderScanRangeIndicators`.
         self.draw_toggle_overlays(&mut map, &viewport, &mut stats);
@@ -1824,6 +2216,7 @@ impl<D: Dispatcher> App<D> {
         frame: &mut RgbaBuffer,
         viewport: &max_render::viewport::Viewport,
         stats: &mut RenderStats,
+        mut hd: Option<&mut HdPresenter>,
     ) {
         let mut positions = Vec::new();
         let mut visible = Vec::new();
@@ -1960,6 +2353,30 @@ impl<D: Dispatcher> App<D> {
                 // Frame palette: a snapshot with palette cycles or the original
                 // system palette (`dt = 0` РІР‚вЂќ no changes).
                 let palette = self.animated_palette().unwrap_or(&assets.system_palette);
+
+                // HD mode: the R4 sprite bank of the type, with the original
+                // sprite renderer as the per-asset fallback of every frame.
+                if let Some(presenter) = hd.as_deref_mut() {
+                    if presenter.has_sprite(unit.unit_type) {
+                        return draw_unit_sprites_with_animation_hd(
+                            assets,
+                            palette,
+                            unit,
+                            &presentation,
+                            image_base,
+                            body_angle,
+                            animation,
+                            effects,
+                            connectors,
+                            frame,
+                            anchor,
+                            zoom,
+                            presenter,
+                            self.color_cycles(),
+                        );
+                    }
+                }
+
                 draw_unit_sprites_with_animation(
                     assets,
                     palette,

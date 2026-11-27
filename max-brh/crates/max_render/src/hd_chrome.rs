@@ -519,6 +519,21 @@ impl HdChrome {
             + self.images.len()
     }
 
+    /// Resident bytes of the decoded HD chrome (RGBA8, 4 B per texel).
+    ///
+    /// The remaster VRAM budget (`remaster-hd.md` §R7, `r0-measurements.md`
+    /// §2.1) counts every decoded texture that stays in memory for the match;
+    /// the chrome is one of those classes.
+    pub fn bytes(&self) -> usize {
+        self.frame
+            .iter()
+            .chain(self.panel_top.iter())
+            .chain(self.panel_bottom.iter())
+            .chain(self.images.values())
+            .map(|image| image.pixels().len())
+            .sum()
+    }
+
     /// The whole render frame: `640·S × 480·S` pixels.
     pub fn frame_rect(&self) -> PixelRect {
         scaled_rect(

@@ -151,6 +151,36 @@ impl Viewport {
         (self.screen_width, self.screen_height)
     }
 
+    /// The same camera on a `×factor` render frame (`remaster-hd.md` §R7).
+    ///
+    /// Both the screen size and `zoom` are multiplied, so the world origin and
+    /// every cell boundary land on exactly `×factor` the logical coordinate: the
+    /// HD frame is the same view at a higher resolution, and the mouse transform
+    /// keeps working in 640×480 (`ScreenGeometry::window_to_frame` divides by
+    /// `S`).
+    ///
+    /// `zoom` is **not** clamped to [`MAX_ZOOM`]: the multiplier is a
+    /// presentation scale, not a zoom level the player can reach, so `S = 4` at
+    /// the 1:1 `zoom = 64` needs `256`. A zero factor returns the camera
+    /// unchanged.
+    pub fn scaled(self, factor: u32) -> Self {
+        if factor == 0 || factor == 1 {
+            return self;
+        }
+
+        let mut viewport = Self {
+            screen_width: self.screen_width.saturating_mul(factor),
+            screen_height: self.screen_height.saturating_mul(factor),
+            center_x: self.center_x,
+            center_y: self.center_y,
+            zoom: self.zoom.saturating_mul(factor),
+        };
+
+        viewport.clamp_center();
+
+        viewport
+    }
+
     /// Center in world pixels.
     #[inline]
     pub fn center(&self) -> (i32, i32) {

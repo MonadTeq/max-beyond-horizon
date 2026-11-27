@@ -396,6 +396,28 @@ pub struct HdFonts {
 }
 
 impl HdFonts {
+    /// A font set with no HD atlases: every font draws the original GNW bitmap
+    /// (nearest `×S`).
+    pub fn empty(scale: RenderScale) -> Self {
+        Self {
+            scale,
+            fonts: GnwFontId::ALL.map(|id| HdFontAtlas::new(id, scale)),
+        }
+    }
+
+    /// A set whose only HD atlas is `atlas`; the other fonts stay on the
+    /// original bitmap.
+    ///
+    /// The slot is picked by [`HdFontAtlas::id`], so a caller that resolved one
+    /// font (or a test that builds one) does not need the whole set.
+    pub fn with_font(scale: RenderScale, atlas: HdFontAtlas) -> Self {
+        let mut fonts = Self::empty(scale);
+        let index = font_index(atlas.id());
+        fonts.fonts[index] = atlas;
+
+        fonts
+    }
+
     /// Loads every GNW font of [`GnwFontId::ALL`] from the remaster root.
     ///
     /// In [`RenderScale::PixelPerfect`] nothing is resolved (the 1:1 path).

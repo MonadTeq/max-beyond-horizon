@@ -28,12 +28,14 @@ use max_app::local::{LocalPhase, LocalSetup};
 use max_app::presentation::PresentationState;
 use max_app::session::{session_step, SessionFrame, StepOutcome};
 use max_app::ui::{Screen, ScreenView};
+use max_app::HdPresenter;
 use max_app::{App, AppConfig, FixedStepClock, FramePacer, SIMULATION_DT, SIMULATION_HZ};
 use max_core::enums::{PlayMode, TeamClan, VictoryType};
 use max_core::team::TeamKind;
 use max_core::universe::{Dispatcher, LocalDispatcher};
 use max_render::buffer::RgbaBuffer;
 use max_render::presentation::ScreenGeometry;
+use max_render::render_scale::RenderScale;
 use max_render::{FRAME_HEIGHT, FRAME_WIDTH};
 
 /// Steps executed after the player's turn starts: enough to close orders, move
@@ -466,6 +468,123 @@ fn menu_frame_bytes_do_not_depend_on_the_window_geometry() {
         first.pixels() == second.pixels(),
         "the 640x480 frame depends on the window/DPI profile"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5: the HD presentation profile does not change snapshot_bytes/state_digest
+// ---------------------------------------------------------------------------
+
+/// Rendering through the HD pipeline is presentation only
+/// (`remaster-hd.md` §R7): the same fixed 60 Hz steps, drawn at `S ∈ {2, 4}`,
+/// must produce the byte-identical `snapshot_bytes` and `state_digest` of the
+/// pixel-perfect run.
+///
+/// The frame is rendered at the end of the run rather than on every step: a
+/// debug-build `S = 4` frame costs seconds, while the gate is about the state.
+/// The per-frame drawing itself is covered by `hd_presentation.rs`.
+#[test]
+fn hd_presentation_does_not_change_the_snapshot_or_digest() {
+    // The `App` scenes and the `640·S × 480·S` frames need more than the default
+    // 2 MiB test-thread stack in a debug build (same pattern as `build_site.rs`).
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(hd_presentation_gate_body)
+        .expect("test thread")
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+}
+
+fn hd_presentation_gate_body() {
+    let (expected_bytes, expected_digest) = {
+        let mut reference =
+            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+
+        // Reference: plain fixed steps, no rendering at all.
+        for _ in 0..STEP_BUDGET {
+            reference.local_update(SIMULATION_DT);
+        }
+
+        (
+            reference.state_ref().snapshot_bytes(),
+            reference.digest(),
+        )
+    };
+
+    for scale in [RenderScale::Hd2, RenderScale::Hd4] {
+        let mut app =
+            started_app().expect(concat!("test fixture is missing: ", stringify!(started_app())));
+        // No remaster assets: every HD layer falls back, which is exactly the
+        // state of a checkout without `target/remaster`.
+        let mut hd = HdPresenter::empty(scale);
+
+        for _ in 0..STEP_BUDGET {
+            app.local_update(SIMULATION_DT);
+        }
+
+        let frame = app.render_frame_hd(&mut hd);
+
+        assert_eq!(
+            frame.width(),
+            FRAME_WIDTH * scale.scale(),
+            "[{}] the HD frame width",
+            scale.label()
+        );
+        assert_eq!(
+            frame.height(),
+            FRAME_HEIGHT * scale.scale(),
+            "[{}] the HD frame height",
+            scale.label()
+        );
+        assert_same_snapshot(
+            &app.state_ref().snapshot_bytes(),
+            &expected_bytes,
+            &format!("[{}] {STEP_BUDGET} steps with HD rendering", scale.label()),
+        );
+        assert_eq!(
+            app.digest(),
+            expected_digest,
+            "[{}] state_digest changed with the HD presentation",
+            scale.label()
+        );
+    }
+}
+
+/// The HD presentation geometry keeps the logical 640×480 frame and the mouse
+/// transform: a click arrives at the UI in logical coordinates, exactly as at
+/// `S = 1` (the only new link is the `/S` after the reverse window transform).
+#[test]
+fn hd_geometry_keeps_the_logical_frame_and_the_mouse_transform() {
+    for scale in [RenderScale::Hd2, RenderScale::Hd4] {
+        let factor = scale.scale();
+        let render = (FRAME_WIDTH * factor, FRAME_HEIGHT * factor);
+        let geometry = ScreenGeometry::native_with_render_scale(render, render, scale);
+
+        assert_eq!(
+            geometry.frame_size(),
+            (FRAME_WIDTH, FRAME_HEIGHT),
+            "[{}] the logical frame changed",
+            scale.label()
+        );
+        assert_eq!(geometry.render_frame_size(), render, "[{}]", scale.label());
+        assert_eq!(geometry.render_scale(), scale);
+        // A point at the centre of the render frame is the centre of the
+        // logical frame: the UI never sees the scaled space.
+        assert_eq!(
+            geometry.window_to_frame(
+                (FRAME_WIDTH * factor / 2) as i32,
+                (FRAME_HEIGHT * factor / 2) as i32
+            ),
+            Some(((FRAME_WIDTH / 2) as i32, (FRAME_HEIGHT / 2) as i32)),
+            "[{}] the mouse transform",
+            scale.label()
+        );
+        // Outside the window — no frame point (a letterbox click is ignored).
+        assert_eq!(geometry.window_to_frame(-1, 0), None);
+        assert_eq!(
+            geometry.window_to_frame(0, (FRAME_HEIGHT * factor) as i32),
+            None
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

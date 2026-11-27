@@ -137,6 +137,80 @@ HD-атлас — точный nearest-апскейл исходного бит�
 - **R6** — HD-шрифты (растровый битмап-атлас GNW ×2/×4; TTF не используется).
 - **R7** — режим-переключатель, детерминизм, DoD (golden 1:1 байт-в-байт, HD-golden, soak).
 
+## Интеграция R7: переключатель и HD-кадр
+
+R3–R6 — слои подмены; R7 собирает их в один кадр и включает режимом.
+
+**Режим.** `max_render::render_scale::PresentationMode::{PixelPerfect, Hd}` +
+`RenderScale` (`S = 2/4`); CLI — `--hd` (по умолчанию `S = 2` — рекомендация R0),
+`--hd-scale N` (`N ∈ {1,2,4}`, `N = 1` — pixel-perfect через тот же
+переключатель; `×3`/`×8` отвергаются при разборе аргументов, ассет-тега для них
+нет), `--remaster-dir DIR` (по умолчанию `max-brh/target/remaster`).
+`PresentationMode::from_flags` — единственная нормализация флагов;
+по умолчанию режим `PixelPerfect`, и `HdPresenter::load` в нём **ничего не
+резолвит**.
+
+**Владелец слоёв.** `max_app::hd::HdPresenter` строит один раз на запуск
+`HdTerrainAtlas` (теги `terrain_tile_<WORLD>_<ID>_x<S>`), `HdChrome`
+(`chrome_*_x<S>`, fallback-источник — `ChromeSource` из `FRAMEPIC`),
+`HdFonts` (`font_*_x<S>`) и по `HdSpriteBank` на каждый загруженный спрайт
+(`unit_sprite_*`/`unit_shadow_*`), плюс общий ограниченный `HdSpriteCache`.
+`RemasterCache::resolve` Fallback — по-ассетный; `HdPresenter::stats()` считает,
+сколько ассетов реально подставлено.
+
+**Кадр.** `App::render_frame_hd` (и `ui::render_session_hd` для игрового экрана)
+рисует `640·S × 480·S`:
+
+1. фон окна — HD `FRAMEPIC` (`draw_frame_with_fallback`: нет ассета — исходная
+   палитровая картинка nearest-апскейлом `×S`);
+2. карта в области `MAIN_MAP` — с `×S`-камерой (`Viewport::scaled`: экран и
+   `zoom` умножаются, мировые координаты и видимые клетки те же), поэтому тайлы
+   из `HdTerrainAtlas`, юниты из `HdSpriteBank` (`HdSpriteRenderer` с тем же
+   кадром/командой/яркостью/циклом, что и 1:1), а наложения (сетка, селектор,
+   путь, метки) масштабируются геометрией камеры сами;
+3. слои интерфейса, разложенные в 640×480 (панели, модальные окна), рисуются
+   1:1 в пустой буфер и композитируются nearest-апскейлом `×S` — это и есть
+   по-ассетный fallback для UI-картинок (`A = 0` — «не тронуто», HD-кадр
+   остаётся виден);
+4. рамка сообщения (`MessageManager_DrawMessage`) размечается и рисуется сразу
+   в `×S` с HD-атласом `Font5` (`panels::draw_status_message_hd`);
+   остальной текст интерфейса — `×S`-апскейл 1:1 (по инварианту R6 он совпадает
+   с HD-атласом, если атлас — точный апскейл).
+
+`PixelPerfect` в этот слой не заходит: `render_frame` остаётся прежним
+байт-в-байт, HD-кадр строится только по явному `--hd`.
+
+**Презентация.** `SdlWindow::set_render_scale` (R3) включает `×S`-кадр и
+линейную фильтрацию финального аплоада; окно создаётся размером рендер-кадра
+(`640·S × 480·S` точек) с сохранением целочисленного nearest-масштаба;
+клики/мышь остаются в 640×480 (`ScreenGeometry::window_to_frame` делит на `S`).
+Меню (не игровой экран) в HD-режиме — nearest-апскейл 1:1-кадра.
+
+**Гейты (DoD R7).**
+
+- `PixelPerfect` — байт-в-байт: golden 1:1 и `presentation_gate` не меняются;
+  `--hd` не входит в 1:1-путь (и в тестах, и в коде).
+- HD-golden «по источникам, не по окну»: HD-кадр есть функция исходных ассетов
+  и `S`; при слоях, являющихся точным nearest-апскейлом исходников, HD-кадр
+  **байт-в-байт равен `×S`-апскейлу 1:1-кадра** (включая спрайты:
+  `hd_unit_sprites_equal_the_upscaled_1to1_drawing`), и не зависит от окна/DPI.
+- Детерминизм: `snapshot_bytes`/`state_digest` при рендере в HD совпадают с
+  1:1-прогоном (`presentation_gate::hd_presentation_does_not_change_the_snapshot_or_digest`).
+- VRAM/soak: `HdStats::fits_quota` против квоты R0 (105 MiB при `S=2`, 420 MiB
+  при `S=4`), ограниченный кэш реколора, прогон HD-кадров не трогает состояние;
+  замер кадра — `examples/hd_frame_bench` (`cargo run -p max_app
+  --no-default-features --release --example hd_frame_bench -- --scale 2`).
+- Тесты: `max_app/tests/hd_presentation.rs` (HD-golden/VRAM/soak),
+  `max_app/tests/presentation_gate.rs` (+HD-профиль), unit-тесты
+  `max_render::render_scale`/`viewport` и `max_app::hd`.
+
+**Ограничение фазы.** Интерфейс (панели, меню, диалоги) остаётся 640×480 и
+попадает в HD-кадр nearest-апскейлом: покадровый HD-UI — отдельная фаза (GPU/
+атласная раскладка), как и сырой GPU-бэкенд после R7. Живая проверка «60 fps»
+зависит от машины: R0 измерил CPU-рендерер `×2` в ~21 мс (47 fps) и `×4` в
+~83 мс (12 fps) на референсной машине, поэтому `S=4` в CPU-пути остаётся
+неиграбельным до GPU-фазы.
+
 ## Guardrails (сводно)
 
 1. Оракул read-only; ремастер — удаляемый кэш + отдельный манифест.

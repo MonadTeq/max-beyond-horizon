@@ -4900,6 +4900,52 @@ where
     }
 }
 
+/// [`render_session`] at the HD presentation scale (`remaster-hd.md` §R7).
+///
+/// The frame comes from [`crate::App::render_frame_hd`]: map tiles and unit
+/// sprites from the remaster layers, the window background from the HD
+/// `FRAMEPIC`. The 1:1 overlays `render_session` adds on top — the HUD when
+/// there is no window chrome, the hot-seat turn notice — are drawn into an
+/// empty buffer and composited as the nearest `×S` upscale, the per-asset
+/// fallback of the plan.
+pub fn render_session_hd<D: Dispatcher>(
+    buffer: &mut RgbaBuffer,
+    view: ScreenView<'_, D>,
+    hd: &mut crate::hd::HdPresenter,
+) where
+    App<D>: SessionLocal,
+{
+    let Some(app) = view.app else {
+        render_session(buffer, view);
+
+        return;
+    };
+    let factor = hd.scale().scale().max(1);
+    let frame = app.render_frame_hd(hd);
+
+    blit(buffer, &frame);
+
+    let (width, height) = app.viewport().screen();
+    let mut overlay = RgbaBuffer::filled(width, height, Rgba::TRANSPARENT);
+
+    if !app.chrome_active() {
+        let hud_view = hud::HudView {
+            state: app.state_ref(),
+            hud: app.hud(),
+            viewport: app.viewport(),
+            team: app.player_team(),
+            status: view.status,
+        };
+
+        if app.build_menu().is_none() && app.save_load().is_none() {
+            hud::render_hud(&mut overlay, &hud_view);
+        }
+    }
+
+    draw_local_notice(&mut overlay, app, view.mouse);
+    crate::render::composite_upscaled(buffer, &overlay, factor);
+}
+
 /// M-HS turn-transition window over the session frame (`DialogMenu`).
 ///
 /// Drawn only when `LocalGame::notice` is open — i.e. in hot-seat on

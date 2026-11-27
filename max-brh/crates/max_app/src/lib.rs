@@ -49,6 +49,7 @@ pub mod credits;
 pub mod cursor;
 pub mod dialog;
 pub mod gamesetupmenu;
+pub mod hd;
 pub mod helpmenu;
 pub mod host;
 pub mod hotseat;
@@ -134,6 +135,10 @@ pub use hotseat::TurnNotice;
 pub use hud::{
     build_attack_order, build_move_order, build_power_order, hud_layout, render_hud, team_color,
     unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
+};
+pub use hd::{
+    default_remaster_root, vram_quota, HdPresenter, HdStats, REMASTER_DIR, VRAM_QUOTA_X2_BYTES,
+    VRAM_QUOTA_X4_BYTES,
 };
 pub use landing::{LandingAction, LandingScreen};
 pub use local::{

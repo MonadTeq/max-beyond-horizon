@@ -1895,6 +1895,114 @@ pub fn draw_status_message(
     painted
 }
 
+/// The HD twin of [`draw_status_message`] (`remaster-hd.md` §R6/§R7).
+///
+/// The same message box, laid out and drawn at the render scale: `S` multiplies
+/// every logical metric (the `-20` of the wrap width, the `+20`/`+10` box
+/// margins, the `10` per line and the `Text_TextLine` outline shift), and the
+/// glyphs come from the HD `Font5` atlas ([`max_render::hd_text`]). With an HD
+/// atlas that is the exact `×S` upscale of the original bitmap the result is
+/// byte-identical to the `×S` upscale of the 1:1 box (the R6 golden invariant).
+///
+/// The background is the same colour table applied to the already drawn pixels
+/// (`MessageManager_MessageBox_BgColorArray`), exactly like the 1:1 function:
+/// the box is transparent over the map, not an opaque fill.
+pub fn draw_status_message_hd(
+    frame: &mut RgbaBuffer,
+    area: PixelRect,
+    palette: &UiPalette,
+    text: &str,
+    style: MessageBoxStyle,
+    snow: bool,
+    font: &max_render::hd_text::HdFontAtlas,
+) -> u32 {
+    if text.is_empty() || area.width <= 0 {
+        return 0;
+    }
+
+    let factor = font.scale().scale().max(1) as i32;
+    // `MessageManager_WrapText(text, width - 20)` at `×S`.
+    let max_line = (area.width - 20 * factor).max(20 * factor);
+    let mut lines: Vec<String> = Vec::new();
+
+    for line in text.split('\n') {
+        let mut current = String::new();
+
+        for word in line.split(' ') {
+            let candidate = if current.is_empty() {
+                word.to_string()
+            } else {
+                format!("{current} {word}")
+            };
+
+            if font.text_width(&candidate) > max_line && !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+            } else {
+                current = candidate;
+            }
+        }
+
+        lines.push(current);
+    }
+
+    let width = (lines
+        .iter()
+        .map(|line| font.text_width(line))
+        .max()
+        .unwrap_or(0)
+        + 20 * factor)
+        .min(area.width);
+    let height = 20 * factor + 10 * factor * lines.len() as i32;
+    let rect = PixelRect::new(area.ulx, area.uly + 10 * factor, width, height);
+    let mut painted = 0;
+
+    let mut cache: std::collections::HashMap<[u8; 3], Rgba> = std::collections::HashMap::new();
+
+    for y in rect.uly..rect.lry() {
+        for x in rect.ulx..rect.lrx() {
+            let Some(color) = frame.get(x, y) else {
+                continue;
+            };
+            let key = [color.r, color.g, color.b];
+            let mapped = match cache.get(&key) {
+                Some(mapped) => *mapped,
+                None => {
+                    let mapped = palette.message_box_color(style, snow, color);
+                    cache.insert(key, mapped);
+                    mapped
+                }
+            };
+
+            if frame.set(x, y, mapped) {
+                painted += 1;
+            }
+        }
+    }
+
+    for (index, line) in lines.iter().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+
+        // `MessageManager_DrawMessageBoxText`: the black copy at `+S, +S` first,
+        // the white fill on top.
+        let drawn = max_render::hd_text::draw_text_hd_outlined(
+            frame,
+            rect.ulx + 10 * factor,
+            rect.uly + 10 * factor + 10 * factor * index as i32,
+            font,
+            line,
+            palette.rgba(0xFF),
+            palette.rgba(0),
+        );
+
+        painted += drawn.max(0) as u32;
+    }
+
+    painted
+}
+
 /// Icon family of a label when it is unambiguous (`Hits`/`Ammo`/`Cargo`/`Speed`/
 /// `Shots`); `Usage`/`Total`/`Teams`/`Power` get the family of the row from the
 /// display type ([`make_row_icon`]).
