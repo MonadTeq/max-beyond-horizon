@@ -132,14 +132,14 @@ pub use assets::{
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
 pub use cursor::{cursor_for_context, CursorContext, CursorHover, CursorId, CursorImage};
+pub use hd::{
+    default_remaster_root, vram_quota, HdPresenter, HdStats, REMASTER_DIR, VRAM_QUOTA_X2_BYTES,
+    VRAM_QUOTA_X4_BYTES,
+};
 pub use hotseat::TurnNotice;
 pub use hud::{
     build_attack_order, build_move_order, build_power_order, hud_layout, render_hud, team_color,
     unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
-};
-pub use hd::{
-    default_remaster_root, vram_quota, HdPresenter, HdStats, REMASTER_DIR, VRAM_QUOTA_X2_BYTES,
-    VRAM_QUOTA_X4_BYTES,
 };
 pub use landing::{LandingAction, LandingScreen};
 pub use local::{
@@ -697,49 +697,48 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     help_mode: Option<helpmenu::HelpMode>,
     /// Visual unit positions in cells (fractional) — drawing only.
     ///
-    /// The simulation still moves a unit a whole cell per tick; the frame follows
-    /// the actual route cell by cell with real time
-    /// ([`App::update_visual_units`]). These values are not part of the CRC/snapshot.
+    /// A routed unit is drawn on its simulation position (the simulation itself
+    /// walks the route at [`VISUAL_CELLS_PER_SECOND`], one cell per movement-budget
+    /// window); this map still carries the fallback position of a unit whose
+    /// position changed without a walked route (save/load, transport/state
+    /// synchronization). These values are not part of the CRC/snapshot.
     visual_units: std::collections::HashMap<UnitId, (f32, f32)>,
     /// Last known frame target of a unit in cells (fractional): the simulation cell
     /// of a ground/sea unit, the **pixel** position (`unit->x/y / 64`) of an
-    /// aircraft — from its changes the visual route is built. UI state, not part of
-    /// the snapshot.
+    /// aircraft — from its changes the fallback visual route is built. UI state, not
+    /// part of the snapshot.
     visual_goals: std::collections::HashMap<UnitId, (f32, f32)>,
-    /// Queue of route cells the frame still has to pass. The simulation
-    /// executes the order in ticks (fast), while the frame passes the same cells at
-    /// the real original speed (`UnitInfo::Move`: 8 px/tick ~ 3.75 cells/s).
-    /// Each point stores the movement direction toward it (`VisualStep.angle`),
-    /// so that the sprite turns at the turn cell, not earlier.
+    /// Queue of route cells the frame still has to pass — the fallback for a
+    /// position write the simulation did not walk. A routed unit is drawn on the
+    /// simulation position and never uses this queue. Each point stores the movement
+    /// direction toward it (`VisualStep.angle`), so that the sprite turns at the turn
+    /// cell, not earlier.
     visual_paths: std::collections::HashMap<UnitId, std::collections::VecDeque<VisualStep>>,
-    /// Simulation speed of a unit at the previous frame (`UnitInfo::speed`).
-    ///
-    /// The difference against the current value is the movement points the
-    /// simulation spent since the last frame; it is attached to the visual steps
-    /// it paid for, so the panel's `Speed` row reaches 0 when the sprite arrives,
-    /// not when the fast simulation does. Frame-only, not part of the snapshot/CRC.
+    /// Simulation speed of a unit at the previous frame (`UnitInfo::speed`), used by
+    /// the fallback route: the difference against the current value is the movement
+    /// points the simulation spent since the last frame. Frame-only, not part of the
+    /// snapshot/CRC.
     visual_speeds: std::collections::HashMap<UnitId, u16>,
-    /// Presentation corpses ([`CorpseVisual`]): dead units whose sprite still
-    /// walks the route to the pixel the simulation killed them on.
+    /// Presentation corpses ([`CorpseVisual`]) — the fallback for a unit removed
+    /// while its **frame** route (a save/load/transport jump) was still walking.
     ///
-    /// The simulation removes an intercepted unit in the middle of its explosion,
-    /// while the frame (4 cells/s against a cell per tick) may still be several
-    /// cells behind. Without the record the sprite would freeze — or vanish — in
-    /// mid-air, short of the cell where the anti-aircraft opened fire. The walk is
-    /// finished from here and the blast stays on the corpse
-    /// ([`App::update_visual_units`]). Frame only, not part of the snapshot/CRC.
+    /// A unit killed while it walks a route is already drawn on the simulation pixel
+    /// (the simulation paces the movement and the frame follows it), so the ordinary
+    /// combat death needs no record. The walk is finished from here only when the
+    /// frame is behind for an un-walked position write. Frame only, not part of the
+    /// snapshot/CRC.
     corpse_visuals: std::collections::BTreeMap<UnitId, CorpseVisual>,
     /// Frame-side offset in **pixels** of an explosion effect against the pixel the
     /// simulation stored for it (`UnitsManager_StartExplosion`,
     /// `units_manager.cpp:3991-3994`).
     ///
     /// The oracle deploys the blast on the dying unit's cell and then aligns it with
-    /// the unit's `x/y` — the pixel the sprite is drawn at. The port's sprite is the
-    /// interpolated **frame** position, which may lag the cell-per-tick simulation,
-    /// so the blast is drawn at the corpse instead of jumping to the death cell.
-    /// The offset (`frame pixel - simulation pixel`) follows the walking corpse for
-    /// the whole animation, so corpse and blast end on the death pixel together.
-    /// Frame-only, not part of the snapshot/CRC.
+    /// the unit's `x/y` — the pixel the sprite is drawn at. For a routed unit the
+    /// sprite is the simulation pixel, so the offset is zero. The fallback route
+    /// (save/load/transport) may still lag the cell, so the blast is drawn at the
+    /// corpse instead of jumping ahead. The offset (`frame pixel - simulation pixel`)
+    /// follows the walking corpse for the whole animation, so corpse and blast end on
+    /// the death pixel together. Frame-only, not part of the snapshot/CRC.
     effect_offsets: std::collections::HashMap<UnitId, (i32, i32)>,
     /// The unit a blast belongs to, remembered by the frame (`effect_offsets`).
     ///
@@ -750,12 +749,12 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     effect_parents: std::collections::HashMap<UnitId, UnitId>,
     /// The team whose turn closed on the previous frame (`max_core::ClosingTurn`).
     ///
-    /// While the turn close drains, the frame draws the closing team on the
-    /// simulation position instead of interpolating. The team is remembered for one
-    /// more frame because the tick that enters the **last** cell (the halt of an
-    /// intercept) also ends the closing state: without the memory that cell would be
-    /// interpolated again and the sprite would trail the halt by one cell — exactly
-    /// the desync this fix removes. Frame only, not part of the snapshot/CRC.
+    /// Routed units are drawn on the simulation position in every phase (the
+    /// simulation paces them by the movement budget), so the frame keeps the closing
+    /// team for one more frame only because the tick that enters the **last** cell
+    /// (the halt of an intercept) also ends the closing state: the last cell of the
+    /// closing team is drawn on the simulation position as well. Frame only, not part
+    /// of the snapshot/CRC.
     closing_visual_team: Option<TeamId>,
     /// Frame-side vision of the local player's team — the live scan coverage
     /// computed from the **visual** anchors, so the radar (the minimap fog and the
@@ -997,27 +996,31 @@ pub const GROWTH_ANIM_SECONDS: f32 = GROWTH_ANIM_STEPS as f32 * ORDER_TICK_SECON
 /// `timer_get`). One cell — `GFX_MAP_TILE_SIZE = 64` px: 8 × 30 / 64 ≈
 /// **3.75 cells/s**. We take 4 — this way the frame passes the route in the same time
 /// as the pixel movement in C++.
+///
+/// The simulation itself paces every routed unit to this rate
+/// (`max_core::MOVEMENT_CELLS_PER_SECOND`, the per-tick movement budget), so the
+/// sprite is drawn on the simulation position and this value only remains the budget
+/// of the fallback frame route (a position write the simulation did not walk).
 pub const VISUAL_CELLS_PER_SECOND: f32 = 4.0;
 
 /// A jump larger than this number of cells is not a route but a teleport/state
 /// synchronization: the visual position is set to the target without animation.
 ///
-/// The turn-close drain does **not** reach this branch any more: it walks the
-/// closing routes inside the simulation at the visual pace
-/// (`max_core::ClosingTurn`), one cell per budget window, so the frame sees at most
-/// a one-cell step and draws every unit of the closing team exactly on the
-/// simulation position ([`App::update_visual_units`]). A save/load or a transport
-/// synchronization keeps the snap: the route is unknown there.
+/// The movement budget does **not** reach this branch: a routed unit is drawn on the
+/// simulation position (`max_core::MOVEMENT_CELLS_PER_SECOND`, one cell per budget
+/// window). A save/load or a transport synchronization keeps the snap: the route is
+/// unknown there.
 pub const VISUAL_TELEPORT_CELLS: i32 = 6;
 
 /// Frame target of a unit in fractional cells — where the sprite has to be drawn.
 ///
-/// * Ground/sea units: the simulation cell. The simulation moves a whole cell per
-///   tick and the frame walks the route at [`VISUAL_CELLS_PER_SECOND`].
+/// * Ground/sea units: the simulation cell. The simulation itself walks a cell at
+///   the movement-budget pace (`max_core::MOVEMENT_CELLS_PER_SECOND`).
 /// * Aircraft: the **pixel** position from `AirPath::Execute` (`airpath.cpp:219-242`,
 ///   `unit->x/y`, one cell = 64 px). The air path is a straight line in pixels, so
-///   the frame interpolates that line (`render::air_pixel_anchor` draws at
-///   `fraction * 64`), not a cell stair.
+///   a routed aircraft is drawn at the simulation pixel (`render::air_pixel_anchor`
+///   draws at `fraction * 64`); the fallback route of an un-walked position write
+///   passes the same line, not a cell stair.
 fn visual_target(unit: &UnitInfo) -> (f32, f32) {
     if unit.is_air() && unit.flags & unit_flags::MISSILE_UNIT == 0 {
         let tile = max_core::unit_order::GFX_MAP_TILE_SIZE as f32;
@@ -1028,9 +1031,23 @@ fn visual_target(unit: &UnitInfo) -> (f32, f32) {
     }
 }
 
+/// Whether the frame draws this unit on the simulation position — the port of the
+/// oracle's single sprite state.
+///
+/// The simulation itself walks every routed unit a cell at the movement-budget pace
+/// (`max_core::MOVEMENT_CELLS_PER_SECOND`), so the sprite **is** the simulation:
+/// [`UnitInfo::route_pending`] selects those units, of every team and in every
+/// phase. Projectiles are excluded: the oracle flies them by `max_velocity` pixel
+/// steps, far faster than one cell per budget window, and they carry no route
+/// sprite — the frame keeps their pixel route in [`App::visual_paths`].
+fn draws_on_simulation_position(unit: &UnitInfo) -> bool {
+    unit.route_pending() && unit.flags & unit_flags::MISSILE_UNIT == 0
+}
+
 /// Walks a unit's visual route by no more than `budget` cells — the per-frame
-/// movement budget of [`App::update_visual_units`]
-/// ([`VISUAL_CELLS_PER_SECOND`] × the frame time).
+/// budget of the **fallback** frame route in [`App::update_visual_units`]
+/// ([`VISUAL_CELLS_PER_SECOND`] × the frame time). A routed unit is drawn on the
+/// simulation position and never reaches this walk.
 ///
 /// The remaining budget is carried over to the next waypoint, so the speed is
 /// constant; a waypoint closer than the budget is reached exactly, so the sprite
@@ -1070,10 +1087,11 @@ fn advance_visual_route(
 /// hover bob and the construction-tape shift).
 ///
 /// Ground/sea: the center of the visual cell (`UnitInfo::SetPosition`,
-/// `unitinfo.cpp:1301`; the 2×2 layout center is `+31`). Aircraft: the interpolated
-/// air-path pixel — `AirPath::Execute` draws the plane at `unit->x/y`
-/// (`airpath.cpp:219-242`) and [`App::visual_position`] already stores that pixel in
-/// cells (64 px per cell).
+/// `unitinfo.cpp:1301`; the 2×2 layout center is `+31`). Aircraft: the air-path
+/// pixel — `AirPath::Execute` draws the plane at `unit->x/y`
+/// (`airpath.cpp:219-242`) and [`App::visual_position`] stores that pixel in cells
+/// (64 px per cell); the simulation itself paces the air route, so for a routed
+/// aircraft this is the simulation pixel.
 ///
 /// Used by the frame to align effects with the sprite without touching the
 /// simulation: `UnitsManager_StartExplosion` aligns the blast with `unit->x/y`
@@ -1104,11 +1122,12 @@ fn frame_pixel_anchor(unit: &UnitInfo, visual: (f32, f32)) -> (f32, f32) {
 /// to it (`Paths_GetAngle`, 0..7).
 ///
 /// The angle is stored **per segment**, not read from `UnitInfo::angle` at
-/// the frame moment. The simulation executes the route fast (a cell per tick) and has already
-/// turned toward the next cell — or passed several cells ahead — while
-/// the sprite still walks this segment at real speed. Without the angle
-/// snapshot the frame would show a turn 45–90° before the sprite reached the turn
-/// cell: the unit would "look" sideways while moving straight.
+/// the frame moment. This queue is the fallback of a position write the simulation
+/// did not walk (save/load, transport/state synchronization): the simulation has
+/// already turned toward the next cell — or gone further — while the sprite still
+/// walks this segment. Without the angle snapshot the frame would show a turn
+/// 45–90° before the sprite reached the turn cell: the unit would "look" sideways
+/// while moving straight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct VisualStep {
     /// Cell coordinate (fractional — at intermediate jump points).
@@ -1120,22 +1139,21 @@ struct VisualStep {
     /// Movement points the simulation spent to enter this cell
     /// (`Paths_CalculateStep`: `normalized_cost`). It is subtracted from the
     /// displayed speed when the sprite finishes the step, so the corner panel's
-    /// `Speed` row falls exactly as the unit visually walks (in C++ the number
-    /// and the sprite move together; the port's simulation runs ahead of the
-    /// frame).
+    /// `Speed` row falls exactly as the unit visually walks the fallback route.
     speed: u16,
 }
 
 /// A dead unit whose sprite still has a route to the point where the simulation
 /// killed it — a **presentation corpse**.
 ///
-/// The frame walks a route at [`VISUAL_CELLS_PER_SECOND`], while the simulation
-/// moves a cell per tick: an intercepted aircraft is killed (and removed by
-/// `unit_order::progress_explosion` → `access::build_clearing` in the middle of
-/// its blast) while its sprite is still several cells from the death pixel. The
-/// record keeps the last simulation snapshot and the death point, so the corpse
-/// finishes the walk to the cell where the anti-aircraft opened fire instead of
-/// freezing (or vanishing) in mid-air.
+/// A routed unit is drawn on the simulation position (the simulation paces the
+/// route itself), so it needs no record. This is the fallback of a save/load or a
+/// transport/state synchronization: the frame walks the un-simulated route at
+/// [`VISUAL_CELLS_PER_SECOND`] while the unit may be killed and removed by
+/// `unit_order::progress_explosion` → `access::build_clearing` in the middle of its
+/// blast. The record keeps the last simulation snapshot and the death point, so the
+/// corpse finishes the walk to the death cell instead of freezing (or vanishing) in
+/// mid-air.
 ///
 /// Frame only: not part of the snapshot/CRC and never read by the simulation.
 #[derive(Debug, Clone, PartialEq)]
@@ -3909,9 +3927,10 @@ impl<D: Dispatcher> App<D> {
     /// (`max_core::universe::GameUniverse::turn_close_pending`).
     ///
     /// Read-only: while this is `true` the local clock keeps ticking
-    /// (`local.rs::local_clock`, the `LocalPhase::Advancing` branch) and
-    /// [`Self::update_visual_units`] draws the closing team on the simulation
-    /// position — the drain walks at the visual pace (`max_core::ClosingTurn`).
+    /// (`local.rs::local_clock`, the `LocalPhase::Advancing` branch). The movement
+    /// itself is paced by the simulation-wide budget
+    /// (`max_core::MOVEMENT_CELLS_PER_SECOND`), so the frame keeps drawing every
+    /// routed unit on the simulation position.
     pub fn turn_close_pending(&self) -> bool {
         self.universe.turn_close_pending()
     }
@@ -3941,11 +3960,12 @@ impl<D: Dispatcher> App<D> {
 
     /// Body angle for the frame: the direction of the current visual segment.
     ///
-    /// While the sprite walks the route, this is the direction of the segment it is
-    /// on (the `angle` field of the queue step); when the queue is empty (the unit stands
-    /// or the frame caught up with the simulation) — the current `UnitInfo::angle`. This way the frame
-    /// turns the unit exactly at the turn cell and does not run ahead of
-    /// the simulation.
+    /// A routed unit is drawn on the simulation position, so its angle is the
+    /// simulation `UnitInfo::angle` (the hull may already have made its one-step
+    /// boundary turn toward the next segment, `GroundPath::UpdateUnitAngle`). The
+    /// queue is only the fallback of a position write the simulation did not walk
+    /// (save/load, transport/state synchronization); then the sprite turns at the
+    /// turn cell and does not run ahead of the simulation.
     ///
     /// The value is for drawing only: not part of the snapshot/CRC and does not
     /// change the simulation.
@@ -3982,11 +4002,11 @@ impl<D: Dispatcher> App<D> {
     ///
     /// C++ decrements `UnitInfo::speed` in `Paths_CalculateStep` as the sprite walks
     /// a cell, so the number in `GameManager_UpdateInfoDisplay` falls together with
-    /// the sprite. The port simulation advances a whole cell per tick, ahead of the
-    /// frame, so reading `unit.speed` directly made the value drop before the unit
-    /// visibly moved. This returns `unit.speed` **plus** the points still attached
-    /// to the cells the sprite has not walked yet ([`VisualStep::speed`]): the row
-    /// reaches 0 exactly when the sprite arrives. Frame-only, not part of the CRC.
+    /// the sprite. The port simulation paces the route itself (the movement budget,
+    /// one cell per window) and the frame draws the sprite on the simulation cell, so
+    /// the panel reads the simulation value. The fallback frame route
+    /// ([`VisualStep::speed`]) still adds the points of the cells the sprite has not
+    /// walked yet. Frame-only, not part of the CRC.
     pub fn displayed_speed(&self, id: UnitId) -> Option<u16> {
         let unit = self.state_ref().unit(id)?;
         let pending: u32 = self
@@ -4313,32 +4333,31 @@ impl<D: Dispatcher> App<D> {
 
     /// Pulls the visual positions toward the simulation ones.
     ///
-    /// The simulation moves a unit a whole cell per tick; the frame passes **the same
-    /// sequence of cells** at the real original speed
-    /// ([`VISUAL_CELLS_PER_SECOND`]). This is the visible "cell by cell"
-    /// movement: with `dt > 0` the sprite position changes between frames, and after
-    /// passing the route it coincides with the target cell.
+    /// The simulation itself walks every routed unit a cell at the original visual
+    /// speed ([`max_core::MOVEMENT_CELLS_PER_SECOND`], the per-tick movement budget
+    /// in `max_core::game`), so the frame draws such a unit **on the simulation
+    /// position**: a shot, an intercept or a death happens on the cell the player
+    /// sees. The old interpolation below is the fallback for a position change the
+    /// simulation did **not** walk — a save/load or a transport/state
+    /// synchronization — where the route is unknown
+    /// ([`VISUAL_TELEPORT_CELLS`]).
     ///
     /// `dt <= 0` — snapshot without interpolation: headless/QA frames remain
     /// deterministic and match the references. The same rule applies to the
     /// visual animation clock: the builder shows the working pose `+16`, and
     /// a "growing" unit — full size.
     ///
-    /// **The turn close.** The closing team's routes are walked by the simulation
-    /// itself at the visual pace (`max_core::ClosingTurn`, one cell per budget
-    /// window): the frame draws those units on the simulation position, without
-    /// interpolation. An intercept, the shot and the death of a closing unit
-    /// therefore happen on the cell the player sees, and the next team starts only
-    /// after the walk has finished. A position change without such a drain —
-    /// save/load, transport/state synchronization — is a snap
+    /// **The routes.** A unit with a pending route ([`UnitInfo::route_pending`])
+    /// is drawn at its simulation cell/pixel every frame, of every team and in
+    /// every phase — not only while a team turn closes. A position change without
+    /// such a route — save/load, transport/state synchronization — is a snap
     /// (`VISUAL_TELEPORT_CELLS`), because its route is unknown.
     ///
-    /// **Death.** A unit killed while its sprite still walks ends the walk on the
-    /// pixel where the simulation killed it; the record [`CorpseVisual`] keeps it
-    /// drawable after `unit_order::progress_explosion` deletes it half-way through
-    /// its blast, and the blast stays on the corpse (`effect_offsets`). A unit
-    /// killed during the turn close needs neither: its sprite is already on the
-    /// simulation pixel when the killing shot lands.
+    /// **Death.** A unit killed while walking is already on the simulation pixel
+    /// (its sprite followed the state), so the blast is drawn there too. The
+    /// presentation record [`CorpseVisual`] and [`Self::effect_offsets`] remain only
+    /// for the fallback: a save/load/transport position write that leaves the
+    /// sprite mid-route.
     ///
     /// P4: the map is updated in place (`retain` + `insert`), not rebuilt
     /// every frame. This removes the `HashMap` allocation of `ids.len()`
@@ -4358,12 +4377,12 @@ impl<D: Dispatcher> App<D> {
         // `SLFDOPN1..6` frames of the self-destruct dialog (`TIMER_FPS_TO_MS(48)`).
         self.advance_self_destruct(dt);
 
-        // The team whose turn is closing (`max_core::ClosingTurn`): its units walk at
-        // the visual pace in the simulation itself, so the frame draws them exactly
-        // where the simulation puts them (see the branch in the loop below). The team
-        // is remembered for one more frame: the tick that enters the closing unit's
-        // last cell (an intercept's halt) also ends the closing state, and that cell
-        // must be drawn on the simulation position too.
+        // The team whose turn is closing (`max_core::ClosingTurn`): its units are
+        // drawn on the simulation position, like every routed unit (see the branch
+        // in the loop below). The team is remembered for one more frame: the tick
+        // that enters the closing unit's last cell (an intercept's halt) also ends
+        // the closing state, and that cell must be drawn on the simulation position
+        // too.
         let active_closing = self.universe.closing_turn_team();
         let closing_team = active_closing.or(self.closing_visual_team.take());
         self.closing_visual_team = active_closing;
@@ -4373,10 +4392,9 @@ impl<D: Dispatcher> App<D> {
         // `fast_movement` ("Double Unit Steps"): C++ doubles the
         // movement speed (`UnitInfo::Move`: `velocity += FastMovement ? 2 : 1`,
         // `unitinfo.cpp:1742`; `Paths_CalculateStep`: `max_velocity` 16 instead of
-        // 8, `paths.cpp:297`), so the sprite passes a cell twice as fast.
-        // The port simulation moves the unit a cell per tick; the frame speed —
-        // the only place where the setting is visible, exactly as the visual effect
-        // of the original.
+        // 8, `paths.cpp:297`). The simulation doubles the per-tick movement budget
+        // (`max_core::game`), and the fallback frame route scales its budget to the
+        // same pace.
         let speed_scale = if self.preferences.fast_movement {
             2.0
         } else {
@@ -4443,13 +4461,31 @@ impl<D: Dispatcher> App<D> {
             let queue = paths.entry(id).or_default();
             let last_speed = speeds.entry(id).or_insert(unit.speed);
 
-            // The turn close walks the closing team's routes **inside the
-            // simulation** at the visual pace (`max_core::ClosingTurn`, one cell per
-            // budget window). The sprite is therefore drawn on the simulation
-            // position itself: no interpolation, no route report, no snap. An
-            // intercept, the shot and the death of such a unit happen on the cell the
-            // player sees, and the next team starts only after the walk ends.
-            if closing_team == Some(unit.team) {
+            // A routed unit is drawn on the simulation position itself: the
+            // simulation paces the route by the movement budget
+            // (`max_core::MOVEMENT_CELLS_PER_SECOND`, one cell per budget window), so
+            // there is nothing to interpolate. No frame-side route report, no snap,
+            // no corpse walk: a shot, an intercept or a death of such a unit happens
+            // on the cell the player sees. The closing team keeps the same rule for
+            // its last cell (the closing state ends on the tick that enters it).
+            //
+            // The tick that **ends** the route (arrival, intercept halt) clears the
+            // path, so the unit is no longer `route_pending`: the last one-cell step
+            // must be drawn at the simulation position too, not interpolated as a
+            // save/load teleport. A one-cell goal change is always a walked step.
+            //
+            // Projectiles keep the frame route: their pixel flight is much faster
+            // than the budget, and they carry no route sprite (see
+            // [`draws_on_simulation_position`]).
+            let walked_step = {
+                let dx = target.0 - goal.0;
+                let dy = target.1 - goal.1;
+
+                dx.abs().max(dy.abs()) <= 1.0 + 1e-3 && unit.flags & unit_flags::MISSILE_UNIT == 0
+            };
+
+            if closing_team == Some(unit.team) || draws_on_simulation_position(unit) || walked_step
+            {
                 *current = target;
                 *goal = target;
                 queue.clear();
@@ -4458,8 +4494,9 @@ impl<D: Dispatcher> App<D> {
                 continue;
             }
 
-            // The simulation moved the unit (usually one cell per tick).
-            // We append the actual route cells so that the frame walks them,
+            // The **fallback** route: a position write the simulation did not walk
+            // (save/load, transport/state synchronization, a projectile's pixel
+            // flight). We append the actual route cells so that the frame walks them,
             // not cutting the path in a straight line; a big jump — a teleport/sync.
             if *goal != target {
                 let dx = target.0 - goal.0;
@@ -4579,13 +4616,14 @@ impl<D: Dispatcher> App<D> {
             // (`UnitInfo::StopMovement`, `unitinfo.cpp:3222` → `BlockedOnPathRequest`,
             // `:3628`) only clears the path — it never rewrites `x/y`.
             //
-            // A unit killed during the **turn close** needs none of this: its sprite
-            // follows the simulation cell (`ClosingTurn`), so it is already on the
-            // death pixel. This branch covers the ordinary case — a unit killed during
-            // a turn whose sprite is still interpolating its queued route: the corpse
-            // keeps that route and walks it at the visual speed to the death pixel, and
-            // the record keeps it drawable after `unit_order::progress_explosion`
-            // removes the unit in the middle of its blast.
+            // A unit killed while it walks a route needs none of this: the simulation
+            // paces the route and the frame draws the sprite on the simulation pixel,
+            // so the queue is empty on the death frame. The record is the fallback for
+            // a sprite still walking an un-walked position write (save/load,
+            // transport/state synchronization): the corpse keeps that route to the
+            // death pixel and stays drawable after
+            // `unit_order::progress_explosion` removes the unit in the middle of its
+            // blast.
             //
             // Projectiles (`MISSILE_UNIT`) and effects (`EXPLODING`) are excluded:
             // both have `hits == 0` for their whole life by `SC_ATTRI`, not because
@@ -4619,10 +4657,11 @@ impl<D: Dispatcher> App<D> {
         }
 
         // Presentation corpses whose unit the simulation already removed: the walk
-        // to the death pixel continues here. A unit killed during an ordinary turn is
-        // deleted in the middle of its blast while its sprite still walks the queued
-        // route; without this it would vanish in mid-air. (A unit killed during the
-        // turn close never needs the record — its sprite is on the simulation cell.)
+        // to the death pixel continues here. This is the fallback of an un-walked
+        // position write (save/load, transport/state synchronization): the sprite
+        // still walks a frame route and would vanish in mid-air when the hull is
+        // deleted in the middle of its blast. A killed routed unit needs no record —
+        // its sprite already stands on the simulation death pixel.
         let ghost_ids: Vec<UnitId> = self
             .corpse_visuals
             .keys()
@@ -4645,12 +4684,12 @@ impl<D: Dispatcher> App<D> {
         // `UnitsManager_StartExplosion` (`units_manager.cpp:3991-3994`): the blast is
         // drawn at the **dying unit's pixel**, i.e. at the sprite the original draws.
         //
-        // The oracle's `unit->x/y` and its sprite are the same point; the port's
-        // sprite is the interpolated frame position while a unit walks during a normal
-        // turn, so it may lag the simulation. The frame therefore keeps the blast on
-        // the sprite: the stored offset is `frame pixel - simulation pixel` of the
-        // dead unit. During the turn close the offset is zero — the sprite follows the
-        // simulation (`ClosingTurn`), so the blast lands on the cell the player sees.
+        // The oracle's `unit->x/y` and its sprite are the same point; the port draws
+        // a routed unit on the simulation pixel too, so the offset is zero. Only the
+        // fallback route of an un-walked position write may lag; then the frame keeps
+        // the blast on the sprite: the stored offset is
+        // `frame pixel - simulation pixel` of the dead unit, so the blast lands on the
+        // cell the player sees.
         //
         // While the effect still references its parent the offset follows the corpse.
         // `unit_order::progress_explosion` releases the parent in the middle of the

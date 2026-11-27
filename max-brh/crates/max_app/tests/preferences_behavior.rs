@@ -96,19 +96,19 @@ fn setup_vs_one_ai() -> LocalSetup {
 fn mobile_unit(app: &App) -> Option<max_core::unit::UnitId> {
     let team = app.state_ref().player_team();
 
-    app.state_ref()
-        .unit_ids_in_order()
-        .into_iter()
-        .find(|id| {
-            app.state_ref().unit(*id).is_some_and(|unit| {
-                unit.team == team
-                    && unit.speed > 0
-                    && matches!(
-                        unit.unit_type,
-                        UnitType::Constructor | UnitType::Engineer | UnitType::Surveyor | UnitType::Tank
-                    )
-            })
+    app.state_ref().unit_ids_in_order().into_iter().find(|id| {
+        app.state_ref().unit(*id).is_some_and(|unit| {
+            unit.team == team
+                && unit.speed > 0
+                && matches!(
+                    unit.unit_type,
+                    UnitType::Constructor
+                        | UnitType::Engineer
+                        | UnitType::Surveyor
+                        | UnitType::Tank
+                )
         })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +131,11 @@ fn click_scroll_controls_whether_hover_scrolls() {
     let before = app.viewport().center();
     let step = app.update_scroll(1.0 / 30.0);
 
-    assert_eq!(step, Some((0, -16)), "клик-скролл выключен: скроллит наведение");
+    assert_eq!(
+        step,
+        Some((0, -16)),
+        "клик-скролл выключен: скроллит наведение"
+    );
     assert_eq!(
         app.viewport().center(),
         (before.0, before.1 - 16),
@@ -144,7 +148,11 @@ fn click_scroll_controls_whether_hover_scrolls() {
     app.set_preferences(prefs);
 
     let before = app.viewport().center();
-    assert_eq!(app.update_scroll(1.0 / 30.0), None, "без нажатой ЛКМ скролла нет");
+    assert_eq!(
+        app.update_scroll(1.0 / 30.0),
+        None,
+        "без нажатой ЛКМ скролла нет"
+    );
     assert_eq!(app.viewport().center(), before);
 
     // A click on the strip — a "hold", like `GameManager_SetGridOffset`.
@@ -199,12 +207,14 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     let mut slow = local_app(&temp_save_dir("fast-off"));
     let mut fast = local_app(&temp_save_dir("fast-on"));
 
-    let mut slow = slow
-        .take()
-        .expect(concat!("test fixture is missing: ", stringify!(local_app(...))));
-    let mut fast = fast
-        .take()
-        .expect(concat!("test fixture is missing: ", stringify!(local_app(...))));
+    let mut slow = slow.take().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(...))
+    ));
+    let mut fast = fast.take().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(...))
+    ));
 
     let setup = setup_vs_one_ai();
     // The setting is set before the start, like the main menu Preferences.
@@ -218,29 +228,58 @@ fn fast_movement_doubles_the_visual_unit_speed() {
     slow.start_local_game(&setup).expect("партия (off)");
     fast.start_local_game(&setup).expect("партия (on)");
 
-    let id = mobile_unit(&slow).expect("мобильный юнит");
-    assert!(mobile_unit(&fast).is_some());
+    // A mobile unit with enough movement points for a route of several cells: the
+    // first cell is entered on the first budget window regardless of the setting, so
+    // a single-cell order would not show the doubled pace.
+    let player = slow.state_ref().player_team();
+    let id = slow
+        .state_ref()
+        .unit_ids_in_order()
+        .into_iter()
+        .find(|id| {
+            slow.state_ref().unit(*id).is_some_and(|unit| {
+                unit.team == player && unit.is_mobile() && unit.hits > 0 && unit.speed >= 3
+            })
+        })
+        .expect("мобильный юнит с запасом хода");
+    assert!(
+        fast.state_ref()
+            .unit(id)
+            .is_some_and(|unit| unit.team == player),
+        "the same scenario units in both matches"
+    );
 
-    // The same order: an adjacent passable cell.
     let from = slow.state_ref().unit(id).expect("юнит").grid;
+    let speed = usize::from(slow.state_ref().unit(id).expect("юнит").speed);
     let mut destination = None;
 
-    'search: for dy in [-1i16, 0, 1] {
-        for dx in [-1i16, 0, 1] {
-            if dx == 0 && dy == 0 {
+    'search: for dy in -4i16..=4 {
+        for dx in -4i16..=4 {
+            let target = Point::new(from.x + dx, from.y + dy);
+
+            if target == from
+                || target.x < 1
+                || target.y < 1
+                || target.x >= max_core::geo::MAP_WIDTH - 1
+                || target.y >= max_core::geo::MAP_HEIGHT - 1
+            {
                 continue;
             }
 
-            let target = Point::new(from.x + dx, from.y + dy);
+            let Some(order) = build_move_order(slow.state_ref(), id, target) else {
+                continue;
+            };
 
-            if build_move_order(slow.state_ref(), id, target).is_some() {
+            // The route must be walkable within this turn's movement points and
+            // longer than one cell.
+            if (2..=speed).contains(&order.preview.len()) {
                 destination = Some(target);
                 break 'search;
             }
         }
     }
 
-    let destination = destination.expect("рядом есть проходимая клетка");
+    let destination = destination.expect("есть проходимый маршрут в несколько клеток");
 
     for app in [&mut slow, &mut fast] {
         let order = build_move_order(app.state_ref(), id, destination).expect("приказ");
@@ -248,31 +287,33 @@ fn fast_movement_doubles_the_visual_unit_speed() {
         app.update_visual_units(0.0);
     }
 
-    let start = slow.visual_position(id).expect("юнит");
+    /// Frames until the sprite is drawn on the destination cell.
+    fn frames_to_arrival(app: &mut App, id: max_core::UnitId, destination: Point) -> usize {
+        let target = (f32::from(destination.x), f32::from(destination.y));
 
-    // The frame passes the route: the simulation ticks (a cell per tick), the sprite
-    // catches up with it at real speed. 10 frames at 60 Hz — 1/6 s.
-    for _ in 0..10 {
-        slow.local_update(1.0 / 60.0);
-        fast.local_update(1.0 / 60.0);
+        for frame in 1..=600 {
+            app.local_update(1.0 / 60.0);
+
+            if app.visual_position(id) == Some(target)
+                && app.state_ref().unit(id).map(|unit| unit.grid) == Some(destination)
+            {
+                return frame;
+            }
+        }
+
+        panic!("юнит не дошёл до {destination:?} за 600 кадров");
     }
 
-    let distance = |app: &App| {
-        let (x, y) = app.visual_position(id).expect("юнит");
-        ((x - start.0).powi(2) + (y - start.1).powi(2)).sqrt()
-    };
+    let slow_frames = frames_to_arrival(&mut slow, id, destination);
+    let fast_frames = frames_to_arrival(&mut fast, id, destination);
 
-    let slow_distance = distance(&slow);
-    let fast_distance = distance(&fast);
-
+    // `fast_movement` ("Double Unit Steps") doubles the per-tick movement budget,
+    // as C++ `GameManager_FastMovement` doubles the movement velocity
+    // (`unitinfo.cpp:1742`): the same route takes about half the frames.
     assert!(
-        slow_distance > 0.0,
-        "спрайт должен двигаться: прошёл {slow_distance}"
-    );
-    assert!(
-        fast_distance > slow_distance * 1.6,
+        fast_frames * 4 <= slow_frames * 3,
         "fast_movement удваивает скорость спрайта (C++ `UnitInfo::Move`): \
-         off={slow_distance}, on={fast_distance}"
+         off={slow_frames} кадров, on={fast_frames} кадров"
     );
 }
 
@@ -283,7 +324,10 @@ fn fast_movement_doubles_the_visual_unit_speed() {
 #[test]
 fn follow_unit_centers_the_camera_on_the_selected_unit() {
     let dir = temp_save_dir("follow");
-    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
+    let mut app = local_app(&dir).expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(&dir))
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -318,10 +362,7 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
     assert!(app.follow_selected_unit(), "камера должна догнать юнита");
     assert_eq!(
         app.viewport().center(),
-        (
-            i32::from(grid.x) * 64 + 32,
-            i32::from(grid.y) * 64 + 32
-        ),
+        (i32::from(grid.x) * 64 + 32, i32::from(grid.y) * 64 + 32),
         "центр камеры — клетка выделенного юнита (`UnitInfo::FollowUnit`)"
     );
 
@@ -336,7 +377,10 @@ fn follow_unit_centers_the_camera_on_the_selected_unit() {
 #[test]
 fn auto_select_picks_the_next_unit_after_a_move() {
     let dir = temp_save_dir("autoselect");
-    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
+    let mut app = local_app(&dir).expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(&dir))
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -428,7 +472,8 @@ fn finish_path_next_tick(app: &mut App, id: max_core::unit::UnitId) {
     }
 }
 
-fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..600 {
+fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {
+    for _ in 0..600 {
         let done = app.state_ref().unit(id).is_none_or(|unit| {
             matches!(unit.orders, UnitOrder::Await | UnitOrder::Idle) && unit.path.is_none()
         });
@@ -454,7 +499,10 @@ fn run_until_idle(app: &mut App, id: max_core::unit::UnitId) {    for _ in 0..60
 #[test]
 fn enemy_halt_reaches_the_simulation() {
     let dir = temp_save_dir("enemy-halt");
-    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
+    let mut app = local_app(&dir).expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(&dir))
+    ));
 
     let mut prefs = app.preferences().clone();
     prefs.enemy_halt = false;
@@ -484,7 +532,10 @@ fn enemy_halt_reaches_the_simulation() {
 #[test]
 fn turn_timers_from_preferences_apply_to_the_local_game() {
     let dir = temp_save_dir("timers");
-    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
+    let mut app = local_app(&dir).expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(&dir))
+    ));
 
     let setup = setup_vs_one_ai();
     app.start_local_game(&setup).expect("локальная партия");
@@ -531,7 +582,10 @@ fn turn_timers_from_preferences_apply_to_the_local_game() {
 #[test]
 fn player_name_applies_to_the_game_and_the_v70_save() {
     let dir = temp_save_dir("player-name");
-    let mut app = local_app(&dir).expect(concat!("test fixture is missing: ", stringify!(local_app(&dir))));
+    let mut app = local_app(&dir).expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app(&dir))
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.player_name = "Alice".to_string();
@@ -555,13 +609,13 @@ fn player_name_applies_to_the_game_and_the_v70_save() {
         "Alice"
     );
 
-    app.preferences_dialog_mut().expect("диалог").draft.player_name = "Bob".to_string();
+    app.preferences_dialog_mut()
+        .expect("диалог")
+        .draft
+        .player_name = "Bob".to_string();
     let action = app.preferences_input(InputEvent::Key(Key::Enter));
 
-    assert_eq!(
-        action,
-        Some(max_app::preferences::PreferencesAction::Done)
-    );
+    assert_eq!(action, Some(max_app::preferences::PreferencesAction::Done));
     assert_eq!(app.preferences().player_name, "Bob");
     assert_eq!(
         app.local().expect("партия").display_name(TeamId::RED),

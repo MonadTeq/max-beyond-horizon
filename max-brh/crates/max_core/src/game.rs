@@ -160,66 +160,74 @@ pub struct UnitSound {
     pub kind: UnitSoundKind,
 }
 
-/// Visual pace of the end-of-turn drain, in cells per second.
+/// Visual pace of the simulation's unit movement, in cells per second.
 ///
-/// The oracle closes a team turn with
-/// `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
-/// (`game_manager.cpp:488-490`): the closing routes are walked by **ordinary
-/// ticks** while the frame keeps drawing, because the original moves
-/// `UnitInfo::x/y` only a few pixels per tick (`UnitInfo::Move`,
-/// `unitinfo.cpp:1742`). The port's movement model advances a whole cell per order
-/// pass — a ground step enters the next cell, an aircraft's `max_velocity` pixel
-/// steps make one cell — so the drain paces a cell to this rate: the same speed the
-/// frame used to interpolate with (`max_app::VISUAL_CELLS_PER_SECOND`).
-pub const CLOSING_CELLS_PER_SECOND: u32 = 4;
+/// The oracle moves `UnitInfo::x/y` only a few pixels per tick (`UnitInfo::Move`,
+/// `unitinfo.cpp:1742`) and the drawing reads the same state, so a shot, an
+/// intercept or a death always happens on the cell the sprite is drawn on. The
+/// port's movement model advances a whole cell per order pass — a ground step
+/// enters the next cell, an aircraft's `max_velocity` pixel steps make one cell —
+/// so the simulation paces every routed unit to this rate by a per-tick movement
+/// budget: the speed the frame used to interpolate with
+/// (`max_app::VISUAL_CELLS_PER_SECOND`), now walked by the simulation itself.
+pub const MOVEMENT_CELLS_PER_SECOND: u32 = 4;
 
 /// Ticks per second of the fixed simulation step (the original's 60 Hz frame,
 /// `GameManager_ProcessTick`, `game_manager.cpp:5144`).
 pub const SIMULATION_TICKS_PER_SECOND: u32 = 60;
 
-/// Fixed point of the drain budget: one fifteenth of a pixel.
+/// Fixed point of the movement budget: one fifteenth of a pixel.
 ///
-/// [`CLOSING_CELLS_PER_SECOND`] cells/s at [`SIMULATION_TICKS_PER_SECOND`] is
+/// [`MOVEMENT_CELLS_PER_SECOND`] cells/s at [`SIMULATION_TICKS_PER_SECOND`] is
 /// `GFX_MAP_TILE_SIZE * 4 / 60` pixels per tick — not an integer. The factor 15
 /// keeps the whole budget in integers (`64 * 4 * 15 / 60 = 64` units per tick,
 /// `64 * 15 = 960` units per cell), so the pace is deterministic and does not
 /// depend on `dt` or on the frame rate.
 pub const DRAIN_UNITS_PER_PIXEL: i64 = 15;
 
-/// Drain budget granted to one moving unit per tick, in [`DRAIN_UNITS_PER_PIXEL`]
-/// units: four cells per second of a 60 Hz step is `4.27` pixels.
-pub const DRAIN_UNITS_PER_TICK: i64 = GFX_MAP_TILE_SIZE as i64
-    * CLOSING_CELLS_PER_SECOND as i64
-    * DRAIN_UNITS_PER_PIXEL
-    / SIMULATION_TICKS_PER_SECOND as i64;
+/// Movement budget granted to one routed unit per tick, in
+/// [`DRAIN_UNITS_PER_PIXEL`] units: four cells per second of a 60 Hz step is
+/// `4.27` pixels.
+pub const DRAIN_UNITS_PER_TICK: i64 =
+    GFX_MAP_TILE_SIZE as i64 * MOVEMENT_CELLS_PER_SECOND as i64 * DRAIN_UNITS_PER_PIXEL
+        / SIMULATION_TICKS_PER_SECOND as i64;
 
-/// One unit of the closing team inside [`ClosingTurn`].
+/// Movement credit of one routed unit ([`GameState::movement_budget`]).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ClosingUnit {
-    /// Movement credit in [`DRAIN_UNITS_PER_PIXEL`] units: the drain advances the
-    /// unit only while the credit is non-negative, and charges it by the pixels the
-    /// pass actually moved (a blocked pass costs nothing, so retries stay at one
-    /// per tick as in the oracle).
+pub(crate) struct MovementCredit {
+    /// Movement credit in [`DRAIN_UNITS_PER_PIXEL`] units: the order pass runs only
+    /// while the credit is non-negative, and each pass charges the pixels it
+    /// actually moved (a blocked pass costs nothing, so retries stay at one per
+    /// tick as in the oracle).
     credit: i64,
     /// Pixel position at the previous pass — the charge is measured from here.
     x: u16,
     y: u16,
+    /// End cell of the route the credit belongs to. A new route (a different end)
+    /// starts with a fresh credit: the movement must not inherit the debt of the
+    /// previous route.
+    end: (i16, i16),
 }
 
 /// The turn close of a team whose units still move — the port of the oracle's
 /// `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
 /// (`game_manager.cpp:488-490`; `:549-558` for the concurrent close).
 ///
-/// # Why the drain is incremental
+/// # Why the move is paced
 ///
 /// The port used to walk the whole remaining route inside one `end_local_turn`
 /// call: fourteen cells or more between two frames. Reaction fire is resolved in
 /// simulation cells, so an intercept, the shot and the death all happened where
 /// the *simulation* was — several cells ahead of a sprite that walks at
-/// [`CLOSING_CELLS_PER_SECOND`]. The drain now advances one order pass per budget
-/// window instead, and the frame draws every unit at the simulation position
-/// (no interpolation): a shot started on a cell is a shot the player sees on that
+/// [`MOVEMENT_CELLS_PER_SECOND`]. The movement budget ([`GameState::movement_budget`])
+/// now paces the route on **every** tick — during the team's active turn as well,
+/// not only while the turn closes — and the frame draws every routed unit at the
+/// simulation position: a shot started on a cell is a shot the player sees on that
 /// cell, and the next team starts only after the movement has finished.
+///
+/// This struct is only the turn-close marker: the team whose routes the close waits
+/// for and the pass diagnostics. The credit itself belongs to the simulation-wide
+/// [`GameState::movement_budget`].
 ///
 /// # Determinism
 ///
@@ -228,33 +236,17 @@ pub(crate) struct ClosingUnit {
 /// arithmetic only. The pace is a function of the tick count, never of `dt` or of
 /// the frame rate.
 ///
-/// The drain state is **not** part of the snapshot/CRC: it only spaces the passes
-/// the oracle would run back to back, and a lockstep peer never starts one. Only
-/// the local team-turn machine drains ([`crate::universe::GameUniverse::end_local_turn`]);
-/// a network match closes turns through the barrier FSM.
+/// The budget is **not** part of the snapshot/CRC: it only spaces the order passes
+/// the oracle would run back to back, and a lockstep peer computes it from the same
+/// tick count. Only the local team-turn machine drains
+/// ([`crate::universe::GameUniverse::end_local_turn`]); a network match closes turns
+/// through the barrier FSM.
 #[derive(Debug, Clone)]
 pub(crate) struct ClosingTurn {
     /// Team whose turn is being closed.
     pub(crate) team: TeamId,
-    /// `fast_movement` of the match ("Double Unit Steps"): the budget doubles, as
-    /// C++ `GameManager_FastMovement` doubles the movement velocity
-    /// (`unitinfo.cpp:1742`).
-    pub(crate) fast_movement: bool,
-    /// Per-unit movement credit.
-    credit: std::collections::BTreeMap<UnitId, ClosingUnit>,
     /// Passes the drain has run (diagnostics and tests).
     pub(crate) passes: u32,
-}
-
-impl ClosingTurn {
-    /// Credit one moving unit gains per tick, in [`DRAIN_UNITS_PER_PIXEL`] units.
-    fn units_per_tick(&self) -> i64 {
-        if self.fast_movement {
-            DRAIN_UNITS_PER_TICK * 2
-        } else {
-            DRAIN_UNITS_PER_TICK
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -421,14 +413,22 @@ pub(crate) struct GameState {
     /// the client drains it into [`crate::universe::GameEvent::EnemySpotted`].
     pub(crate) spotted_reports: Vec<UnitId>,
     /// The turn close in progress ([`ClosingTurn`]) — the incremental, drawing-paced
-    /// drain of the closing team's routes. `None` when no turn is closing.
+    /// walk of the closing team's routes. `None` when no turn is closing.
     ///
     /// Not part of the snapshot/CRC (like the presentation reports): it spaces
     /// passes of the same simulation, and a lockstep peer never starts one.
     pub(crate) closing_turn: Option<ClosingTurn>,
+    /// Per-unit movement credit, in [`DRAIN_UNITS_PER_PIXEL`] units — the tick
+    /// budget that paces **every** routed unit at [`MOVEMENT_CELLS_PER_SECOND`].
+    ///
+    /// Not part of the snapshot/CRC (like the former closing-turn credit): it only
+    /// spaces the order passes the oracle would run back to back, and both lockstep
+    /// peers compute it from the same tick count in integer arithmetic.
+    pub(crate) movement_budget: std::collections::BTreeMap<UnitId, MovementCredit>,
     /// `GameManager_FastMovement` ("Double Unit Steps", `game_manager.cpp:224`) —
-    /// the closing drain runs at twice the visual pace. The simulation result is
-    /// unchanged, so the setting is not part of the snapshot/CRC.
+    /// the movement budget doubles, so every routed unit walks twice as fast. The
+    /// simulation result is unchanged, so the setting is not part of the
+    /// snapshot/CRC.
     pub(crate) fast_movement: bool,
     /// `UnitsManager_TeamInfo[*].finished_turn` is duplicated in `teams`; here —
     /// barrier counters so that the state is self-contained.
@@ -509,18 +509,18 @@ pub(crate) struct GameState {
     pub(crate) victory_limit: i32,
 }
 
-/// Whether a unit is walking a route the turn close has to finish — the movement
-/// part of the oracle's `Access_AreTaskEventsPending` (`access.cpp:2269`) that the
-/// port's drain waits for ([`GameState::task_events_pending`]).
+/// Whether the movement budget paces this unit's order pass — the port of the
+/// movement part of the oracle's `Access_AreTaskEventsPending` (`access.cpp:2269`):
+/// a route is installed and the order is in `ORDER_STATE_IN_PROGRESS`/
+/// `ORDER_STATE_IN_TRANSITION` ([`UnitInfo::route_pending`]).
 ///
-/// Only such a unit pays the closing drain budget; a halted, firing or exploding
-/// unit keeps its normal per-tick pass.
-fn closing_route_pending(unit: &UnitInfo) -> bool {
-    unit.path.is_some()
-        && matches!(
-            unit.state,
-            UnitOrderState::InProgress | UnitOrderState::InTransition
-        )
+/// Projectiles (`MISSILE_UNIT`) and effect units are excluded: the oracle flies a
+/// projectile by `max_velocity` pixel steps without spending a turn's movement
+/// allowance, and a projectile carries no route sprite whose position the player
+/// could compare with the simulation cell. An explosion effect never has a pending
+/// route at all. A halted, firing or exploding unit keeps its normal per-tick pass.
+fn paced_movement(unit: &UnitInfo) -> bool {
+    unit.route_pending() && unit.flags & unit_flags::MISSILE_UNIT == 0
 }
 
 impl Default for GameState {
@@ -587,6 +587,7 @@ impl GameState {
             unit_sounds: Vec::new(),
             spotted_reports: Vec::new(),
             closing_turn: None,
+            movement_budget: std::collections::BTreeMap::new(),
             fast_movement: false,
             turn_indices: [0; TEAM_SLOTS],
             next_turn_indices: [0; TEAM_SLOTS],
@@ -1876,7 +1877,12 @@ impl GameState {
     /// by a click from an unfinished site (`CURSOR_UNIT_NO_GO`,
     /// `game_manager.cpp:5927-5931`), and cancellation goes only through an explicit `stop`
     /// (`ORDER_BUILD`/`BUILD_CANCEL` → `UnitInfo::CancelBuilding`).
-    pub(crate) fn set_order(&mut self, id: UnitId, order: UnitOrder, state: UnitOrderState) -> bool {
+    pub(crate) fn set_order(
+        &mut self,
+        id: UnitId,
+        order: UnitOrder,
+        state: UnitOrderState,
+    ) -> bool {
         let Some(mut unit) = self.unit(id).cloned() else {
             return false;
         };
@@ -2081,7 +2087,7 @@ impl GameState {
     pub fn process_unit_orders(&mut self, kind: UnitListKind) {
         let ids = self.lists[kind.index()].clone();
         for id in ids {
-            if self.has_unit(id) && !self.closing_move_paused(id) {
+            if self.has_unit(id) && !self.movement_paused(id) {
                 unit_order::process_order(self, id);
             }
         }
@@ -2152,21 +2158,16 @@ impl GameState {
     /// `UnitEvent_UnitEvents` (the emergency stops queued by
     /// `Access_UpdateMapStatus`).
     ///
-    /// The drain is **not** walked here: as in the oracle it stays in the tick loop
-    /// and advances one order pass per [`ClosingTurn`] budget window, so the
-    /// simulation walks the route at the speed the frame draws it — the intercept,
-    /// the shot and the death then happen on the cell the player sees.
+    /// The movement of the closing team is **not** walked here: as in the oracle it
+    /// stays in the tick loop, paced by the simulation-wide movement budget
+    /// ([`Self::grant_movement_budget`]), so the simulation walks the route at the
+    /// speed the frame draws it — the intercept, the shot and the death then happen
+    /// on the cell the player sees.
     ///
     /// Returns `true` while a route is still pending: the caller has to keep
     /// ticking before the turn may close ([`Self::closing_turn_pending`]).
     pub(crate) fn begin_end_turn_movement(&mut self, team: TeamId) -> bool {
-        let fast_movement = self.fast_movement;
-        self.closing_turn = Some(ClosingTurn {
-            team,
-            fast_movement,
-            credit: std::collections::BTreeMap::new(),
-            passes: 0,
-        });
+        self.closing_turn = Some(ClosingTurn { team, passes: 0 });
 
         self.task_events_pending(team)
     }
@@ -2203,85 +2204,109 @@ impl GameState {
             .unwrap_or(0)
     }
 
-    /// Grants this tick's movement budget to the closing team's routed units —
-    /// the "tick" half of [`ClosingTurn`], called before [`Self::process_orders`].
-    fn grant_closing_turn_budget(&mut self) {
-        let Some(team) = self.closing_turn_team() else {
-            return;
-        };
-        let Some(units) = self
-            .closing_turn
-            .as_ref()
-            .map(ClosingTurn::units_per_tick)
-        else {
-            return;
-        };
+    /// Credit one routed unit gains per tick, in [`DRAIN_UNITS_PER_PIXEL`] units.
+    ///
+    /// `fast_movement` ("Double Unit Steps") doubles it, as C++
+    /// `GameManager_FastMovement` doubles the movement velocity
+    /// (`unitinfo.cpp:1742`).
+    fn movement_units_per_tick(&self) -> i64 {
+        if self.fast_movement {
+            DRAIN_UNITS_PER_TICK * 2
+        } else {
+            DRAIN_UNITS_PER_TICK
+        }
+    }
+
+    /// Grants this tick's movement budget to every routed unit — called before
+    /// [`Self::process_orders`].
+    ///
+    /// The budget is granted to **all** units walking a route, of every team and in
+    /// every phase, not only to the closing team: the simulation itself walks a cell
+    /// at [`MOVEMENT_CELLS_PER_SECOND`], so the frame can draw every unit on its
+    /// simulation position and a shot always lands where the sprite is.
+    ///
+    /// The credit never banks more than one tick, so a unit blocked by another one
+    /// does not sprint when the blocker leaves. A new route (a different end cell)
+    /// starts from a zero credit: the movement must not inherit the debt of the
+    /// previous route.
+    fn grant_movement_budget(&mut self) {
+        let units = self.movement_units_per_tick();
 
         // The pre-pass positions: the charge of this tick is measured from them.
-        let mut moving: Vec<(UnitId, u16, u16)> = Vec::new();
+        let mut moving: Vec<(UnitId, u16, u16, (i16, i16))> = Vec::new();
         for kind in UnitListKind::ALL {
             for id in self.unit_list(kind) {
                 let Some(unit) = self.unit(*id) else { continue };
 
-                if unit.team != team || !closing_route_pending(unit) {
+                if !paced_movement(unit) {
                     continue;
                 }
 
-                moving.push((*id, unit.x, unit.y));
+                let end = unit
+                    .path
+                    .as_ref()
+                    .map(UnitPath::end)
+                    .unwrap_or((unit.grid.x, unit.grid.y));
+
+                moving.push((*id, unit.x, unit.y, end));
             }
         }
 
-        let Some(closing) = self.closing_turn.as_mut() else {
-            return;
-        };
+        // Units that stopped walking (out of speed, halted, destroyed) drop out —
+        // the next route starts with a fresh credit.
+        self.movement_budget
+            .retain(|id, _| moving.iter().any(|(moving_id, _, _, _)| *moving_id == *id));
 
-        // Units that stopped walking (out of speed, halted, destroyed) drop out.
-        closing.credit.retain(|id, _| {
-            moving
-                .iter()
-                .any(|(moving_id, _, _)| *moving_id == *id)
-        });
+        for (id, x, y, end) in moving {
+            let entry = self.movement_budget.entry(id).or_insert(MovementCredit {
+                credit: 0,
+                x,
+                y,
+                end,
+            });
 
-        for (id, x, y) in moving {
-            let entry = closing
-                .credit
-                .entry(id)
-                .or_insert(ClosingUnit { credit: 0, x, y });
+            if entry.end != end {
+                entry.credit = 0;
+                entry.end = end;
+            }
 
-            entry.credit += units;
+            entry.credit = (entry.credit + units).min(units);
             entry.x = x;
             entry.y = y;
         }
     }
 
     /// Charges this tick's budget by the pixels the order pass actually moved —
-    /// the second half of [`ClosingTurn`], called after [`Self::process_orders`].
+    /// called after [`Self::process_orders`].
     ///
     /// A blocked pass moves nothing and therefore costs nothing: the oracle's
     /// `UnitInfo::RegisterMovementWait` retry keeps one attempt per tick, as before.
-    fn charge_closing_turn_budget(&mut self) {
-        let Some(team) = self.closing_turn_team() else {
-            return;
-        };
-
+    /// A unit that ends its route (arrival, halt, out of speed) leaves the budget:
+    /// its next route must not start in debt.
+    fn charge_movement_budget(&mut self) {
         let mut positions: Vec<(UnitId, u16, u16)> = Vec::new();
+        let mut routed: Vec<UnitId> = Vec::new();
+
         for kind in UnitListKind::ALL {
             for id in self.unit_list(kind) {
                 let Some(unit) = self.unit(*id) else { continue };
 
-                if unit.team == team {
+                if paced_movement(unit) {
+                    routed.push(*id);
+                }
+
+                if self.movement_budget.contains_key(id) {
                     positions.push((*id, unit.x, unit.y));
                 }
             }
         }
 
-        let Some(closing) = self.closing_turn.as_mut() else {
-            return;
-        };
-        closing.passes = closing.passes.saturating_add(1);
+        if let Some(closing) = self.closing_turn.as_mut() {
+            closing.passes = closing.passes.saturating_add(1);
+        }
 
         for (id, x, y) in positions {
-            let Some(entry) = closing.credit.get_mut(&id) else {
+            let Some(entry) = self.movement_budget.get_mut(&id) else {
                 continue;
             };
 
@@ -2291,29 +2316,28 @@ impl GameState {
             entry.x = x;
             entry.y = y;
         }
+
+        self.movement_budget
+            .retain(|id, _| routed.iter().any(|routed_id| routed_id == id));
     }
 
-    /// Whether the closing drain pauses this unit's order pass: the movement budget
-    /// is spent, so the unit must not enter the next cell/pixel yet.
+    /// Whether the movement budget pauses this unit's order pass: the credit is
+    /// spent, so the unit must not enter the next cell/pixel yet.
     ///
     /// Only a unit that is actually walking a route can be paused — a halted,
     /// firing or exploding unit pays no budget and stays on its normal pass (the
-    /// reaction fire and the emergency stops of the turn close keep running every
-    /// tick, exactly like the oracle's `GameManager_ProgressTurn`).
-    fn closing_move_paused(&self, id: UnitId) -> bool {
-        let Some(closing) = self.closing_turn.as_ref() else {
-            return false;
-        };
+    /// reaction fire and the emergency stops keep running every tick, exactly like
+    /// the oracle's `GameManager_ProgressTurn`).
+    fn movement_paused(&self, id: UnitId) -> bool {
         let Some(unit) = self.unit(id) else {
             return false;
         };
 
-        if unit.team != closing.team || !closing_route_pending(unit) {
+        if !paced_movement(unit) {
             return false;
         }
 
-        closing
-            .credit
+        self.movement_budget
             .get(&id)
             .is_some_and(|entry| entry.credit < 0)
     }
@@ -2321,8 +2345,8 @@ impl GameState {
     /// `Access_AreTaskEventsPending` (`access.cpp:2269`) — the predicate of the
     /// turn-close drain (`while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`).
     ///
-    /// The port drains the **routes of the closing team that are being walked** —
-    /// the movement part the old drain already used
+    /// The port waits for the **routes of the closing team that are being walked** —
+    /// [`UnitInfo::route_pending`], the movement part the old drain already used
     /// (`has_move_order` + a path + `IN_PROGRESS`/`IN_TRANSITION`). The oracle
     /// predicate also lists pending fire/explosion/activation/tape/scaling orders,
     /// `ORDER_STATE_INIT`, path-request states and the
@@ -2337,7 +2361,7 @@ impl GameState {
             for id in self.unit_list(kind) {
                 let Some(unit) = self.unit(*id) else { continue };
 
-                if unit.team == team && closing_route_pending(unit) {
+                if unit.team == team && unit.route_pending() {
                     return true;
                 }
             }
@@ -3305,19 +3329,17 @@ impl GameState {
         // 2. Input commands: in arrival order.
         self.apply_pending_commands();
 
-        // 2b. The turn close ([`ClosingTurn`]): the closing team's routes receive the
-        //     movement budget of this tick, so the drain advances a cell/pixel at the
-        //     visual pace — the oracle's `GameManager_ProgressTurn` in the tempo of
-        //     the drawing (`game_manager.cpp:488-490`).
-        self.grant_closing_turn_budget();
-
-        // 3. Orders.
+        // 3. Orders. Every routed unit receives the movement budget of this tick
+        //    before the pass and is charged by the pixels it actually advanced after
+        //    it: the simulation walks a cell at the visual pace
+        //    ([`MOVEMENT_CELLS_PER_SECOND`]) in **every** phase, so the frame can
+        //    draw each unit on the simulation position and a shot/intercept always
+        //    lands where the sprite is.
         if self.game_state != GameStateType::TurnActive {
+            self.grant_movement_budget();
             self.process_orders();
+            self.charge_movement_budget();
         }
-
-        // 3b. Charge the budget by the pixels the pass actually advanced.
-        self.charge_closing_turn_budget();
 
         // 4. AI reactions and end of turn.
         if self.game_state != GameStateType::TurnActive && !self.orders_pending {

@@ -30,12 +30,12 @@
 //!
 //! # Fix under test
 //!
-//! The drain is incremental (`max_core::ClosingTurn`): the simulation walks the
-//! closing route one visual budget window at a time and `App::update_visual_units`
-//! draws the closing team on the simulation cell. The halt cell is therefore the
-//! cell the sprite is drawn on, the blast is spawned on it
-//! (`UnitsManager_StartExplosion`) and drawn on the same pixel
-//! (`App::explosion_draw_offset` is zero: the frame no longer lags the state).
+//! The simulation paces every routed unit by the per-tick movement budget
+//! (`max_core::MOVEMENT_CELLS_PER_SECOND`) and `App::update_visual_units` draws a
+//! routed unit on the simulation cell. The halt cell is therefore the cell the
+//! sprite is drawn on, the blast is spawned on it (`UnitsManager_StartExplosion`)
+//! and drawn on the same pixel (`App::explosion_draw_offset` is zero: the frame no
+//! longer lags the state).
 //!
 //! The simulation (the blast cell, the damage, the CRC) is untouched.
 
@@ -239,9 +239,9 @@ fn an_intercepted_unit_is_drawn_and_explodes_where_it_was_killed() {
     let mut frames_after_death = 0usize;
     let mut blast_on_sprite = 0usize;
     let mut hull_removed = false;
-    // The first drain frame re-synchronizes the sprite with the simulation (the
-    // player's own turn walked the route a cell per tick while the frame
-    // interpolated): that frame may cover the lag, but it must land on the sim cell.
+    // The first closing frame is checked as a phase boundary: the simulation already
+    // paces the route in the active turn, so the sprite lands on the simulation cell
+    // there as well.
     let mut resynced = false;
 
     for _ in 0..400 {

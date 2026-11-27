@@ -7,11 +7,14 @@
 //! the radar of a unit moves together with its sprite: the vision is updated on
 //! **arrival** at the cell, never earlier.
 //!
-//! The port's lockstep simulation advances a whole cell per tick while the frame
-//! walks the same cells at [`crate::VISUAL_CELLS_PER_SECOND`] (see
-//! [`crate::App::update_visual_units`]), so reading the simulation scan on the
-//! frame shows the radar ahead of the unit — the manual defect «радар (scan)
-//! смещается раньше прибытия юнита».
+//! The port's lockstep simulation walks a routed unit at
+//! [`crate::VISUAL_CELLS_PER_SECOND`] (the movement budget) and the frame draws the
+//! sprite on the simulation cell (see [`crate::App::update_visual_units`]), so for a
+//! walked route the simulation scan and the sprite cross a cell together. A position
+//! write the simulation did not walk (save/load, transport/state synchronization)
+//! still leaves the sprite on its fallback route, and reading the simulation scan on
+//! the frame would then show the radar ahead of the unit — the manual defect
+//! «радар (scan) смещается раньше прибытия юнита».
 //!
 //! This module therefore keeps a frame-only copy of the player's **current**
 //! coverage:

@@ -19,9 +19,9 @@ const TANK_HITS: u16 = 24;
 const TANK_AMMO: u8 = 14;
 const TANK_SPEED: u16 = 6;
 
-/// Given a tank and a `MOVE` endpoint, ticks move it exactly one cell per tick,
-/// spend one speed point per cell and restore `AWAIT` on arrival. Two identical
-/// runs are bit-identical (D).
+/// Given a tank and a `MOVE` endpoint, the simulation walks it one cell per movement
+/// budget window (`max_core::MOVEMENT_CELLS_PER_SECOND`), spends one speed point per
+/// cell and restores `AWAIT` on arrival. Two identical runs are bit-identical (D).
 #[test]
 fn move_spends_speed_and_restores_await_deterministically() {
     fn run() -> max_core::universe::GameUniverse {
@@ -30,13 +30,13 @@ fn move_spends_speed_and_restores_await_deterministically() {
         order_move(&mut state, unit, Point::new(14, 10));
 
         assert!(
-            run_until(&mut state, 64, |state| {
+            run_until(&mut state, 256, |state| {
                 state
                     .snapshot()
                     .unit(unit)
                     .is_some_and(|unit| unit.grid == Point::new(14, 10) && !unit.has_move_order())
             }),
-            "tank did not reach the target in 64 ticks"
+            "tank did not reach the target in 256 ticks"
         );
 
         let unit = state.snapshot().unit(unit).expect("unit");
@@ -85,7 +85,7 @@ fn movement_readiness_recomputes_shots() {
     assert_eq!(state.snapshot().unit(unit).unwrap().shots, 2, "TANK rounds");
 
     order_move(&mut state, unit, Point::new(14, 10));
-    assert!(run_until(&mut state, 64, |state| {
+    assert!(run_until(&mut state, 256, |state| {
         state
             .snapshot()
             .unit(unit)

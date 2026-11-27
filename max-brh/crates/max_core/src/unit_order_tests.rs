@@ -221,7 +221,7 @@ fn air_move_reaches_target_cell() {
     loop {
         state.tick();
         ticks += 1;
-        assert!(ticks < 64, "самолёт не долетел до цели");
+        assert!(ticks < 1024, "самолёт не долетел до цели");
         let unit = state.unit(id).unwrap();
         if unit.grid == Point::new(10, 10) && !unit.has_move_order() {
             break;
@@ -428,8 +428,25 @@ fn all_eight_directions_move_facing_the_step() {
 /// L-route: on completing the current cell the hull makes one step toward
 /// the next one (`GroundPath::UpdateUnitAngle`), then finishes turning in
 /// `Execute` and only after that moves. Movement is always along the course.
+///
+/// The simulation paces the route by the movement budget
+/// (`MOVEMENT_CELLS_PER_SECOND`): a cell is entered every budget window, so the
+/// test drives the ticks until each cell boundary instead of assuming a cell per
+/// tick.
 #[test]
 fn turn_at_cell_boundary_precedes_the_next_step() {
+    /// Ticks until the unit enters `target`; returns the tick number.
+    fn tick_until(state: &mut GameState, id: UnitId, target: Point, limit: usize) -> usize {
+        for tick in 1..=limit {
+            state.tick();
+            if state.unit(id).unwrap().grid == target {
+                return tick;
+            }
+        }
+
+        panic!("юнит не вошёл в клетку {target:?} за {limit} тиков");
+    }
+
     let (mut state, id) = state_with_path(
         2,
         vec![
@@ -440,28 +457,34 @@ fn turn_at_cell_boundary_precedes_the_next_step() {
         ],
     );
 
-    // Tick 1: the angle is already east — step to (11,10); the next step is still
-    // east, so at the cell boundary there is no rotation.
-    state.tick();
+    // The first cell is entered on the first budget window: the angle is already
+    // east and the next step is still east, so at the boundary there is no rotation.
+    tick_until(&mut state, id, Point::new(11, 10), 16);
     let unit = state.unit(id).unwrap();
     assert_eq!(unit.grid, Point::new(11, 10));
     assert_eq!(unit.angle, 2);
 
-    // Tick 2: step to (12,10); at the boundary rotation toward the next
-    // step (north) starts: E → NE.
-    state.tick();
+    // The next budget window enters (12,10); at the boundary rotation toward the
+    // next step (north) starts: E → NE.
+    tick_until(&mut state, id, Point::new(12, 10), 32);
     let unit = state.unit(id).unwrap();
     assert_eq!(unit.grid, Point::new(12, 10));
     assert_eq!(unit.angle, 1, "на границе клетки — один шаг 45° к северу");
 
-    // Tick 3: finish turning NE → N without movement (as `GroundPath::Execute`).
-    state.tick();
+    // The next pass finishes turning NE → N without movement
+    // (as `GroundPath::Execute`).
+    let mut turned = 0;
+    while state.unit(id).unwrap().angle != 0 {
+        state.tick();
+        turned += 1;
+        assert!(turned < 32, "корпус не довернулся на север");
+    }
     let unit = state.unit(id).unwrap();
     assert_eq!(unit.grid, Point::new(12, 10));
     assert_eq!(unit.angle, 0);
 
-    // Tick 4: movement north.
-    state.tick();
+    // The following budget window moves north.
+    tick_until(&mut state, id, Point::new(12, 9), 32);
     let unit = state.unit(id).unwrap();
     assert_eq!(unit.grid, Point::new(12, 9));
     assert_eq!(unit.angle, 0);
@@ -2098,10 +2121,12 @@ fn ship_raises_the_bridge_and_it_lowers_after_it_passes() {
     );
 
     // It finishes raising (`ORDER_AWAIT`/`EXECUTING_ORDER`) and then lowers once
-    // no sea unit stands on the cell.
+    // no sea unit stands on the cell. The ship is paced by the movement budget
+    // (`MOVEMENT_CELLS_PER_SECOND`), so the loop waits for it to walk the rest of
+    // the route after the bridge has lowered.
     let mut fully_raised = false;
     let mut lowered = false;
-    for _ in 0..400 {
+    for _ in 0..2_000 {
         state.tick();
         let bridge_unit = state.unit(bridge).expect("bridge");
         let ship_unit = state.unit(ship).expect("ship");
@@ -2116,7 +2141,7 @@ fn ship_raises_the_bridge_and_it_lowers_after_it_passes() {
         {
             lowered = true;
         }
-        if lowered {
+        if lowered && ship_unit.grid == Point::new(12, 10) && !ship_unit.has_move_order() {
             break;
         }
     }

@@ -254,9 +254,10 @@ fn land_and_takeoff_cycle_restores_await() {
     }
 }
 
-/// `MOVE` over multiple ticks: request (`NEW_ORDER`) → path (`IN_PROGRESS`) →
-/// one cell per tick; `STOP_MOVEMENT` mid-route blocks the order and drops the
-/// path (`GroundPath::CancelMovement`).
+/// `MOVE` over multiple ticks: request (`NEW_ORDER`) → path (`IN_PROGRESS`) → one
+/// cell per movement budget window (`max_core::MOVEMENT_CELLS_PER_SECOND`);
+/// `STOP_MOVEMENT` mid-route blocks the order and drops the path
+/// (`GroundPath::CancelMovement`).
 #[test]
 fn move_request_path_and_emergency_stop() {
     let mut state = game();

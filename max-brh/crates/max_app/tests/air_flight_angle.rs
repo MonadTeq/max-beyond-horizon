@@ -135,8 +135,10 @@ fn the_aircraft_sprite_faces_the_flight_direction_on_all_directions() {
 
         let mut moved = false;
 
-        for frame in 0..256 {
-            if frame < 64 {
+        for frame in 0..800 {
+            // The simulation paces the flight by the movement budget: a cell per
+            // budget window, so the segment needs enough ticks to be walked.
+            if frame < 700 {
                 app.tick();
             }
             app.update_visual_units(1.0 / 60.0);

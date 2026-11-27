@@ -815,3 +815,159 @@ fn unit_ids_stay_inside_the_thirteen_bit_index_space() {
     assert_eq!(state.unit_id_counter, before + 64);
     assert_eq!(state.unit_count(), 2 + 64);
 }
+
+/// Installs a ready straight route east of `steps` cells with a matching angle, so
+/// the first order pass starts moving at once (`Paths_CalculateStep` is called
+/// after a non-turning `Paths_UpdateAngle`).
+fn give_straight_route(state: &mut GameState, id: UnitId, steps: usize, speed: u16) {
+    let end = {
+        let unit = state.unit_mut(id).expect("unit");
+        let end = Point::new(unit.grid.x + steps as i16, unit.grid.y);
+
+        unit.angle = 2;
+        unit.orders = UnitOrder::Move;
+        unit.state = UnitOrderState::InProgress;
+        unit.speed = speed;
+        unit.path = Some(UnitPath::Ground(GroundPath {
+            end_x: end.x,
+            end_y: end.y,
+            step_index: 0,
+            steps: vec![PathStep::new(1, 0); steps],
+        }));
+
+        end
+    };
+
+    state.set_order_data(
+        id,
+        OrderData {
+            move_to: end,
+            fire_on: Point::ZERO,
+        },
+    );
+}
+
+/// The movement budget paces a route in the **active turn** (not only while a team
+/// turn closes): one cell per `MOVEMENT_CELLS_PER_SECOND` window — a steady state of
+/// 15 ticks per cell at 60 Hz — and the turn-close machine is not started.
+#[test]
+fn the_movement_budget_paces_routes_in_the_active_turn() {
+    let (mut state, id, _) = tank_state();
+    give_straight_route(&mut state, id, 4, 4);
+
+    assert_eq!(
+        state.game_state,
+        GameStateType::InGame,
+        "the team's active turn"
+    );
+    assert!(state.closing_turn.is_none(), "no turn close is running");
+
+    let mut entries = Vec::new();
+    let mut last = state.unit(id).expect("unit").grid.x;
+
+    for tick in 1..=120 {
+        state.tick();
+
+        assert!(
+            state.closing_turn.is_none(),
+            "the movement budget is not the turn-close machine"
+        );
+
+        let unit = state.unit(id).expect("unit");
+        if unit.grid.x != last {
+            entries.push(tick);
+            last = unit.grid.x;
+        }
+    }
+
+    assert_eq!(
+        entries.len(),
+        4,
+        "four movement points walk four cells: {entries:?}"
+    );
+    assert!(
+        entries[0] <= 2,
+        "the first cell is entered on the first budget window: {entries:?}"
+    );
+
+    // Steady state: one cell per 15 ticks — four cells per second at 60 Hz.
+    for pair in entries.windows(2).skip(1) {
+        assert_eq!(
+            pair[1] - pair[0],
+            15,
+            "a cell takes exactly one movement-budget window: {entries:?}"
+        );
+    }
+
+    let unit = state.unit(id).expect("unit");
+    assert_eq!(unit.grid, Point::new(14, 10));
+    assert_eq!(unit.orders, UnitOrder::Await);
+    assert!(unit.path.is_none(), "the route is dropped on arrival");
+    assert!(
+        state.movement_budget.is_empty(),
+        "a unit that arrived leaves the budget: its next route starts in credit"
+    );
+}
+
+/// The budget **pauses** the order pass between two cells: the unit stays in the
+/// cell it entered and no longer reports a pending order.
+#[test]
+fn the_movement_budget_pauses_the_pass_between_cells() {
+    let (mut state, id, _) = tank_state();
+    give_straight_route(&mut state, id, 3, 3);
+
+    // First window: the first cell is entered.
+    state.tick();
+    assert_eq!(state.unit(id).expect("unit").grid, Point::new(11, 10));
+    assert!(
+        state.movement_paused(id),
+        "the credit is spent: the next pass must wait for the budget"
+    );
+
+    // The following ticks are paused — no cell and no second pass.
+    let paused = state.unit(id).expect("unit").clone();
+    for _ in 0..10 {
+        state.tick();
+        let unit = state.unit(id).expect("unit");
+        assert_eq!(
+            unit.grid, paused.grid,
+            "a paused unit does not enter a cell"
+        );
+        assert_eq!(
+            unit.state, paused.state,
+            "a paused unit keeps its order state"
+        );
+        assert!(state.movement_paused(id));
+    }
+
+    // A budget window later the next cell is entered.
+    for _ in 0..10 {
+        state.tick();
+    }
+    assert_eq!(state.unit(id).expect("unit").grid, Point::new(12, 10));
+}
+
+/// The movement budget is **not** part of the snapshot/CRC: a credit value the
+/// simulation keeps between the pass windows changes nothing in the canonical bytes.
+#[test]
+fn the_movement_budget_is_not_part_of_the_snapshot() {
+    let (mut state, id, _) = tank_state();
+    give_straight_route(&mut state, id, 4, 4);
+
+    state.tick();
+    state.tick();
+
+    assert!(!state.movement_budget.is_empty(), "the unit is walking");
+    assert!(
+        state.movement_paused(id),
+        "the pass is waiting for the budget"
+    );
+
+    let with_budget = state.snapshot_bytes();
+    state.movement_budget.clear();
+    assert_eq!(
+        with_budget,
+        state.snapshot_bytes(),
+        "the budget only spaces the passes: it adds no field to the digest"
+    );
+}

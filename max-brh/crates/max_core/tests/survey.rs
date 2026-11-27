@@ -46,7 +46,12 @@ fn land_state_with_resources() -> GameUniverse {
 
 /// Whether the cell is surveyed by the team (`ResourceManager_CargoMap & hash_team_id`).
 fn known(state: &GameUniverse, x: i16, y: i16, team: u8) -> bool {
-    state.snapshot().map().resources.get(x, y).is_visible_to(team)
+    state
+        .snapshot()
+        .map()
+        .resources
+        .get(x, y)
+        .is_visible_to(team)
 }
 
 #[test]
@@ -166,7 +171,10 @@ fn only_a_surveyor_marks_resources() {
     let _ = state
         .spawn_unit(UnitType::Surveyor, TeamId::RED, Point::new(40, 40), 0)
         .expect("surveyor");
-    assert_eq!(state.snapshot().map().resources.get(40, 40).visibility(), 0b1000);
+    assert_eq!(
+        state.snapshot().map().resources.get(40, 40).visibility(),
+        0b1000
+    );
 }
 
 #[test]
@@ -219,7 +227,12 @@ fn render_mask_matches_the_cpp_hash_team_id() {
     let mut state = land_state_with_resources();
 
     // RED marks (10,10), GREEN does not.
-    let entry = state.snapshot().map().resources.get(10, 10).with_team_visible(0);
+    let entry = state
+        .snapshot()
+        .map()
+        .resources
+        .get(10, 10)
+        .with_team_visible(0);
     state.map_mut().resources.set(10, 10, entry);
 
     let mask_red = max_core::map::team_visibility_bit(0) as u16;
@@ -227,13 +240,25 @@ fn render_mask_matches_the_cpp_hash_team_id() {
 
     assert_eq!(mask_red, 0b1000, "HASH_TEAM_RED = 0x2000 (бит 13)");
     assert_eq!(mask_green, 0b0100, "HASH_TEAM_GREEN = 0x1000 (бит 12)");
-    assert!(state.snapshot().map().resources.get(10, 10).is_visible_to(0));
-    assert!(!state.snapshot().map().resources.get(10, 10).is_visible_to(1));
+    assert!(state
+        .snapshot()
+        .map()
+        .resources
+        .get(10, 10)
+        .is_visible_to(0));
+    assert!(!state
+        .snapshot()
+        .map()
+        .resources
+        .get(10, 10)
+        .is_visible_to(1));
 
     // `Survey_RenderMarkers` additionally requires `surface != AIR`.
     let _ = state.map_mut().surface.set(10, 10, Surface::AIR);
     assert_eq!(
-        state.snapshot().modified_surface_type(Point::new(10, 10), false),
+        state
+            .snapshot()
+            .modified_surface_type(Point::new(10, 10), false),
         access::SURFACE_TYPE_AIR,
         "иконка на AIR-клетке не рисуется (проверка в рендере)"
     );
@@ -343,10 +368,11 @@ fn auto_survey_drives_the_scout_to_a_known_deposit_and_reveals_it() {
     assert!(!known(&state, 24, 26, 0), "the deposit arms are unknown");
 
     // One turn of the Auto mode: `PerformAutoSurvey` creates the task, the task
-    // issues `ORDER_MOVE` to the known deposit and the scout drives there.
+    // issues `ORDER_MOVE` to the known deposit and the scout drives there at the
+    // movement-budget pace (one cell per `MOVEMENT_CELLS_PER_SECOND` window).
     let mut moved = false;
 
-    for _ in 0..40 {
+    for _ in 0..200 {
         state.tick();
 
         let unit = state.snapshot().unit(surveyor).expect("surveyor").clone();
@@ -391,7 +417,12 @@ fn auto_survey_ends_when_everything_is_surveyed_and_clears_the_flag() {
     // `TaskAutoSurvey::Execute` gives up (`taskautosurvey.cpp:115-122`).
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let entry = state.snapshot().map().resources.get(x, y).with_team_visible(0);
+            let entry = state
+                .snapshot()
+                .map()
+                .resources
+                .get(x, y)
+                .with_team_visible(0);
             state.map_mut().resources.set(x, y, entry);
         }
     }
@@ -404,15 +435,28 @@ fn auto_survey_ends_when_everything_is_surveyed_and_clears_the_flag() {
     for _ in 0..8 {
         state.tick();
 
-        if !state.snapshot().unit(surveyor).expect("surveyor").auto_survey {
+        if !state
+            .snapshot()
+            .unit(surveyor)
+            .expect("surveyor")
+            .auto_survey
+        {
             break;
         }
     }
 
     let unit = state.snapshot().unit(surveyor).expect("surveyor");
     assert!(!unit.auto_survey, "the Auto mode turns itself off");
-    assert_eq!(unit.grid, Point::new(20, 20), "nothing left to survey — no move");
-    assert_eq!(task_count(&state), 0, "the task is removed with the Auto mode");
+    assert_eq!(
+        unit.grid,
+        Point::new(20, 20),
+        "nothing left to survey — no move"
+    );
+    assert_eq!(
+        task_count(&state),
+        0,
+        "the task is removed with the Auto mode"
+    );
 }
 
 #[test]

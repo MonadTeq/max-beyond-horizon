@@ -500,6 +500,22 @@ impl UnitInfo {
         )
     }
 
+    /// Whether the unit is walking a route right now — the movement part of
+    /// `Access_AreTaskEventsPending` (`access.cpp:2269`): a path is installed and the
+    /// order is in `ORDER_STATE_IN_PROGRESS`/`ORDER_STATE_IN_TRANSITION`.
+    ///
+    /// The simulation paces exactly these units by the per-tick movement budget
+    /// (`GameState::grant_movement_budget`), and the frame draws them on the
+    /// simulation position ([`crate::game`]).
+    #[inline]
+    pub fn route_pending(&self) -> bool {
+        self.path.is_some()
+            && matches!(
+                self.state,
+                UnitOrderState::InProgress | UnitOrderState::InTransition
+            )
+    }
+
     /// Unit list by flags (`UnitInfo::GetUnitList`/`AllocateUnitList`).
     pub fn list_kind_for_flags(flags: u32) -> UnitListKind {
         use crate::enums::unit_flags::{

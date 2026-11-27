@@ -47,7 +47,7 @@ fn digest_line_has_the_documented_fields() {
 /// Unique temporary test directory (without external crates).
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-            "max_app_{tag}_{}_{}",
+        "max_app_{tag}_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -60,8 +60,10 @@ fn temp_dir(tag: &str) -> PathBuf {
 
 #[test]
 fn displayed_speed_follows_the_visual_route_not_the_tick() {
-    // The panel's `Speed` row must fall with the sprite, not with the fast
-    // simulation (`Paths_CalculateStep` decrements the value as C++ walks a cell).
+    // The panel's `Speed` row must fall with the sprite (`Paths_CalculateStep`
+    // decrements the value as C++ walks a cell). The port's simulation paces the
+    // route itself (`max_core::MOVEMENT_CELLS_PER_SECOND`) and the frame draws the
+    // sprite on the simulation cell, so the panel reads exactly the simulation speed.
     let mut app = App::new(AppConfig::default());
     let mut setup = LocalSetup::default();
     setup.world = 0;
@@ -112,12 +114,15 @@ fn displayed_speed_follows_the_visual_route_not_the_tick() {
     app.update_visual_units(0.0);
 
     let speed0 = app.state_ref().unit(surveyor).expect("surveyor").speed;
-    assert!(speed0 > 1, "the surveyor starts with movement points: {speed0}");
+    assert!(
+        speed0 > 1,
+        "the surveyor starts with movement points: {speed0}"
+    );
 
-    // One simulation step (the unit moves a whole cell in a tick) — the frame
-    // has not walked it yet.
+    // One budget window enters the first cell; the frame draws the sprite on the
+    // simulation cell.
     let mut ticks = 0;
-    while app.state_ref().unit(surveyor).map(|unit| unit.grid) == Some(start) && ticks < 20 {
+    while app.state_ref().unit(surveyor).map(|unit| unit.grid) == Some(start) && ticks < 64 {
         app.tick();
         ticks += 1;
     }
@@ -128,32 +133,47 @@ fn displayed_speed_follows_the_visual_route_not_the_tick() {
     );
     app.update_visual_units(1.0 / 60.0);
 
+    let grid = app.state_ref().unit(surveyor).expect("surveyor").grid;
     let sim_speed = app.state_ref().unit(surveyor).expect("surveyor").speed;
     assert!(sim_speed < speed0, "the tick spends movement points");
     assert_eq!(
+        app.visual_position(surveyor),
+        Some((f32::from(grid.x), f32::from(grid.y))),
+        "the sprite is drawn on the simulation cell"
+    );
+    assert_eq!(
         app.displayed_speed(surveyor),
-        Some(speed0),
-        "the panel still shows the points of the cells the sprite has not walked"
+        Some(sim_speed),
+        "the panel shows the simulation speed: the sprite has already walked the cell"
     );
 
-    // Walk the frame: the displayed value decreases and ends exactly at the
-    // simulation value when the sprite arrives.
+    // While the route is walked, the displayed value only falls and always equals
+    // the simulation value (there is no frame-side queue any more).
     let mut last = app.displayed_speed(surveyor).expect("speed");
-    let mut frames = 0;
-    loop {
+    for _ in 0..400 {
+        app.tick();
         app.update_visual_units(1.0 / 60.0);
+
         let shown = app.displayed_speed(surveyor).expect("speed");
         assert!(
             shown <= last,
             "the displayed speed must not grow while walking: {last} -> {shown}"
         );
+        assert_eq!(
+            shown,
+            app.state_ref().unit(surveyor).expect("surveyor").speed,
+            "the panel value is the simulation speed on every frame"
+        );
         last = shown;
-        frames += 1;
 
-        if shown == app.state_ref().unit(surveyor).expect("surveyor").speed {
+        if !app
+            .state_ref()
+            .unit(surveyor)
+            .expect("surveyor")
+            .has_move_order()
+        {
             break;
         }
-        assert!(frames < 1200, "the sprite did not finish the route: {shown}");
     }
 }
 
@@ -165,7 +185,7 @@ fn handshake_patches_default_to_the_assets_path() {
     assert_eq!(
         config.handshake_patches_path(),
         config.patches_res.as_path(),
-            "None → хэш из assets-пути patches_res, как раньше"
+        "None → хэш из assets-пути patches_res, как раньше"
     );
 }
 
@@ -180,7 +200,7 @@ fn handshake_patches_override_only_the_hash_path() {
     assert_eq!(
         config.patches_res,
         PathBuf::from("assets/PATCHES.RES"),
-            "ассетный путь не меняется"
+        "ассетный путь не меняется"
     );
 }
 
@@ -198,15 +218,13 @@ fn data_hash_uses_handshake_patches_and_leaves_the_patches_part_empty_when_missi
         patches_res: patches.clone(),
         ..Default::default()
     };
-    let hash = max_net::DataHash::from_files(
-        &assets_only.max_res,
-        assets_only.handshake_patches_path(),
-    )
-    .expect("hash files");
+    let hash =
+        max_net::DataHash::from_files(&assets_only.max_res, assets_only.handshake_patches_path())
+            .expect("hash files");
     assert!(hash.max_res.is_some());
     assert!(
         hash.patches_res.is_some(),
-            "None → хэш из assets-пути patches_res"
+        "None → хэш из assets-пути patches_res"
     );
 
     // Some(nonexistent path) → an empty PATCHES part, but the assets remain.
@@ -221,7 +239,7 @@ fn data_hash_uses_handshake_patches_and_leaves_the_patches_part_empty_when_missi
     assert!(hash.max_res.is_some());
     assert!(
         hash.patches_res.is_none(),
-            "путь хендшейка не существует → хэш без PATCHES-части (семантика сервера)"
+        "путь хендшейка не существует → хэш без PATCHES-части (семантика сервера)"
     );
     assert_eq!(
         split.handshake_patches_path(),

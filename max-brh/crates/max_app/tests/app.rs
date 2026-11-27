@@ -452,55 +452,69 @@ fn visual_angle_stays_on_the_segment_being_animated() {
     // The first tick: a step east; the next step is east too — the sprite and
     // the simulation face east.
     app.tick();
-    assert_eq!(app.state_ref().unit(id).expect("танк").grid, Point::new(11, 10));
+    assert_eq!(
+        app.state_ref().unit(id).expect("танк").grid,
+        Point::new(11, 10)
+    );
     app.update_visual_units(1.0 / 60.0);
     assert_eq!(app.visual_angle(id), Some(2));
 
-    // The second tick: a step to (12,10); at the cell boundary the simulation has already started
-    // turning north (`GroundPath::UpdateUnitAngle`: E → NE), but the sprite
-    // still walks the east segment and must face east.
-    app.tick();
-    assert_eq!(app.state_ref().unit(id).expect("танк").grid, Point::new(12, 10));
-    assert_eq!(app.state_ref().unit(id).expect("танк").angle, 1);
-    app.update_visual_units(1.0 / 60.0);
-    assert_eq!(
-        app.visual_angle(id),
-        Some(2),
-        "спрайт движется на восток — кадр обязан смотреть на восток, а не NE"
-    );
-
-    // The simulation and the frame move together: while the sprite shifts along an axis, its angle equals
-    // the shift direction (axial segments of this route).
-    let mut previous = app.visual_position(id).expect("танк");
-    for frame in 0..40 {
+    // The next cell is a budget window away (`MOVEMENT_CELLS_PER_SECOND`): tick
+    // until the tank enters (12,10). At the boundary the simulation has already
+    // started turning north (`GroundPath::UpdateUnitAngle`: E → NE), and the frame
+    // draws exactly the simulation state — including that one-step turn.
+    let mut ticks = 0;
+    while app.state_ref().unit(id).map(|unit| unit.grid) != Some(Point::new(12, 10)) {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
+        ticks += 1;
+        assert!(ticks < 64, "танк не вошёл в (12,10)");
+    }
+    assert_eq!(app.state_ref().unit(id).expect("танк").angle, 1);
+    assert_eq!(
+        app.visual_angle(id),
+        Some(1),
+        "the sprite is the simulation state: after the boundary turn it faces NE"
+    );
+
+    // Every frame draws the sprite on the simulation cell: the movement is a cell
+    // hop per budget window, and the angle never runs ahead of the drawn cell.
+    let mut previous = app.visual_position(id).expect("танк");
+    for frame in 0..120 {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+        let unit = app.state_ref().unit(id).expect("танк");
         let now = app.visual_position(id).expect("танк");
+
+        assert_eq!(
+            now,
+            (f32::from(unit.grid.x), f32::from(unit.grid.y)),
+            "кадр {frame}: спрайт обязан стоять в клетке симуляции ({:?})",
+            unit.grid
+        );
+
         let dx = now.0 - previous.0;
         let dy = now.1 - previous.1;
-        let step_x = i32::from(dx > 1e-4) - i32::from(dx < -1e-4);
-        let step_y = i32::from(dy > 1e-4) - i32::from(dy < -1e-4);
-
-        // The frame cannot cross a route corner; if it did (interpolation/transition
-        // diagonal), the shift direction is ambiguous — skip.
-        if step_x != 0 && step_y != 0 {
-            previous = now;
-            continue;
-        }
-        if step_x != 0 || step_y != 0 {
-            let angle = paths_get_angle(step_x, step_y) as u8;
-            assert_eq!(
-                app.visual_angle(id),
-                Some(angle),
-                "кадр {frame} смотрит не по ходу: смещение ({dx}, {dy}), позиция {now:?}"
+        // A hop is one cell per budget window; the hull may already have made its
+        // 45° boundary step toward the next segment (`GroundPath::UpdateUnitAngle`),
+        // so the drawn angle is at most one octant away from the hop direction.
+        if dx.abs() > 1e-4 || dy.abs() > 1e-4 {
+            let step_x = i32::from(dx > 0.0) - i32::from(dx < 0.0);
+            let step_y = i32::from(dy > 0.0) - i32::from(dy < 0.0);
+            let hop_angle = i32::from(paths_get_angle(step_x, step_y) as u8);
+            let drawn = i32::from(app.visual_angle(id).expect("angle"));
+            let delta = (drawn - hop_angle).rem_euclid(8);
+            assert!(
+                delta <= 1 || delta >= 7,
+                "кадр {frame}: спрайт смотрит на {drawn} против шага {hop_angle}"
             );
         }
         previous = now;
     }
 
-    // We finish the frame without simulation ticks: the sprite reaches the last cell,
-    // after which the angle is taken from the simulation again (the last direction).
-    for _ in 0..300 {
+    // We finish the frame without simulation ticks: the sprite is already on the
+    // last simulation cell (the frame never interpolates a walked route).
+    for _ in 0..60 {
         app.update_visual_units(1.0 / 60.0);
     }
 
@@ -559,25 +573,43 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "юнит не сдвинулся за {ticks} тиков"
     );
 
-    // A frame with real `dt` walks the route: two consecutive frames
-    // differ in the sprite position (visible movement, not a teleport).
+    // A frame with real `dt` draws the sprite on the simulation cell: the
+    // simulation itself walks the route at the movement-budget pace, so the frame
+    // never interpolates a walked route.
     app.update_visual_units(1.0 / 60.0);
     let first = app.visual_position(id).expect("юнит жив");
-    assert_ne!(first, start, "после шага кадр обязан сдвинуться: {first:?}");
+    let first_grid = app.state_ref().unit(id).expect("юнит").grid;
+    assert_eq!(
+        first,
+        (f32::from(first_grid.x), f32::from(first_grid.y)),
+        "the sprite is the simulation position: {first:?} vs {first_grid:?}"
+    );
 
-    // Pixel check: two consecutive frames differ (the marker/sprite
-    // moved) without a simulation tick between them.
+    // The next visible movement is one budget window away: tick and draw until the
+    // sprite enters the next cell; between the windows the frame stays still.
     app.viewport_mut().center_on_grid(from.x, from.y);
     let first_frame = app.render_frame();
+    let mut second = first;
 
-    app.update_visual_units(1.0 / 60.0);
-    let second = app.visual_position(id).expect("юнит жив");
+    for _ in 0..120 {
+        app.tick();
+        app.update_visual_units(1.0 / 60.0);
+        let now = app.visual_position(id).expect("юнит жив");
+        let grid = app.state_ref().unit(id).expect("юнит").grid;
+        assert_eq!(
+            now,
+            (f32::from(grid.x), f32::from(grid.y)),
+            "every frame draws the simulation cell"
+        );
+        if now != first {
+            second = now;
+            break;
+        }
+    }
+
     let second_frame = app.render_frame();
-    assert_ne!(
-        second, first,
-        "два кадра с dt>0 должны различаться позицией"
-    );
-    assert!(second.0 > first.0, "спрайт плавно идёт вправо: {second:?}");
+    assert_ne!(second, first, "the route must walk at least one cell");
+    assert!(second.0 > first.0, "спрайт идёт вправо: {second:?}");
     assert_ne!(
         first_frame.pixels(),
         second_frame.pixels(),
@@ -593,7 +625,7 @@ fn movement_is_visible_between_frames_and_finishes_on_the_target_cell() {
         "update_visual_units не должен менять симуляцию"
     );
 
-    // We finish the route: 2 cells at 4 cells/s — ~30 frames, we take a margin.
+    // We finish the route: 2 cells at 4 cells/s — ~30 ticks, we take a margin.
     for _ in 0..300 {
         app.tick();
         app.update_visual_units(1.0 / 60.0);
@@ -662,7 +694,13 @@ fn assets_integration_smoke() {
     let color_pal = data_dir.join("COLOR.PAL");
     let patches = repo_path("tests/fixtures/assets/PATCHES.RES");
 
-    assert!(max_res.is_file() && color_pal.is_file() && patches.is_file(), concat!("required test fixture is missing: ", stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())));
+    assert!(
+        max_res.is_file() && color_pal.is_file() && patches.is_file(),
+        concat!(
+            "required test fixture is missing: ",
+            stringify!(!max_res.is_file() || !color_pal.is_file() || !patches.is_file())
+        )
+    );
 
     let config = AppConfig::default()
         .with_data_dir(&data_dir)
@@ -778,7 +816,10 @@ fn chrome_app() -> Option<App> {
 
 #[test]
 fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
 
     assert!(app.chrome_active(), "640×480 + FRAMEPIC = хром 1:1");
 
@@ -805,10 +846,8 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
         (grid.x, grid.y)
     );
 
-    let transition = max_app::ui::handle_session_input(
-        &mut app,
-        max_app::ui::InputEvent::MouseClick(x, y)
-    );
+    let transition =
+        max_app::ui::handle_session_input(&mut app, max_app::ui::InputEvent::MouseClick(x, y));
 
     assert_eq!(transition, max_app::ui::Transition::None);
     let selected = app.hud().selected.expect("клик по карте выбирает юнита");
@@ -821,7 +860,10 @@ fn chrome_click_on_the_map_centre_selects_the_unit_under_it() {
 
 #[test]
 fn chrome_end_turn_click_is_a_button_not_a_map_click() {
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
     let rect = max_render::layout::END_TURN_BUTTON;
     let x = rect.ulx + rect.width / 2;
     let y = rect.uly + rect.height / 2;
@@ -885,7 +927,10 @@ const END_TURN_RECT: max_render::buffer::PixelRect =
 /// color `COLOR_RED` at `<= 20` and `0xA2` otherwise (`GameManager_DrawTurnTimer`).
 #[test]
 fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
 
     let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
         .expect("палитра FRAMEPIC");
@@ -931,14 +976,18 @@ fn chrome_timer_shows_the_turn_timer_value_with_the_cpp_colors() {
 /// (`GameManager_UpdateGui` → `MenuClickEndTurnButton`).
 #[test]
 fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
 
     let palette = max_app::panels::UiPalette::from_assets(app.assets().expect("ассеты"))
         .expect("палитра FRAMEPIC");
     let tan = palette.rgba(max_app::panels::END_TURN_TEXT);
 
     // My turn (RED, human): the button is released, the usual label.
-    app.universe_mut().set_active_turn_team(max_core::TeamId::RED);
+    app.universe_mut()
+        .set_active_turn_team(max_core::TeamId::RED);
     app.universe_mut().teams_mut()[0].team_type = max_core::team::TeamKind::Player;
     let (human, _) = app.render_frame_with_stats();
 
@@ -948,7 +997,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // Computer GREEN turn: the button is pressed, the label — the team color (index 2).
-    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut()
+        .set_active_turn_team(max_core::TeamId::GREEN);
     app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Computer;
     let (ai, _) = app.render_frame_with_stats();
     let green = palette.rgba(2);
@@ -981,7 +1031,8 @@ fn chrome_end_turn_is_pressed_with_the_team_color_on_an_ai_turn() {
     );
 
     // HOT-SEAT: the second human moves — the button is released again.
-    app.universe_mut().set_active_turn_team(max_core::TeamId::GREEN);
+    app.universe_mut()
+        .set_active_turn_team(max_core::TeamId::GREEN);
     app.universe_mut().teams_mut()[1].team_type = max_core::team::TeamKind::Player;
     let (hotseat, _) = app.render_frame_with_stats();
 
@@ -1003,7 +1054,10 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::geo::Point;
 
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
 
     let site = Point::new(30, 20);
     let team = app.player_team();
@@ -1016,12 +1070,9 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
 
-    app.universe_mut().deploy_construction_site(
-        builder,
-        UnitType::TrainingHall,
-        site,
-    )
-    .expect("site deployed");
+    app.universe_mut()
+        .deploy_construction_site(builder, UnitType::TrainingHall, site)
+        .expect("site deployed");
 
     let mut builder_unit = app.state_ref().unit(builder).expect("builder").clone();
     builder_unit.grid = site;
@@ -1039,8 +1090,10 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
     app.hud_mut().select(Some(builder));
     app.viewport_mut().center_on_grid(site.x, site.y);
 
-    let cells =
-        max_app::render::build_marker_cells(app.state_ref(), app.state_ref().unit(builder).unwrap());
+    let cells = max_app::render::build_marker_cells(
+        app.state_ref(),
+        app.state_ref().unit(builder).unwrap(),
+    );
     assert!(
         cells.len() >= 8,
         "вокруг площадки 2×2 обязаны быть проходимые клетки: {cells:?}"
@@ -1064,12 +1117,21 @@ fn chrome_build_markers_are_drawn_around_the_finished_site() {
 
 #[test]
 fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
     let center = |rect: max_render::buffer::PixelRect| {
         (rect.ulx + rect.width / 2, rect.uly + rect.height / 2)
     };
     let click = |app: &mut App, rect: max_render::buffer::PixelRect| {
-        max_app::ui::handle_session_input(app, max_app::ui::InputEvent::MouseClick(rect.ulx + rect.width / 2, rect.uly + rect.height / 2));
+        max_app::ui::handle_session_input(
+            app,
+            max_app::ui::InputEvent::MouseClick(
+                rect.ulx + rect.width / 2,
+                rect.uly + rect.height / 2,
+            ),
+        );
     };
     let release = |app: &mut App, rect: max_render::buffer::PixelRect| {
         let (x, y) = center(rect);
@@ -1088,7 +1150,11 @@ fn chrome_toggle_and_zoom_clicks_work_on_the_panels() {
     click(&mut app, max_render::layout::ZOOM_MINUS);
     assert_eq!(app.viewport().zoom(), 64, "нажатие − ещё не меняет зум");
     release(&mut app, max_render::layout::ZOOM_MINUS);
-    assert_eq!(app.viewport().zoom(), 54, "отпускание − уменьшает зум на 10");
+    assert_eq!(
+        app.viewport().zoom(),
+        54,
+        "отпускание − уменьшает зум на 10"
+    );
     release(&mut app, max_render::layout::ZOOM_PLUS);
     assert_eq!(app.viewport().zoom(), 64, "кнопка + возвращает 1:1");
 }
@@ -1114,7 +1180,13 @@ fn app_can_be_created_twice_and_start_exit_twice() {
         ..Default::default()
     };
 
-    assert!(config().max_res.is_file(), concat!("required test fixture is missing: ", stringify!(!config().max_res.is_file())));
+    assert!(
+        config().max_res.is_file(),
+        concat!(
+            "required test fixture is missing: ",
+            stringify!(!config().max_res.is_file())
+        )
+    );
 
     let dir = std::env::temp_dir().join(format!(
         "max_app_restart_{}_{}",
@@ -1205,7 +1277,10 @@ fn frame_for_player_name(name: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn non_ascii_player_name_renders_with_the_fallback_glyph() {
-    let question = frame_for_player_name("?").expect(concat!("test fixture is missing: ", stringify!(frame_for_player_name("?"))));
+    let question = frame_for_player_name("?").expect(concat!(
+        "test fixture is missing: ",
+        stringify!(frame_for_player_name("?"))
+    ));
     let ascii = frame_for_player_name("A").expect("кадр с ASCII-именем");
     let cyrillic = frame_for_player_name("Ж").expect("кадр с не-ASCII именем");
 
@@ -1229,8 +1304,7 @@ fn non_ascii_player_name_renders_with_the_fallback_glyph() {
 ///
 /// Prepares a controlled map for frame tests: without foreign units, resource
 /// knowledge and palette "beacons" that could change pixels.
-fn empty_land_state(
-) -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
+fn empty_land_state() -> max_core::universe::GameUniverse<max_core::universe::LocalDispatcher> {
     let mut state = max_core::universe::GameUniverse::default();
 
     for y in 0..max_core::geo::MAP_HEIGHT {
@@ -1417,7 +1491,10 @@ fn the_builder_stays_in_the_tape_centre_after_completion() {
 fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
 
-    let mut app = chrome_app().expect(concat!("test fixture is missing: ", stringify!(chrome_app())));
+    let mut app = chrome_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(chrome_app())
+    ));
 
     let site = Point::new(30, 20);
     let team = app.player_team();
@@ -1429,12 +1506,9 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
         .universe_mut()
         .spawn_unit(UnitType::TrainingHall, team, site, 0)
         .expect("training hall");
-    app.universe_mut().deploy_construction_site(
-        builder,
-        UnitType::TrainingHall,
-        site,
-    )
-    .expect("site");
+    app.universe_mut()
+        .deploy_construction_site(builder, UnitType::TrainingHall, site)
+        .expect("site");
 
     let mut builder_unit = app.state_ref().unit(builder).expect("builder").clone();
     builder_unit.grid = site;
@@ -1443,8 +1517,10 @@ fn build_marker_cells_are_the_cpp_ring_around_a_two_by_two_site() {
     builder_unit.state = UnitOrderState::UnitReady;
     app.universe_mut().write_unit(builder, builder_unit);
 
-    let cells =
-        max_app::render::build_marker_cells(app.state_ref(), app.state_ref().unit(builder).unwrap());
+    let cells = max_app::render::build_marker_cells(
+        app.state_ref(),
+        app.state_ref().unit(builder).unwrap(),
+    );
 
     // C++: start `(parent.x - 1, parent.y + 1)`, for a building `+1` in y, then
     // N/E/S/W for three steps cumulatively; the `Access_IsAccessible` filter.
@@ -1505,7 +1581,10 @@ fn resource_icons_are_survey_knowledge_only_and_above_buildings() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
     use max_core::map::{ResourceKind, ResourceMapEntry};
 
-    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
+    let mut app = assets_app_with_land().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(assets_app_with_land())
+    ));
 
     let known_cell = Point::new(40, 40);
     let unknown_cell = Point::new(42, 40);
@@ -1665,9 +1744,11 @@ fn the_selected_unit_gets_the_cpp_corner_selector_and_it_blinks() {
 #[test]
 fn a_built_radar_keeps_rotating_its_sixteen_frames() {
     use max_core::enums::{UnitOrder, UnitOrderState, UnitType};
-    
 
-    let mut app = assets_app_with_land().expect(concat!("test fixture is missing: ", stringify!(assets_app_with_land())));
+    let mut app = assets_app_with_land().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(assets_app_with_land())
+    ));
 
     let mut site = Point::new(40, 40);
     let engineer = app

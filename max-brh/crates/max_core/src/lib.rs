@@ -136,26 +136,26 @@ pub use deploy::{
     TeamDeployment, TeamSupply, DEFAULT_MISSION_LOADOUT, DEFAULT_START_GOLD, DEPLOY_SEARCH_RANGE,
     LARGE_SLAB_IMAGE_COUNT, SMALL_SLAB_IMAGE_COUNT,
 };
+pub use events::{ApplyOutcome, CommandQueue, UnitEvent};
 pub use max_types::enums::{
     AiStrategy, CautionLevel, FileType, GameStateType, InvalidEnumValue, Opponent, OpponentType,
     Planet, PlanetType, PlayMode, ResearchTopic, ResearchTopicType, Surface, SurfaceType, TeamClan,
     TeamClanType, TeamIndex, TeamType, UnitOrder, UnitOrderState, UnitOrderStateType,
     UnitOrderType, UnitType, VictoryType, WinLossState,
 };
-pub use events::{ApplyOutcome, CommandQueue, UnitEvent};
 // Stage B §7: `GameState` is **not** re-exported any more — the public entry is
 // `crate::universe::GameUniverse` plus the read-only `StateRef`. The type itself
 // stays `pub(crate)`-visible to the facade and the inline `#[cfg(test)]` modules.
 pub use game::{
     LiveAttack, OrderData, TeamTurnEntry, TurnEvent, UnitSound, UnitSoundKind,
-    CLOSING_CELLS_PER_SECOND, GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE,
-    INITIAL_UNIT_ID_COUNTER, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, SIMULATION_TICKS_PER_SECOND,
+    GFX_MAP_TILE_SIZE as GAME_GFX_MAP_TILE_SIZE, INITIAL_UNIT_ID_COUNTER,
+    MOVEMENT_CELLS_PER_SECOND, PLAYER_TEAM_COUNT, PLAYER_TEAM_MAX, SIMULATION_TICKS_PER_SECOND,
     TEAM_SLOTS,
 };
+pub use hash::{MapHash, MapHashObject, UnitHash};
 pub use max_types::geo::{
     Direction, PathStep, Point, DIRECTION_OFFSETS, MAP_HEIGHT, MAP_SIZE, MAP_TILES, MAP_WIDTH,
 };
-pub use hash::{MapHash, MapHashObject, UnitHash};
 pub use max_types::input::{
     Command, ComplexSummaryEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
     Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet09TeamState,
@@ -218,9 +218,9 @@ pub use unit_values::{
     ATTRIB_TURNS, BASE_UNIT_VALUES, CLAN_TRADEOFFS, UNIT_COUNT,
 };
 pub use universe::{
-    BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher, NetworkCommand,
-    RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, StateDelta, StateRef, SubmitOutcome,
-    TurnNotice,
+    BarrierFacts, Dispatcher, EventStream, GameEvent, GameUniverse, LocalDispatcher,
+    NetworkCommand, RejectSource, RemoteCommand, RemoteHandling, RoutedCommand, StateDelta,
+    StateRef, SubmitOutcome, TurnNotice,
 };
 pub use victory::{
     cargo_fuel_consumption_rate, cargo_gold_consumption_rate, cargo_life_consumption_rate,

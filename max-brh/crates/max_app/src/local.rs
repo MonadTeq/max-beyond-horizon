@@ -90,6 +90,13 @@ pub const ENDTURN_TURN_BASED_MIN_SECONDS: u32 = 45;
 /// (`tasks_pending`), so the emergency `force ENDTURN` from the concurrent
 /// `Ai_CheckEndTurn` branch stays as the last-resort guard: after this many
 /// ticks the turn is closed forcibly.
+///
+/// The guard is sized for the visual movement tempo
+/// (`max_core::MOVEMENT_CELLS_PER_SECOND`): 12 000 ticks are 200 s at 60 Hz —
+/// 800 walked cells, which is more than seven full crossings of the 112-cell map
+/// (1 680 ticks). The `settings["endturn"]` window (at least 15 s, 45 s in Turn
+/// Based) is the real bound of a normal AI turn, so the guard never fires on a
+/// walking unit; it only catches an AI that keeps creating tasks.
 pub const LOCAL_AI_TICK_LIMIT: u32 = 12_000;
 
 /// Starting positions of the teams: the four quarters of the 112×112 map.
@@ -1688,9 +1695,10 @@ impl App {
                 // The turn close (`max_core::ClosingTurn`): while the closing team's
                 // units still walk, the simulation keeps ticking — the oracle's
                 // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
-                // (`game_manager.cpp:488-490`). The drain advances one order pass per
-                // visual budget window, so the movement is drawn cell by cell and the
-                // team-turn machine advances the turn on the tick the walk ends.
+                // (`game_manager.cpp:488-490`). The movement budget already paces the
+                // route in every phase (one cell per budget window), so the walk is
+                // drawn cell by cell and the team-turn machine advances the turn on
+                // the tick the walk ends.
                 if self.universe.turn_close_pending() {
                     let _report = self.tick();
                     update.ticked = true;

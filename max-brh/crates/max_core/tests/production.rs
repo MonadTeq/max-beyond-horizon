@@ -246,15 +246,21 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     // `UnitInfo::GetTurnsToBuild`: TANK = 4 turns, factory — 3/turn at 1×, 12 at 2×,
     // 36 at 4×. 4×: 4 turns divided by 4 → (1,36); 2×: (2,24).
     assert_eq!(
-        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 1),
+        state
+            .snapshot()
+            .turns_and_consumption(&heavy, UnitType::Tank, 1),
         (4, 12)
     );
     assert_eq!(
-        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 2),
+        state
+            .snapshot()
+            .turns_and_consumption(&heavy, UnitType::Tank, 2),
         (2, 24)
     );
     assert_eq!(
-        state.snapshot().turns_and_consumption(&heavy, UnitType::Tank, 4),
+        state
+            .snapshot()
+            .turns_and_consumption(&heavy, UnitType::Tank, 4),
         (1, 36)
     );
 
@@ -264,7 +270,9 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     active.build_time = 3;
     active.build_list = vec![UnitType::Tank];
     assert_eq!(
-        state.snapshot().turns_and_consumption(&active, UnitType::Tank, 2),
+        state
+            .snapshot()
+            .turns_and_consumption(&active, UnitType::Tank, 2),
         (2, 15)
     );
 
@@ -275,11 +283,15 @@ fn turns_and_consumption_matches_the_cpp_loop() {
         .expect("training hall");
     let hall = state.snapshot().unit(hall).expect("factory").clone();
     assert_eq!(
-        state.snapshot().turns_and_consumption(&hall, UnitType::Infantry, 1),
+        state
+            .snapshot()
+            .turns_and_consumption(&hall, UnitType::Infantry, 1),
         (2, 2)
     );
     assert_eq!(
-        state.snapshot().turns_and_consumption(&hall, UnitType::Infantry, 2),
+        state
+            .snapshot()
+            .turns_and_consumption(&hall, UnitType::Infantry, 2),
         (1, 4)
     );
 
@@ -292,7 +304,9 @@ fn turns_and_consumption_matches_the_cpp_loop() {
     constructor.storage = 0;
     for rate in [1, 2, 4] {
         assert_eq!(
-            state.snapshot().turns_and_consumption(&constructor, UnitType::MiningStation, rate),
+            state
+                .snapshot()
+                .turns_and_consumption(&constructor, UnitType::MiningStation, rate),
             (12, 24),
             "ставка {rate}× ограничена пустым складом"
         );
@@ -311,7 +325,9 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
     let mut builder = random.snapshot().unit(builder).expect("builder").clone();
     builder.storage = 0;
     assert_eq!(
-        random.snapshot().turns_and_consumption(&builder, UnitType::Shipyard, 1),
+        random
+            .snapshot()
+            .turns_and_consumption(&builder, UnitType::Shipyard, 1),
         (20, 40)
     );
 
@@ -325,7 +341,9 @@ fn clan_tradeoffs_change_the_build_turns_and_total_cost() {
     let mut builder = crimson.snapshot().unit(builder).expect("builder").clone();
     builder.storage = 0;
     assert_eq!(
-        crimson.snapshot().turns_and_consumption(&builder, UnitType::Shipyard, 1),
+        crimson
+            .snapshot()
+            .turns_and_consumption(&builder, UnitType::Shipyard, 1),
         (15, 30),
         "клан сокращает SHIPYARD на 5 ходов"
     );
@@ -374,7 +392,11 @@ fn factory_queue_spawns_a_unit_after_n_turns() {
 
     // Team gold is not spent by production (C++: only `CargoMenu`/
     // upgrades) — previously the factory "paid with gold" and stopped at zero credits.
-    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
+    assert_eq!(
+        state.snapshot().team_units()[0].gold(),
+        0,
+        "золото не тратится"
+    );
 
     let factory_unit = state.snapshot().unit(factory).expect("factory alive");
     assert_eq!(factory_unit.state, UnitOrderState::UnitReady);
@@ -401,7 +423,9 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     manager.commit(plant).expect("build");
 
     // FIGHTER: `ATTRIB_TURNS` from SC_ATTRI; build until `UNIT_READY`.
-    let turns = state.snapshot().turns_to_build(TeamId::RED, UnitType::Fighter);
+    let turns = state
+        .snapshot()
+        .turns_to_build(TeamId::RED, UnitType::Fighter);
     for _ in 0..turns {
         production_turn(&mut state);
     }
@@ -440,10 +464,7 @@ fn air_plant_keeps_the_built_fighter_on_its_cell_until_activated() {
     assert!(plant_unit.build_list.is_empty());
 
     // A player click on an adjacent cell → `ORDER_ACTIVATE` to the factory.
-    assert!(
-        state.issue_factory_exit(plant),
-        "приказ вывода отдан"
-    );
+    assert!(state.issue_factory_exit(plant), "приказ вывода отдан");
     for _ in 0..64 {
         state.tick();
 
@@ -487,7 +508,9 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
     manager.enqueue(plant, UnitType::Fighter).expect("fighter");
     manager.commit(plant).expect("build");
 
-    let turns = state.snapshot().turns_to_build(TeamId::RED, UnitType::Fighter);
+    let turns = state
+        .snapshot()
+        .turns_to_build(TeamId::RED, UnitType::Fighter);
     for _ in 0..turns {
         production_turn(&mut state);
     }
@@ -515,10 +538,9 @@ fn air_plant_unit_stays_inside_without_a_launch_order() {
 
     // A click on the factory cell selects the factory itself, not the unit in it.
     assert_eq!(
-        state.snapshot().get_team_unit(Point::new(10, 10),
-            TeamId::RED,
-            unit_flags::SELECTABLE
-        ),
+        state
+            .snapshot()
+            .get_team_unit(Point::new(10, 10), TeamId::RED, unit_flags::SELECTABLE),
         Some(plant),
         "`Access_GetTeamUnit` пропускает `ORDER_IDLE`"
     );
@@ -657,7 +679,11 @@ fn factory_produces_with_zero_gold_and_pauses_until_materials_return() {
         Some(1)
     );
     assert_eq!(count_type(&state, UnitType::Infantry), 0);
-    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
+    assert_eq!(
+        state.snapshot().team_units()[0].gold(),
+        0,
+        "золото не тратится"
+    );
 
     // Material delivery (mine/storage): the construction reaches the end from the same place.
     state.unit_mut(dump).expect("dump").storage = 5;
@@ -887,7 +913,9 @@ fn mobile_two_speed_build_spends_storage_and_matches_the_menu_cost() {
     state.unit_mut(constructor).expect("builder").storage = 40;
 
     let before = state.snapshot().unit(constructor).expect("builder").clone();
-    let expected = state.snapshot().turns_and_consumption(&before, UnitType::MiningStation, 2);
+    let expected = state
+        .snapshot()
+        .turns_and_consumption(&before, UnitType::MiningStation, 2);
     assert_eq!(expected, (8, 40));
 
     let mut manager = state.production_manager(TeamId::RED);
@@ -1023,15 +1051,17 @@ fn constructor_order_deploys_the_large_construction_site() {
     // machine) does not spawn a second site and does not burn RNG.
     let mut duplicate_state = state.clone();
     let rng_before = duplicate_state.snapshot().rng().clone();
-    let duplicate = duplicate_state.deploy_construction_site(constructor,
-        UnitType::TrainingHall,
-        site,
-    );
+    let duplicate =
+        duplicate_state.deploy_construction_site(constructor, UnitType::TrainingHall, site);
     assert!(
         duplicate.is_none(),
         "площадка уже стоит — повторный спавн запрещён"
     );
-    assert_eq!(*duplicate_state.snapshot().rng(), rng_before, "RNG не сдвинут");
+    assert_eq!(
+        *duplicate_state.snapshot().rng(),
+        rng_before,
+        "RNG не сдвинут"
+    );
 }
 
 /// The engineer builds a small object (`ROAD`): `SMLTAPE`/`SMLCONES`, no slab
@@ -1082,15 +1112,12 @@ fn construction_site_on_water_has_no_cones_and_tape_angle_one() {
     let site = Point::new(30, 30);
     assert!(state
         .map_mut()
-        
         .surface
         .set(site.x, site.y, max_core::enums::Surface::WATER));
 
-    let deployed = state.deploy_construction_site(constructor,
-        UnitType::LightVehiclePlant,
-        site,
-    )
-    .expect("площадка на воде");
+    let deployed = state
+        .deploy_construction_site(constructor, UnitType::LightVehiclePlant, site)
+        .expect("площадка на воде");
 
     assert_eq!(deployed.cones, None, "на воде конусы не ставятся");
     let tape = state.snapshot().unit(deployed.tape).expect("лента");
@@ -1110,7 +1137,6 @@ fn state_with_finished_building(turns: usize) -> (GameUniverse, max_core::UnitId
         for x in 0..max_core::geo::MAP_WIDTH {
             let _ = state
                 .map_mut()
-                
                 .surface
                 .set(x, y, max_core::enums::Surface::LAND);
         }
@@ -1200,7 +1226,10 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     // While the builder stands on the site, the tape and cones are in place, and the building is not
     // unfolded (no `ORDER_AWAIT_SCALING`).
     assert!(
-        state.snapshot().construction_utility(TeamId::RED, site).is_some(),
+        state
+            .snapshot()
+            .construction_utility(TeamId::RED, site)
+            .is_some(),
         "лента ещё на площадке: здание не раскрыто"
     );
     assert!(
@@ -1248,7 +1277,10 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
             .is_some_and(|unit| unit.orders == UnitOrder::Idle),
         "здание не раскрывается без ухода строителя"
     );
-    assert!(state.snapshot().construction_utility(TeamId::RED, site).is_some());
+    assert!(state
+        .snapshot()
+        .construction_utility(TeamId::RED, site)
+        .is_some());
 
     // Player order (`game_manager.cpp:6879-6890`): `ORDER_ACTIVATE`/
     // `ORDER_STATE_IN_TRANSITION` with `move_to` = the click cell. In the port this is
@@ -1304,9 +1336,11 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     assert!(left_site, "строитель обязан сойти с площадки");
 
     // The builder is outside the footprint → `UnitsManager_BuildingReady`: utilities removed,
-    // the slab remains, the building unfolds.
+    // the slab remains, the building unfolds. The builder is still `ORDER_MOVE` while it
+    // walks the exit cell at the movement-budget pace, and `BuildingReady` waits for the
+    // end of that route (`parent.orders == Move && state != ExecutingOrder`).
     let mut expanded = false;
-    for _ in 0..12 {
+    for _ in 0..200 {
         tick_orders(&mut state);
         if state
             .snapshot()
@@ -1320,7 +1354,10 @@ fn completion_waits_for_the_builder_to_leave_before_the_building_appears() {
     assert!(expanded, "C++ BuildingReady: ScaleUnit(building, EXPAND)");
 
     assert!(
-        state.snapshot().construction_utility(TeamId::RED, site).is_none(),
+        state
+            .snapshot()
+            .construction_utility(TeamId::RED, site)
+            .is_none(),
         "лента снимается после ухода строителя"
     );
     assert!(
@@ -1454,8 +1491,7 @@ fn a_built_radar_restores_its_sentry_order() {
     }
 
     // The exit order is given by the player/AI (`issue_builder_exit`) — see A1.
-    assert!(state.issue_builder_exit(constructor
-    ));
+    assert!(state.issue_builder_exit(constructor));
 
     let mut restored = false;
     for _ in 0..60 {
@@ -1497,8 +1533,7 @@ fn completion_sequence_is_deterministic() {
         let mut frames = vec![state.snapshot().snapshot_bytes()];
 
         // Player exit order (`ORDER_ACTIVATE`), then ticks until unfolding.
-        assert!(state.issue_builder_exit(constructor
-        ));
+        assert!(state.issue_builder_exit(constructor));
 
         for _ in 0..30 {
             tick_orders(&mut state);
@@ -1528,7 +1563,10 @@ fn cancelling_the_build_removes_the_site() {
     let report = manager.commit(constructor).expect("site");
     let site = report.site;
     drop(manager);
-    assert!(state.snapshot().construction_utility(TeamId::RED, site).is_some());
+    assert!(state
+        .snapshot()
+        .construction_utility(TeamId::RED, site)
+        .is_some());
 
     let mut manager = state.production_manager(TeamId::RED);
     assert!(manager.cancel(constructor));
@@ -1757,7 +1795,11 @@ fn awac_completes_from_the_merged_complex_pot() {
         32,
         "80 − 36 (4×) − 12 (2× на последнем ходу)"
     );
-    assert_eq!(state.snapshot().team_units()[0].gold(), 0, "золото не тратится");
+    assert_eq!(
+        state.snapshot().team_units()[0].gold(),
+        0,
+        "золото не тратится"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1917,17 +1959,23 @@ fn complex_raw_materials_sums_only_connected_raw_storage() {
     assert_ne!(dump_complex, mine_complex, "склады не связаны коннекторами");
 
     assert_eq!(
-        state.snapshot().complex_raw_materials(TeamId::RED, dump_complex),
+        state
+            .snapshot()
+            .complex_raw_materials(TeamId::RED, dump_complex),
         30,
         "ADUMP — свой котёл"
     );
     assert_eq!(
-        state.snapshot().complex_raw_materials(TeamId::RED, mine_complex),
+        state
+            .snapshot()
+            .complex_raw_materials(TeamId::RED, mine_complex),
         7,
         "шахта — свой котёл"
     );
     assert_eq!(
-        state.snapshot().complex_raw_materials(TeamId::GREEN, dump_complex),
+        state
+            .snapshot()
+            .complex_raw_materials(TeamId::GREEN, dump_complex),
         0,
         "чужая команда"
     );

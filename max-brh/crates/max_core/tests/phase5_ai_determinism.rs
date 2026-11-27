@@ -27,7 +27,13 @@ use support::phase5::{
 
 /// Pinned `(state_checksum, replay_digest_crc, state_digest)` of the strategy
 /// scenario (A.2: clan selection + weight tables, 6 rounds).
-const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0xD94E, 0xB2DB);
+///
+/// Repinned (2026-11-27, movement tempo): the simulation itself walks every routed
+/// unit at `max_core::MOVEMENT_CELLS_PER_SECOND` (the per-tick movement budget, one
+/// cell per budget window) instead of a cell per tick, so the AI units are on
+/// different cells after the fixed round count. The snapshot layout is unchanged;
+/// only the values of the moved units (grid/speed/path/order state) differ.
+const STRATEGY_CRCS: (u16, u16, u16) = (0x71E1, 0xA02A, 0x165B);
 /// Pinned digests of the production scenario (A.3: base + first buildings, 12
 /// rounds).
 ///
@@ -38,7 +44,11 @@ const STRATEGY_CRCS: (u16, u16, u16) = (0x4C90, 0xD94E, 0xB2DB);
 /// The packet 45 `state_checksum` and the replay digest do not change (the units
 /// themselves are the same); only the snapshot digest differs — it carries the
 /// AI task list.
-const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x4901);
+///
+/// Repinned again (2026-11-27, movement tempo): the AI builders/data walk at the
+/// visual pace, so their positions in the snapshot differ; `state_checksum` and the
+/// replay digest are still unchanged (no unit was destroyed or gained a shot).
+const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0xE925);
 /// Pinned digests of the factory scenario (A.1/A.3: spotted enemy tank → heavy
 /// plant orders a tank, 4 rounds).
 ///
@@ -54,7 +64,11 @@ const PRODUCTION_CRCS: (u16, u16, u16) = (0x7682, 0x0404, 0x4901);
 /// two 42 ms order ticks, `units_manager.cpp:4030`). `HITEXPLD` therefore stays
 /// alive 21 steps, and `ORDER_STATE_ATTACK_PENDING` waits for it, so the shot
 /// cadence (and the `moved`/`image_index` counters in the snapshot) shifts.
-const FACTORY_CRCS: (u16, u16, u16) = (0xEDDD, 0x6357, 0x4DD1);
+///
+/// Repinned again (2026-11-27, movement tempo): the tanks/plant walk at the visual
+/// pace, so the attacking unit and its orders are on different cells at the end of
+/// the fixed round count.
+const FACTORY_CRCS: (u16, u16, u16) = (0x3CA3, 0xC107, 0xF10C);
 /// Pinned digests of the combat scenario (A.4: spotted facility attacked, 6
 /// rounds).
 ///
@@ -67,6 +81,10 @@ const FACTORY_CRCS: (u16, u16, u16) = (0xEDDD, 0x6357, 0x4DD1);
 /// Repinned again (2026-11-26) for the explosion tempo — see [`FACTORY_CRCS`]:
 /// every shot's hit explosion now runs 21 steps, so the attack sequence (and the
 /// effect counters in the snapshot) differ.
+///
+/// Unchanged by the movement tempo (2026-11-27): the scenario's attacker does not
+/// reach its target within the fixed rounds, so no routed position is in the
+/// digest.
 const COMBAT_CRCS: (u16, u16, u16) = (0x5D58, 0xC2D6, 0xD081);
 /// Pinned digests of the research scenario (A.5: upgrades + powered centre, 4
 /// rounds).
@@ -75,10 +93,17 @@ const COMBAT_CRCS: (u16, u16, u16) = (0x5D58, 0xC2D6, 0xD081);
 /// pre-allocates every mine, so the scenario's mine contributes its fuel
 /// production from the first turn); the `state_checksum` is unchanged because
 /// packet 45 does not carry the mining counters.
-const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x6407, 0x38C5);
+///
+/// Repinned again (2026-11-27, movement tempo): a routed unit is on a different
+/// cell after the fixed rounds; the replay and snapshot digests carry the position.
+const RESEARCH_CRCS: (u16, u16, u16) = (0xCC41, 0x1240, 0x755E);
 /// Pinned digests of the reconnaissance scenario (A.6: scout exploring, 8
 /// rounds).
-const RECON_CRCS: (u16, u16, u16) = (0x122B, 0x54BB, 0xF5E7);
+///
+/// Repinned (2026-11-27, movement tempo): the scout walks at the visual pace, so
+/// it covers fewer cells in the fixed rounds and its position/path (and the AI
+/// task state that follows it) are part of the digest.
+const RECON_CRCS: (u16, u16, u16) = (0x0CCE, 0x3EB2, 0x775F);
 
 /// A.2: clan `AyersHand` resolves to `Missiles`; the base plays six rounds.
 fn strategy_scenario() -> GameUniverse {

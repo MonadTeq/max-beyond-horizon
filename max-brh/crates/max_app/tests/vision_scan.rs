@@ -11,11 +11,14 @@
 //! (`access.cpp:576`) darkens the fog and `UnitInfo::Draw(team)` hides the units of a
 //! cell that just became hidden (`unitinfo.cpp:2842-2870`) — the fog is not a memory.
 //!
-//! The port's simulation advances a whole cell per tick while the frame walks the same
-//! cells at `VISUAL_CELLS_PER_SECOND` (`App::update_visual_units`), so the simulation
-//! scan of a moving unit is ahead of its sprite. [`App::vision`] is the frame-side
-//! copy that follows the visual anchors; these tests pin the difference, the
-//! convergence on arrival and the closing fog.
+//! The port's simulation itself walks a cell at the visual pace
+//! (`max_core::MOVEMENT_CELLS_PER_SECOND`) while the frame draws the sprite on the
+//! simulation position (`App::update_visual_units`), so the simulation scan and the
+//! sprite cross a cell together. [`App::vision`] is the frame-side copy that follows
+//! the visual anchors; it differs from the simulation only on a position write the
+//! simulation did not walk (save/load, transport/state synchronization), where the
+//! sprite keeps the fallback route. These tests pin that behaviour, the convergence
+//! on arrival and the closing fog.
 
 use max_app::{App, AppConfig};
 use max_core::enums::UnitType;
@@ -94,9 +97,13 @@ fn step_simulation(app: &mut App, mover: UnitId) {
     app.universe_mut().write_unit(mover, unit);
 }
 
-/// The simulation scan reveals the enemy on the tick its cell arrives, while the
-/// sprite is still in the previous cell: the frame must **not** show the enemy
-/// yet, and must show it once the sprite arrives.
+/// The scan follows the **sprite** in both directions.
+///
+/// A walked cell: the simulation paces the movement (`MOVEMENT_CELLS_PER_SECOND`)
+/// and the frame draws the sprite on the simulation cell, so the frame scan covers
+/// the enemy exactly when the simulation scan does — the radar never runs ahead.
+/// An un-walked position write (save/load, transport/state synchronization) keeps the
+/// fallback frame route, and the scan stays on the sprite until it arrives.
 #[test]
 fn the_radar_does_not_run_ahead_of_the_sprite() {
     let (mut app, mover, enemy) = scenario();
@@ -112,64 +119,66 @@ fn the_radar_does_not_run_ahead_of_the_sprite() {
     );
     assert!(!app.presented_visible(app.state_ref().unit(enemy).expect("враг")));
 
-    // One simulation cell = one tick; the frame gets the same `dt`, so the sprite
-    // stays in the old cell (`VisualStep` budget is `VISUAL_CELLS_PER_SECOND`).
+    // A walked cell: the sprite is the simulation position, so the frame scan
+    // arrives with it and the enemy becomes visible at once.
     step_simulation(&mut app, mover);
     app.update_visual_units(1.0 / 60.0);
 
     let enemy_unit = app.state_ref().unit(enemy).expect("враг").clone();
-    let (visual_x, _) = app.visual_position(mover).expect("юнит");
-    assert!(
-        visual_x < 20.5,
-        "спрайт ещё не прибыл в клетку 21: {visual_x}"
+    let ex = i32::from(enemy_unit.grid.x);
+    let ey = i32::from(enemy_unit.grid.y);
+    assert_eq!(
+        app.visual_position(mover).map(|(x, _)| x.round()),
+        Some(21.0),
+        "the sprite is drawn on the walked simulation cell"
     );
     assert!(
         enemy_unit.is_visible_to_team(TeamId::RED),
-        "симуляционный скан уже видит врага (расхождение, которое и вызывало дефект)"
-    );
-
-    // THE REGRESSION: the frame must not show the enemy ahead of the sprite.
-    let ex = i32::from(enemy_unit.grid.x);
-    let ey = i32::from(enemy_unit.grid.y);
-
-    assert!(
-        !app.vision().covers(ex, ey),
-        "скан кадра не должен уезжать вперёд (визуальный якорь — клетка 20)"
+        "the simulation scan sees the enemy after the step"
     );
     assert!(
-        !app.presented_visible(&enemy_unit),
-        "враг не должен рисоваться до прибытия спрайта"
+        app.vision().covers(ex, ey),
+        "the frame scan is rebuilt from the same cell"
     );
+    assert!(app.presented_visible(&enemy_unit), "the enemy is drawn");
+
+    // An un-walked jump back to (16,20): the frame has no route for it, so the
+    // sprite walks at `VISUAL_CELLS_PER_SECOND` and the radar stays on the sprite —
+    // the enemy is still shown until the sprite leaves its scan.
+    {
+        let mut unit = app.state_ref().unit(mover).cloned().expect("юнит");
+        unit.grid = Point::new(16, 20);
+        app.universe_mut().write_unit(mover, unit);
+    }
+    app.update_visual_units(1.0 / 60.0);
     assert!(
-        !app.vision().covers(ex, ey),
-        "туман на миникарте не должен открываться раньше прибытия"
+        app.presented_visible(&enemy_unit),
+        "the radar must not leave before the sprite: the enemy stays drawn"
     );
 
-    // The sprite catches up without any further simulation tick (`dt > 0` only).
+    // The sprite arrives at the jump target without any further simulation tick
+    // (`dt > 0` only); now the frame scan equals the simulation one and the enemy
+    // leaves the fog.
     for _ in 0..120 {
         app.update_visual_units(1.0 / 60.0);
 
-        if app.presented_visible(&enemy_unit) {
+        if !app.presented_visible(&enemy_unit) {
             break;
         }
     }
 
     assert_eq!(
         app.visual_position(mover).map(|(x, _)| x.round()),
-        Some(21.0),
+        Some(16.0),
         "спрайт дошёл до клетки"
     );
     assert!(
-        app.vision().covers(ex, ey),
-        "после прибытия скан кадра = скан симуляции"
+        !app.vision().covers(ex, ey),
+        "после прибытия скан кадра ушёл вместе со спрайтом"
     );
     assert!(
-        app.presented_visible(&enemy_unit),
-        "после прибытия враг виден"
-    );
-    assert!(
-        app.vision().covers(ex, ey),
-        "клетка врага попала в текущий скан миникарты"
+        !app.presented_visible(&enemy_unit),
+        "враг скрылся вместе со сканом"
     );
 }
 

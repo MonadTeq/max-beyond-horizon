@@ -143,7 +143,7 @@ pub fn run_turns(
 
 /// Upper bound of the ticks a headless turn close may take.
 ///
-/// The drain walks one cell per `max_core::CLOSING_CELLS_PER_SECOND` budget window
+/// The drain walks one cell per `max_core::MOVEMENT_CELLS_PER_SECOND` budget window
 /// (15 ticks at 60 Hz), so even a route across the whole 112-cell map fits with a
 /// wide margin.
 pub const TURN_CLOSE_TICK_LIMIT: usize = 40_000;

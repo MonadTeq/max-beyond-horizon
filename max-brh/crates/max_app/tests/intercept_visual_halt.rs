@@ -21,12 +21,11 @@
 //!
 //! # Fix under test
 //!
-//! The drain is incremental (`max_core::ClosingTurn`): every tick walks the closing
-//! route by one visual budget window, and `App::update_visual_units` draws the
-//! closing team on the **simulation** cell — no interpolation, no corpse walk. A
-//! ground step is a whole cell (`max_core::CLOSING_CELLS_PER_SECOND` cells per
-//! second), so the sprite steps cell by cell and is always exactly where the
-//! simulation is.
+//! The simulation paces every routed unit by the per-tick movement budget
+//! (`max_core::MOVEMENT_CELLS_PER_SECOND`, alone and during the turn close), and
+//! `App::update_visual_units` draws a routed unit on the **simulation** cell — no
+//! interpolation, no corpse walk. A ground step is a whole cell, so the sprite steps
+//! cell by cell and is always exactly where the simulation is.
 //!
 //! # Frames under test
 //!
@@ -178,12 +177,10 @@ fn intercept_scenario(app: &mut App, hits: u16) -> Option<(UnitId, Point)> {
 
 /// The largest sprite step a frame may take: one cell.
 ///
-/// Outside the turn close the frame interpolates at `VISUAL_CELLS_PER_SECOND`; during
-/// the close the simulation itself walks a cell per budget window
-/// (`max_core::CLOSING_CELLS_PER_SECOND`) and the sprite follows it exactly. Both
-/// are covered by one cell, which is the strongest statement available for a
-/// cell-per-tick simulation: the sprite is never more than the step the simulation
-/// just made away from it.
+/// The simulation itself walks a routed unit a cell per budget window
+/// (`max_core::MOVEMENT_CELLS_PER_SECOND`) and the frame draws the sprite on the
+/// simulation cell, so a frame never moves the sprite by more than the one cell the
+/// pass entered — in the active turn and during the turn close alike.
 const DRAIN_CELL_STEP: f32 = 1.0 + 1e-3;
 
 #[test]
@@ -218,11 +215,10 @@ fn a_surviving_unit_steps_to_the_halt_cell_with_its_simulation_cell() {
         let cell = (f32::from(unit.grid.x), f32::from(unit.grid.y));
         let step = (now.0 - previous.0).abs().max((now.1 - previous.1).abs());
 
-        // The first drain frame puts the sprite on the simulation cell: during the
-        // player's own turn the simulation walks a cell per tick while the frame
-        // interpolates at `VISUAL_CELLS_PER_SECOND`, so the sprite is a few cells
-        // behind when the turn closes. That frame may cover the lag — but it must
-        // land on the simulation cell, and every following frame steps a single cell.
+        // The sprite is already on the simulation cell when the turn closes: the
+        // simulation paces the movement in the active turn too. The first closing
+        // frame is still checked as a phase boundary — it must be on the simulation
+        // cell, and every following frame steps a single cell.
         if closing && !resynced {
             resynced = true;
             assert!(
@@ -327,9 +323,10 @@ fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
         frames += 1;
 
         let now = app.visual_position(mover);
-        let simulation = app.state_ref().unit(mover).map(|unit| {
-            (f32::from(unit.grid.x), f32::from(unit.grid.y))
-        });
+        let simulation = app
+            .state_ref()
+            .unit(mover)
+            .map(|unit| (f32::from(unit.grid.x), f32::from(unit.grid.y)));
 
         if let (Some(previous), Some(now)) = (previous, now) {
             if closing && !resynced {
@@ -368,8 +365,7 @@ fn a_unit_killed_on_the_halt_cell_is_drawn_there() {
                 death_cell = Some((f32::from(unit.grid.x), f32::from(unit.grid.y)));
                 // The sprite is drawn on that cell already.
                 assert_eq!(
-                    now,
-                    death_cell,
+                    now, death_cell,
                     "frame {frames}: the killing shot lands on the cell the sprite is drawn on"
                 );
             }

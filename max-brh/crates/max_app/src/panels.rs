@@ -2460,9 +2460,10 @@ pub fn rows_for(state: StateRef<'_>, unit: &UnitInfo, player_team: TeamId) -> [O
 /// [`rows_for`] with the frame-synchronized `Speed` value ([`crate::App::displayed_speed`]).
 ///
 /// C++ draws `unit->speed`, which its pixel walk decrements as the sprite moves;
-/// the port simulation runs a cell per tick ahead of the sprite, so the panel
-/// passes the visual value here. The `base` (and therefore the pips) stays the
-/// unit's `ATTRIB_SPEED`.
+/// the port simulation paces the route itself and draws the sprite on the simulation
+/// cell, so the panel passes the simulation value (plus the points of a fallback
+/// frame route, if any). The `base` (and therefore the pips) stays the unit's
+/// `ATTRIB_SPEED`.
 pub fn rows_for_with_speed(
     state: StateRef<'_>,
     unit: &UnitInfo,

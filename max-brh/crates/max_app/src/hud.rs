@@ -1682,9 +1682,9 @@ impl<D: Dispatcher> App<D> {
     /// `true` — the machine finished the match (`check_end_game_conditions` inside
     /// `finish_turn`); the log line reports it.
     ///
-    /// The turn close is incremental when the team still has walking units
-    /// (`max_core::ClosingTurn`): the machine runs on the tick that ends the walk, so
-    /// the log line says that the turn is waiting for them.
+    /// The turn close waits for walking units (`max_core::ClosingTurn`): the
+    /// movement budget paces them on every tick, and the machine runs on the tick that
+    /// ends the walk, so the log line says that the turn is waiting for them.
     pub fn end_turn(&mut self) -> bool {
         let team = self.state_ref().player_team();
         let over = self.universe.end_local_turn(team);

@@ -41,7 +41,8 @@ fn tank_routes_around_a_water_wall() {
         'turn: for _ in 0..8 {
             start_turn(&mut state, TeamId::RED);
             order_move(&mut state, unit, goal);
-            for _ in 0..12 {
+            // One cell per movement-budget window (`MOVEMENT_CELLS_PER_SECOND`).
+            for _ in 0..240 {
                 state.tick();
                 let tank = state.snapshot().unit(unit).expect("unit");
                 if tank.grid != previous {
@@ -100,7 +101,6 @@ fn unreachable_goal_leaves_the_tank_waiting() {
                 }
                 state
                     .map_mut()
-                    
                     .surface
                     .set(15 + dx, 15 + dy, Surface::WATER);
             }
@@ -158,7 +158,8 @@ fn sea_unit_routes_along_the_water_lane() {
     'turn: for _ in 0..4 {
         start_turn(&mut state, TeamId::RED);
         order_move(&mut state, ship, goal);
-        for _ in 0..12 {
+        // One cell per movement-budget window (`MOVEMENT_CELLS_PER_SECOND`).
+        for _ in 0..200 {
             state.tick();
             let unit = state.snapshot().unit(ship).expect("ship");
             if unit.grid != last {
@@ -183,7 +184,10 @@ fn sea_unit_routes_along_the_water_lane() {
     }
 
     assert_eq!(last, Point::new(15, 5), "ship did not reach the goal");
-    assert_eq!(moves, 10, "one cell per tick along the lane");
+    assert_eq!(
+        moves, 10,
+        "one cell per movement-budget window along the lane"
+    );
     assert_eq!(
         state.snapshot().unit(ship).unwrap().orders,
         UnitOrder::Await
@@ -262,7 +266,8 @@ fn move_to_attack_stops_within_range() {
             },
         );
         state.set_order(red, UnitOrder::MoveToAttack, UnitOrderState::Init);
-        for _ in 0..12 {
+        // One cell per movement-budget window (`MOVEMENT_CELLS_PER_SECOND`).
+        for _ in 0..200 {
             state.tick();
             let red_unit = state.snapshot().unit(red).expect("red unit");
             closest = closest.min(access::squared_distance(red_unit.grid, Point::new(20, 5)));

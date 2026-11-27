@@ -17,16 +17,19 @@
 //! `GroundPath::Execute` (`groundpath.cpp:210`), which spends the cell cost from
 //! `speed` (`Paths_CalculateStep`, `paths.cpp:292`).
 //!
-//! # The drain is incremental (visual tempo)
+//! # The movement is paced (visual tempo)
 //!
 //! The port runs that loop **in the tick**: `GameUniverse::end_local_turn` marks
 //! the closing team (`GameState::begin_end_turn_movement` → `ClosingTurn`) and
 //! returns; every following tick advances the movement by one visual budget window
-//! (`max_core::CLOSING_CELLS_PER_SECOND` cells per second of a 60 Hz step), with
-//! reaction fire resolved between the cells. The simulation therefore walks a cell
-//! exactly when the frame draws it, and the next team starts on the tick the walk
-//! ends — the original's tempo, where `UnitInfo::Move` moves the unit a few pixels
-//! per tick and the drawing follows the state.
+//! (`max_core::MOVEMENT_CELLS_PER_SECOND` cells per second of a 60 Hz step), with
+//! reaction fire resolved between the cells. The same budget paces a route in the
+//! **active** turn as well, not only at the turn close
+//! (`the_movement_budget_paces_routes_in_the_active_turn` in `game_tests.rs`). The
+//! simulation therefore walks a cell exactly when the frame draws it, and the next
+//! team starts on the tick the walk ends — the original's tempo, where
+//! `UnitInfo::Move` moves the unit a few pixels per tick and the drawing follows the
+//! state.
 //!
 //! These scenarios drive the drain through [`support::close_turn`] (a headless
 //! frame loop) unless a test is *about* the pacing itself.
@@ -85,7 +88,12 @@ fn unit_with_path_and_speed_advances_at_the_turn_end() {
     universe.begin_local_round();
     assert_eq!(universe.snapshot().active_turn_team(), TeamId::RED);
 
-    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+    let id = support::spawn(
+        &mut universe,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
     give_route(&mut universe, id, 4, 2);
 
     let start = universe.snapshot().unit(id).cloned().expect("unit").grid;
@@ -139,7 +147,12 @@ fn the_turn_close_walks_one_cell_per_visual_budget_window() {
     let mut universe = support::game();
     universe.begin_local_round();
 
-    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+    let id = support::spawn(
+        &mut universe,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
     // Eight cells and enough speed for all of them.
     give_route(&mut universe, id, 8, 8);
 
@@ -223,8 +236,12 @@ fn fast_movement_halves_the_budget_window() {
         universe.begin_local_round();
         universe.set_fast_movement(fast_movement);
 
-        let id =
-            support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+        let id = support::spawn(
+            &mut universe,
+            UnitType::Tank,
+            TeamId::RED,
+            Point::new(10, 10),
+        );
         give_route(&mut universe, id, 8, 8);
         universe.end_local_turn(TeamId::RED);
 
@@ -282,8 +299,12 @@ fn the_drain_pace_does_not_change_the_state_bytes() {
         universe.begin_local_round();
         universe.set_fast_movement(fast_movement);
 
-        let id =
-            support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+        let id = support::spawn(
+            &mut universe,
+            UnitType::Tank,
+            TeamId::RED,
+            Point::new(10, 10),
+        );
         give_route(&mut universe, id, 6, 3);
         let over = support::close_turn(&mut universe, TeamId::RED);
         assert!(!over, "the match is not over");
@@ -323,7 +344,12 @@ fn a_route_without_speed_does_not_advance_at_the_turn_end() {
     let mut universe = support::game();
     universe.begin_local_round();
 
-    let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+    let id = support::spawn(
+        &mut universe,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
     give_route(&mut universe, id, 4, 0);
 
     let before = universe.snapshot().unit(id).cloned().expect("unit").grid;
@@ -341,7 +367,12 @@ fn the_end_of_turn_walk_is_deterministic() {
     fn close_turn() -> (Vec<u8>, Point, u16) {
         let mut universe = support::game();
         universe.begin_local_round();
-        let id = support::spawn(&mut universe, UnitType::Tank, TeamId::RED, Point::new(10, 10));
+        let id = support::spawn(
+            &mut universe,
+            UnitType::Tank,
+            TeamId::RED,
+            Point::new(10, 10),
+        );
         give_route(&mut universe, id, 6, 3);
         support::close_turn(&mut universe, TeamId::RED);
         let state = universe.snapshot();

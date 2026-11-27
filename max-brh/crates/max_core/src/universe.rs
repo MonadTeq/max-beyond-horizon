@@ -2336,12 +2336,11 @@ impl<D: Dispatcher> GameUniverse<D> {
         // (`finish_turn` requires the phase; `06` itself sets it only in `TurnBased`).
         self.state.enter_end_turn();
         // `GameManager_TeamTurnTurnBased`/`GameManager_TeamTurnConcurrent`: the turn
-        // close drains the still-walking routes —
+        // close waits for the still-walking routes —
         // `while (Access_AreTaskEventsPending()) GameManager_ProgressTurn();`
-        // (`game_manager.cpp:488-490`, `:549-558`). The drain is **incremental**
-        // (`GameState::begin_end_turn_movement` → `ClosingTurn`): each following
-        // [`Self::tick`] advances the closing routes by the visual movement budget,
-        // so the simulation walks a cell exactly when the frame draws it. The
+        // (`game_manager.cpp:488-490`, `:549-558`). The walk itself is paced by the
+        // simulation-wide movement budget (`GameState::movement_budget`) on every
+        // tick, so the simulation walks a cell exactly when the frame draws it. The
         // machine runs on the tick that finishes the walk, i.e. the next team starts
         // after the movement — as in the oracle, where the same loop ends the drain.
         let pending = self.state.begin_end_turn_movement(team);
@@ -2369,11 +2368,11 @@ impl<D: Dispatcher> GameUniverse<D> {
         self.state.closing_turn_pending()
     }
 
-    /// The team whose turn is closing — its units walk at the visual pace
-    /// (`GameState::closing_turn_team`).
+    /// The team whose turn is closing (`GameState::closing_turn_team`).
     ///
-    /// **Channel:** presentation read: the frame draws these units at the
-    /// simulation position instead of interpolating a route.
+    /// **Channel:** presentation read: the frame keeps the closing team on the
+    /// simulation position for one more frame (the closing state ends on the tick
+    /// that enters the last cell), like every routed unit.
     pub fn closing_turn_team(&self) -> Option<TeamId> {
         self.state.closing_turn_team()
     }

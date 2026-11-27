@@ -57,10 +57,19 @@ fn shadow_offset(state: &max_core::universe::GameUniverse, id: max_core::UnitId)
 #[test]
 fn takeoff_and_landing_slide_the_air_shadow() {
     let mut state = game();
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
 
     // A unit that is born on the ground has no shadow shift (`Redraw`).
-    assert_eq!(shadow_offset(&state, fighter), Point::ZERO, "shadow under the hull");
+    assert_eq!(
+        shadow_offset(&state, fighter),
+        Point::ZERO,
+        "shadow under the hull"
+    );
 
     state.set_order(fighter, UnitOrder::TakeOff, UnitOrderState::Init);
 
@@ -101,7 +110,11 @@ fn takeoff_and_landing_slide_the_air_shadow() {
     // The ninth step clears `HOVERING` and calls `Redraw()`.
     state.tick();
     assert!(!hovering(&state, fighter), "ninth step clears HOVERING");
-    assert_eq!(shadow_offset(&state, fighter), Point::ZERO, "shadow back under the hull");
+    assert_eq!(
+        shadow_offset(&state, fighter),
+        Point::ZERO,
+        "shadow back under the hull"
+    );
 }
 
 /// The shadow shift is presentation only: it never enters the snapshot/CRC
@@ -109,7 +122,12 @@ fn takeoff_and_landing_slide_the_air_shadow() {
 #[test]
 fn the_shadow_shift_is_not_part_of_the_state_digest() {
     let mut state = game();
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
 
     let before = state.snapshot().snapshot_bytes();
 
@@ -161,7 +179,12 @@ fn distance_to_line(point: (i32, i32), start: (i32, i32), end: (i32, i32)) -> f3
 #[test]
 fn an_aircraft_flies_the_straight_pixel_segment() {
     let mut state = game();
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
 
     if let Some(unit) = state.unit_mut(fighter) {
         unit.flags |= unit_flags::HOVERING;
@@ -174,7 +197,7 @@ fn an_aircraft_flies_the_straight_pixel_segment() {
     let end = (20 * 64 + 32, 14 * 64 + 32);
     let mut samples = Vec::new();
 
-    for _ in 0..120 {
+    for _ in 0..600 {
         state.tick();
 
         let unit = state.snapshot().unit(fighter).expect("fighter").clone();
@@ -229,7 +252,12 @@ fn an_aircraft_flies_the_straight_pixel_segment() {
 #[test]
 fn an_aircraft_killed_mid_flight_explodes_on_its_pixel() {
     let mut state = game();
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
 
     if let Some(unit) = state.unit_mut(fighter) {
         unit.flags |= unit_flags::HOVERING;
@@ -282,7 +310,10 @@ fn an_aircraft_killed_mid_flight_explodes_on_its_pixel() {
         "`OffsetDrawZones(unit->x - explosion->x, ...)`: the blast is drawn on the \
          aircraft pixel, not on the cell center"
     );
-    assert_eq!(blast.grid, cell, "the effect is spawned on the aircraft cell");
+    assert_eq!(
+        blast.grid, cell,
+        "the effect is spawned on the aircraft cell"
+    );
 }
 
 /// `AirPath::Execute` + `Paths_GetAirPath`: an aircraft flies exactly `speed`
@@ -291,7 +322,12 @@ fn an_aircraft_killed_mid_flight_explodes_on_its_pixel() {
 #[test]
 fn an_aircraft_spends_one_speed_point_per_cell() {
     let mut state = game();
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
     // `spawn` does not take off; the flight tests start in the air.
     if let Some(unit) = state.unit_mut(fighter) {
         unit.flags |= unit_flags::HOVERING;
@@ -305,7 +341,7 @@ fn an_aircraft_spends_one_speed_point_per_cell() {
 
     let start = grid(&state, fighter);
     let mut flown = 0;
-    for _ in 0..80 {
+    for _ in 0..2_000 {
         let before = grid(&state, fighter);
         state.tick();
         if grid(&state, fighter) != before {
@@ -358,14 +394,19 @@ fn real_time_does_not_spend_air_speed() {
     let mut state = game();
     state.set_real_time(true);
 
-    let fighter = spawn(&mut state, UnitType::Fighter, TeamId::RED, Point::new(10, 10));
+    let fighter = spawn(
+        &mut state,
+        UnitType::Fighter,
+        TeamId::RED,
+        Point::new(10, 10),
+    );
     if let Some(unit) = state.unit_mut(fighter) {
         unit.flags |= unit_flags::HOVERING;
     }
 
     let allowance = speed(&state, fighter);
     order_move(&mut state, fighter, Point::new(20, 10));
-    ticks(&mut state, 30);
+    ticks(&mut state, 600);
 
     assert_eq!(
         grid(&state, fighter),

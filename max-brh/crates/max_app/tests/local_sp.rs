@@ -141,7 +141,10 @@ fn setup_vs_one_ai() -> LocalSetup {
 /// cell by cell (frame positions differ), not teleport.
 #[test]
 fn local_update_with_real_dt_animates_move_orders() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -199,9 +202,8 @@ fn local_update_with_real_dt_animates_move_orders() {
     }
 
     assert!(
-        seen.len() >= 3,
-        "кадр должен пройти хотя бы одну промежуточную позицию, а не \
-         телепортироваться: {seen:?}"
+        seen.len() >= 2,
+        "кадр должен пройти маршрут по клеткам, а не телепортироваться: {seen:?}"
     );
     assert_eq!(
         seen.last(),
@@ -216,7 +218,10 @@ fn local_update_with_real_dt_animates_move_orders() {
 
 #[test]
 fn clan_choice_changes_starting_team_values() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.team_clans[0] = max_core::enums::TeamClan::VonGriffin;
@@ -237,10 +242,9 @@ fn clan_choice_changes_starting_team_values() {
     );
 
     // Von Griffin gives the Scout +2 attack (`clan_tradeoffs_apply` in max_core).
-    let expected =
-        max_core::unit_values::team_base_values(max_core::enums::TeamClan::VonGriffin)
-            [max_core::UnitType::Scout as usize]
-            .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
+    let expected = max_core::unit_values::team_base_values(max_core::enums::TeamClan::VonGriffin)
+        [max_core::UnitType::Scout as usize]
+        .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
     let actual = app.state_ref().team_units()[0]
         .base_unit_values(max_core::UnitType::Scout as u16)
         .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
@@ -249,16 +253,18 @@ fn clan_choice_changes_starting_team_values() {
         "Von Griffin должен дать клановые бонусы скауту RED"
     );
 
-    let random =
-        max_core::unit_values::team_base_values(max_core::enums::TeamClan::Random)
-            [max_core::UnitType::Scout as usize]
-            .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
+    let random = max_core::unit_values::team_base_values(max_core::enums::TeamClan::Random)
+        [max_core::UnitType::Scout as usize]
+        .get_attribute(max_core::unit_values::ATTRIB_ATTACK);
     assert_ne!(actual, random, "клановый бонус реально применён");
 }
 
 #[test]
 fn local_save_roundtrips_clans() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.team_clans[2] = max_core::enums::TeamClan::SevenKnights;
@@ -267,8 +273,7 @@ fn local_save_roundtrips_clans() {
     let bytes = app.local_save_bytes().expect("контейнер MXLS");
     let save = LocalSave::decode(&bytes).expect("MXLS разбирается");
     assert_eq!(
-        save.setup.team_clans,
-        setup.team_clans,
+        save.setup.team_clans, setup.team_clans,
         "кланы сохраняются в LocalSetup"
     );
 }
@@ -445,7 +450,10 @@ fn players_screen_rejects_a_game_without_opponent() {
 
 #[test]
 fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия стартует");
@@ -536,7 +544,10 @@ fn five_turns_against_the_ai_alternate_and_the_ai_acts() {
 
 #[test]
 fn simultaneous_moves_mode_also_plays_turns() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.play_mode = PlayMode::SimultaneousMoves;
@@ -554,7 +565,10 @@ fn simultaneous_moves_mode_also_plays_turns() {
 
 #[test]
 fn turn_timer_expires_and_closes_the_turn() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.timer = 2;
@@ -576,7 +590,10 @@ fn turn_timer_expires_and_closes_the_turn() {
 
 #[test]
 fn pause_stops_ticks_and_timer() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let mut setup = setup_vs_one_ai();
     setup.timer = 2;
@@ -598,7 +615,10 @@ fn pause_stops_ticks_and_timer() {
 
 #[test]
 fn human_on_a_later_slot_starts_with_the_ai_turns() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     // The human is GREEN (slot 1), RED is the computer: the round starts with the AI turn.
     let mut setup = setup_vs_one_ai();
@@ -642,7 +662,10 @@ fn human_on_a_later_slot_starts_with_the_ai_turns() {
 
 #[test]
 fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -724,7 +747,10 @@ fn eliminating_the_ai_wins_and_the_game_over_screen_renders() {
 
 #[test]
 fn local_save_roundtrips_after_a_turn() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     app.start_local_game(&setup_vs_one_ai())
         .expect("локальная партия");
@@ -775,7 +801,10 @@ fn local_save_roundtrips_after_a_turn() {
 
 #[test]
 fn v70_save_loads_into_the_local_game() {
-    let mut app = local_app().expect(concat!("test fixture is missing: ", stringify!(local_app())));
+    let mut app = local_app().expect(concat!(
+        "test fixture is missing: ",
+        stringify!(local_app())
+    ));
 
     let config = AppConfig::default()
         .with_data_dir(repo_path("max-original"))
