@@ -165,3 +165,51 @@ fn resolve_missing_entry_and_missing_file_are_none() {
     // Known tag but the `.ktx2` file does not exist → None (no panic).
     assert_eq!(cache.resolve("ghost"), None);
 }
+
+#[test]
+fn sprite_tags_are_stable_and_scale_and_frame_specific() {
+    // The R4 contract: `max_render::hd_sprites` resolves exactly these strings,
+    // so a ×2 and a ×4 bank must not collide, and neither must two frames.
+    assert_eq!(sprite_frame_tag("TANK", 0, 2), "unit_sprite_TANK_000_x2");
+    assert_eq!(sprite_frame_tag("TANK", 104, 4), "unit_sprite_TANK_104_x4");
+    assert_eq!(sprite_shadow_tag("TANK", 0, 2), "unit_shadow_TANK_000_x2");
+    assert_ne!(
+        sprite_frame_tag("TANK", 7, 2),
+        sprite_frame_tag("TANK", 7, 4),
+        "a ×2 and a ×4 asset must be different manifest entries"
+    );
+    assert_ne!(
+        sprite_frame_tag("TANK", 7, 2),
+        sprite_frame_tag("TANK", 8, 2),
+        "every frame is a separate index map"
+    );
+    assert_ne!(
+        sprite_frame_tag("TANK", 7, 2),
+        sprite_shadow_tag("TANK", 7, 2),
+        "the body and its shadow are separate assets"
+    );
+    assert_ne!(
+        sprite_frame_tag("TANK", 7, 2),
+        sprite_frame_tag("COMMTWR", 7, 2),
+        "different resources are different sprites"
+    );
+}
+
+#[test]
+fn sprite_tags_are_usable_as_manifest_keys_and_file_stems() {
+    for tag in [
+        sprite_frame_tag("SUBMARNE", 15, 2),
+        sprite_shadow_tag("SUBMARNE", 15, 4),
+    ] {
+        assert!(
+            tag.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "the tag becomes a manifest key and a file name: {tag}"
+        );
+
+        let manifest = manifest(&format!(
+            r#"{{"assets":{{"{tag}":{{"path":"{tag}.uastc.ktx2","scale":2}}}}}}"#
+        ));
+        assert_eq!(manifest.get(&tag).map(|entry| entry.scale), Some(2));
+    }
+}

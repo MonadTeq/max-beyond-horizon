@@ -121,9 +121,48 @@ impl<'a> SpriteRenderer<'a> {
         anchor: (i32, i32),
         color: Rgba,
     ) -> DrawStats {
-        let (ulx, uly) = self.frame_origin(frame, anchor);
+        self.draw_frame_silhouette_scaled(dst, frame, anchor, 64, color)
+    }
 
-        self.draw_rect(dst, frame, (ulx, uly), |_, _| color)
+    /// Silhouette at scale `zoom` (64 — 1:1), nearest neighbour.
+    ///
+    /// The `zoom_level < 8` mode of `UnitInfo::RenderSprite` draws every opaque
+    /// pixel of the sprite in the team color regardless of the palette, so the
+    /// shadow/sprite geometry is the same as [`Self::draw_frame_scaled`] while
+    /// the color is a constant (no palette lookup at all).
+    pub fn draw_frame_silhouette_scaled(
+        &self,
+        dst: &mut RgbaBuffer,
+        frame: &SpriteFrame,
+        anchor: (i32, i32),
+        zoom: u32,
+        color: Rgba,
+    ) -> DrawStats {
+        let zoom = zoom.max(1);
+        let (ulx, uly) = self.frame_origin_scaled(frame, anchor, zoom);
+        let width = scale_length(frame.width, zoom);
+        let height = scale_length(frame.height, zoom);
+        let mut stats = DrawStats::default();
+
+        for y in 0..height {
+            let source_y = source_coordinate(y, zoom, i32::from(frame.height));
+
+            for x in 0..width {
+                let source_x = source_coordinate(x, zoom, i32::from(frame.width));
+
+                if frame.pixel(source_x as u32, source_y as u32).is_none() {
+                    continue;
+                }
+
+                if dst.set(ulx + x, uly + y, color) {
+                    stats.drawn += 1;
+                } else {
+                    stats.clipped += 1;
+                }
+            }
+        }
+
+        stats
     }
 
     /// Darkens the already drawn map by the shadow mask.
@@ -404,17 +443,20 @@ impl<'a> SpriteRenderer<'a> {
 }
 
 /// Scale of a coordinate/hot spot: `value * zoom / 64` (64 — 1:1).
-fn scale_pixels(value: i32, zoom: u32) -> i32 {
+///
+/// `pub(crate)` so that the HD sprite adapter (`crate::hd_sprites`) reuses the
+/// exact geometry of the original renderer instead of re-deriving it.
+pub(crate) fn scale_pixels(value: i32, zoom: u32) -> i32 {
     ((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32
 }
 
 /// Scale of a length (minimum 1 pixel so that the sprite does not disappear).
-fn scale_length(value: u16, zoom: u32) -> i32 {
+pub(crate) fn scale_length(value: u16, zoom: u32) -> i32 {
     (((i64::from(value) * i64::from(zoom.max(1))) / 64) as i32).max(1)
 }
 
 /// Source coordinate for a destination pixel under nearest-neighbour.
-fn source_coordinate(destination: i32, zoom: u32, source_len: i32) -> i32 {
+pub(crate) fn source_coordinate(destination: i32, zoom: u32, source_len: i32) -> i32 {
     let source = (i64::from(destination) * 64 / i64::from(zoom.max(1))) as i32;
     source.min(source_len.saturating_sub(1)).max(0)
 }

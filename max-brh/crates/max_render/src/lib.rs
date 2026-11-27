@@ -3,11 +3,14 @@
 //! The crate is split into two parts:
 //!
 //! * **pure** — [`palette`], [`buffer`], [`sprite_atlas`], [`map_render`],
-//!   [`viewport`], [`text`], [`ui`], [`terrain`], [`hd_terrain`],
+//!   [`viewport`], [`text`], [`ui`], [`terrain`], [`hd_terrain`], [`hd_sprites`],
 //!   [`render_scale`]: only data and integer arithmetic, no SDL. Everything is
 //!   tested without a window — this is the main, always buildable layer.
 //!   [`hd_terrain`] is the R3 presentation adapter: it reads decoded RGBA8
 //!   textures through `max_assets::remaster` and never touches `max_core`.
+//!   [`hd_sprites`] is the R4 adapter: HD index maps recolored on the CPU by a
+//!   palette LUT (`ColorLut`/`BrightnessLut`/`ColorCycles`), with per-asset
+//!   fallback to [`SpriteRenderer`].
 //! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
 //!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
 //!   and the `sdl3` dependency is not pulled in.
@@ -37,6 +40,7 @@
 
 pub mod buffer;
 pub mod frame_scale;
+pub mod hd_sprites;
 pub mod hd_terrain;
 pub mod layout;
 pub mod map_render;
@@ -54,6 +58,11 @@ pub mod sdl_window;
 
 pub use buffer::{PixelRect, Rgba, RgbaBuffer, BYTES_PER_PIXEL};
 pub use frame_scale::{upscale_nearest, FrameScale, FRAME_HEIGHT, FRAME_WIDTH, MAX_SCALE};
+pub use hd_sprites::{
+    is_silhouette_zoom, scaled_offset, HdIndexFrame, HdIndexMap, HdRecolorState, HdShadowFrame,
+    HdSpriteBank, HdSpriteCache, HdSpriteKey, HdSpriteRenderer, HdSpriteTexture, IndexPaletteLut,
+    COVERAGE_CHANNEL, DEFAULT_CACHE_LIMIT, PAYLOAD_CHANNEL, SILHOUETTE_ZOOM,
+};
 pub use hd_terrain::{HdTerrainAtlas, HdTile};
 pub use layout::{
     AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,

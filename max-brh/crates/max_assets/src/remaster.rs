@@ -44,6 +44,41 @@ pub fn terrain_tile_tag(world: &str, tile_id: u16, scale: u32) -> String {
     format!("terrain_tile_{world}_{tile_id:03}_x{scale}")
 }
 
+/// Manifest tag of an HD unit sprite frame (`remaster-hd.md` §R4).
+///
+/// Under fork 1 of the remaster plan the recolor model is **index-domain**:
+/// the `.ktx2` payload is not a baked RGBA picture but a high-resolution index
+/// map — one palette index per texel (`R` channel), the texel coverage in the
+/// alpha channel (`A`), see [`crate::remaster`] and
+/// `max_render::hd_sprites` for the exact transport convention. Therefore one
+/// asset covers every team, every brightness level and every palette-cycle
+/// frame: `ColorLut`/`BrightnessLut`/cycles are applied as a palette LUT on the
+/// CPU at draw time, exactly like `SpriteRenderer::color_for`.
+///
+/// The tag identifies the source `MAX.RES` resource (`TANK`, `COMMTWR`,
+/// …), the frame index in that sprite sheet and the presentation scale, e.g.
+/// `unit_sprite_TANK_000_x2`. The scale is part of the tag because a ×2 and a
+/// ×4 bank are separate manifest entries, and an asset must be encoded
+/// **losslessly** (UASTC or uncompressed): a lossy ETC1S payload would shift
+/// palette indices and therefore colors.
+///
+/// The tag is a plain manifest key and part of the `.ktx2` file name, so it
+/// contains only ASCII letters, digits and underscores.
+pub fn sprite_frame_tag(resource: &str, frame: u16, scale: u32) -> String {
+    format!("unit_sprite_{resource}_{frame:03}_x{scale}")
+}
+
+/// Manifest tag of an HD unit sprite shadow (`remaster-hd.md` §R4).
+///
+/// A shadow is not a picture but a darkening mask (`spw.md` §4.3): the `.ktx2`
+/// payload carries one mask level per texel (`R`: `0` — no shadow, `255` — the
+/// full level-5 darkening; intermediate values blend linearly), which
+/// `max_render::hd_sprites` applies with `Rgba::darken`. The tag mirrors
+/// [`sprite_frame_tag`], e.g. `unit_shadow_TANK_000_x2`.
+pub fn sprite_shadow_tag(resource: &str, frame: u16, scale: u32) -> String {
+    format!("unit_shadow_{resource}_{frame:03}_x{scale}")
+}
+
 /// Remaster asset error, returned as a value (never a panic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemasterError {

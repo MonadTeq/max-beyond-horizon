@@ -464,6 +464,27 @@ impl ColorCycles {
         &self.steps
     }
 
+    /// The step counts by value — the *cycle frame* of the palette.
+    ///
+    /// [`rotate_palette`] depends only on `steps` (not on the sub-step
+    /// `elapsed_ms`), so this array is a complete, hashable identity of the
+    /// palette snapshot (used as a cache key by `max_render::hd_sprites`).
+    pub fn step_signature(&self) -> [u64; COLOR_CYCLES.len()] {
+        self.steps
+    }
+
+    /// Clock placed exactly at `steps` (the inverse of [`Self::step_signature`]).
+    ///
+    /// A render cache stores the step signature and rebuilds the same palette
+    /// snapshot from it: the elapsed time inside the current step is irrelevant
+    /// to the picture.
+    pub fn from_step_counts(steps: &[u64; COLOR_CYCLES.len()]) -> Self {
+        Self {
+            elapsed_ms: [0.0; COLOR_CYCLES.len()],
+            steps: *steps,
+        }
+    }
+
     /// No cycle moved (the palette equals the initial one).
     pub fn is_static(&self) -> bool {
         self.steps.iter().all(|&steps| steps == 0)
