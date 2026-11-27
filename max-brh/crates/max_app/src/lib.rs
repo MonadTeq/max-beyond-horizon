@@ -4512,7 +4512,43 @@ impl<D: Dispatcher> App<D> {
                             0
                         };
 
-                        let angle = if sign_x == 0 && sign_y == 0 {
+                        // The air route is a single straight segment: the oracle
+                        // turns the aircraft to `m_angle` once
+                        // (`UnitsManager_GetTargetAngle` of the segment,
+                        // `airpath.cpp:56-58`) and keeps that angle for the whole
+                        // flight (`Paths_UpdateAngle` then always matches).
+                        // `paths_get_angle` of the frame displacement is the
+                        // 8-direction **sign** angle: for a segment with a slope
+                        // between 1:2 and 1:4 it says "diagonal" while the oracle
+                        // says "axial", so the plane looked 45° sideways, and the
+                        // halved last pixel step could flip the sign — the angle
+                        // jumped on a straight line. The air waypoint therefore
+                        // takes the angle of the segment it belongs to, not the
+                        // sign of the sub-cell step. On the arrival tick the path
+                        // is already cleared by `Paths_FinishMove`; the previous
+                        // waypoint of the same segment (or the final `unit.angle`,
+                        // which the oracle never turned away from the segment) is
+                        // then the right value.
+                        let air_angle = if unit.is_air()
+                            && unit.flags & unit_flags::MISSILE_UNIT == 0
+                        {
+                            match unit.path.as_ref() {
+                                Some(max_core::unit::UnitPath::Air(path)) => {
+                                    Some(path.angle.max(0) as u8)
+                                }
+                                // A taxiing aircraft on a ground route moves cell
+                                // by cell like a ground unit — the sign-based
+                                // step angle applies.
+                                Some(_) => None,
+                                None => queue.back().map(|step| step.angle).or(Some(unit.angle)),
+                            }
+                        } else {
+                            None
+                        };
+
+                        let angle = if let Some(air_angle) = air_angle {
+                            air_angle
+                        } else if sign_x == 0 && sign_y == 0 {
                             unit.angle
                         } else {
                             max_core::unit_order::paths_get_angle(sign_x, sign_y) as u8
@@ -4550,7 +4586,16 @@ impl<D: Dispatcher> App<D> {
             // keeps that route and walks it at the visual speed to the death pixel, and
             // the record keeps it drawable after `unit_order::progress_explosion`
             // removes the unit in the middle of its blast.
-            let dead = unit.hits == 0;
+            //
+            // Projectiles (`MISSILE_UNIT`) and effects (`EXPLODING`) are excluded:
+            // both have `hits == 0` for their whole life by `SC_ATTRI`, not because
+            // they were just killed. A "corpse" of a flying rocket walked its visual
+            // cell queue as a second sprite (the live one already follows the pixel
+            // line) and kept gliding cell-by-cell after the impact — the missile
+            // animation regression. The oracle destroys them instantly at
+            // `Paths_FinishMove`/`ProgressExplosion` without any walk.
+            let dead = unit.hits == 0
+                && unit.flags & (unit_flags::MISSILE_UNIT | unit_flags::EXPLODING) == 0;
 
             if dead && !queue.is_empty() {
                 // The corpse of a unit the simulation has just killed (or killed
