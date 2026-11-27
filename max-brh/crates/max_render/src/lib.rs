@@ -16,6 +16,9 @@
 //!   (`FRAMEPIC`/`PANELTOP`/`PANELBTM`, buttons and menus by `MAX.RES` name)
 //!   and UI box skins, drawn at the presentation scale with per-asset fallback
 //!   to the original palette images and the procedural [`ui`] theme.
+//!   [`hd_text`] is the R6 adapter: HD **raster** GNW font atlases (no TTF),
+//!   metrics and the `Text_TextLine` relief scaled exactly by `S`, with
+//!   per-font fallback to the original GNW bitmap (nearest `×S`).
 //! * **SDL layer** — [`sdl_window`] behind the `sdl` feature: window, output of
 //!   [`RgbaBuffer`] to the screen and the event queue. Without the feature the module does not build
 //!   and the `sdl3` dependency is not pulled in.
@@ -48,6 +51,7 @@ pub mod frame_scale;
 pub mod hd_chrome;
 pub mod hd_sprites;
 pub mod hd_terrain;
+pub mod hd_text;
 pub mod layout;
 pub mod map_render;
 pub mod palette;
@@ -75,6 +79,10 @@ pub use hd_sprites::{
     COVERAGE_CHANNEL, DEFAULT_CACHE_LIMIT, PAYLOAD_CHANNEL, SILHOUETTE_ZOOM,
 };
 pub use hd_terrain::{HdTerrainAtlas, HdTile};
+pub use hd_text::{
+    draw_text_hd, draw_text_hd_outlined, draw_text_hd_shadowed, draw_text_line_hd, line_width_hd,
+    HdFontAtlas, HdFonts, HdGlyphAtlas, FONT_COVERAGE_CHANNEL, GLYPH_COUNT, INK_THRESHOLD,
+};
 pub use layout::{
     AMMO_BUTTON, COLORS_BUTTON, CORNER_FLIC, END_TURN_BUTTON, FILES_BUTTON, GRID_BUTTON,
     HITS_BUTTON, MAIN_MAP, MINIMAP, NAME_BUTTON, PREFS_BUTTON, RANGE_BUTTON, SCAN_BUTTON,

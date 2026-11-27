@@ -116,6 +116,18 @@ impl GnwFontId {
         }
     }
 
+    /// Stem of the original file name (`FONT1`, `FONT2`, `FONT5`).
+    ///
+    /// This is the `<FONT>` part of the remaster tag `font_<FONT>_x<S>`
+    /// (`remaster-hd.md` §R6), see [`max_assets::remaster::font_tag`].
+    pub const fn file_stem(self) -> &'static str {
+        match self {
+            Self::Font1 => "FONT1",
+            Self::Font2 => "FONT2",
+            Self::Font5 => "FONT5",
+        }
+    }
+
     /// Parsed font (decoded once per process).
     pub fn font(self) -> &'static GnwFont {
         static FONT_1: OnceLock<GnwFont> = OnceLock::new();

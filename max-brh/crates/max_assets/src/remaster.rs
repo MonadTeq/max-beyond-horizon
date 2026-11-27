@@ -100,6 +100,23 @@ pub fn chrome_image_tag(resource: &str, scale: u32) -> String {
     format!("chrome_{resource}_x{scale}")
 }
 
+/// Manifest tag of an HD raster font atlas (`remaster-hd.md` §R6).
+///
+/// The game text is drawn with the **raster** GNW fonts `FONT1.FON`/`FONT2.FON`/
+/// `FONT5.FON`; the remaster keeps them raster (no TTF) so the pixel look,
+/// the per-glyph advance and the `Text_TextLine` relief survive. An HD asset is
+/// one pre-baked RGBA8 atlas per font and presentation scale; its layout and the
+/// transport convention (`A` = ink coverage) are documented in
+/// `max_render::hd_text`.
+///
+/// `font` is the original file stem verbatim, e.g. `font_FONT1_x2`,
+/// `font_FONT2_x4`. The scale is part of the tag because a ×2 and a ×4 atlas are
+/// separate manifest entries. The tag is a manifest key and part of the `.ktx2`
+/// file name, so it contains only ASCII letters, digits and underscores.
+pub fn font_tag(font: &str, scale: u32) -> String {
+    format!("font_{font}_x{scale}")
+}
+
 /// Manifest tag of an HD skin of a procedural UI widget (`remaster-hd.md` §R5).
 ///
 /// `max_render::ui::render_ui` draws its boxes procedurally (a theme fill and a

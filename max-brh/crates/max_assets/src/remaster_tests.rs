@@ -227,6 +227,40 @@ fn chrome_and_ui_tags_are_usable_as_manifest_keys_and_file_stems() {
 }
 
 #[test]
+fn font_tags_are_stable_and_scale_specific() {
+    // The R6 contract: `max_render::hd_text` resolves exactly these strings, so
+    // a ×2 and a ×4 atlas must not collide, and neither must two fonts.
+    assert_eq!(font_tag("FONT1", 2), "font_FONT1_x2");
+    assert_eq!(font_tag("FONT5", 4), "font_FONT5_x4");
+    assert_ne!(
+        font_tag("FONT2", 2),
+        font_tag("FONT2", 4),
+        "a ×2 and a ×4 font atlas must be different manifest entries"
+    );
+    assert_ne!(
+        font_tag("FONT1", 2),
+        font_tag("FONT2", 2),
+        "every GNW font is a separate atlas"
+    );
+}
+
+#[test]
+fn font_tags_are_usable_as_manifest_keys_and_file_stems() {
+    for tag in [font_tag("FONT1", 2), font_tag("FONT2", 4)] {
+        assert!(
+            tag.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "the tag becomes a manifest key and a file name: {tag}"
+        );
+
+        let manifest = manifest(&format!(
+            r#"{{"assets":{{"{tag}":{{"path":"{tag}.uastc.ktx2","scale":2}}}}}}"#
+        ));
+        assert_eq!(manifest.get(&tag).map(|entry| entry.scale), Some(2));
+    }
+}
+
+#[test]
 fn sprite_tags_are_stable_and_scale_and_frame_specific() {
     // The R4 contract: `max_render::hd_sprites` resolves exactly these strings,
     // so a ×2 and a ×4 bank must not collide, and neither must two frames.
