@@ -93,6 +93,20 @@
 Не-юниты (эффекты/декорации) — имена Rust сохраняются; отдельная таблица в
 `object-classifier.md`.
 
+## Экземпляры юнитов и боевые группы
+
+Имена экземпляров юнитов и механика группового выбора/перемещения — согласованы
+с владельцем; источники:
+[`analysis/unit-name-group-select.md`](analysis/unit-name-group-select.md)
+(Оракул Klei + Оракул Interplay).
+
+| Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
+|---|---|---|---|---|
+| Порядковый номер экземпляра («Scout 7») | `UnitInfo::unit_id` | `UnitInfo::unit_id` | unitinfo.hpp:414 / architecture/client/state-model.md:587 | u8; номер типа в команде, выдаётся из `team_unit_counters` при выпуске; часть имени юнита; **не путать** с `UnitInfo::id` — глобальным hash-id (unitinfo.hpp:475) |
+| Счётчик производства экземпляров (на команду и тип) | `team_unit_counters` | `CTInfo::unit_counters[UNIT_END]` | ctinfo.hpp:103,49-51 / saveload.cpp:839,852-856 | старт 1, цикл 256 (V70 — массив u8); инкремент при выпуске юнита (units_manager.cpp:2377-2379); в Rust сейчас `TeamInfo::unit_counters` (team.rs:74) — переименовать |
+| Боевая группа | `UnitGroup` | `UnitInfo::unit_list` + `UnitInfoGroup` | unitinfo.hpp:476 / unitinfogroup.hpp:42 / access.cpp:2177-2253 | лидер = голова списка; рамка/Shift+клик, лимит 10, приказы только лидеру; в Rust сейчас параллельные таблицы `GameState::unit_group`/`groups` (game.rs:492-496) |
+| Бюджет хода группы | `group_speed` | `UnitInfo::group_speed` | access.cpp:1195-1216 | `min(speed)+1` — общий бюджет хода боевой группы; тратится членами при движении, не ниже 1; runtime-поле, не в V70-save (architecture/client/state-model.md:642) |
+
 ## Приказы
 
 | Домен-термин | Rust-имя | C++-идентификатор | Источник | Примечание |
