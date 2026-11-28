@@ -67,3 +67,78 @@ fn writable_defaults_live_inside_the_catalog() {
         );
     }
 }
+
+/// Unique temporary directory (the layout tests may run in parallel).
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "max_app_layout_{tag}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    dir
+}
+
+/// An AppImage mount is read-only: the catalog root is the directory that holds
+/// the `.AppImage` file, while the data stays inside the mounted AppDir
+/// (`distro-installers.md` §D — saves are written next to the `.AppImage`).
+#[test]
+fn appimage_writes_beside_the_file_and_reads_the_mounted_data() {
+    let dir = temp_dir("appimage");
+    // The mounted AppDir: `usr/bin/max-brh` + `data/MAX.RES`.
+    let appdir = dir.join("AppDir");
+    let exe = appdir.join("usr/bin/max-brh");
+    std::fs::create_dir_all(exe.parent().expect("exe dir")).expect("exe dir");
+    std::fs::create_dir_all(appdir.join("data")).expect("data dir");
+    std::fs::write(appdir.join("data/MAX.RES"), b"RES0").expect("write MAX.RES");
+    // The player's directory: the `.AppImage` file and a foreign CWD.
+    let appimage = dir.join("MAX-BRH-0.1.28a-x86_64.AppImage");
+    std::fs::write(&appimage, b"").expect("write AppImage");
+    let cwd = dir.join("foreign-cwd");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+
+    let catalog = detect_with_appimage(
+        &AppConfig::default(),
+        Some(&exe),
+        Some(&cwd),
+        appimage.parent().map(Path::to_path_buf),
+    )
+    .expect("catalog");
+
+    assert_eq!(catalog.data_dir(), appdir.join("data"), "data stays in the mount");
+    assert_eq!(catalog.root(), dir, "the writable root is the .AppImage directory");
+    assert_eq!(catalog.marker(), Some("data"));
+    assert_eq!(catalog.saves_dir(), dir.join("saves"));
+    assert_eq!(catalog.preferences_path(), dir.join("preferences.ini"));
+    assert!(
+        !catalog.root().starts_with(&appdir),
+        "the AppDir mount itself must never be the writable root"
+    );
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Without the AppImage marker the same tree resolves to the AppDir itself — the
+/// regression this fix exists for.
+#[test]
+fn without_an_appimage_the_appdir_is_the_catalog_root() {
+    let dir = temp_dir("plain");
+    let appdir = dir.join("AppDir");
+    let exe = appdir.join("usr/bin/max-brh");
+    std::fs::create_dir_all(exe.parent().expect("exe dir")).expect("exe dir");
+    std::fs::create_dir_all(appdir.join("data")).expect("data dir");
+    std::fs::write(appdir.join("data/MAX.RES"), b"RES0").expect("write MAX.RES");
+
+    let catalog = detect_with_appimage(&AppConfig::default(), Some(&exe), Some(&dir), None)
+        .expect("catalog");
+
+    assert_eq!(catalog.root(), appdir);
+    assert_eq!(catalog.data_dir(), appdir.join("data"));
+
+    std::fs::remove_dir_all(dir).ok();
+}

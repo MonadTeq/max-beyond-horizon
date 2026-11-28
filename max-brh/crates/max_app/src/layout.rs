@@ -24,6 +24,8 @@ use crate::AppConfig;
 pub const SAVES_DIR_NAME: &str = "saves";
 /// Mission-category save directory inside the catalog (C++ `FilePathGameData`).
 pub const MISSIONS_DIR_NAME: &str = "missions";
+/// Environment variable the AppImage runtime sets to the running `.AppImage` path.
+pub const APPIMAGE_ENV: &str = "APPIMAGE";
 
 /// The resolved portable catalog: the game root and its data directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,21 +117,56 @@ impl Catalog {
 /// working directory decide (a library-style launch), which keeps the historical
 /// behavior. Returns [`None`] when no `MAX.RES` exists (no writable catalog is
 /// known, so the historical defaults stay in effect).
+///
+/// A launch from an AppImage ([`APPIMAGE_ENV`]) keeps the data of the mounted
+/// AppDir but writes next to the `.AppImage` file: the mount is read-only.
 pub fn detect(config: &AppConfig, exe: Option<&Path>, cwd: Option<&Path>) -> Option<Catalog> {
+    detect_with_appimage(config, exe, cwd, appimage_game_root())
+}
+
+/// [`detect`] with an explicit AppImage root — unit tests do not mutate the
+/// process environment.
+fn detect_with_appimage(
+    config: &AppConfig,
+    exe: Option<&Path>,
+    cwd: Option<&Path>,
+    appimage_root: Option<PathBuf>,
+) -> Option<Catalog> {
     let exe_roots = exe.map(assets::exe_search_roots).unwrap_or_default();
 
-    if let Some(max_res) = assets::find_max_res_in(&exe_roots) {
-        return catalog_from(&max_res, cwd);
-    }
+    let catalog = if let Some(max_res) = assets::find_max_res_in(&exe_roots) {
+        catalog_from(&max_res, cwd)
+    } else {
+        let roots = assets::data_search_roots_from(config, cwd, exe);
+        let (max_res, _) = assets::resolve_max_res_at(config, &roots);
 
-    let roots = assets::data_search_roots_from(config, cwd, exe);
-    let (max_res, _) = assets::resolve_max_res_at(config, &roots);
+        if !max_res.is_file() {
+            return None;
+        }
 
-    if !max_res.is_file() {
-        return None;
-    }
+        catalog_from(&max_res, cwd)
+    }?;
 
-    catalog_from(&max_res, cwd)
+    // The AppImage runtime mounts the AppDir read-only (squashfs), so the catalog
+    // root becomes the directory of the `.AppImage` file itself: saves, missions,
+    // `preferences.ini` and `settings.jsonc` are written next to it
+    // (`distro-installers.md` §D).
+    Some(match appimage_root {
+        Some(root) => Catalog { root, ..catalog },
+        None => catalog,
+    })
+}
+
+/// The directory that holds the running `.AppImage` (`APPIMAGE`, set by the
+/// runtime), or `None` for a regular launch.
+fn appimage_game_root() -> Option<PathBuf> {
+    let path = std::env::var_os(APPIMAGE_ENV)?;
+    let path = Path::new(&path);
+
+    // A bare file name has an empty parent: there is no directory to write to.
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
 }
 
 /// Builds the catalog from the resolved `MAX.RES`; a relative path (a development

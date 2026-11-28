@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=M.A.X.: Beyond Rust Horizon
+GenericName=Strategy game
+Comment=Free non-commercial fan remake of M.A.X.: Mechanized Assault & Exploration
+Exec=max-brh
+Icon=max-brh
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=max;strategy;remake;rts;
+StartupWMClass=max-brh

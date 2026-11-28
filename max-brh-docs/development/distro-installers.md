@@ -48,7 +48,7 @@
 Базовые (ранее зафиксировано): NSIS 3.x; портативность (всё внутри выбранного каталога, без реестра ARP/системных каталогов); `game.exe`; remaster обязателен; `uninstall.exe` внутри каталога; тихий режим `/S /D=каталог`; версия `0.1.28a`; корень проекта — `max-brh-installer/`.
 
 - **Windows — NSIS 3.x (MUI2 + кастомный скин)**: мастер «выбрать каталог → дисклеймер → установить»; ВСЁ внутрь каталога; **без** записи в реестр ARP; **ярлык в меню Пуск — опциональный чекбокс**; uninstall.exe внутри каталога; тихий режим `/S /D=каталог`. Бинарь в пакете — **game.exe**.
-- **Linux — переносимый tar.gz** (каталог целиком) + **AppImage (нужен в v1)**: данные и remaster внутри; сейвы рядом с AppImage.
+- **Linux — переносимый tar.gz** (каталог целиком: `max-brh` + `lib/libSDL3.so.0` с rpath `$ORIGIN/lib` + `data/` (509 файлов, sha256 сверен) + обязательный `remaster/` + пустые `saves/`/`missions/` + `settings.jsonc` + `LICENSE`/`THIRD_PARTY_LICENSES.txt`/`README.txt`/`CHANGELOG.md` + `SHA256SUMS`) **+ AppImage (нужен в v1)**: один файл, внутри `AppRun` + `data/` + `remaster/` + `usr/bin/max-brh` (rpath `$ORIGIN/../lib`). Образ AppImage только для чтения, поэтому **каталог игры — каталог самого `.AppImage`**: `layout::detect` учитывает переменную `APPIMAGE` и ставит `game_root` туда, `AppRun` создаёт рядом `saves/`/`missions/`, кладёт шаблон `settings.jsonc` и передаёт `--remaster-dir` внутрь образа. Реализация: `max-brh-installer/linux/` (`Dockerfile`, `build-distro.sh`, `gate-g4.sh`, `AppRun`, `max-brh.desktop`), запуск — `max-brh-installer/scripts/build-linux-distro.ps1`; артефакты — `max-brh-installer/dist/linux/` (вне git).
 - **Remaster — обязательная часть обоих пакетов** (не отдельный опциональный пакет).
 
 ## Часть E. Лицензии/распространение — решения владельца (2026-11-28)
@@ -65,6 +65,8 @@
 | 3 | NSIS-портативный установщик (каталог → всё внутрь, uninstall.exe) | G3: тихая установка в выбранный каталог, деинсталляция чистит ТОЛЬКО каталог, сейвы внутри переживают апгрейд |
 | 4 | Linux tar.gz (переносимый) + опционально AppImage | G4: распаковал → запустил → сейвы в каталоге игры; AppImage запускается |
 | 5 | CI `release.yml` по тегу v* (Windows zip+NSIS, Linux tar.gz/AppImage, SHA256SUMS) | G5: все гейты зелёные, артефакты опубликованы |
+
+Этап 4 реализован: сборка и упаковка — `max-brh-installer/linux/` (`Dockerfile` на Ubuntu 22.04 + Rust 1.94.0, `build-distro.sh`), гейт — `gate-g4.sh` в том же образе, запуск — `max-brh-installer/scripts/build-linux-distro.ps1`. Гейт G4 прогоняется по готовым артефактам в чистом каталоге контейнера и пишет `g4-summary.json`/`g4.log` рядом с ними; описание проверок — `max-brh-installer/README.md`, раздел «Linux: переносимый tar.gz + AppImage».
 
 ## Guardrails
 

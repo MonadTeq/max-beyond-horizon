@@ -145,3 +145,11 @@ max-brh-qa-tools/remaster-encode/target/
 
 # NSIS installer build output (staging lives under .tmp/ and is ignored above).
 max-brh-installer/dist/
+
+# Linux distro build output (release-engineer artifacts).
+max-brh-installer/scripts/*.tar.xz
+max-brh-installer/scripts/*.AppImage
+max-brh-installer/scripts/SHA256SUMS
+max-brh-installer/scripts/g4.log
+max-brh-installer/scripts/g4-summary.json
+max-brh-installer/scripts/staging-report.json

@@ -1,0 +1,33 @@
+#!/bin/sh
+# AppRun of MAX-BRH-<version>-x86_64.AppImage (distro-installers.md §D).
+#
+# The AppImage runtime mounts the AppDir read-only, so the writable game root is
+# the directory that holds the .AppImage file itself: saves/, missions/,
+# preferences.ini and settings.jsonc live next to it. The game itself finds the
+# mounted data/ through the executable path (layout.rs: data marker `data`) and
+# receives remaster/ via --remaster-dir.
+set -eu
+
+HERE="$(cd -- "$(dirname -- "$0")" && pwd)"
+
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$HERE/usr/bin:${PATH:-/usr/bin:/bin}"
+
+if [ -n "${APPIMAGE:-}" ]; then
+    # Normal launch: the player's directory is the directory of the file.
+    GAME_ROOT="$(dirname -- "$APPIMAGE")"
+else
+    # `APPIMAGE_EXTRACT_AND_RUN=1` or an extracted AppDir: no file to anchor to.
+    GAME_ROOT="$(pwd)"
+fi
+
+# Portable layout: the writable directories appear next to the .AppImage.
+mkdir -p -- "$GAME_ROOT/saves" "$GAME_ROOT/missions" 2>/dev/null || true
+
+# Seed the editable settings template on the first run; never overwrite a file
+# the player already has (settings.jsonc is read from the game root, not the mount).
+if [ ! -e "$GAME_ROOT/settings.jsonc" ] && [ -f "$HERE/settings.jsonc" ]; then
+    cp -- "$HERE/settings.jsonc" "$GAME_ROOT/settings.jsonc" 2>/dev/null || true
+fi
+
+exec "$HERE/usr/bin/max-brh" --remaster-dir "$HERE/remaster" "$@"
