@@ -3,9 +3,14 @@
 > **Текущая версия — пре-альфа `0.1.28a`** (сброс версии 2026-11-28; Cargo-версия
 > `0.1.28-alpha`, до `1.0` не поднимать — решение владельца). Разделы ниже
 > описывают прошлые срезы `1.1.0`/`1.0.0` и остаются историей.
+>
+> **Релиз `0.1.28a` выпускается конвейером** `.github/workflows/release.yml`
+> (этап 5): bump CHANGELOG → тег `v0.1.28a` → workflow собирает и публикует
+> Windows NSIS, Linux tar.xz/AppImage и `SHA256SUMS`. Актуальная процедура и
+> гейты G5.1/G5.2 — в разделе «0.1.28a — конвейер релиза» ниже.
 
-Версия: **1.1.0** · дата среза: **2026-11-16** · тег: **v1.1.0** (не создан —
-создаётся релиз-менеджером; команда подготовлена в §v1.1.0 ниже).
+Исторический срез: **1.1.0** · дата среза: **2026-11-16** · тег: **v1.1.0**
+(не создан — создаётся релиз-менеджером; команда подготовлена в §v1.1.0 ниже).
 
 Документ — исполняемая последовательность: каждый пункт либо команда с
 ожидаемым результатом, либо ручная проверка с местом для свидетельства.
@@ -16,6 +21,106 @@
 > **1.0.0** (2026-11-15) и остаются как свидетельства предыдущего среза.
 > Для **1.1.0** актуальны раздел «v1.1.0 — итоговый чек-лист» (ниже) и
 > артефакты `bin/release/max_app-1.1.0-*`.
+
+## 0.1.28a — конвейер релиза (этап 5)
+
+Релиз собирается и публикуется одним workflow
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml) по тегу `v*`
+(ручной запуск — `workflow_dispatch` с именем тега); локально пакеты собирать не
+нужно. План и состав джоб — `development/distro-installers.md` §F (этап 5).
+Разделы 0–10 и приложения A–D ниже — история срезов 1.0.0/1.1.0, в этом релизе
+они не выполняются.
+
+| Джоба | Что делает | Гейт |
+|---|---|---|
+| `inventory` | `asset_inventory` по объединению оракулов дважды → `data-inventory.json`; проверка тега, дерева и версии | G1 + G5.2 |
+| `windows` | MSVC + vcpkg SDL3 (`build-windows-ui.ps1`) → `stage.ps1` → `makensis` (`build-installer.ps1`) → `MAX-BRH-0.1.28a-setup.exe` | G3 (`test-g3.ps1`) |
+| `linux` | Docker (`linux/Dockerfile`, `build-distro.sh`) → `max-brh-0.1.28a-linux.tar.xz` + `MAX-BRH-0.1.28a-x86_64.AppImage` | G4 (`gate-g4.sh`) |
+| `publish` | единый `SHA256SUMS`, release-notes из `CHANGELOG [0.1.28a]`, GitHub Release, проверка опубликованных ассетов | G5.1 |
+
+Обязательный ремастер (`target/remaster`) в git не хранится — его собирают обе
+платформенные джобы: `max-brh-qa-tools/remaster-encode` (`sample` + `encode
+--verify`, пин `--locked`).
+
+### Порядок выпуска (bump CHANGELOG → tag → workflow)
+
+- [ ] Версия едина: `max-brh/Cargo.toml` — `0.1.28-alpha`;
+      `max_app::version::DISPLAY_VERSION` — `0.1.28a`;
+      `max-brh-installer/scripts/build-installer.ps1` — `$Version = '0.1.28a'`;
+      `CHANGELOG.md` — секция `## [0.1.28a]` с датой и составом.
+      `Cargo.lock` обновлён (`cargo check`), закоммичен.
+- [ ] Регрессия клиента зелёная на коммите тега (связь с G5.2):
+      `bash max-brh-cicd/ci.sh` (Docker, стадии 1–4) и
+      `.github/workflows/ci.yml` —
+      `gh run list --commit <sha> --workflow ci.yml`.
+- [ ] Оракулы не тронуты:
+      `git status --short max-original max-cpp-port max-original-dasm` — пусто.
+- [ ] Дерево чистое: `git status --short` — пусто (**G5.2**).
+- [ ] Аннотированный тег и публикация:
+      ```sh
+      git tag -a v0.1.28a -m "M.A.X.: Beyond Rust Horizon 0.1.28a"
+      git push origin v0.1.28a      # запускает release.yml
+      gh run list --workflow release.yml --limit 1
+      gh run watch <run-id>         # inventory → windows/linux → publish
+      ```
+- [ ] Все джобы зелёные: `inventory` (G1), `windows` (G3), `linux` (G4),
+      `publish` (G5.1).
+- [ ] Релиз опубликован и проверен:
+      `gh release view v0.1.28a --json tagName,isPrerelease,assets`;
+      `isPrerelease: true`, в ассетах есть `MAX-BRH-0.1.28a-setup.exe`,
+      `max_app-*-windows-x86_64-ui.zip`, `max-brh-0.1.28a-linux.tar.xz`,
+      `MAX-BRH-0.1.28a-x86_64.AppImage`, `SHA256SUMS` и отчёты гейтов.
+- [ ] Подпись **не** включена — заглушка с TODO (решение владельца D4,
+      `development/distro-installers.md` §E).
+
+### Гейт G5.1 — полный прогон по тегу
+
+`publish` запускается только после успешных `inventory`/`windows`/`linux`
+(`needs`), то есть G1/G3/G4 уже зелёные. Затем:
+
+- [ ] единый `SHA256SUMS` собран по четырём дистрибутивам и проверен
+      `sha256sum -c --strict` (ровно один `setup.exe`, один Windows zip, один
+      Linux tar-архив, один AppImage);
+- [ ] release-notes взяты из `CHANGELOG [0.1.28a]` и приложены к релизу;
+- [ ] GitHub Release создан из тега (`prerelease`), ассеты и `SHA256SUMS`
+      действительно опубликованы: `gh release view` + сверка скачанного
+      `SHA256SUMS` с локальным;
+- [ ] свидетельства приложены к релизу: `inventory-report.json` (G1),
+      `g3-result.json` (G3), `g4-summary.json` + `g4.log` (G4),
+      `build-info.json`, `linux-staging-report.json`.
+
+### Гейт G5.2 — тег только на чистом дереве и зелёной регрессии
+
+- [x] Проверка в workflow реализована: в `inventory` — тег аннотированный
+  (`git cat-file -t` = `tag`), `git status --porcelain` пуст, `v<DISPLAY_VERSION>`
+  совпадает с именем тега, `build-installer.ps1` несёт ту же версию; в `publish`
+  те же проверки тега/дерева/версии повторяются перед публикацией. Нарушение —
+  job падает до сборки/публикации.
+- [ ] Регрессия после изменений клиента (связь зафиксирована): перед тегом
+  зелёные `ci.yml` (GitHub Actions) **и** `max-brh-cicd/ci.sh` (тот же прогон в
+  Docker локально) на коммите тега; `ci.yml`/`ci.sh` по-прежнему единственный
+  источник истины по тестам клиента — `release.yml` их не дублирует.
+- [ ] Оракулы не тронуты (проверка в `inventory` и в `stage.ps1`/G3).
+
+### Артефакты 0.1.28a
+
+| Файл | Источник | Гейт |
+|---|---|---|
+| `MAX-BRH-0.1.28a-setup.exe` | `build-installer.ps1` (NSIS 3.x, MUI2-скин) | G3 |
+| `max_app-0.1.28-alpha-windows-x86_64-ui.zip` | `build-windows-ui.ps1` (имя — Cargo-semver; установщик — display-версия) | — |
+| `max-brh-0.1.28a-linux.tar.xz` | `build-distro.sh` (меньший из tar.gz/tar.xz) | G4 |
+| `MAX-BRH-0.1.28a-x86_64.AppImage` | `build-distro.sh` (appimagetool 1.9.1) | G4 |
+| `SHA256SUMS` | `publish` (все четыре файла) | G5.1 |
+
+### Ограничения этапа 5
+
+- Подпись/секреты не включены — заглушка TODO (D4); целостность — `SHA256SUMS`.
+- Дублирующие версии-константы (`stage.ps1` в отчёте, `test-g3.ps1` в дефолтном
+  пути, тег образа в `build-linux-distro.ps1`) при будущем bump нужно обновить
+  вручную; workflow проверяет только `DISPLAY_VERSION` и `build-installer.ps1`
+  и передаёт setup/отчёты явными путями.
+- Windows zip — это каталог клиента без установщика; полная поставка —
+  `setup.exe`.
 
 ## v1.1.0 — итоговый чек-лист (2026-11-16)
 
@@ -711,6 +816,11 @@ D:\dev\toolchain\vcpkg\vcpkg.exe install sdl3:x64-windows
       архива — копирайт Interplay на данные игры.
 
 ## 8. Git tag v1.0.0
+
+> Для `0.1.28a` тег создаётся по разделу «0.1.28a — конвейер релиза» выше: тег
+> `v0.1.28a` запускает `release.yml`, который сам собирает, проверяет
+> (`G1`/`G3`/`G4`) и публикует артефакты (`G5.1`). Раздел ниже — исторический
+> ручной порядок 1.0.0.
 
 Тег создаётся только после зелёных §2–§5 (и §6, если Windows-сборки входят в
 релиз). `release.sh --tag` делает это автоматически; вручную:

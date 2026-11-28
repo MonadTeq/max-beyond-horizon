@@ -124,6 +124,8 @@ Write-Host "  target dir:    $targetDir"
 # via .bat: in cmd `set VAR=value && ...` captures a trailing space into the value,
 # so only `set "VAR=value"`.
 $bat = Join-Path $root "build\win-msvc-build.bat"
+# A clean checkout has no build/ directory (it is gitignored), so create it here.
+New-Item -ItemType Directory -Force (Split-Path -Parent $bat) | Out-Null
 $batLines = @(
     '@echo off',
     "call `"$vcvars`" >nul",

@@ -1,0 +1,611 @@
+name: Release
+
+# Release pipeline for a version tag — stage 5 of
+# max-brh-docs/development/distro-installers.md §F (runbook:
+# max-brh-docs/development/release-checklist.md §0.1.28a).
+#
+#   git status --short                  # must be empty (G5.2)
+#   git tag -a v0.1.28a -m "M.A.X.: Beyond Rust Horizon 0.1.28a"
+#   git push origin v0.1.28a
+#
+# The tag is the only release trigger; a manual run needs the tag name.
+#
+# Jobs and gates:
+#   inventory  G1  asset_inventory -> data-inventory.json: 0 differences against
+#                  max-brh-installer/data-inventory.json, two byte-identical runs,
+#                  oracles untouched. Also the G5.2 tag/tree/version check.
+#   windows    G3  native MSVC + vcpkg SDL3 (build-windows-ui.ps1) -> portable
+#                  staging (stage.ps1) -> makensis -> MAX-BRH-<ver>-setup.exe ->
+#                  silent install/uninstall/upgrade smoke (test-g3.ps1).
+#   linux      G4  Docker (Ubuntu 22.04 + Rust 1.94.0) -> tar.xz + AppImage
+#                  (build-distro.sh) -> unpack/run/AppImage smoke (gate-g4.sh).
+#   publish    G5.1 combined SHA256SUMS over every artifact -> GitHub Release
+#                  with the CHANGELOG [<ver>] section -> published assets checked.
+#
+# The mandatory HD remaster (target/remaster, outside git) is rebuilt in both
+# platform jobs by max-brh-qa-tools/remaster-encode, so the packages never depend
+# on a developer's local target/ directory.
+#
+# Artifacts are NOT signed: signing/secrets are the owner decision D4
+# (distro-installers.md §E) and remain a documented placeholder in `publish`.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing annotated release tag (e.g. v0.1.28a)'
+        required: true
+        type: string
+
+# A release is never cancelled by a later tag push: one tag, one pipeline run.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+# Default is read-only; only `publish` raises contents: write.
+permissions:
+  contents: read
+
+env:
+  # `github.event.inputs` is empty on a tag push; the ref name is the tag there.
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RUST_TOOLCHAIN: '1.94.0'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # G1: the distribution manifest cannot drift from the loaders.
+  # ---------------------------------------------------------------------------
+  inventory:
+    name: G1 inventory (data-inventory.json)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout the release tag with both read-only oracles
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: 'Gate G5.2: annotated tag, clean tree, version consistency'
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          if [ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" != "tag" ]; then
+            echo "::error::G5.2: ${RELEASE_TAG} is not an annotated tag; create it with git tag -a"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::G5.2: the working tree is dirty; a release tag is cut on a clean tree only"
+            git status --short
+            exit 1
+          fi
+          version="$(sed -n 's/^pub const DISPLAY_VERSION: &str = "\(.*\)";$/\1/p' max-brh/crates/max_app/src/version.rs | head -n 1)"
+          if [ -z "$version" ] || [ "$RELEASE_TAG" != "v$version" ]; then
+            echo "::error::G5.2: tag ${RELEASE_TAG} does not match DISPLAY_VERSION '${version:-<none>}'"
+            exit 1
+          fi
+          if ! grep -qF "\$Version = '${version}'" max-brh-installer/scripts/build-installer.ps1; then
+            echo "::error::G5.2: build-installer.ps1 does not produce version ${version}"
+            exit 1
+          fi
+          echo "G5.2 OK: ${RELEASE_TAG} = v${version}, tree clean, installer version matches"
+
+      - name: 'Gate G1: rebuild the manifest from the oracles twice'
+        run: |
+          set -euo pipefail
+          inventory=max-brh-installer/data-inventory.json
+          # Hard links keep the 368 MiB of game data out of the runner's disk
+          # copy. Symlinks would not work: asset_inventory scans the directory with
+          # DirEntry::file_type(), which does not follow links, so every symlinked
+          # file would look like a non-file and the manifest would lose it.
+          data_dir="$PWD/.tmp/inventory-data"
+          rm -rf "$data_dir"
+          mkdir -p "$data_dir"
+
+          # The manifest is built over the union of the two read-only oracles —
+          # the same source roots stage.ps1 and build-distro.sh read.
+          # max-original wins over max-cpp-port/assets on a name clash.
+          while IFS= read -r rel; do
+            src=""
+            for root in "$PWD/max-original" "$PWD/max-cpp-port/assets"; do
+              if [ -f "$root/$rel" ]; then
+                src="$root/$rel"
+                break
+              fi
+            done
+            if [ -z "$src" ]; then
+              echo "::error::G1: no oracle source for $rel"
+              exit 1
+            fi
+            ln "$src" "$data_dir/$rel"
+          done < <(jq -r '.files[].path' "$inventory")
+
+          expected="$(jq -r '.totals.files' "$inventory")"
+          linked="$(find "$data_dir" -maxdepth 1 -type f | wc -l)"
+          echo "G1: $linked hard-linked oracle files (the manifest lists $expected)"
+          test "$linked" = "$expected"
+
+          cd max-brh
+          cargo run --quiet --locked -p max_assets --example asset_inventory -- \
+            "$data_dir" --out "$RUNNER_TEMP/inventory-run1.json"
+          cargo run --quiet --locked -p max_assets --example asset_inventory -- \
+            "$data_dir" --out "$RUNNER_TEMP/inventory-run2.json"
+
+          cmp "$RUNNER_TEMP/inventory-run1.json" "$RUNNER_TEMP/inventory-run2.json"
+          echo "G1: two runs are byte-identical (deterministic manifest)"
+
+          if ! diff -u ../max-brh-installer/data-inventory.json "$RUNNER_TEMP/inventory-run1.json"; then
+            echo "::error::G1: data-inventory.json drifted from the oracle data (0 differences required)"
+            exit 1
+          fi
+          echo "G1: manifest matches max-brh-installer/data-inventory.json (0 differences)"
+
+      - name: 'Gate G1: oracles untouched'
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain -- max-original max-cpp-port max-original-dasm)"
+          if [ -n "$dirty" ]; then
+            echo "::error::G1: the oracles are modified"
+            echo "$dirty"
+            exit 1
+          fi
+          echo "G1 OK: max-original/, max-cpp-port/, max-original-dasm/ are clean"
+
+      - name: Write the G1 evidence report
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          jq -n \
+            --arg gate G1 \
+            --arg tag "$RELEASE_TAG" \
+            --arg commit "$GITHUB_SHA" \
+            --arg manifest_sha256 "$(sha256sum max-brh-installer/data-inventory.json | cut -d' ' -f1)" \
+            --arg generated_sha256 "$(sha256sum "$RUNNER_TEMP/inventory-run1.json" | cut -d' ' -f1)" \
+            --argjson files "$(jq '.totals.files' max-brh-installer/data-inventory.json)" \
+            --argjson bytes "$(jq '.totals.bytes' max-brh-installer/data-inventory.json)" \
+            '{schema: 1, gate: $gate, tag: $tag, commit: $commit,
+              manifest: "max-brh-installer/data-inventory.json",
+              manifest_sha256: $manifest_sha256,
+              generated_sha256: $generated_sha256,
+              deterministic: true, differences: 0,
+              files: $files, bytes: $bytes, oracles_untouched: true}' \
+            > release-assets/inventory-report.json
+          cat release-assets/inventory-report.json
+
+      - name: Upload the G1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventory-release
+          path: release-assets/inventory-report.json
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # G3: portable Windows catalog and the NSIS installer.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: G3 Windows NSIS installer
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the release tag (SDL3 + Klei oracle submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }} (MSVC)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache vcpkg (SDL3 x64-windows)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: vcpkg-sdl3-x64-windows-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: vcpkg-sdl3-x64-windows-
+
+      - name: Install vcpkg + SDL3 (the sdl-vcpkg feature needs VCPKG_ROOT)
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          if (-not (Test-Path (Join-Path $vcpkg 'bootstrap-vcpkg.bat'))) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkg
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg clone failed ($LASTEXITCODE)" }
+          }
+          & (Join-Path $vcpkg 'bootstrap-vcpkg.bat') -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed ($LASTEXITCODE)" }
+          & (Join-Path $vcpkg 'vcpkg.exe') install sdl3:x64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install sdl3:x64-windows failed ($LASTEXITCODE)" }
+          "VCPKG_ROOT=$vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKG_DEFAULT_TRIPLET=x64-windows" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build the mandatory HD remaster (R2 encoder, target/remaster)
+        shell: pwsh
+        run: |
+          cargo run --release --locked --manifest-path max-brh-qa-tools\remaster-encode\Cargo.toml -- sample --root .
+          if ($LASTEXITCODE -ne 0) { throw "remaster-encode sample failed ($LASTEXITCODE)" }
+          cargo run --release --locked --manifest-path max-brh-qa-tools\remaster-encode\Cargo.toml -- encode --root . --verify
+          if ($LASTEXITCODE -ne 0) { throw "remaster-encode encode failed ($LASTEXITCODE)" }
+          Get-ChildItem target\remaster | Select-Object Name, Length
+
+      - name: Build the Windows UI client (MSVC + vcpkg SDL3 + sound)
+        shell: pwsh
+        run: |
+          & powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1 -VcpkgRoot $env:VCPKG_ROOT
+          if ($LASTEXITCODE -ne 0) { throw "build-windows-ui.ps1 failed ($LASTEXITCODE)" }
+
+      - name: Stage the portable catalog (data + remaster, sha256 verified)
+        shell: pwsh
+        run: |
+          $release = Join-Path $PWD 'bin\target\release'
+          & powershell -ExecutionPolicy Bypass -File max-brh-installer\scripts\stage.ps1 -ReleaseDir $release
+          if ($LASTEXITCODE -ne 0) { throw "stage.ps1 failed ($LASTEXITCODE)" }
+
+      - name: Install NSIS 3.x
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+
+      - name: Build MAX-BRH-<version>-setup.exe (makensis)
+        shell: pwsh
+        run: |
+          & powershell -ExecutionPolicy Bypass -File max-brh-installer\scripts\build-installer.ps1 -SkipStage
+          if ($LASTEXITCODE -ne 0) { throw "build-installer.ps1 failed ($LASTEXITCODE)" }
+
+      - name: 'Gate G3: silent install, upgrade, uninstall, oracles'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem 'max-brh-installer\dist\MAX-BRH-*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'the NSIS build produced no MAX-BRH-*-setup.exe' }
+          & powershell -ExecutionPolicy Bypass -File max-brh-installer\scripts\test-g3.ps1 -Setup $setup.FullName
+          if ($LASTEXITCODE -ne 0) { throw "test-g3.ps1 failed ($LASTEXITCODE)" }
+
+      - name: Collect the release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item 'max-brh-installer\dist\MAX-BRH-*-setup.exe' release-assets\
+          Copy-Item 'max-brh-installer\dist\build-info.json' release-assets\
+          Copy-Item 'bin\release\max_app-*-windows-x86_64-ui.zip' release-assets\
+          Copy-Item '.tmp\g3\g3-result.json' release-assets\
+          Get-ChildItem release-assets | Select-Object Name, Length
+
+      - name: Upload the Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # G4: portable Linux tar archive and AppImage.
+  # ---------------------------------------------------------------------------
+  linux:
+    name: G4 Linux tar.xz + AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      IMAGE: max-brh-linux-dist:release
+    steps:
+      - name: Checkout the release tag (SDL3 + Klei oracle submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Free disk space (Docker image, cargo target, 368 MiB of data)
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Build the packaging image (Ubuntu 22.04 + Rust 1.94.0 + appimagetool)
+        run: |
+          set -euo pipefail
+          docker build --progress=plain \
+            -t "$IMAGE" \
+            -f max-brh-installer/linux/Dockerfile \
+            max-brh-installer/linux
+
+      - name: Build the HD remaster + the Linux distribution (Docker)
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/linux-dist"
+          rm -rf "$work"
+          mkdir -p "$work"
+          docker run --rm \
+            -v "$PWD:/src" \
+            -v "$work:/work" \
+            -e FEATURES=sdl-from-source,sound \
+            -e CARGO_HOME=/work/cargo-home \
+            -e CARGO_TARGET_DIR=/work/target/remaster-encode \
+            -w /src/max-brh-qa-tools/remaster-encode \
+            "$IMAGE" bash -c '
+              set -euo pipefail
+              cargo run --release --locked -- sample --root /src --out /work/remaster-sources
+              cargo run --release --locked -- encode --root /src --sources /work/remaster-sources --out /src/target/remaster --verify
+              bash /src/max-brh-installer/linux/build-distro.sh
+            '
+
+      - name: 'Gate G4: unpack, run headless, AppImage under Xvfb'
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/linux-dist"
+          docker run --rm -v "$PWD:/src" -v "$work:/work" "$IMAGE" \
+            bash /src/max-brh-installer/linux/gate-g4.sh
+          jq -e '.failed == 0' "$work/g4/g4-summary.json" >/dev/null
+          jq -r '"G4: \(.passed) passed, \(.failed) failed — \(.archive.name) + \(.appimage.name)"' \
+            "$work/g4/g4-summary.json"
+
+      - name: Collect the release assets
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/linux-dist"
+          mkdir -p release-assets
+          archive="$(find "$work/out" -maxdepth 1 -type f \( -name 'max-brh-*-linux.tar.xz' -o -name 'max-brh-*-linux.tar.gz' \) -print -quit)"
+          appimage="$(find "$work/out" -maxdepth 1 -type f -name 'MAX-BRH-*-x86_64.AppImage' -print -quit)"
+          if [ -z "$archive" ] || [ -z "$appimage" ]; then
+            echo "::error::the Linux build produced no tar archive or no AppImage"
+            exit 1
+          fi
+          cp "$archive" "$appimage" release-assets/
+          cp "$work/out/staging-report.json" release-assets/linux-staging-report.json
+          cp "$work/g4/g4-summary.json" release-assets/g4-summary.json
+          cp "$work/g4/g4.log" release-assets/g4.log
+          ls -l release-assets
+
+      - name: Upload the Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: release-assets/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # G5.1: one SHA256SUMS over every artifact, the GitHub Release, and proof that
+  # every asset was published.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: G5.1 publish (SHA256SUMS + GitHub Release)
+    needs: [inventory, windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 'Gate G5.2: annotated tag, clean tree, version consistency'
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          if [ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" != "tag" ]; then
+            echo "::error::G5.2: ${RELEASE_TAG} is not an annotated tag"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::G5.2: the working tree is dirty"
+            git status --short
+            exit 1
+          fi
+          version="$(sed -n 's/^pub const DISPLAY_VERSION: &str = "\(.*\)";$/\1/p' max-brh/crates/max_app/src/version.rs | head -n 1)"
+          if [ -z "$version" ] || [ "$RELEASE_TAG" != "v$version" ]; then
+            echo "::error::G5.2: tag ${RELEASE_TAG} does not match DISPLAY_VERSION '${version:-<none>}'"
+            exit 1
+          fi
+          echo "G5.2 OK: ${RELEASE_TAG} = v${version}"
+
+      - name: Download every release artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Show the downloaded artifacts
+        run: ls -l release-assets
+
+      - name: 'Gate G5.1: combined SHA256SUMS over every artifact'
+        run: |
+          set -euo pipefail
+          cd release-assets
+
+          count() {
+            find . -maxdepth 1 -type f -name "$1" | wc -l
+          }
+          for pattern in 'MAX-BRH-*-setup.exe' 'max_app-*-windows-x86_64-ui.zip' 'MAX-BRH-*-x86_64.AppImage'; do
+            n="$(count "$pattern")"
+            if [ "$n" -ne 1 ]; then
+              echo "::error::G5.1: expected exactly one $pattern, found $n"
+              exit 1
+            fi
+          done
+          archives="$(count 'max-brh-*-linux.tar.xz')"
+          if [ "$archives" -eq 0 ]; then
+            archives="$(count 'max-brh-*-linux.tar.gz')"
+          fi
+          if [ "$archives" -ne 1 ]; then
+            echo "::error::G5.1: expected exactly one Linux tar archive, found $archives"
+            exit 1
+          fi
+
+          mapfile -t files < <(find . -maxdepth 1 -type f \( \
+            -name 'MAX-BRH-*-setup.exe' -o \
+            -name 'max_app-*-windows-x86_64-ui.zip' -o \
+            -name 'max-brh-*-linux.tar.xz' -o \
+            -name 'max-brh-*-linux.tar.gz' -o \
+            -name 'MAX-BRH-*-x86_64.AppImage' \) -printf '%f\n' | sort)
+          printf '%s\n' "${files[@]}"
+          if [ "${#files[@]}" -ne 4 ]; then
+            echo "::error::G5.1: expected 4 distributables, got ${#files[@]}"
+            exit 1
+          fi
+
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c --strict SHA256SUMS
+          echo "G5.1: SHA256SUMS matches all ${#files[@]} artifacts"
+
+      - name: Build the release notes from CHANGELOG [<version>]
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^pub const DISPLAY_VERSION: &str = "\(.*\)";$/\1/p' max-brh/crates/max_app/src/version.rs | head -n 1)"
+          awk -v header="## [${version}]" '
+            index($0, header) == 1 { inside = 1 }
+            inside && /^## \[/ && index($0, header) != 1 { exit }
+            inside { print }
+          ' CHANGELOG.md > changelog-section.md
+          if [ ! -s changelog-section.md ]; then
+            echo "::error::CHANGELOG.md has no [${version}] section"
+            exit 1
+          fi
+
+          setup="$(find release-assets -maxdepth 1 -type f -name 'MAX-BRH-*-setup.exe' -printf '%f\n' -quit)"
+          zip="$(find release-assets -maxdepth 1 -type f -name 'max_app-*-windows-x86_64-ui.zip' -printf '%f\n' -quit)"
+          archive="$(find release-assets -maxdepth 1 -type f \( -name 'max-brh-*-linux.tar.xz' -o -name 'max-brh-*-linux.tar.gz' \) -printf '%f\n' -quit)"
+          appimage="$(find release-assets -maxdepth 1 -type f -name 'MAX-BRH-*-x86_64.AppImage' -printf '%f\n' -quit)"
+
+          {
+            echo "M.A.X.: Beyond Rust Horizon ${version} — Windows x86_64 + Linux x86_64"
+            echo
+            echo "Портативные поставки: игра, данные и HD-ремастер — в одном каталоге,"
+            echo "системная установка не нужна. Это пре-альфа (до 1.0 версию не поднимать)."
+            echo
+            cat changelog-section.md
+            echo
+            echo "## Артефакты"
+            echo
+            echo "| Файл | Платформа | Что внутри |"
+            echo "|---|---|---|"
+            echo "| \`${setup}\` | Windows x86_64 | NSIS-мастер (RU/EN): \`game.exe\` + SDL3 + data + remaster; тихая установка \`/S /D=<каталог>\` |"
+            echo "| \`${zip}\` | Windows x86_64 | каталог клиента без установщика (MSVC + vcpkg SDL3, звук) |"
+            echo "| \`${archive}\` | Linux x86_64 | распаковал → \`./run.sh\` (или \`./max-brh\`); сейвы внутри каталога |"
+            echo "| \`${appimage}\` | Linux x86_64 | один файл; \`saves/\`/\`missions/\` — рядом с образом |"
+            echo
+            echo "## Контрольные суммы"
+            echo
+            echo '```'
+            cat release-assets/SHA256SUMS
+            echo '```'
+            echo
+            echo "Проверка после скачивания: \`sha256sum -c SHA256SUMS\`."
+            echo
+            echo "## Свидетельства гейтов"
+            echo
+            echo "- G1 — \`inventory-report.json\`: \`data-inventory.json\` совпадает с оракулами, 0 расхождений, два прогона байт-в-байт."
+            echo "- G3 — \`g3-result.json\`: тихая установка/деинсталляция, апгрейд, оракулы не тронуты."
+            echo "- G4 — \`g4-summary.json\`, \`g4.log\`: распаковка, запуск из чужого CWD, AppImage под Xvfb."
+            echo "- Артефакты не подписаны: решение владельца D4 ещё открыто (distro-installers.md §E)."
+          } > release-notes.generated.md
+          cat release-notes.generated.md
+
+      # TODO(D4) — signing is intentionally disabled until the owner decides on a
+      # key/certificate (distro-installers.md §E, decision D4). When it lands:
+      #   1. store the secrets (e.g. RELEASE_SIGNING_KEY, RELEASE_SIGNING_CERTIFICATE);
+      #   2. sign setup.exe with signtool, the AppImage with gpg, the archives with
+      #      gpg --detach-sign;
+      #   3. attach the *.sig/*.asc files and verify them after publication.
+      # The size of this step is deliberately zero today: the release is unsigned.
+      - name: Signing placeholder (owner decision D4 — not enabled)
+        run: |
+          echo "::notice title=Unsigned release::Artifact signing is not enabled: owner decision D4 is still open (max-brh-docs/development/distro-installers.md §E). The release ships unsigned with SHA256SUMS only."
+
+      - name: Publish the GitHub Release (prerelease)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: 'M.A.X.: Beyond Rust Horizon ${{ env.RELEASE_TAG }}'
+          body_path: release-notes.generated.md
+          prerelease: true
+          draft: false
+          # The Linux archive is .tar.xz or .tar.gz (build-distro.sh keeps the
+          # smaller one), so one of the two patterns never matches.
+          fail_on_unmatched_files: false
+          files: |
+            release-assets/MAX-BRH-*-setup.exe
+            release-assets/max_app-*-windows-x86_64-ui.zip
+            release-assets/max-brh-*-linux.tar.xz
+            release-assets/max-brh-*-linux.tar.gz
+            release-assets/MAX-BRH-*-x86_64.AppImage
+            release-assets/SHA256SUMS
+            release-assets/build-info.json
+            release-assets/linux-staging-report.json
+            release-assets/g4-summary.json
+            release-assets/g4.log
+            release-assets/g3-result.json
+            release-assets/inventory-report.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Gate G5.1: verify the published assets'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json tagName,isPrerelease,assets > release-view.json
+          cat release-view.json
+
+          jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag' release-view.json >/dev/null
+          jq -e '.isPrerelease == true' release-view.json >/dev/null
+
+          version="$(sed -n 's/^pub const DISPLAY_VERSION: &str = "\(.*\)";$/\1/p' max-brh/crates/max_app/src/version.rs | head -n 1)"
+          names="$(jq -r '.assets[].name' release-view.json | sort)"
+          for required in \
+            SHA256SUMS \
+            inventory-report.json \
+            build-info.json \
+            linux-staging-report.json \
+            g4-summary.json \
+            g3-result.json \
+            "MAX-BRH-${version}-setup.exe" \
+            "MAX-BRH-${version}-x86_64.AppImage"; do
+            if ! grep -qxF "$required" <<< "$names"; then
+              echo "::error::G5.1: release asset is missing: $required"
+              exit 1
+            fi
+          done
+          if ! grep -qE '^max_app-.*-windows-x86_64-ui\.zip$' <<< "$names"; then
+            echo "::error::G5.1: the Windows client zip is missing"
+            exit 1
+          fi
+          archive_count="$(jq -r '[.assets[].name | select(test("^max-brh-.*-linux\\.tar\\.(gz|xz)$"))] | length' release-view.json)"
+          if [ "$archive_count" -ne 1 ]; then
+            echo "::error::G5.1: expected exactly one published Linux archive, found $archive_count"
+            exit 1
+          fi
+
+          mkdir -p verify
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS --dir verify --clobber
+          cmp verify/SHA256SUMS release-assets/SHA256SUMS
+          echo "G5.1 OK: release ${RELEASE_TAG} published all artifacts and SHA256SUMS"
+
+      - name: Publish the gate summary
+        if: always()
+        run: |
+          {
+            echo "## Release ${RELEASE_TAG}"
+            echo
+            echo "| Gate | Job | Result |"
+            echo "|---|---|---|"
+            echo "| G1 inventory | inventory | ${{ needs.inventory.result }} |"
+            echo "| G3 Windows NSIS | windows | ${{ needs.windows.result }} |"
+            echo "| G4 Linux | linux | ${{ needs.linux.result }} |"
+            echo
+            echo "SHA256SUMS and the published assets are verified by the G5.1 steps above."
+          } >> "$GITHUB_STEP_SUMMARY"

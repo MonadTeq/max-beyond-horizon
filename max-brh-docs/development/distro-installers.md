@@ -1,6 +1,6 @@
 # Дистрибутивы и графические установщики — план
 
-Версия 0.1 (Архитектор) · 2026-11-28. Идея: ремейк устанавливается БЕЗ оригинальной игры (standalone), ресурсы в HD.
+Версия 0.2 (Архитектор) · 2026-11-28. Этап 5 — релизный конвейер (`.github/workflows/release.yml`). Идея: ремейк устанавливается БЕЗ оригинальной игры (standalone), ресурсы в HD.
 
 **Корень проекта инсталлятора: `max-brh-installer/`** (решение владельца 2026-11-28) — ресурсы установщика (иконки, баннеры, рамки UI) и скрипты NSIS/пакетирования живут там.
 
@@ -64,9 +64,41 @@
 | 2 | Портативная структура (маркер `data`, `settings.jsonc` приоритет) | G2: smoke — игра из выбранного каталога читает/пишет всё ВНУТРИ него; staging-макет 0 нехваток |
 | 3 | NSIS-портативный установщик (каталог → всё внутрь, uninstall.exe) | G3: тихая установка в выбранный каталог, деинсталляция чистит ТОЛЬКО каталог, сейвы внутри переживают апгрейд |
 | 4 | Linux tar.gz (переносимый) + опционально AppImage | G4: распаковал → запустил → сейвы в каталоге игры; AppImage запускается |
-| 5 | CI `release.yml` по тегу v* (Windows zip+NSIS, Linux tar.gz/AppImage, SHA256SUMS) | G5: все гейты зелёные, артефакты опубликованы |
+| 5 | CI `release.yml` по тегу v* (Windows zip+NSIS, Linux tar.xz/AppImage, SHA256SUMS) | G5.1: полный прогон по тегу — G1/G3/G4 зелёные, SHA256SUMS сходится, артефакты опубликованы; G5.2: тег только на чистом дереве, регрессия `ci.yml`/`ci.sh` зелёная |
 
 Этап 4 реализован: сборка и упаковка — `max-brh-installer/linux/` (`Dockerfile` на Ubuntu 22.04 + Rust 1.94.0, `build-distro.sh`), гейт — `gate-g4.sh` в том же образе, запуск — `max-brh-installer/scripts/build-linux-distro.ps1`. Гейт G4 прогоняется по готовым артефактам в чистом каталоге контейнера и пишет `g4-summary.json`/`g4.log` рядом с ними; описание проверок — `max-brh-installer/README.md`, раздел «Linux: переносимый tar.gz + AppImage».
+
+Этап 5 реализован: **`.github/workflows/release.yml`** — единственный релизный конвейер; событие — тег `v*` (ручной запуск — `workflow_dispatch` с именем тега). Джобы и гейты:
+
+| Джоба | Что делает | Гейт |
+|---|---|---|
+| `inventory` | `asset_inventory` по объединению оракулов (`max-original/` + `max-cpp-port/assets/`) дважды → `data-inventory.json`; проверка тега/дерева/версии | G1: 0 расхождений с `max-brh-installer/data-inventory.json`, два прогона байт-в-байт, оракулы чисты; G5.2 |
+| `windows` | нативный MSVC + vcpkg SDL3 (`build-windows-ui.ps1`) → `stage.ps1` → `makensis` (`build-installer.ps1`) → `MAX-BRH-0.1.28a-setup.exe` | G3: `test-g3.ps1` (тихая установка/деинсталляция, апгрейд, оракулы) |
+| `linux` | Docker (`linux/Dockerfile`, `build-distro.sh`) → `max-brh-0.1.28a-linux.tar.xz` + `MAX-BRH-0.1.28a-x86_64.AppImage` | G4: `gate-g4.sh` (распаковка, запуск из чужого CWD, AppImage под Xvfb) |
+| `publish` | единый `SHA256SUMS` по всем артефактам, release-notes из `CHANGELOG [0.1.28a]`, GitHub Release, проверка опубликованных ассетов | G5.1: `sha256sum -c` сходится, все артефакты опубликованы |
+
+Обязательный HD-ремастер (`target/remaster`) в git не хранится, поэтому обе платформенные джобы собирают его энкодером `max-brh-qa-tools/remaster-encode` (`sample` + `encode --verify`); пакеты не зависят от локального `target/` разработчика.
+
+**Как катить релиз** (полный чек-лист — `release-checklist.md` §0.1.28a):
+
+```sh
+# 1. bump CHANGELOG.md: секция ## [0.1.28a] с датой и составом
+# 2. версия: max-brh/Cargo.toml (0.1.28-alpha), max_app::version::DISPLAY_VERSION
+#    (0.1.28a), max-brh-installer/scripts/build-installer.ps1 ($Version)
+# 3. регрессия зелёная: bash max-brh-cicd/ci.sh + .github/workflows/ci.yml
+git status --short                 # пусто (G5.2)
+git tag -a v0.1.28a -m "M.A.X.: Beyond Rust Horizon 0.1.28a"
+git push origin v0.1.28a           # запускает release.yml
+gh run list --workflow release.yml --limit 1
+gh run watch <run-id>              # G1 → G3/G4 → publish (G5.1)
+gh release view v0.1.28a --json assets
+```
+
+**Гейт G5.1** (в `publish`): конвейер запускается только при успешных `inventory`/`windows`/`linux`; `SHA256SUMS` собирается по четырём дистрибутивам (`setup.exe`, Windows zip, Linux tar.xz, AppImage) и проверяется `sha256sum -c`; после создания GitHub Release проверяется, что все ассеты и `SHA256SUMS` действительно опубликованы (сверка скачанного `SHA256SUMS` с локальным). Релиз помечается `prerelease` — проект в пре-альфе.
+
+**Гейт G5.2**: тег создаётся только на чистом дереве. `release.yml` проверяет в `inventory` тег (`git cat-file -t` = `tag`), `git status --porcelain`, `v<DISPLAY_VERSION>` и версию в `build-installer.ps1`; в `publish` те же проверки тега/дерева/версии повторяются перед публикацией. Связь с регрессией: перед тегом обязательны зелёные `.github/workflows/ci.yml` (GitHub) и `max-brh-cicd/ci.sh` (локально/Docker, стадии 1–4) на коммите тега — см. `release-checklist.md` §0.1.28a (G5.2).
+
+Подпись и секреты **не включены**: в `publish` стоит заглушка с TODO (решение владельца D4, §E). До решения D4 релиз публикуется неподписанным, целостность обеспечивает `SHA256SUMS`.
 
 ## Guardrails
 
