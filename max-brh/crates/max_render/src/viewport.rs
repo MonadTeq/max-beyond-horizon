@@ -526,6 +526,34 @@ pub fn draw_order(units: &[(i16, i16)]) -> Vec<usize> {
     order
 }
 
+/// Drawing order of a set of positions with explicit z-layers.
+///
+/// The key is `(layer, y, x)`: a unit of a higher layer is drawn after **all**
+/// units of the lower ones, then the "ground" (`y`) and `x` order of
+/// [`draw_order`] applies inside a layer. This mirrors
+/// `UnitInfoGroup::RenderGroups` (`max-cpp-port/src/unitinfogroup.cpp:181-237`),
+/// which draws whole groups in a fixed order instead of sorting every sprite by
+/// its cell alone — in particular the aircraft groups are drawn after the
+/// ground/sea/stationary ones, so an aircraft is always over the sprite of its
+/// cell (and the sprite next to it while it crosses a cell border).
+///
+/// `layers[index]` is the layer of unit `index`; a missing entry means layer `0`.
+/// Returns indices of the source slice; the sort is stable, so units of the same
+/// layer and position keep the source order.
+pub fn draw_order_layered(units: &[(i16, i16)], layers: &[u8]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..units.len()).collect();
+
+    order.sort_by_key(|&index| {
+        (
+            layers.get(index).copied().unwrap_or(0),
+            units[index].1,
+            units[index].0,
+        )
+    });
+
+    order
+}
+
 #[cfg(test)]
 #[path = "viewport_tests.rs"]
 mod tests;

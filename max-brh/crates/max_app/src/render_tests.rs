@@ -74,6 +74,139 @@ fn the_flight_bob_follows_shake_air() {
     );
 }
 
+/// `UnitInfo::ShakeWater` (`unitinfo.cpp:4592-4634`): every 32nd order tick the
+/// ship is pushed one pixel along `DIRECTION_OFFSETS[moved / 64]` and pulled back
+/// on the next 32nd; the shadow moves twice as far (`shadow_offset -= offset`).
+#[test]
+fn the_water_bob_follows_shake_water() {
+    use max_core::geo::Point;
+
+    // `moved = 0..31`: north, one pixel out of the anchor.
+    assert_eq!(shake_water_offset(0), (0, -1));
+    assert_eq!(shake_water_offset(1), (0, -1));
+    assert_eq!(shake_water_offset(31), (0, -1));
+    // `moved = 32..63`: the return offset — the hull is back on its anchor.
+    assert_eq!(shake_water_offset(32), (0, 0));
+    assert_eq!(shake_water_offset(63), (0, 0));
+    // `moved = 64..95`: the next direction, north-east.
+    assert_eq!(shake_water_offset(64), (1, -1));
+    assert_eq!(shake_water_offset(96), (0, 0));
+    // `moved = 128`: east.
+    assert_eq!(shake_water_offset(128), (1, 0));
+    // The oracle reads `DIRECTION_OFFSETS[moved / 64]` past its end after 512
+    // ticks; the presentation wraps the direction.
+    assert_eq!(shake_water_offset(512), (0, -1));
+
+    // The shadow: the hull anchor carries `offset`, the stored value takes
+    // `-offset`, so the shadow ends `2 * offset` from its base.
+    let mut presentation = UnitPresentation::new();
+    presentation.shadow_offset = Point::new(-64, -64);
+    assert_eq!(
+        water_bobbed_shadow_offset(&presentation, (0, -1)),
+        Point::new(-64, -63),
+        "shadow_offset -= offset"
+    );
+    let rocking = water_bobbed_shadow_offset(&presentation, (0, -1));
+    assert_eq!(
+        (-rocking.x, -rocking.y),
+        (64, 63),
+        "the shadow moves 2 × 1 px north of its base"
+    );
+    assert_eq!(
+        water_bobbed_shadow_offset(&presentation, (0, 0)),
+        presentation.shadow_offset,
+        "no rock — the stored shadow offset is unchanged"
+    );
+}
+
+/// The z-layers repeat `UnitInfoGroup::RenderGroups`
+/// (`unitinfogroup.cpp:181-237`): aircraft are drawn after every ground unit,
+/// effects on top of all.
+#[test]
+fn the_unit_draw_layers_follow_the_render_groups() {
+    use max_core::enums::{unit_flags, UnitOrder, UnitType};
+    use max_core::team::TeamId;
+    use max_core::unit::{UnitId, UnitInfo};
+
+    let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+    tank.flags = unit_flags::MOBILE_LAND_UNIT;
+    assert_eq!(unit_draw_layer(&tank), 0);
+
+    let mut landed = UnitInfo::new(UnitType::Fighter, TeamId::RED, UnitId(2));
+    landed.flags = unit_flags::MOBILE_AIR_UNIT;
+    landed.orders = UnitOrder::Await;
+    assert_eq!(unit_draw_layer(&landed), 1, "air_units_on_ground");
+
+    let mut hovering = landed.clone();
+    hovering.flags |= unit_flags::HOVERING;
+    assert_eq!(unit_draw_layer(&hovering), 3, "air_units_in_air");
+
+    let mut taking_off = landed.clone();
+    taking_off.orders = UnitOrder::Move;
+    assert_eq!(
+        unit_draw_layer(&taking_off),
+        3,
+        "an aircraft with `ORDER_MOVE` is `air_units_in_air` too"
+    );
+
+    let mut rocket = UnitInfo::new(UnitType::Rocket, TeamId::RED, UnitId(3));
+    rocket.flags = unit_flags::MISSILE_UNIT;
+    assert_eq!(unit_draw_layer(&rocket), 2, "rockets");
+
+    let mut smoke = UnitInfo::new(UnitType::RocketSmoke, TeamId::RED, UnitId(4));
+    smoke.flags = unit_flags::MISSILE_UNIT | unit_flags::ANIMATED | unit_flags::EXPLODING;
+    assert_eq!(
+        unit_draw_layer(&smoke),
+        2,
+        "`RKTSMOKE` stays in the rockets group"
+    );
+
+    let mut blast = UnitInfo::new(UnitType::LandExplosion, TeamId::RED, UnitId(5));
+    blast.flags = unit_flags::STATIONARY | unit_flags::ANIMATED | unit_flags::EXPLODING;
+    assert_eq!(unit_draw_layer(&blast), 4, "air_particles_explosions");
+}
+
+/// Death rule: a unit killed with `hits == 0` in `ORDER_STATE_DESTROY` has no
+/// hull sprite any more; explosion effects and the `INFANTRY`/`COMMANDO` own
+/// death animation are the documented exceptions.
+#[test]
+fn the_hull_of_a_dying_unit_is_not_drawn() {
+    use max_core::enums::{unit_flags, UnitOrderState, UnitType};
+    use max_core::team::TeamId;
+    use max_core::unit::{UnitId, UnitInfo};
+
+    let mut tank = UnitInfo::new(UnitType::Tank, TeamId::RED, UnitId(1));
+    tank.hits = 5;
+    assert!(hull_sprite_drawn(&tank), "a live unit is drawn");
+
+    // `UnitsManager_StartExplosion` (`units_manager.cpp:3995-3997`).
+    tank.hits = 0;
+    tank.state = UnitOrderState::Destroy;
+    assert!(!hull_sprite_drawn(&tank), "the hull of a dying unit is gone");
+    assert!(!dead_unit_sprite_drawn(&tank));
+
+    // `LNDEXPLD`/`HITEXPLD` have `hits == 0` for their whole life by `SC_ATTRI`
+    // and are the death animation themselves.
+    let mut blast = UnitInfo::new(UnitType::LandExplosion, TeamId::RED, UnitId(2));
+    blast.flags = unit_flags::STATIONARY | unit_flags::ANIMATED | unit_flags::EXPLODING;
+    blast.state = UnitOrderState::Destroy;
+    assert!(hull_sprite_drawn(&blast));
+
+    // A flying projectile has `hits == 0` too, but is not in the death state.
+    let mut rocket = UnitInfo::new(UnitType::Rocket, TeamId::RED, UnitId(3));
+    rocket.flags = unit_flags::MISSILE_UNIT;
+    assert!(hull_sprite_drawn(&rocket));
+
+    // `INFANTRY`/`COMMANDO`: the own 8-frame block is the death animation
+    // (`units_manager.cpp:3932-3946`).
+    let mut infantry = UnitInfo::new(UnitType::Infantry, TeamId::RED, UnitId(4));
+    infantry.hits = 0;
+    infantry.state = UnitOrderState::Destroy;
+    infantry.image_base = DEATH_ANIMATION_IMAGE_BASE;
+    assert!(hull_sprite_drawn(&infantry));
+    assert!(dead_unit_sprite_drawn(&infantry));
+}
+
 /// `AirPath::Execute` (`airpath.cpp:219-242`) and `UnitsManager_StartExplosion`
 /// (`units_manager.cpp:3991-3994`): both are drawn at the stored **pixel**
 /// position, not at the cell anchor — the air path is a straight pixel segment and

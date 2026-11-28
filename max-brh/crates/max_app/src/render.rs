@@ -28,7 +28,7 @@ use max_render::palette::{ColorLut, TeamColors, FULL_BRIGHTNESS_LEVEL};
 
 use max_render::sprite_atlas::SpriteRenderer;
 use max_render::terrain::PaletteRgba;
-use max_render::viewport::{draw_order, Viewport};
+use max_render::viewport::{draw_order_layered, Viewport};
 
 use max_core::enums::{unit_flags, TeamClan, UnitOrder, UnitOrderState, UnitType};
 use max_core::geo::Point;
@@ -497,6 +497,100 @@ pub fn image_base_for(unit: &max_core::unit::UnitInfo, team_clan: Option<TeamCla
     } else {
         unit.image_base
     }
+}
+
+/// Z-layer of a unit in the sprite pass — the group order of
+/// `UnitInfoGroup::RenderGroups` (`max-cpp-port/src/unitinfogroup.cpp:181-237`).
+///
+/// The oracle does not sort every sprite by its cell: it draws whole groups in a
+/// fixed order. The layers keep the important part of that order:
+///
+/// | layer | oracle group |
+/// |---|---|
+/// | 0 | torpedoes, water platforms, ground covers, land/sea units, stationary buildings |
+/// | 1 | `air_units_on_ground` (a landed aircraft) |
+/// | 2 | `rockets` (projectiles and their trail particles) |
+/// | 3 | `air_units_in_air` (`HOVERING` or `ORDER_MOVE`) |
+/// | 4 | `air_particles_explosions` (`EXPLODING`, except `RKTSMOKE`) |
+///
+/// The collapsed layer 0 is a port simplification: the relative order of the
+/// ground-cover sub-groups is the cell order of `draw_order` anyway. Layers
+/// 1 and 3 are what guarantee that an aircraft is **always** drawn over the
+/// ground, sea and building sprite of its cell (and over the sprite next to it
+/// while the rounded visual cell lags behind the pixel it flies over).
+pub fn unit_draw_layer(unit: &max_core::unit::UnitInfo) -> u8 {
+    let flags = unit.flags;
+
+    // `air_particles_explosions` (`unitinfogroup.cpp:150-156`): `EXPLODING`
+    // effects; `RKTSMOKE` stays in the `rockets` group of the oracle.
+    if flags & unit_flags::EXPLODING != 0 && unit.unit_type != UnitType::RocketSmoke {
+        return 4;
+    }
+
+    // `rockets`: projectiles and trail particles (`MISSILE_UNIT`).
+    if flags & unit_flags::MISSILE_UNIT != 0 {
+        return 2;
+    }
+
+    if flags & unit_flags::MOBILE_AIR_UNIT != 0 {
+        // `air_units_in_air` / `air_units_on_ground` (`unitinfogroup.cpp:158-165`).
+        return if flags & unit_flags::HOVERING != 0 || unit.orders == UnitOrder::Move {
+            3
+        } else {
+            1
+        };
+    }
+
+    0
+}
+
+/// First frame of the `INFANTRY`/`COMMANDO` own death animation.
+///
+/// `UnitsManager_StartExplosion` (`units_manager.cpp:3932-3946`):
+/// `image_base = 168 + (angle / 2) * 8`, `image_index_max = image_base + 7`;
+/// the unit plays this block itself before it is removed.
+pub const DEATH_ANIMATION_IMAGE_BASE: i16 = 168;
+
+/// Whether the unit dies by its own sprite block (`INFANTRY`/`COMMANDO`).
+///
+/// The oracle gives these two types no separate blast sprite: it replaces their
+/// hull frames with the death block above (`units_manager.cpp:3932-3946`), so the
+/// unit sprite **is** the death animation and must stay drawn.
+fn plays_own_death_animation(unit: &max_core::unit::UnitInfo) -> bool {
+    matches!(unit.unit_type, UnitType::Infantry | UnitType::Infiltrator)
+        && unit.image_base >= DEATH_ANIMATION_IMAGE_BASE
+}
+
+/// Whether the unit's own hull sprite is drawn in the sprite pass.
+///
+/// Death rule: when a unit reaches `hits == 0` the blast is spawned at its pixel
+/// and the unit enters `ORDER_STATE_DESTROY` (`UnitsManager_StartExplosion`,
+/// `units_manager.cpp:3915-4004`); from that frame on the game shows only the
+/// death animation there — the hull sprite must not linger under the blast until
+/// `UnitsManager_BuildClearing` removes the unit half-way through the animation
+/// (`UnitsManager_ProgressExplosion`, `units_manager.cpp:4015-4023`).
+///
+/// Exceptions, where the sprite is the effect itself or the death animation:
+/// * `EXPLODING` units (`LNDEXPLD`/`HITEXPLD`/`RKTSMOKE`/`TRPBUBLE`) have
+///   `hits == 0` for their whole life by `SC_ATTRI` — they are the effect drawn
+///   at the death pixel;
+/// * `INFANTRY`/`COMMANDO` — see [`plays_own_death_animation`].
+pub fn hull_sprite_drawn(unit: &max_core::unit::UnitInfo) -> bool {
+    if unit.hits > 0 || unit.flags & unit_flags::EXPLODING != 0 {
+        return true;
+    }
+
+    plays_own_death_animation(unit) || unit.state != UnitOrderState::Destroy
+}
+
+/// Whether a **dead** unit still has its own sprite drawn — a presentation corpse
+/// ([`crate::CorpseVisual`]) or the frame of an `INFANTRY`/`COMMANDO` death.
+///
+/// Unlike [`hull_sprite_drawn`] this does not look at the order state: a corpse
+/// is created for a unit the simulation killed, and its hull is never drawn from
+/// the death frame on — only the own death animation is.
+pub fn dead_unit_sprite_drawn(unit: &max_core::unit::UnitInfo) -> bool {
+    unit.flags & unit_flags::EXPLODING != 0 || plays_own_death_animation(unit)
 }
 
 /// Body frame index: `image_base + angle`, and for a powered-on building РІР‚вЂќ +1.
@@ -1089,6 +1183,55 @@ pub fn shake_air_offset(moved: u8) -> (i32, i32) {
     }
 
     (dx, dy)
+}
+
+/// `UnitInfo::ShakeWater` (`unitinfo.cpp:4592-4634`) — the ship rock on water.
+///
+/// C++ calls `Animate()` once per order tick for `MOBILE_SEA_UNIT`/`SEAMINE`
+/// units standing on water and advances the unbounded `moved` counter. On every
+/// **32nd** tick it applies `OffsetDrawZones(±DIRECTION_OFFSETS[moved / 64])`:
+///
+/// ```text
+/// distance = moved / 64;
+/// if (moved >= distance * 64 + 32)   offset = -DIRECTION_OFFSETS[distance];
+/// else                               offset = +DIRECTION_OFFSETS[distance];
+/// ```
+///
+/// so a ship is pushed one pixel along the current direction for 32 ticks and
+/// pulled back on the next 32; the direction rotates every 64 ticks. The
+/// cumulative displacement is therefore just the current half-block:
+/// `moved % 64 < 32` — one pixel out, otherwise back at the anchor.
+///
+/// `moved` is unbounded in the oracle (the array is read past its end after 512
+/// ticks); the presentation wraps the direction like [`shake_air_offset`] does,
+/// so a harbor guard keeps a repeating rock instead of panicking.
+///
+/// Returns the hull offset in map pixels. The shadow moves twice as far
+/// (`shadow_offset -= offset`, `unitinfo.cpp:4622-4623`, on top of the hull's
+/// `OffsetDrawZones(offset)`).
+pub fn shake_water_offset(moved: u32) -> (i32, i32) {
+    if moved % 64 >= 32 {
+        return (0, 0);
+    }
+
+    let distance = ((moved / 64) as usize) % max_core::geo::DIRECTION_OFFSETS.len();
+    let direction = max_core::geo::DIRECTION_OFFSETS[distance];
+
+    (i32::from(direction.x), i32::from(direction.y))
+}
+
+/// Presentation shadow offset of a ship rocking on water.
+///
+/// `UnitInfo::ShakeWater` (`unitinfo.cpp:4622-4623`) applies the hull's
+/// `OffsetDrawZones(offset)` and `shadow_offset -= offset`; the hull anchor is
+/// moved by `offset` by the renderer, so subtracting the offset once places the
+/// shadow `2 * offset` from its base while the hull moves `offset` (the flight bob
+/// of [`bobbed_shadow_offset`] subtracts twice — `3 * offset`).
+pub fn water_bobbed_shadow_offset(presentation: &UnitPresentation, bob: (i32, i32)) -> Point {
+    Point::new(
+        presentation.shadow_offset.x - bob.0 as i16,
+        presentation.shadow_offset.y - bob.1 as i16,
+    )
 }
 
 /// Presentation shadow offset of a bobbing hovering unit.
@@ -2271,6 +2414,7 @@ impl<D: Dispatcher> App<D> {
         mut hd: Option<&mut HdPresenter>,
     ) {
         let mut positions = Vec::new();
+        let mut layers = Vec::new();
         let mut visible = Vec::new();
         // A unit sprite may hang into the frame from the edge even if its cell
         // is already outside the visible range: we take a margin of 2 cells.
@@ -2316,7 +2460,15 @@ impl<D: Dispatcher> App<D> {
                 stats.units_skipped += 1;
                 continue;
             }
+            // Death: a unit with `hits == 0` in `ORDER_STATE_DESTROY` is no longer
+            // a sprite — only its death effect is drawn at the death pixel
+            // (`hull_sprite_drawn`).
+            if !hull_sprite_drawn(unit) {
+                stats.units_skipped += 1;
+                continue;
+            }
             positions.push((tile_x, tile_y));
+            layers.push(unit_draw_layer(unit));
             visible.push(id);
         }
 
@@ -2327,7 +2479,10 @@ impl<D: Dispatcher> App<D> {
             None => fallback_selector_palette(),
         };
 
-        for index in draw_order(&positions) {
+        // `UnitInfoGroup::RenderGroups` (`unitinfogroup.cpp:181-237`): the group
+        // layers first, then the cell order — so the aircraft groups are drawn
+        // after every ground/sea/stationary sprite of the frame.
+        for index in draw_order_layered(&positions, &layers) {
             let Some(unit) = self.state_ref().unit(visible[index]) else {
                 continue;
             };
@@ -2361,8 +2516,14 @@ impl<D: Dispatcher> App<D> {
             // Flight bob (`UnitInfo::ShakeAir`, `unitinfo.cpp:4636-4678`): a
             // hovering aircraft sways by up to two pixels along a rotating
             // direction, the shadow by three times as much (see `hover_offset`).
-            // `dt = 0` (QA/headless) РІР‚вЂќ zero, the goldens do not drift.
-            let (bob_x, bob_y) = self.hover_offset(visible[index]);
+            // Water bob (`UnitInfo::ShakeWater`, `unitinfo.cpp:4592-4634`): a ship
+            // on water rocks one pixel along the rotating direction, the shadow by
+            // twice as much (see `sea_bob_offset`). A unit is never air and sea at
+            // the same time, so the sum is the single active offset.
+            // `dt = 0` (QA/headless) — zero, the goldens do not drift.
+            let (hover_x, hover_y) = self.hover_offset(visible[index]);
+            let (sea_x, sea_y) = self.sea_bob_offset(visible[index]);
+            let (bob_x, bob_y) = (hover_x + sea_x, hover_y + sea_y);
             // `UnitInfo::PositionInTape` + `OffsetDrawZones` (`unitinfo.cpp:4478`):
             // the constructor shifts by 8 px per tick toward the 2Р“вЂ”2 tape center, 32 px in total
             // (half a cell) РІР‚вЂќ to the center of the construction site. This is a frame
@@ -2411,9 +2572,16 @@ impl<D: Dispatcher> App<D> {
             // `UnitInfo::ShakeAir` shifts `shadow_offset -= 2 * offset` on top of the
             // hull's `OffsetDrawZones(offset)`. The anchor above already carries
             // `offset`, so the stored value takes `-2 * offset` and the shadow ends
-            // up three times as far from its base as the hull.
-            if bob_x != 0 || bob_y != 0 {
-                presentation.shadow_offset = bobbed_shadow_offset(&presentation, (bob_x, bob_y));
+            // up three times as far from its base as the hull. `ShakeWater` subtracts
+            // the offset once (`unitinfo.cpp:4622-4623`), i.e. the ship's shadow moves
+            // twice the hull's pixel.
+            if hover_x != 0 || hover_y != 0 {
+                presentation.shadow_offset =
+                    bobbed_shadow_offset(&presentation, (hover_x, hover_y));
+            }
+            if sea_x != 0 || sea_y != 0 {
+                presentation.shadow_offset =
+                    water_bobbed_shadow_offset(&presentation, (sea_x, sea_y));
             }
             let drawn = self.assets().and_then(|assets| {
                 // Frame palette: a snapshot with palette cycles or the original
@@ -2488,23 +2656,23 @@ impl<D: Dispatcher> App<D> {
         self.draw_presentation_corpses(frame, viewport, stats);
     }
 
-    /// Presentation corpses ([`App::presentation_corpses`]) — the dead units whose
-    /// sprite still walks to the pixel where the simulation killed them.
+    /// Presentation corpses ([`App::presentation_corpses`]) — the records of dead
+    /// units whose frame route still walks to the pixel where the simulation killed
+    /// them.
     ///
-    /// This is the fallback of an un-walked position write (save/load,
+    /// The record itself is a fallback of an un-walked position write (save/load,
     /// transport/state synchronization): the simulation may delete a unit half-way
-    /// through its blast while the frame still has several cells of the frame route to
-    /// walk. The sprite of such a corpse is drawn from the last simulation snapshot
-    /// until it arrives, so it does not vanish in mid-air. A unit killed while it walks
-    /// a routed route has no such walk: its sprite is drawn on the simulation cell
-    /// (the simulation paces the movement).
+    /// through its blast while the frame still has several cells of the frame route
+    /// to walk, and the blast must stay anchored to the death pixel.
+    ///
+    /// **The hull is not drawn.** From the death frame on the game shows only the
+    /// death animation ([`hull_sprite_drawn`]); a dead unit's sprite never lingers
+    /// under the blast. Only the own death animation of `INFANTRY`/`COMMANDO`
+    /// ([`dead_unit_sprite_drawn`]) is the exception, because there the sprite *is*
+    /// the animation.
     ///
     /// Frame only: the state, the snapshot and the CRC are untouched; `dt = 0`
     /// (headless/QA) has no corpses at all, so the golden frames do not change.
-    ///
-    /// The hull is drawn with the sprite the unit had when it died: no flight bob
-    /// (`ShakeAir` moves a *living* hovering unit), no construction-tape shift and no
-    /// selection marker — a corpse stands still, loses its tape and is deselected.
     fn draw_presentation_corpses(
         &self,
         frame: &mut RgbaBuffer,
@@ -2540,6 +2708,13 @@ impl<D: Dispatcher> App<D> {
                 continue;
             }
             if !self.no_fow() && !self.presented_visible(&corpse.unit) {
+                continue;
+            }
+            // Death rule (`hull_sprite_drawn`): the hull of a killed unit is not a
+            // sprite any more. The record keeps the walk and the blast anchor alive,
+            // but it draws only the unit's own death animation
+            // (`dead_unit_sprite_drawn`).
+            if !dead_unit_sprite_drawn(&corpse.unit) {
                 continue;
             }
 

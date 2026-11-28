@@ -127,8 +127,8 @@ pub use ui::{
     Point, Rect, TextBox, UiBox, UiBoxPainter, UiState, UiTheme, Widget,
 };
 pub use viewport::{
-    draw_order, GridLines, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS, MAX_ZOOM, MIN_ZOOM,
-    ZOOM_STEP,
+    draw_order, draw_order_layered, GridLines, TileRange, Viewport, DEFAULT_ZOOM, MAP_TILE_PIXELS,
+    MAX_ZOOM, MIN_ZOOM, ZOOM_STEP,
 };
 
 #[cfg(feature = "sdl")]

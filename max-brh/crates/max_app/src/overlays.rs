@@ -887,6 +887,13 @@ pub fn draw_unit_overlays<D: Dispatcher>(
             continue;
         }
 
+        // Death rule (`render::hull_sprite_drawn`): a destroyed unit has no sprite,
+        // so its displays and labels go with it — the frame keeps only the death
+        // animation on the death pixel.
+        if !crate::render::hull_sprite_drawn(unit) {
+            continue;
+        }
+
         let visual = app
             .visual_position(id)
             .unwrap_or_else(|| crate::visual_target(unit));

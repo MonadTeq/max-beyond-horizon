@@ -786,6 +786,14 @@ pub struct App<D: Dispatcher = LocalDispatcher> {
     /// real `dt`; frame-only, not part of the snapshot/CRC, and `dt = 0`
     /// (QA/headless) leaves the sprite at rest.
     hover_anims: std::collections::HashMap<UnitId, HoverAnim>,
+    /// Water-bob clock of the sea units standing on water (`UnitInfo::ShakeWater`).
+    ///
+    /// `UnitInfo::Animate` shifts the sprite of a `MOBILE_SEA_UNIT`/`SEAMINE` unit
+    /// on water by one pixel every 32nd order tick and pulls it back on the next
+    /// 32nd (`unitinfo.cpp:4592-4634`). The port keeps the C++ `moved` counter from
+    /// real `dt`; frame-only, not part of the snapshot/CRC, and `dt = 0`
+    /// (QA/headless) leaves the sprite at rest.
+    water_bob_anims: std::collections::HashMap<UnitId, WaterBobAnim>,
     /// Palette cycle clock (`World::InitColorCycles` +
     /// `World::UpdateColorAnimations`): 11 DAC slot ranges that
     /// rotate at 2/6/8/9/10 fps. It is they that make the building beacons blink
@@ -906,6 +914,28 @@ struct HoverAnim {
 /// Whether the unit hovers (`UnitInfo::Animate`: `flags & HOVERING`).
 fn is_hovering_unit(unit: &UnitInfo) -> bool {
     unit.flags & unit_flags::HOVERING != 0
+}
+
+/// Water-bob clock of one sea unit — `UnitInfo::ShakeWater`.
+///
+/// C++ (`unitinfo.cpp:4592-4634`): every `Animate()` call (one order tick,
+/// [`ORDER_TICK_SECONDS`]) advances the unbounded `moved` counter; on every 32nd
+/// tick the sprite is pushed one pixel along `DIRECTION_OFFSETS[moved / 64]` and
+/// on the next 32nd tick pulled back, so a ship rocks around its anchor.
+/// Frame only — not part of the snapshot/CRC.
+#[derive(Debug, Clone, Copy, Default)]
+struct WaterBobAnim {
+    /// Seconds since the last `ShakeWater` step.
+    elapsed: f32,
+    /// C++ `moved` counter of the water bob.
+    step: u32,
+}
+
+/// Whether the unit takes the water bob (`UnitInfo::Animate`, `unitinfo.cpp:5064`):
+/// any `MOBILE_SEA_UNIT` (amphibious included) and the sea mine. The caller still
+/// has to check that the unit stands on water.
+fn is_water_bobbing_unit(unit: &UnitInfo) -> bool {
+    unit.flags & unit_flags::MOBILE_SEA_UNIT != 0 || unit.unit_type == UnitType::SeaMine
 }
 
 /// Seconds per frame of the builder working cycle.
@@ -1243,6 +1273,7 @@ impl<D: Dispatcher> App<D> {
             vision: vision::VisionView::default(),
             frame_anims: std::collections::HashMap::new(),
             hover_anims: std::collections::HashMap::new(),
+            water_bob_anims: std::collections::HashMap::new(),
             color_cycles: max_render::palette::ColorCycles::new(),
             cycle_palette: None,
             growth_anims: std::collections::HashMap::new(),
@@ -3871,6 +3902,7 @@ impl<D: Dispatcher> App<D> {
         self.effect_parents.clear();
         self.closing_visual_team = None;
         self.hover_anims.clear();
+        self.water_bob_anims.clear();
         // The frame-side vision belongs to the previous match: the next frame
         // reseeds it from the new simulation (`App::update_visual_units`).
         self.vision.reset();
@@ -4064,6 +4096,22 @@ impl<D: Dispatcher> App<D> {
             .unwrap_or((0, 0))
     }
 
+    /// Water-bob offset of a unit for drawing, in map pixels.
+    ///
+    /// A port of `UnitInfo::ShakeWater` (`unitinfo.cpp:4592-4634`, see
+    /// [`render::shake_water_offset`]): a sea unit on water rocks one pixel along
+    /// the rotating direction and returns 32 ticks later. The shadow is shifted
+    /// twice as far by the renderer (`shadow_offset -= offset` on top of
+    /// `OffsetDrawZones(offset)`). `(0, 0)` off the water, for a land unit and for
+    /// `dt = 0` frames — the goldens do not drift. Frame only, not part of the
+    /// snapshot/CRC.
+    pub fn sea_bob_offset(&self, id: UnitId) -> (i32, i32) {
+        self.water_bob_anims
+            .get(&id)
+            .map(|anim| crate::render::shake_water_offset(anim.step))
+            .unwrap_or((0, 0))
+    }
+
     /// Snapshot of the system palette with palette cycles (`None` — no changes).
     ///
     /// `Some` only after the [`App::color_cycles`] clock has stepped at least
@@ -4190,6 +4238,7 @@ impl<D: Dispatcher> App<D> {
         if !(dt > 0.0) {
             self.frame_anims.clear();
             self.hover_anims.clear();
+            self.water_bob_anims.clear();
             self.growth_anims.clear();
             return;
         }
@@ -4291,6 +4340,45 @@ impl<D: Dispatcher> App<D> {
             }
         } else {
             self.hover_anims.clear();
+        }
+
+        // Water bob of sea units — `UnitInfo::ShakeWater`. C++ calls it from
+        // `UnitInfo::Animate` for `MOBILE_SEA_UNIT`/`SEAMINE` standing on water,
+        // once per order tick and only with `settings["effects"]` enabled
+        // (`unitinfo.cpp:5056-5067`). The clock counts real frame time at the same
+        // [`ORDER_TICK_SECONDS`] pace.
+        if effects {
+            self.water_bob_anims.retain(|id, _| {
+                state.unit(*id).is_some_and(|unit| {
+                    is_water_bobbing_unit(unit)
+                        && state.modified_surface_type(unit.grid, false)
+                            == max_core::access::SURFACE_TYPE_WATER
+                })
+            });
+
+            for id in &ids {
+                let Some(unit) = state.unit(*id) else {
+                    continue;
+                };
+
+                if !is_water_bobbing_unit(unit)
+                    || state.modified_surface_type(unit.grid, false)
+                        != max_core::access::SURFACE_TYPE_WATER
+                {
+                    continue;
+                }
+
+                let anim = self.water_bob_anims.entry(*id).or_default();
+
+                anim.elapsed += dt;
+
+                while anim.elapsed >= ORDER_TICK_SECONDS {
+                    anim.elapsed -= ORDER_TICK_SECONDS;
+                    anim.step = anim.step.wrapping_add(1);
+                }
+            }
+        } else {
+            self.water_bob_anims.clear();
         }
 
         // "Growth": start from the simulation `scaler_adjust` (C++ 2^-n).

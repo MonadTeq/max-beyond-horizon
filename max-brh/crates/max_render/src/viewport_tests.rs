@@ -119,6 +119,31 @@ fn draw_order_is_by_ground_then_x() {
 }
 
 #[test]
+fn layered_draw_order_puts_air_over_every_ground_unit() {
+    // `UnitInfoGroup::RenderGroups` (`unitinfogroup.cpp:181-237`): aircraft are
+    // drawn after the ground/sea/stationary groups, whatever cell they stand in.
+    // The air unit here is in the row **above** the ground unit, so a plain
+    // `draw_order` would draw it first.
+    let units = [(10, 5), (10, 6)];
+    let layers = [1, 0];
+
+    assert_eq!(draw_order(&units), vec![0, 1]);
+    assert_eq!(draw_order_layered(&units, &layers), vec![1, 0]);
+
+    // Inside one layer the ground/x order and the stable source order apply.
+    let units = [(10, 5), (3, 9), (7, 5), (10, 5)];
+    let layers = [1, 0, 1, 0];
+    assert_eq!(
+        draw_order_layered(&units, &layers),
+        vec![3, 1, 2, 0],
+        "layer 0 first (y, x, original order), then layer 1"
+    );
+
+    // A missing layer entry is layer 0.
+    assert_eq!(draw_order_layered(&units, &[2]), vec![2, 3, 1, 0]);
+}
+
+#[test]
 fn visible_units_filters_and_orders() {
     let viewport = test_viewport();
 
