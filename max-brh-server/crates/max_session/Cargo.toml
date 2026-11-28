@@ -1,6 +1,6 @@
 [package]
 name = "max_session"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "Process manager for headless M.A.X. Port game sessions (spawn/health/restart, port pool, session configuration)"
 

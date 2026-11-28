@@ -1,6 +1,6 @@
 [package]
 name = "player_test_client"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "WebSocket test client for GORC player simulation"
 

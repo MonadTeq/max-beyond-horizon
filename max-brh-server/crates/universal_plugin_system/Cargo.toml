@@ -1,6 +1,6 @@
 [package]
 name = "universal_plugin_system"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 authors = ["Horizon Team"]
 description = "A flexible, reusable plugin system that can be used across multiple applications with custom event propagation support"

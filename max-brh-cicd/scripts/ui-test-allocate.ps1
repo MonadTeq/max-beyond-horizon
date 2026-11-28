@@ -134,7 +134,7 @@ public static class MaxUiPixel {
 
 $exeCandidates = @(
     (Join-Path $root 'build\win-msvc-target\release\max-brh.exe'),
-    (Join-Path $root 'release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe')
+    (Join-Path $root 'release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe')
 )
 $exe = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $exe) { throw "ui-test-allocate: нет собранного max-brh.exe (build-windows-ui.ps1 -NoPackage)" }

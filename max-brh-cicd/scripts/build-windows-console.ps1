@@ -128,7 +128,7 @@ elseif (-not [System.IO.Path]::IsPathRooted($TargetDir)) { $TargetDir = Join-Pat
 # --- workspace version ------------------------------------------------------
 $manifest = Join-Path $root "max-brh\Cargo.toml"
 if (-not (Test-Path $manifest)) { Fail "нет $manifest" }
-$version = (Select-String -Path $manifest -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"').Matches.Groups[1].Value
+$version = (Select-String -Path $manifest -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)"').Matches.Groups[1].Value
 if (-not $version) { Fail "не удалось прочитать версию из $manifest" }
 
 $bundleName = "max_app-$version-windows-x86_64"

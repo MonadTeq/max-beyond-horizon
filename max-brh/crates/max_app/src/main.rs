@@ -658,6 +658,10 @@ fn log_level() -> tracing_subscriber::filter::LevelFilter {
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt().with_max_level(log_level()).init();
+    println!(
+        "max-brh {} — клиент M.A.X. (M4.2 HUD)",
+        max_app::version::DISPLAY_VERSION
+    );
 
     match Cli::parse().and_then(run) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1053,7 +1057,10 @@ async fn connect_interactive(
     #[cfg(feature = "sdl")]
     {
         let mut window = max_render::SdlWindow::new_scaled(
-            "M.A.X. — max_app (R2.4)",
+            &format!(
+                "M.A.X. — max_app (R2.4) v{}",
+                max_app::version::DISPLAY_VERSION
+            ),
             config.screen_width,
             config.screen_height,
             normalized_window_scale(scale),
@@ -1626,7 +1633,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
     // in the game's `Setup` dialog rebuilds only these resources and leaves the
     // `App`/session untouched.
     let mut presentation = WindowPresentation::new(
-        "M.A.X. — Rust client (M4.2 HUD)",
+        &format!(
+            "M.A.X. — Rust client (M4.2 HUD) v{}",
+            max_app::version::DISPLAY_VERSION
+        ),
         (config.screen_width, config.screen_height),
         render_scale,
         resolved.aa,

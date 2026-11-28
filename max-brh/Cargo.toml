@@ -17,7 +17,10 @@ members = [
 sdl3-src = { path = "../max-brh-vendor/sdl3-src-fork" }
 
 [workspace.package]
-version = "1.1.0"
+# Pre-alpha: the owner resets the product version to `0.1.28a` and keeps it below
+# 1.0 until the release decision. Cargo requires semver, so the manifest carries
+# `0.1.28-alpha`; the displayed form (`0.1.28a`) lives in `max_app::version`.
+version = "0.1.28-alpha"
 edition = "2021"
 license = "MIT"
 

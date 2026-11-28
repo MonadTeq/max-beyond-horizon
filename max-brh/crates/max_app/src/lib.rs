@@ -93,6 +93,7 @@ pub mod unit_names;
 pub mod unitmenu;
 pub mod unitstats;
 pub mod upgrademenu;
+pub mod version;
 pub mod vision;
 pub mod winloss;
 

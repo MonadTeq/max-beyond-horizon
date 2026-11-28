@@ -84,7 +84,7 @@ docker compose up -d --build                 # сервер Horizon
 
 Docker для Windows-сборок не требуется: обе сборки выполняются нативной MSVC-сборкой
 на хосте (консольная сборка клиента —
-`bin\release\max_app-1.1.0-windows-x86_64.zip`, игровая сборка —
+`bin\release\max_app-0.1.28-alpha-windows-x86_64.zip`, игровая сборка —
 `…-windows-x86_64-ui.zip`).
 
 Необходимые инструменты и библиотеки — там же (Rust 1.94, MSVC+vcpkg/SDL3, Docker,
@@ -94,7 +94,7 @@ Python 3; стек: tonic/prost, vendored ENet 1.3.18, SDL3, rodio).
 
 ```powershell
 # одиночная / hot-seat (окно; без флагов — GUI, --ui — совместимый alias):
-bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
+bin\release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe
 #   New Game — одиночная против ИИ; Multiplayer Game → Hot Seat Game — 2–4 игрока.
 #   После экрана Players: мобилизация (покупка юнитов, cargo, апгрейды —
 #   переключатель Buy Units/Upgrades) → выбор точки высадки.

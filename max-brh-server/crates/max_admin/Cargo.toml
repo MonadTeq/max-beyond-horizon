@@ -1,6 +1,6 @@
 [package]
 name = "max_admin"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "M.A.X. Port admin plugin for Horizon: programmable admin events (list/status/start/stop/restart sessions) for automation and CLI tooling."
 

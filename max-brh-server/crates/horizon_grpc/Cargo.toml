@@ -1,6 +1,6 @@
 [package]
 name = "horizon_grpc"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "Horizon lobby/admin gRPC server (horizon.v1): a thin adapter over max_session and max_auth that runs next to the WebSocket listener."
 

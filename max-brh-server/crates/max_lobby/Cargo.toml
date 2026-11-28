@@ -1,6 +1,6 @@
 [package]
 name = "max_lobby"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "M.A.X. Port lobby plugin for Horizon: creates, lists and joins headless game sessions through max_session."
 

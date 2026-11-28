@@ -95,8 +95,8 @@ if (-not $Exe) {
     $candidates = @(
         (Join-Path $root 'build\win-msvc-target\release\max-brh.exe'),
         (Join-Path $root 'bin\target\release\max-brh.exe'),
-        (Join-Path $root 'release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe'),
-        (Join-Path $root 'bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe')
+        (Join-Path $root 'release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe'),
+        (Join-Path $root 'bin\release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe')
     )
     $Exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 }

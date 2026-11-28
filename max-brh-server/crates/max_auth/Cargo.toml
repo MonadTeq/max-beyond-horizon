@@ -1,6 +1,6 @@
 [package]
 name = "max_auth"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 description = "Signed session tickets (HMAC-SHA256) for M.A.X. Port dedicated servers: issue and verify the strings clients present in the ENet transport handshake."
 

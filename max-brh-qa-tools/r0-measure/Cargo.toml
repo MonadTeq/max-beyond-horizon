@@ -1,6 +1,6 @@
 [package]
 name = "r0-measure"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 license = "MIT"
 description = "R0 (HD remaster) measurements: render memory, asset inventory/HD volume, KTX2 transcoder benchmark"

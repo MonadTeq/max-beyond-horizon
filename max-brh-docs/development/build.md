@@ -67,13 +67,13 @@ cargo build --release -p max_app --no-default-features       # headless
 ### Windows игровая сборка (штатный сценарий)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-ui.ps1
-# артефакт: bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
+# артефакт: bin\release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe (+SDL3.dll)
 ```
 
 ### Windows консольная сборка клиента (MSVC, нативно)
 ```powershell
 powershell -ExecutionPolicy Bypass -File max-brh-cicd\scripts\build-windows-console.ps1
-# артефакт: bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe
+# артефакт: bin\release\max_app-0.1.28-alpha-windows-x86_64\max-brh.exe
 ```
 Нативная MSVC-сборка (`x86_64-pc-windows-msvc`), без Docker и mingw. Скрипт
 поднимает `vcvars64`, собирает
@@ -83,7 +83,7 @@ PE (Subsystem=3, Console) и выполняет `--help`/`--demo SAVE1.CAM --tur
 
 ### Linux-сборка + архив
 ```sh
-bash release.sh          # bin/release/max_app-1.1.0-linux-x86_64.tar.gz
+bash release.sh          # bin/release/max_app-0.1.28-alpha-linux-x86_64.tar.gz
 ```
 
 ### Horizon (сервер)
@@ -132,7 +132,7 @@ cargo run -p max_app
 ```powershell
 # готовый Windows-артефакт (SDL3 из vcpkg, звук), см. build-windows-ui.ps1:
 cd D:\dev\max-port-debug
-bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
+bin\release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe
 ```
 По умолчанию (без флагов) клиент открывает GUI; `--ui` — совместимый alias.
 В меню: **New Game** (одиночная: Options → Planet → Players, «Human/Computer» →
@@ -165,7 +165,7 @@ bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
 # 1. сервер:
 docker compose up -d --build
 # 2. клиенты (в меню: Multiplayer Game → Host/Join Network Game):
-bin\release\max_app-1.1.0-windows-x86_64-ui\max-brh.exe
+bin\release\max_app-0.1.28-alpha-windows-x86_64-ui\max-brh.exe
 ```
 Автоматический smoke: `bash max-brh-cicd/scripts/live-smoke.sh 10` (2 клиента × 10 ходов).
 
@@ -178,7 +178,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
 cargo run -p max_app --no-default-features -- --new-game --world 12 --seed 42 --out frame.ppm
 cargo run -p max_app --no-default-features -- --connect 127.0.0.1:8082 --join <GAME_ID> --turns 10
 ```
-Готовая консольная сборка клиента (Windows, MSVC): `bin\release\max_app-1.1.0-windows-x86_64\max-brh.exe`
+Готовая консольная сборка клиента (Windows, MSVC): `bin\release\max_app-0.1.28-alpha-windows-x86_64\max-brh.exe`
 (`--demo`, `--new-game`, `--connect`; окна в нём нет).
 
 В debug-сборке на Windows главный поток получает 8 МиБ стека через

@@ -1,6 +1,6 @@
 [package]
 name = "horizon_protocol"
-version = "0.1.0"
+version = "0.1.28-alpha"
 description = "Wire protocol between Horizon and its clients: frame types, JSON envelopes and bitcode encoding."
 license = "MIT"
 edition = "2021"

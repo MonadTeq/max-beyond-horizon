@@ -1,6 +1,6 @@
 [package]
 name = "remaster-encode"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 license = "MIT"
 description = "R2 (HD remaster) build-time KTX2 encoder: lossless sources -> ETC1S/UASTC .ktx2 + remaster-manifest.json"

@@ -115,7 +115,7 @@ MANIFEST="$ROOT/max-brh/Cargo.toml"
 }
 
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$MANIFEST")"
-if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
     echo "release.sh: не удалось прочитать версию из $MANIFEST (получено '$VERSION')" >&2
     exit 1
 fi

@@ -1,6 +1,6 @@
 [package]
 name = "max-resources-exporter"
-version = "0.1.0"
+version = "0.1.28-alpha"
 edition = "2021"
 license = "MIT"
 description = "M.A.X. per-unit asset exporter: sprites, turrets, shadows, connectors, portraits and FLC animations"

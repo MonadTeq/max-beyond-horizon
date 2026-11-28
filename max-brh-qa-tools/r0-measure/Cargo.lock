@@ -509,7 +509,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "max-resources-viewer"
-version = "0.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "max_assets",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "max_app"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "max_assets",
@@ -535,9 +535,10 @@ dependencies = [
 
 [[package]]
 name = "max_assets"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
+ "basisu",
  "max_types",
  "serde",
  "serde_json",
@@ -546,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "max_core"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "max_types",
  "serde",
@@ -554,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "max_net"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "cc",
@@ -575,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "max_render"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "max_assets",
  "max_core",
@@ -584,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "max_types"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "serde",
 ]
@@ -897,7 +898,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "r0-measure"
-version = "0.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "basisu",

@@ -32,7 +32,7 @@
 
 ## Статус
 
-- **Версия 1.1.0** (2026-11-16; экраны P8 — 2026-11-17): production-ready клиент —
+- **Версия 0.1.28a** (пре-альфа, 2026-11-28): клиент в разработке —
   три режима (одиночная, hot-seat, сеть Horizon), производство/строительство,
   исследования (`R` — `ResearchMenu`, `O` — питание центра) и покупные
   апгрейды (`U`), V70-сейвы с автосейвом, визуал 1:1 (включая Help-экраны
@@ -97,7 +97,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   (2 клиента × N ходов). GitHub-эквивалент — `../.github/workflows/ci.yml`.
 - Релиз (M6.4): `bash ../release.sh` собирает Linux-сборку с
   `--no-default-features --features sdl-from-source,sound`, упаковывает
-  `release/` и готовит тег `v1.1.0`; полный порядок —
+  `release/` и готовит тег `v0.1.28-alpha`; полный порядок —
   `../max-brh-docs/development/release-checklist.md`.
 - Windows x64, консольная сборка клиента (M6.4): нативная MSVC-сборка —
   `powershell -ExecutionPolicy Bypass -File ..\max-brh-cicd\scripts\build-windows-console.ps1`
@@ -117,7 +117,7 @@ cargo run -p max_app --no-default-features -- --demo ../max-original/SAVE1.CAM -
   Подсистема — **windows** (Subsystem=2): двойной клик открывает окно SDL3 без
   консоли; `--help`/`--demo` этой сборки видны только при перенаправлении
   (`max-brh.exe --help > help.txt`). Проверено на MSVC 14.51 + SDL3 3.4.20:
-  окно `M.A.X. — Rust client (M4.2 HUD)` открывается, звук — `rodio/cpal`
+  окно `M.A.X. — Rust client (M4.2 HUD) v0.1.28a` открывается, звук — `rodio/cpal`
   (WASAPI, без отдельных DLL). Требования к тулчейну —
   `../max-brh-docs/development/release-checklist.md` §6.1, разбор грабель —
   `../max-brh-cicd/scripts/README.md`.

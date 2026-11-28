@@ -177,7 +177,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "max_assets"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "basisu",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "max_core"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "max_types",
  "serde",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "max_render"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "max_assets",
  "max_core",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "max_types"
-version = "1.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "serde",
 ]
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "remaster-encode"
-version = "0.1.0"
+version = "0.1.28-alpha"
 dependencies = [
  "anyhow",
  "image",
