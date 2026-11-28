@@ -24,7 +24,10 @@
 //!   the mission registry and mission-file resolution — module [`mission`];
 //! - HD remaster assets — `remaster-manifest.json` + KTX2/Basis transcoded to
 //!   RGBA8 (presentation-only, per-asset fallback to `MAX.RES`) — module
-//!   [`remaster`].
+//!   [`remaster`];
+//! - distribution file inventory — the exact `data-inventory.json` manifest
+//!   (SHA-256 + class of every shipped file) for the installers — module
+//!   [`inventory`].
 //!
 //! The crate parses bytes into structured data; it contains no render specifics.
 //! Format errors are returned as values ([`ResError`], [`WrlError`],
@@ -35,6 +38,7 @@
 pub mod cursor;
 pub mod flic;
 pub mod image;
+pub mod inventory;
 pub mod markers;
 pub mod mission;
 pub mod mve;
@@ -53,6 +57,10 @@ pub use flic::{
     FLI_MAGIC, FRAME_MAGIC,
 };
 pub use image::{BigImage, ImageError, SimpleImage, BIG_HEADER, SIMPLE_HEADER};
+pub use inventory::{
+    build as build_inventory, AssetClass, ClassCount, DataInventory, InventoryError, InventoryFile,
+    InventorySources, InventoryTotals, MissingFile, INVENTORY_FILE, INVENTORY_SCHEMA,
+};
 pub use markers::{decode_marker, ResourceMarkers, BIG_MARKER_COUNT, SMALL_MARKER_COUNT};
 pub use mission::{
     xor_decode, Media, MediaResource, MissionDescriptor, MissionRegistry, StoryBlock, TextBlock,

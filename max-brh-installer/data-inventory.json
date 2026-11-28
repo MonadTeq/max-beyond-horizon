@@ -1,0 +1,3156 @@
+{
+  "schema": 1,
+  "sources": {
+    "max_res_entries": 1828,
+    "max_res_file_references": 721,
+    "max_res_unique_references": 567,
+    "max_res_unresolved_references": 184,
+    "patches_res_entries": 84,
+    "patches_res_file_references": 1,
+    "patches_res_unique_references": 1,
+    "patches_res_unresolved_references": 0,
+    "mission_descriptors": 66,
+    "mission_files": 63,
+    "mission_files_present": 61,
+    "mission_hashes_verified": 61,
+    "mission_hashes_mismatched": 0,
+    "mission_briefing_files": 61,
+    "music_tracks": 16,
+    "music_files": 13,
+    "music_allowlisted_missing": 3,
+    "music_missing": 0
+  },
+  "totals": {
+    "files": 509,
+    "bytes": 385718310
+  },
+  "classes": [
+    {
+      "class": "data",
+      "files": 27,
+      "bytes": 48018729
+    },
+    {
+      "class": "mission",
+      "files": 122,
+      "bytes": 11255943
+    },
+    {
+      "class": "sound",
+      "files": 272,
+      "bytes": 25737626
+    },
+    {
+      "class": "flc",
+      "files": 71,
+      "bytes": 10002811
+    },
+    {
+      "class": "video",
+      "files": 3,
+      "bytes": 100174984
+    },
+    {
+      "class": "music",
+      "files": 13,
+      "bytes": 190498976
+    },
+    {
+      "class": "subtitles",
+      "files": 1,
+      "bytes": 29241
+    }
+  ],
+  "files": [
+    {
+      "path": "AA_ISO.FLC",
+      "class": "flc",
+      "size": 14582,
+      "sha256": "4e937a01c779bdc80c44c5e9d4da50429f7b9e4b95808bd79cfa71fe261d6eb9"
+    },
+    {
+      "path": "ACTIVATE.SPW",
+      "class": "sound",
+      "size": 17964,
+      "sha256": "eb4557f2802fbee334b0a0b50014c649d1885c4e7563099073641092f5575ecd"
+    },
+    {
+      "path": "AGT.FLC",
+      "class": "flc",
+      "size": 248772,
+      "sha256": "43bea2c4fb302277cf58f150cc8a3e2ab54de53c0363fe2befa9d188e7fafd70"
+    },
+    {
+      "path": "AIRPLNT.FLC",
+      "class": "flc",
+      "size": 15106,
+      "sha256": "06c04cd79a4e29b0ccb5350b584f78a5dcaf3360793c63a8a26c7c729233eeb5"
+    },
+    {
+      "path": "ALNASG.FLC",
+      "class": "flc",
+      "size": 243286,
+      "sha256": "2ccde6b4ad8acd5046bac3df841047c4551b21b763358ac172b4f315bc6b51c3"
+    },
+    {
+      "path": "ALNPLANE.FLC",
+      "class": "flc",
+      "size": 292284,
+      "sha256": "f22c414735218bf1ca1e9000d2fec6b1487ec8b9d70fcfe8d2762b2e5065e1be"
+    },
+    {
+      "path": "ALNTANK.FLC",
+      "class": "flc",
+      "size": 237702,
+      "sha256": "df6ed6dcb1ffd2b35e48c0d0a1802c5f41d1a4478e219fd402296b90c8c28e83"
+    },
+    {
+      "path": "ALNTK1.SPW",
+      "class": "sound",
+      "size": 123760,
+      "sha256": "3915d6118af6997df7e654d1842a07ed0381fc5b05bc9d5fc439b906ca3653cf"
+    },
+    {
+      "path": "ALNTK5.SPW",
+      "class": "sound",
+      "size": 258160,
+      "sha256": "42fca6325d310b02d8ebc4d8738499a8b9a214dd881611cb89c7b8e993892986"
+    },
+    {
+      "path": "ALNTK7.SPW",
+      "class": "sound",
+      "size": 32556,
+      "sha256": "bbf02c37fbc99458dbcef921823f4a9ed7227218865a5f8fc66f957f4c9e7c97"
+    },
+    {
+      "path": "ANTIMSL.FLC",
+      "class": "flc",
+      "size": 14760,
+      "sha256": "630488b637f58c7c87b7b0f2ace15e129e7cd3eb41a37ffad85d3121cf79ba8e"
+    },
+    {
+      "path": "APC1.SPW",
+      "class": "sound",
+      "size": 89644,
+      "sha256": "f46af5820580f65b3e0f819df74cade60216d28ff8c9b7dbc8a206e699a3a5f1"
+    },
+    {
+      "path": "APC17.SPW",
+      "class": "sound",
+      "size": 34152,
+      "sha256": "2b284882ef662530b4880d4ad35adb34fe2072a4260eeade97996127354c61d0"
+    },
+    {
+      "path": "APC18.SPW",
+      "class": "sound",
+      "size": 32722,
+      "sha256": "e05a0c3614ca7c9db5ac0c44b7e1d82f0f5e8632660fa2161aec03a0dd93b8dc"
+    },
+    {
+      "path": "APC5.SPW",
+      "class": "sound",
+      "size": 90480,
+      "sha256": "fbb45a98887811c27c2d3e3b1bac7c6ee49e660202a2c2476b482b82a29388ae"
+    },
+    {
+      "path": "APC7.SPW",
+      "class": "sound",
+      "size": 80172,
+      "sha256": "ec7d8c4b9e386571099687da6daadb9e1126ff917f967ffa24b209eeae85ceb6"
+    },
+    {
+      "path": "APC_TR01.FLC",
+      "class": "flc",
+      "size": 222012,
+      "sha256": "2af8acf96b6fbc8af3549313d4a6d7209fc7b6566612818e7b1ed59b21782440"
+    },
+    {
+      "path": "APLAN1.SPW",
+      "class": "sound",
+      "size": 131952,
+      "sha256": "b24481c433495fe72cc67525ff5f06798137dfdb6a2183c725c67f9761a4b42d"
+    },
+    {
+      "path": "APLAN5.SPW",
+      "class": "sound",
+      "size": 143442,
+      "sha256": "0d490f5f07b4b9da812603aaf3660f892a494cadeb59e45992aa4c7c4e98d881"
+    },
+    {
+      "path": "APLAN7.SPW",
+      "class": "sound",
+      "size": 43308,
+      "sha256": "8eb3c7cf59c5e939ebe650d983487336a885b0a41c5f891c6896c1a38625ac40"
+    },
+    {
+      "path": "ASGUN14.SPW",
+      "class": "sound",
+      "size": 76844,
+      "sha256": "0a37fce6f2c9818a555b803715c1f1f23eaedd132a4ac4826f421e11c4221795"
+    },
+    {
+      "path": "ATANK1.SPW",
+      "class": "sound",
+      "size": 159856,
+      "sha256": "0484e711a71f46e8a04716e250d68b99e82492643b74508b020a554957dfaf19"
+    },
+    {
+      "path": "ATANK5.SPW",
+      "class": "sound",
+      "size": 258160,
+      "sha256": "6e78241037d21291712149e8f2555101f0f101e71584cd22b93b624afbc1a231"
+    },
+    {
+      "path": "ATANK7.SPW",
+      "class": "sound",
+      "size": 32556,
+      "sha256": "3556e28095a0e1b514086ecdaf37f1b35ff5811a648bb8a42399de19a71f061b"
+    },
+    {
+      "path": "ATRANS02.FLC",
+      "class": "flc",
+      "size": 280898,
+      "sha256": "8bcdcd36f34f06d7092b714718169b12d7b7fd929dbe1143b251498202cb812d"
+    },
+    {
+      "path": "ATRANS1.SPW",
+      "class": "sound",
+      "size": 150384,
+      "sha256": "8efccd05a4d40f6d91c0789c6f3f4419b5e9d43e7931afc886b0db7ad289a386"
+    },
+    {
+      "path": "ATRANS5.SPW",
+      "class": "sound",
+      "size": 264304,
+      "sha256": "ffcd80089d4de3aae9b86bab66ea939f6ac7a59e8828a6cd32ac7286b25cbb33"
+    },
+    {
+      "path": "ATRANS7.SPW",
+      "class": "sound",
+      "size": 65964,
+      "sha256": "363a2ed6324fba0975a3e21d089c7af923398a634830726b21aa8ec1524e8b55"
+    },
+    {
+      "path": "ATTACK1.SPW",
+      "class": "sound",
+      "size": 131952,
+      "sha256": "5222961edf726c720d048da95f46241f884a6c15cf70f9d9605b897e6ad65eec"
+    },
+    {
+      "path": "ATTACK5.SPW",
+      "class": "sound",
+      "size": 157088,
+      "sha256": "5eb44f3c0e8e5c372be771f74b0e403a108dbb62fcd45bcd5517c62fa55926cb"
+    },
+    {
+      "path": "ATTACK7.SPW",
+      "class": "sound",
+      "size": 43308,
+      "sha256": "a6f64652224d5b0b1785b0b0736aca7bf09771ce48dc64c1150f4d425039cdca"
+    },
+    {
+      "path": "AUNIT17.SPW",
+      "class": "sound",
+      "size": 297072,
+      "sha256": "b2ac06aca4c6f3b90bf98474b3f2b69a1c3b88afae08d4f12203dfacf5eafd16"
+    },
+    {
+      "path": "AUNIT18.SPW",
+      "class": "sound",
+      "size": 144428,
+      "sha256": "5ee85902c31dd54e9f3cb45a735f4fb7b4f99a339082391032daa104fad6e1db"
+    },
+    {
+      "path": "AWAC1.SPW",
+      "class": "sound",
+      "size": 52208,
+      "sha256": "005769c870cbdb111507c62d40bc9651f50454515793ef066f4c2f86ec3cf53e"
+    },
+    {
+      "path": "AWAC5.SPW",
+      "class": "sound",
+      "size": 264048,
+      "sha256": "44677336b974fbfe89bc969b24d19c0b091a5993677af2e59d41bc6e36f3eb34"
+    },
+    {
+      "path": "AWAC7.SPW",
+      "class": "sound",
+      "size": 55340,
+      "sha256": "e523bda7818a5f7e8daa69127ccbea973194329fb9a8a7c3e6c42a7f56ad1c94"
+    },
+    {
+      "path": "AWACS03.FLC",
+      "class": "flc",
+      "size": 303376,
+      "sha256": "49ce28dc3bad44267758e884cc96bba415bc4425577d00c35f12a9f1d31c0cad"
+    },
+    {
+      "path": "BARX_ISO.FLC",
+      "class": "flc",
+      "size": 14638,
+      "sha256": "9d267c6b735a7f23b488c805acca1e3bd384f08bded7e3fb026ec4a229599141"
+    },
+    {
+      "path": "BKG1_MSC.MSC",
+      "class": "music",
+      "size": 14910112,
+      "sha256": "bad451c053a42395160d1d13f463ad4cb363724c18faef2b6a543a14a8874581"
+    },
+    {
+      "path": "BKG2_MSC.MSC",
+      "class": "music",
+      "size": 16378916,
+      "sha256": "3ef8f45c89e9dccd1a2548fc27714f94b8ea9455c1bba86b94bcd87dae6ff638"
+    },
+    {
+      "path": "BKG3_MSC.MSC",
+      "class": "music",
+      "size": 17325512,
+      "sha256": "31650a1b1a8a4387d508de0680c64301329fe9d2e044a553b2f404a8b4c38b1d"
+    },
+    {
+      "path": "BKG4_MSC.MSC",
+      "class": "music",
+      "size": 15141892,
+      "sha256": "138e6cc64af9fcd3d6f3da75ac0cf81dc14eb42d67b1b9cf9204669cd8bd5204"
+    },
+    {
+      "path": "BKG5_MSC.MSC",
+      "class": "music",
+      "size": 14663060,
+      "sha256": "e0784cb030211f71e09856648a2ee8f034c42378c6a7d9deef8d52d6e4b8a11f"
+    },
+    {
+      "path": "BKG6_MSC.MSC",
+      "class": "music",
+      "size": 18393356,
+      "sha256": "061ca732f6c64147e71e080966a2cbea1aa5248523dd8658062d8a624c83ecc1"
+    },
+    {
+      "path": "BLDEXPLG.SPW",
+      "class": "sound",
+      "size": 241452,
+      "sha256": "9e5324e72d52144af2c11fb3e25444c62856b76d9d49d1e60dcc554884b62a6d"
+    },
+    {
+      "path": "BLOCK16.SPW",
+      "class": "sound",
+      "size": 132830,
+      "sha256": "a9b62649c033e8d5017887cbb997584f3ba35434ec5e421500ee299e0cc9c270"
+    },
+    {
+      "path": "BLOK128.FLC",
+      "class": "flc",
+      "size": 11568,
+      "sha256": "8e108bfbdf2bf2df5749a2a6f3a53c4d96ab423a633ae98b87059d2294765046"
+    },
+    {
+      "path": "BOATEXP1.SPW",
+      "class": "sound",
+      "size": 141868,
+      "sha256": "b67659f6200d133aa512ce3d43f235837ce6ed7fbcb32c26cdcdeed82fb6cf6f"
+    },
+    {
+      "path": "BOMBER03.FLC",
+      "class": "flc",
+      "size": 273062,
+      "sha256": "0d53cf25d758ad620a50391eea3ca35bdad5c57752e74c44c60e51a288b96496"
+    },
+    {
+      "path": "BRIDGE.FLC",
+      "class": "flc",
+      "size": 12512,
+      "sha256": "4888dff1170d907bc64ac4f352c7a94f421e95334caa7a3ae5b78fd32f736352"
+    },
+    {
+      "path": "BULL1.SPW",
+      "class": "sound",
+      "size": 153712,
+      "sha256": "3ecc82ef4c3c7ec02ea8eac94007da3d6b9cc2bd9aba6d892060edcf63be9198"
+    },
+    {
+      "path": "BULL17.SPW",
+      "class": "sound",
+      "size": 196976,
+      "sha256": "e1938a8e01399494449f4dc1e75f054b397c51470372bae9ba387046b1b6fea4"
+    },
+    {
+      "path": "BULL5.SPW",
+      "class": "sound",
+      "size": 141168,
+      "sha256": "eca91ecb2b53c4f14c080ed6978d1ccf32a96d9778f7e309a7eb683c484731d5"
+    },
+    {
+      "path": "BULL7.SPW",
+      "class": "sound",
+      "size": 27436,
+      "sha256": "84bc0d955a5fcfedb61d9a0624d6e8bb54f8f54b19617440d0e405623a5a8b62"
+    },
+    {
+      "path": "CANFIRE.SPW",
+      "class": "sound",
+      "size": 86060,
+      "sha256": "689a402929cf0b74d93354b5d5ecc161387a1ca21fcd21e110fa28cf25acbab8"
+    },
+    {
+      "path": "CBLDEXP1.SPW",
+      "class": "sound",
+      "size": 201230,
+      "sha256": "b964611db3f120886b80df5cfc1a0ebfb84c9aedf9db4706752df3a8bab95d8c"
+    },
+    {
+      "path": "CBLDEXP2.SPW",
+      "class": "sound",
+      "size": 199148,
+      "sha256": "1c7a089a9f808ddef6053a46818bb400f5dfc1b556f23ce39d9da875e192faf5"
+    },
+    {
+      "path": "CMINE16.SPW",
+      "class": "sound",
+      "size": 144684,
+      "sha256": "2cc1222c5c51dec8abc5489c9700560f8e28fd36e93ef6efeec98c27e6ce0045"
+    },
+    {
+      "path": "COLOR.PAL",
+      "class": "data",
+      "size": 33536,
+      "sha256": "44c4b5ad8d562bbb134292e312adaea80b942d84361941c97246d8f23ac9f0eb"
+    },
+    {
+      "path": "COMMTWR.FLC",
+      "class": "flc",
+      "size": 13898,
+      "sha256": "84ef7f3fa0b2c8af11faf7d4c7dc091b8868fc7b003f52575f5da18f6e6a2632"
+    },
+    {
+      "path": "CONST1.SPW",
+      "class": "sound",
+      "size": 120790,
+      "sha256": "103a8d348767c16f4cd03df33f415b91c9f98d8d530f37cab5c2194a87df6ac3"
+    },
+    {
+      "path": "CONST2.SPW",
+      "class": "sound",
+      "size": 123504,
+      "sha256": "ef410318d033d8aa6d15fbcf1ad28eff22b0c9f31a8f750a941eb80c6efac28f"
+    },
+    {
+      "path": "CONST5.SPW",
+      "class": "sound",
+      "size": 102256,
+      "sha256": "3c48fa52679ec80fc257cd1a8f93f165ce300a3d961099558f95ea0bb0aa8cca"
+    },
+    {
+      "path": "CONST6.SPW",
+      "class": "sound",
+      "size": 224624,
+      "sha256": "f521b94766a332367b350708e3c222b110eff7d21249da9bfbc8f2cc39922142"
+    },
+    {
+      "path": "CONST7.SPW",
+      "class": "sound",
+      "size": 38700,
+      "sha256": "e35c45074bef7d605b4ba5e0080b5dfe49963d737561f6e527becbfbeefdd6cf"
+    },
+    {
+      "path": "CONST8.SPW",
+      "class": "sound",
+      "size": 31532,
+      "sha256": "2201fd1d27ca7304372e0390acfa1bbecaa81b3e97a286cfc646dbbf68ca9f36"
+    },
+    {
+      "path": "CONSTRCT.FLC",
+      "class": "flc",
+      "size": 272292,
+      "sha256": "efbd0342537d02e9a807bb7a1cffdffdcb9fb3a0fde34b9d0b9365c6d4149180"
+    },
+    {
+      "path": "CORVETTE.FLC",
+      "class": "flc",
+      "size": 197994,
+      "sha256": "c1ec1023b5525fbab08ce79780c83483f3aec9d94da8bf8904390f20cb776294"
+    },
+    {
+      "path": "CORVT14.SPW",
+      "class": "sound",
+      "size": 44844,
+      "sha256": "b7661827fdcdaa44c951a4bb5b05ea898c526dbd2c3e51a62a0f1d03c972dadc"
+    },
+    {
+      "path": "CRATER_1.WRL",
+      "class": "data",
+      "size": 1111825,
+      "sha256": "1c7fd2dbf663bd59e44b805d4eefe01679e25ffea8eb68337adfca5ec6eba7c6"
+    },
+    {
+      "path": "CRATER_2.WRL",
+      "class": "data",
+      "size": 1120019,
+      "sha256": "f18045f9dd315bb2c91dce05efb196924f9fcdd64a873482b997c432af1a9b12"
+    },
+    {
+      "path": "CRATER_3.WRL",
+      "class": "data",
+      "size": 669349,
+      "sha256": "91b3ed80b33560e0e14c61120a6bb9ef7d2dfa44a159c130ea78f944cb5b9c64"
+    },
+    {
+      "path": "CRATER_4.WRL",
+      "class": "data",
+      "size": 1136407,
+      "sha256": "3749ceabc5b53aa3e7126d8751479725786d93fc800cf4b3e59b32d22dd301bd"
+    },
+    {
+      "path": "CRATER_5.WRL",
+      "class": "data",
+      "size": 1038079,
+      "sha256": "2646e4c177bccf19e88a78365f18fda48e06c0f8e0aa62ebd442b6ab2de646e1"
+    },
+    {
+      "path": "CRATER_6.WRL",
+      "class": "data",
+      "size": 1152795,
+      "sha256": "f2a2b010c280a8a73f0a7e6af549eb318b7b981463c366a7511a4725a138d393"
+    },
+    {
+      "path": "CROSS.FLC",
+      "class": "flc",
+      "size": 17966,
+      "sha256": "a6f20c53ecf1170c9d3708cf44a0f77b535fd363595cf03959da8a92baf0b199"
+    },
+    {
+      "path": "CRTR_MSC.MSC",
+      "class": "music",
+      "size": 14181412,
+      "sha256": "41870e97a3480b3b87f3fdf205ca537aada040e38496082e0a2a652fc5eed606"
+    },
+    {
+      "path": "DESCR1.CAM",
+      "class": "mission",
+      "size": 454,
+      "sha256": "916e52ce7261526b246accb7ae5cab7a151dceb7b50a521cf51ec39a53401064"
+    },
+    {
+      "path": "DESCR1.MPS",
+      "class": "mission",
+      "size": 117,
+      "sha256": "82b9184fed03d5c7364c06ac46577caced7d393cc09923830736965012fe86bf"
+    },
+    {
+      "path": "DESCR1.SCE",
+      "class": "mission",
+      "size": 463,
+      "sha256": "abfa1a5af0a460f76a24af4fe0b2135c43254f4cf9395e01d983da3fabe255b6"
+    },
+    {
+      "path": "DESCR1.TRA",
+      "class": "mission",
+      "size": 204,
+      "sha256": "83f1bcf0ee45551179f6713bde196881af4b6ae2055e2c3da650e6492d9bb57f"
+    },
+    {
+      "path": "DESCR10.MPS",
+      "class": "mission",
+      "size": 188,
+      "sha256": "827ade6aea1b5ffcb6f275aa0c756c17079657d012fc9e39dfba331315e1becf"
+    },
+    {
+      "path": "DESCR10.SCE",
+      "class": "mission",
+      "size": 180,
+      "sha256": "cfdf2bd47de6f44c44650e2b46bc32eff71d16e741c9256ae3e722e970688b5a"
+    },
+    {
+      "path": "DESCR10.TRA",
+      "class": "mission",
+      "size": 713,
+      "sha256": "01e5d024a9fe5fb0eb3a377a236dae4ccada60a3a05304a77d0c16e34073a487"
+    },
+    {
+      "path": "DESCR11.MPS",
+      "class": "mission",
+      "size": 192,
+      "sha256": "6834a0d4fc52851e2ff8b03cd015ca0a4a44d7cefa58f559d4a46866292c18b3"
+    },
+    {
+      "path": "DESCR11.SCE",
+      "class": "mission",
+      "size": 372,
+      "sha256": "c7217e5e9d1fe1833d96f43b35d41dd9b9a8fbb0ca92ce9bca06e43d6aad59ab"
+    },
+    {
+      "path": "DESCR11.TRA",
+      "class": "mission",
+      "size": 1035,
+      "sha256": "431f8c0cc35380f7a3874c3b9ceff0ecc36ba83ee82bd6ff5a9150eb9b1da24d"
+    },
+    {
+      "path": "DESCR12.MPS",
+      "class": "mission",
+      "size": 117,
+      "sha256": "519d2b9fab468220ebbfdb29cfc326ef42ac6715ef752997a721bf5647126f91"
+    },
+    {
+      "path": "DESCR12.SCE",
+      "class": "mission",
+      "size": 391,
+      "sha256": "903015433bc1225f44e25a59034a1240250cca62867d7cd9c4a863d7e9cb7662"
+    },
+    {
+      "path": "DESCR12.TRA",
+      "class": "mission",
+      "size": 513,
+      "sha256": "c9a0549866cda0137ea5c84efdb5ba0dfd2bf0712b9f06e75c3a57624f3d5f39"
+    },
+    {
+      "path": "DESCR13.SCE",
+      "class": "mission",
+      "size": 428,
+      "sha256": "e9e4b36bd34c307550e151d04d8edc6fe5df228300d531afeb7cffd862dba826"
+    },
+    {
+      "path": "DESCR13.TRA",
+      "class": "mission",
+      "size": 701,
+      "sha256": "ff27f4e479546919c6b89d241ba11156ad10614db05ffa257a6cd52d800311ee"
+    },
+    {
+      "path": "DESCR14.SCE",
+      "class": "mission",
+      "size": 424,
+      "sha256": "36c979c82b7f0580ed52bb06c8f767130597986cabb4e2110250d842935e7e05"
+    },
+    {
+      "path": "DESCR14.TRA",
+      "class": "mission",
+      "size": 788,
+      "sha256": "ca86ca02eb7bdd6d9d9ea048a2ffff85494f83c6d079aeef4692218e624a061c"
+    },
+    {
+      "path": "DESCR15.SCE",
+      "class": "mission",
+      "size": 677,
+      "sha256": "ac635308ce11db20b676277e7d858efa3057aaf5f95e7f8ccc8852866a355884"
+    },
+    {
+      "path": "DESCR15.TRA",
+      "class": "mission",
+      "size": 226,
+      "sha256": "c2f3c6290910ab3ac9569fdb3a65fa84858334b61e8a4f0dfe6afcce516920cb"
+    },
+    {
+      "path": "DESCR16.SCE",
+      "class": "mission",
+      "size": 521,
+      "sha256": "932e73dc0df7d34689cbdb9e46dc85c77877f846d4e7a7710703b3cb3487c1ee"
+    },
+    {
+      "path": "DESCR17.SCE",
+      "class": "mission",
+      "size": 359,
+      "sha256": "afb9a33afed91df9f82cc9d475b84ff5fe69a529a1b7c745429d3f74ad888ac8"
+    },
+    {
+      "path": "DESCR18.SCE",
+      "class": "mission",
+      "size": 336,
+      "sha256": "a9b608a7f61032ac9f7d469143cf7ef150749ad732b21ad79d7e7ce8f5e3474c"
+    },
+    {
+      "path": "DESCR19.SCE",
+      "class": "mission",
+      "size": 258,
+      "sha256": "4d0236e6121bf44466866df06e4c45d0e83a28a673e599be51199af3e88e5382"
+    },
+    {
+      "path": "DESCR2.CAM",
+      "class": "mission",
+      "size": 470,
+      "sha256": "66f2db1096229f6ab7d3bae24f3286260e49c076db6cf6889dfd8823a4f583c6"
+    },
+    {
+      "path": "DESCR2.MPS",
+      "class": "mission",
+      "size": 176,
+      "sha256": "b19a63db4702e1891ec692f3f11804b558271d4aaf680362d2eb1722f3800959"
+    },
+    {
+      "path": "DESCR2.SCE",
+      "class": "mission",
+      "size": 536,
+      "sha256": "cf5ddbd1768de3552902a54194fb434b51dba0ab18ff43b75254a422c201517c"
+    },
+    {
+      "path": "DESCR2.TRA",
+      "class": "mission",
+      "size": 162,
+      "sha256": "617a4ce9d57abc2e12d53ad7f3c995aa74813c1e5fe104d1ad5becf70c1cdfcc"
+    },
+    {
+      "path": "DESCR20.SCE",
+      "class": "mission",
+      "size": 941,
+      "sha256": "5a72976b0847ee38ae193393bbe5c3ad0985f39bc6f82a353b8fdcda3ea46bf8"
+    },
+    {
+      "path": "DESCR21.SCE",
+      "class": "mission",
+      "size": 304,
+      "sha256": "fb0d401967168776dab1faecf28158f87f9e58a2f6d72b4e99b3c568aa61602a"
+    },
+    {
+      "path": "DESCR22.SCE",
+      "class": "mission",
+      "size": 314,
+      "sha256": "724c7dc56f49334f26f82461401a5d070606c1c0ec1a45de0db8d44174d58c5d"
+    },
+    {
+      "path": "DESCR23.SCE",
+      "class": "mission",
+      "size": 234,
+      "sha256": "3ba70a5c825b8c831a036b814d962772f888ca29c96fc08344e0dd83a995946c"
+    },
+    {
+      "path": "DESCR24.SCE",
+      "class": "mission",
+      "size": 274,
+      "sha256": "3827d06c2679552d55205b1ff541276d1b8b9d3494807c3b021a8e3352cea529"
+    },
+    {
+      "path": "DESCR3.CAM",
+      "class": "mission",
+      "size": 410,
+      "sha256": "62af63420a99f37f8ac30d1be82361a4b89a9460116b333c359a34e80f428324"
+    },
+    {
+      "path": "DESCR3.MPS",
+      "class": "mission",
+      "size": 109,
+      "sha256": "e78c6cb662196d36f28e0b8a9f5b797640dd6ec59cddeb17f166f005e3ce0a6e"
+    },
+    {
+      "path": "DESCR3.SCE",
+      "class": "mission",
+      "size": 682,
+      "sha256": "91dabb2124b87b54edbd549af00c2e6a6a0baa04b83b46aaaf8039db32f26d78"
+    },
+    {
+      "path": "DESCR3.TRA",
+      "class": "mission",
+      "size": 330,
+      "sha256": "ce42470c4370aa4f6a3046a3e820c50ed460a6f81a2ebacf620d2803a133a862"
+    },
+    {
+      "path": "DESCR4.CAM",
+      "class": "mission",
+      "size": 411,
+      "sha256": "d3fd97ab966b9d2f3caa5134a1b20115dc11f8fd1e5bf4e223b54026d22db6da"
+    },
+    {
+      "path": "DESCR4.MPS",
+      "class": "mission",
+      "size": 117,
+      "sha256": "c7d3b9b855d1b1640ebf7fcb55974889765b2462350b5899920c060cc28ef377"
+    },
+    {
+      "path": "DESCR4.SCE",
+      "class": "mission",
+      "size": 251,
+      "sha256": "464f955c5bf518c06b64e766a5b4afd7997e4e1781d6826ecd21ae54a6486d61"
+    },
+    {
+      "path": "DESCR4.TRA",
+      "class": "mission",
+      "size": 408,
+      "sha256": "8dd494058eb0e2bc47c30f1484ce8b02970d0488be6243ae49763e24b7b8ac19"
+    },
+    {
+      "path": "DESCR5.CAM",
+      "class": "mission",
+      "size": 681,
+      "sha256": "149f67609628a7475365c49ba24aa120dcf049fb2025672d0ac1b6163a2a9e0d"
+    },
+    {
+      "path": "DESCR5.MPS",
+      "class": "mission",
+      "size": 117,
+      "sha256": "044f4d998b211da2dfc666cabe81f18d66d7fd63aff6155f32e921ed7bd239b1"
+    },
+    {
+      "path": "DESCR5.SCE",
+      "class": "mission",
+      "size": 328,
+      "sha256": "215934084bda4eae5138737325d819dc39e512ff2253e229fc30cdb77c6f7995"
+    },
+    {
+      "path": "DESCR5.TRA",
+      "class": "mission",
+      "size": 113,
+      "sha256": "715ff96fb9b3ab60c10176d622e657c5432cfe30c6f3bf8dafb0b04ad182df4a"
+    },
+    {
+      "path": "DESCR6.CAM",
+      "class": "mission",
+      "size": 325,
+      "sha256": "ecd034b12b48ca0db8d8370e029678e1cf953ba45e511f019a022702783d503b"
+    },
+    {
+      "path": "DESCR6.MPS",
+      "class": "mission",
+      "size": 116,
+      "sha256": "3b3d939b124aa08f4886fdb8f8e86eeca919d0fee2bb7dec241e4cfeeb637a9f"
+    },
+    {
+      "path": "DESCR6.SCE",
+      "class": "mission",
+      "size": 686,
+      "sha256": "60352874f005b2bedd8fbde954f4fba05a1a5d8cf194a11bba0985ac322ed7e0"
+    },
+    {
+      "path": "DESCR6.TRA",
+      "class": "mission",
+      "size": 880,
+      "sha256": "25071f0e46bca22a9cc28043370c6b89820e31b2f8035d9077cedab595e2a195"
+    },
+    {
+      "path": "DESCR7.CAM",
+      "class": "mission",
+      "size": 419,
+      "sha256": "c09d1be02289d9d75bcd41fb17965cbd234bdc198bae06061eb34ff1ba6f34b8"
+    },
+    {
+      "path": "DESCR7.MPS",
+      "class": "mission",
+      "size": 125,
+      "sha256": "f1599d09c75a1fa88e3a6eb93b2cd9aa8975511d4fd9390207815d0aa4e65fc9"
+    },
+    {
+      "path": "DESCR7.SCE",
+      "class": "mission",
+      "size": 419,
+      "sha256": "d2f61ca7886d2b449f1fde901999b86e09ccd6947a602616aff4d6fc671acbe2"
+    },
+    {
+      "path": "DESCR7.TRA",
+      "class": "mission",
+      "size": 693,
+      "sha256": "6558c9190ce5dda927f7ab9fa16cae9b75ae9ea67f76dab8aff2dadaf8bc39a0"
+    },
+    {
+      "path": "DESCR8.CAM",
+      "class": "mission",
+      "size": 702,
+      "sha256": "7ea030197fc19809bb0e749370381ccdf2ec589028f8d576edfa3f785a237492"
+    },
+    {
+      "path": "DESCR8.MPS",
+      "class": "mission",
+      "size": 176,
+      "sha256": "1063d4baccfd54854e35ae5fef98506efb465260403d09bb6815c85ed91922aa"
+    },
+    {
+      "path": "DESCR8.SCE",
+      "class": "mission",
+      "size": 518,
+      "sha256": "782c0245f8ebd7ddba20b5873d5cc7e9f07c6ad0ca21ccb55ee4ca75401c1dd3"
+    },
+    {
+      "path": "DESCR8.TRA",
+      "class": "mission",
+      "size": 482,
+      "sha256": "143e6bfe70ffaaf1da1c775f9566e4cb426f4e5d01c3c0e9d2b41b8dd924e2d5"
+    },
+    {
+      "path": "DESCR9.CAM",
+      "class": "mission",
+      "size": 984,
+      "sha256": "74395db46789e71ffff5f0f64d00a62cb926c5621875f5d0848c3c14df8b4e3f"
+    },
+    {
+      "path": "DESCR9.MPS",
+      "class": "mission",
+      "size": 177,
+      "sha256": "5408a12dbaececbcbdbdd69134220a738faf36107d21db1f7e5800fab6f70b53"
+    },
+    {
+      "path": "DESCR9.SCE",
+      "class": "mission",
+      "size": 674,
+      "sha256": "fab4e54f5b7bc1760549f82cb3dac0c71855730727f903698b30fcf9ba61c8cf"
+    },
+    {
+      "path": "DESCR9.TRA",
+      "class": "mission",
+      "size": 826,
+      "sha256": "284d84e20e006fc17085a5343c9c56d23916c0e0ac5f95aa80cfafa1bb9070c9"
+    },
+    {
+      "path": "DESERT_1.WRL",
+      "class": "data",
+      "size": 1124116,
+      "sha256": "2a1e65b4e9d95c6edc3f6da12d85c1d801df860fac562bc60f612c6fc2087ad8"
+    },
+    {
+      "path": "DESERT_2.WRL",
+      "class": "data",
+      "size": 894684,
+      "sha256": "ef341cff54196289740ea3156423897b0a4135741d8214f8c1104cba3ba7f37a"
+    },
+    {
+      "path": "DESERT_3.WRL",
+      "class": "data",
+      "size": 1320772,
+      "sha256": "5877fc3c584558330683909b0ec153712e25f3337e975b590a0cacca3d8b4c7a"
+    },
+    {
+      "path": "DESERT_4.WRL",
+      "class": "data",
+      "size": 1365839,
+      "sha256": "5a6ac1733af876ed603d076f03106ac0a46977d43dc29d8c2885684ab3269b30"
+    },
+    {
+      "path": "DESERT_5.WRL",
+      "class": "data",
+      "size": 1578883,
+      "sha256": "33771f1cd7b3b321dca8667976f3e1fcadbf9c2c978e509fda1819291f0cf80c"
+    },
+    {
+      "path": "DESERT_6.WRL",
+      "class": "data",
+      "size": 1505137,
+      "sha256": "ddcba1014d11165e219d17396457a640376b22ca099525264fc7f3a509a138e9"
+    },
+    {
+      "path": "DOCK.FLC",
+      "class": "flc",
+      "size": 15560,
+      "sha256": "a313c5dad0fef4070b5c5a8c4850c25d8c508dd2b11b3c66c64d012e516f8e71"
+    },
+    {
+      "path": "DORM.FLC",
+      "class": "flc",
+      "size": 16416,
+      "sha256": "11767bf59e146103b21db51251691b205e99e70061edba4c2452194c9b648831"
+    },
+    {
+      "path": "DOZER01.FLC",
+      "class": "flc",
+      "size": 241688,
+      "sha256": "f6dc4243ec75605cbba88c5abf99edd35e37832558b021141e24e6d78b14a6f9"
+    },
+    {
+      "path": "DPBG_S.FLC",
+      "class": "flc",
+      "size": 14264,
+      "sha256": "cdbc3976cfdf8fcb2f44cffad44fd52023aca331ac04e2ce2ad829d2da0e09b0"
+    },
+    {
+      "path": "DSRT_MSC.MSC",
+      "class": "music",
+      "size": 16598112,
+      "sha256": "64900f8a66122f4a17fed48de97f4d395d6f9b8fef6b970daffab88417495dfd"
+    },
+    {
+      "path": "ENGIN1.SPW",
+      "class": "sound",
+      "size": 132208,
+      "sha256": "bd8d055e2d4e523155ed996f49cd518d46a763e6126ea79d672785bcbd90bd77"
+    },
+    {
+      "path": "ENGIN2.SPW",
+      "class": "sound",
+      "size": 132464,
+      "sha256": "526912b71cceca6970da801331841ee3051d97485d1db5d58ae891d6b85e083e"
+    },
+    {
+      "path": "ENGIN5.SPW",
+      "class": "sound",
+      "size": 86128,
+      "sha256": "49ab110737e09b3c80dabcf870cff101ba7473a8cdc123e0fff516f65dd818e0"
+    },
+    {
+      "path": "ENGIN6.SPW",
+      "class": "sound",
+      "size": 85872,
+      "sha256": "af9c35f914e61251ade883727f12b52bc8cc22471d98efd1b4da7bbc49442db7"
+    },
+    {
+      "path": "ENGIN7.SPW",
+      "class": "sound",
+      "size": 27948,
+      "sha256": "99d8bc26470ab1d69c394a7678b6c248504a38b125e5a1f0e7b1c06b16f4d1da"
+    },
+    {
+      "path": "ENGIN8.SPW",
+      "class": "sound",
+      "size": 32556,
+      "sha256": "da0a17a41ba07bbab84e75c98354218c9bb84009d8deab9cef21693043ff8421"
+    },
+    {
+      "path": "ENGINEER.FLC",
+      "class": "flc",
+      "size": 300124,
+      "sha256": "3af18186e4d793baaf254de3fa6ca71191e6d0e0dc97cb108cd41fe7aa91a70b"
+    },
+    {
+      "path": "EPLOWET1.SPW",
+      "class": "sound",
+      "size": 91692,
+      "sha256": "9673bdbde6b8ffb09c9c42cf43a44870efbd9ddc5fbc8675e8edcbef9604ac2c"
+    },
+    {
+      "path": "EPLOWET2.SPW",
+      "class": "sound",
+      "size": 70956,
+      "sha256": "286e3a04c0ef2251b3a4cf50fd1f79caf1091a11ac7ef84c0920124e4c4782e8"
+    },
+    {
+      "path": "ESCORT.FLC",
+      "class": "flc",
+      "size": 195750,
+      "sha256": "d5d5744ae32d1c67533e213c97ef7b8180786e18b18af7d06dcd17f2b39c5be9"
+    },
+    {
+      "path": "EXPBULD5.SPW",
+      "class": "sound",
+      "size": 302778,
+      "sha256": "d5b62b79fb8ae4c99cb071fa1004a3259eec1f0af5a5d2be1dd282406ca7fbb7"
+    },
+    {
+      "path": "EXPBULD6.SPW",
+      "class": "sound",
+      "size": 265500,
+      "sha256": "bdcfd984fdfd5cf4e6c17df3dac4ce70d0d1c10a4e23e2c76e00eeab1d88ad6d"
+    },
+    {
+      "path": "EXPLBLD1.SPW",
+      "class": "sound",
+      "size": 167080,
+      "sha256": "edc7bca02ca38b78e457c1549919b93b0717b209059a524811e8684f6272680d"
+    },
+    {
+      "path": "EXPLBLD2.SPW",
+      "class": "sound",
+      "size": 164392,
+      "sha256": "adf4ea471766ce8c1c99f7c98bf1460d429e7c03312966171fa9c145a146c906"
+    },
+    {
+      "path": "EXPLBULD.SPW",
+      "class": "sound",
+      "size": 196058,
+      "sha256": "d2cfd35c8515c01d2de07ff909fe77cdf91be2ae898a42b918f9927e02067b65"
+    },
+    {
+      "path": "EXPLLRGE.SPW",
+      "class": "sound",
+      "size": 150072,
+      "sha256": "9b0ba95ab447b85b4d8443356e45a7baadda61e44b69cd415d4be889006907bf"
+    },
+    {
+      "path": "EXPLMED.SPW",
+      "class": "sound",
+      "size": 122240,
+      "sha256": "7ee607a80c76552f6ef8dcbf3e2b56bd207399e5ef18ab7b2a5e8f455774ae3f"
+    },
+    {
+      "path": "EXPLSMAL.SPW",
+      "class": "sound",
+      "size": 123326,
+      "sha256": "e46b73b4b9aba1fffe7426d514ea6ba573f9ed3edc8119a20ed8db3712b242ca"
+    },
+    {
+      "path": "EXPSDIRT.SPW",
+      "class": "sound",
+      "size": 74138,
+      "sha256": "eda99bdc259100b337b7ba25f0244ef522fab91d23f78a01d589c2298f824b93"
+    },
+    {
+      "path": "E_ART2.FLC",
+      "class": "flc",
+      "size": 272412,
+      "sha256": "677a470ffd23a98da545bd8f536e0563debb5a02a1f8f17e458ba0740dc17139"
+    },
+    {
+      "path": "F001.SPW",
+      "class": "sound",
+      "size": 23852,
+      "sha256": "df9a9988e5697ba55a7407c29eab647d710e4523665fca0876deb7f9ac8ee6f0"
+    },
+    {
+      "path": "F004.SPW",
+      "class": "sound",
+      "size": 53804,
+      "sha256": "23f6a956d0695957b36e8afec7689b2af35dfe6bc3731609482d421295b69588"
+    },
+    {
+      "path": "F005.SPW",
+      "class": "sound",
+      "size": 44076,
+      "sha256": "291b2dd4d53f5801d92a8a73792d191b0c0adb5d9060e536d72cb530264f1be5"
+    },
+    {
+      "path": "F006.SPW",
+      "class": "sound",
+      "size": 56364,
+      "sha256": "84c5780fc15d9da2d3a5588364e2c2e545bc00b9c57a68f651d357d30e5069b0"
+    },
+    {
+      "path": "F007.SPW",
+      "class": "sound",
+      "size": 56108,
+      "sha256": "9601957dafd8df38a62ff9f15743b60c62003ea20b5c75650267323dc4db81ac"
+    },
+    {
+      "path": "F010.SPW",
+      "class": "sound",
+      "size": 51756,
+      "sha256": "50f3043f179d553d3b142f2c353bb4a8cba23a6b4d51e2c4abf2850ea181244c"
+    },
+    {
+      "path": "F012.SPW",
+      "class": "sound",
+      "size": 93484,
+      "sha256": "f7865211aedc01567d5e82c96e484a34769add04f7fb196f3023aa16af5abca7"
+    },
+    {
+      "path": "F013.SPW",
+      "class": "sound",
+      "size": 45868,
+      "sha256": "6cb402224a097542ebe6bef8522647b5b0c81b253db82f1ae7c9ccdc9ebf153a"
+    },
+    {
+      "path": "F025.SPW",
+      "class": "sound",
+      "size": 93740,
+      "sha256": "8aeb19e1f4fa06ec11f73600a741c267d138da260a3cc450805516ddf60aa55d"
+    },
+    {
+      "path": "F026.SPW",
+      "class": "sound",
+      "size": 106284,
+      "sha256": "67a2fdf3565bf06769ac9292df95ca957af5e8b708ecfb888f6382335fa90e3e"
+    },
+    {
+      "path": "F031.SPW",
+      "class": "sound",
+      "size": 88876,
+      "sha256": "8fcfa7e49fe37367e084e6eb08655c99abb61479ceddc3ef95a9165ef509ad4c"
+    },
+    {
+      "path": "F032.SPW",
+      "class": "sound",
+      "size": 100652,
+      "sha256": "432c99d726712f84715d88b4bb7ceb14225b25af144db3d552e2abcacf9955e3"
+    },
+    {
+      "path": "F037.SPW",
+      "class": "sound",
+      "size": 89644,
+      "sha256": "fe1619c8f13ebf285f7f9303b37b3a61a0caf0dfe663a102c1e726ce8c3cfa6f"
+    },
+    {
+      "path": "F038.SPW",
+      "class": "sound",
+      "size": 97068,
+      "sha256": "d17389ac4f3e6c4412dc026a8804552058db3e531fb29b44df5d8d67a5c6b4e2"
+    },
+    {
+      "path": "F043.SPW",
+      "class": "sound",
+      "size": 87084,
+      "sha256": "9c8ba999847451525a535b2dd6ff8194f98d2f079013217404fb64eed2d9b0e9"
+    },
+    {
+      "path": "F044.SPW",
+      "class": "sound",
+      "size": 100396,
+      "sha256": "985798daec13dacf9d3479c3adf23f164c243ad64aacd521b059e05cb03e0267"
+    },
+    {
+      "path": "F049.SPW",
+      "class": "sound",
+      "size": 148268,
+      "sha256": "8b9c7ea4741e6ec6e64f15eca1b9869fb9a96e7d62f74f4e71b6f154889768f4"
+    },
+    {
+      "path": "F050.SPW",
+      "class": "sound",
+      "size": 73004,
+      "sha256": "54d6bdc653ac71c9eef6df39b6819ea3d717da1744b1ebb151ba27797db2c2f9"
+    },
+    {
+      "path": "F053.SPW",
+      "class": "sound",
+      "size": 29484,
+      "sha256": "5b7a9e0687b482ccc2056f90e6e6712cd5af476be87045a4573e36230b5bb527"
+    },
+    {
+      "path": "F057.SPW",
+      "class": "sound",
+      "size": 64044,
+      "sha256": "a0e309fddc0433c9c5a6761dcae411ea68bd9bc85c6bd389adab7b3a01308e8b"
+    },
+    {
+      "path": "F061.SPW",
+      "class": "sound",
+      "size": 96044,
+      "sha256": "7f2907556e4dadce77dbdcf57875886caeab938a9ea4d9ce5fb3814cbb6ccd21"
+    },
+    {
+      "path": "F066.SPW",
+      "class": "sound",
+      "size": 72492,
+      "sha256": "0923155351a3da9b6f1d4220bd735d283f9449715ec97c0cce14a0e89ba76246"
+    },
+    {
+      "path": "F070.SPW",
+      "class": "sound",
+      "size": 56620,
+      "sha256": "8743ea0a4f3721309580a27f79c66756d62e5b0a5b691c6fddae53e6a8aa6157"
+    },
+    {
+      "path": "F071.SPW",
+      "class": "sound",
+      "size": 47916,
+      "sha256": "2ebd5a47d8953da923054a6ecc7bd5534b5d6a8bd0970621ab523dbf6b14f923"
+    },
+    {
+      "path": "F075.SPW",
+      "class": "sound",
+      "size": 79660,
+      "sha256": "5f35c4853eda4712975759e036b0a7e2207747bc90d86b880a967fe14f32cb7c"
+    },
+    {
+      "path": "F080.SPW",
+      "class": "sound",
+      "size": 105004,
+      "sha256": "677e415b65a8a4ab8b01e2371404b004e92a9859a4e2e0ae59edd3cfcf9c3790"
+    },
+    {
+      "path": "F081.SPW",
+      "class": "sound",
+      "size": 99628,
+      "sha256": "6becb09cc42ef7a4827e2bef05cc760840ef0684b5a0f7966c5595c5ba6ca817"
+    },
+    {
+      "path": "F085.SPW",
+      "class": "sound",
+      "size": 34604,
+      "sha256": "ddbc1d63bb76b318497a84c6c449576298af091213e60f15ecbee21b82c266d2"
+    },
+    {
+      "path": "F089.SPW",
+      "class": "sound",
+      "size": 83756,
+      "sha256": "85288f1b7898e83f1f660aa2960a35ec5d5cf586114b7c5e56b4484c6c2a3e42"
+    },
+    {
+      "path": "F093.SPW",
+      "class": "sound",
+      "size": 63276,
+      "sha256": "66f26b9970e89b87135c8024f5d55a9993969b0879e2c044c918076006ba98d5"
+    },
+    {
+      "path": "F094.SPW",
+      "class": "sound",
+      "size": 79916,
+      "sha256": "5d1999f0caa565d155abc36e785ca99864e9b941c14376ae255755946891f7a4"
+    },
+    {
+      "path": "F095.SPW",
+      "class": "sound",
+      "size": 44332,
+      "sha256": "30c3827a8efe6227a1829161be5bdc3fdf99f38632a7088d83faaeac851543ac"
+    },
+    {
+      "path": "F098.SPW",
+      "class": "sound",
+      "size": 80172,
+      "sha256": "1a25c6b3b3d068a748af813423e4145857dc363e2de40c723be857f609173968"
+    },
+    {
+      "path": "F103.SPW",
+      "class": "sound",
+      "size": 88620,
+      "sha256": "302878d9dacae4a3216fc413ab85d170e6b6503ee074f79860d34289729d721e"
+    },
+    {
+      "path": "F108.SPW",
+      "class": "sound",
+      "size": 77356,
+      "sha256": "33c7f35e9d3b94865e3b510e4225a7294851f770f18e6732696a83788f269f98"
+    },
+    {
+      "path": "F113.SPW",
+      "class": "sound",
+      "size": 86060,
+      "sha256": "ef6ab20b25078671ce1214bbbb427a5881a40a9fc2330dbd1e4eb4e83805529c"
+    },
+    {
+      "path": "F118.SPW",
+      "class": "sound",
+      "size": 112684,
+      "sha256": "e578e515217ae7b92b74e8354362c2d35e7bdc38d10f4a2c2c9a662f70d65d79"
+    },
+    {
+      "path": "F122.SPW",
+      "class": "sound",
+      "size": 111660,
+      "sha256": "1490bdb2f8ac4bcbb6f30e4ca9ad47cc74422e984ecddb3a42a3d6f90235e993"
+    },
+    {
+      "path": "F126.SPW",
+      "class": "sound",
+      "size": 108844,
+      "sha256": "7ca0460797a2f79d002d7b5f23f4d57accfa29760a856a1cdc4a743fcf8bc9e4"
+    },
+    {
+      "path": "F130.SPW",
+      "class": "sound",
+      "size": 104492,
+      "sha256": "28273c6fadf78760307b46df80482f4ffc0b0c36e797da012257f952ac707951"
+    },
+    {
+      "path": "F138.SPW",
+      "class": "sound",
+      "size": 65836,
+      "sha256": "6a742ae67628da5426b46949829856ca48db6727f53860a3d6c6831ad8db69af"
+    },
+    {
+      "path": "F142.SPW",
+      "class": "sound",
+      "size": 56876,
+      "sha256": "58f0502ccde72cedfbc53de33e89a77410a796216c0087c75300dcc8cd9551a1"
+    },
+    {
+      "path": "F145.SPW",
+      "class": "sound",
+      "size": 66348,
+      "sha256": "c0657f6a565c60c6fa41421bc15efe6f3736673f32ca5b313a6bc8584a13eba0"
+    },
+    {
+      "path": "F150.SPW",
+      "class": "sound",
+      "size": 54060,
+      "sha256": "7f3a4e1ffd88e7b5e0b143b2ea989c2051970a17e6b752edb4154b6a3902cc0d"
+    },
+    {
+      "path": "F151.SPW",
+      "class": "sound",
+      "size": 62508,
+      "sha256": "b71e5a4addfd38f2bb5cd76bef3c076929b17276cc12793058ae73a87dd42f04"
+    },
+    {
+      "path": "F154.SPW",
+      "class": "sound",
+      "size": 54316,
+      "sha256": "bf0002e91be362a9cead20b942a8dacc9eaab51eb01d32e273b68b98f606f9a7"
+    },
+    {
+      "path": "F155.SPW",
+      "class": "sound",
+      "size": 59948,
+      "sha256": "138b490b7fc14a9faeb206ded429d2d6cc1342b5adaa2cd5c60268cad312ddc5"
+    },
+    {
+      "path": "F158.SPW",
+      "class": "sound",
+      "size": 42284,
+      "sha256": "4e1cd126b97712ad74f8df7880f8d19bd7d4e308ebf764b1272faa7edcc606a4"
+    },
+    {
+      "path": "F162.SPW",
+      "class": "sound",
+      "size": 66348,
+      "sha256": "40502955373101f14c2c89a3628fb69b6ab23917af2ed3154fdb2336f65a150a"
+    },
+    {
+      "path": "F163.SPW",
+      "class": "sound",
+      "size": 63276,
+      "sha256": "9348d663e46dc5bf641984564bedf2c597e891d7a206909635247c74e2b7d784"
+    },
+    {
+      "path": "F164.SPW",
+      "class": "sound",
+      "size": 54572,
+      "sha256": "09247b38317179d414ec533052a11ae710f6039a7ce1c797ac93f807f5013027"
+    },
+    {
+      "path": "F165.SPW",
+      "class": "sound",
+      "size": 52012,
+      "sha256": "176e70588312a57c2107210910fee6efdf1f88cc0a82a48fb0598166c76dd5e2"
+    },
+    {
+      "path": "F166.SPW",
+      "class": "sound",
+      "size": 58156,
+      "sha256": "29d3f70c144186731273742752ca23ca94660a9d41a1289e11ca70848def9434"
+    },
+    {
+      "path": "F169.SPW",
+      "class": "sound",
+      "size": 47404,
+      "sha256": "11bb1c5ee0efc0f23e53aa3fbfe3378b3e939f2be6485511751b2a4251e14546"
+    },
+    {
+      "path": "F171.SPW",
+      "class": "sound",
+      "size": 48940,
+      "sha256": "4f568565e456023fc2aefad20dabb232745e41171995d08e232bdd12e5aa9f72"
+    },
+    {
+      "path": "F176.SPW",
+      "class": "sound",
+      "size": 55084,
+      "sha256": "591cd0b001e2754846d9bc159f9bb7c6a06c33bea1ef3b15abbbd5ffaf0184e3"
+    },
+    {
+      "path": "F177.SPW",
+      "class": "sound",
+      "size": 43052,
+      "sha256": "5169ae00e0f47cfa3f213dd293015d8b37f2c71d8bf58b0afe3ade8254b197a9"
+    },
+    {
+      "path": "F181.SPW",
+      "class": "sound",
+      "size": 52524,
+      "sha256": "89c0459378559d0431db272f69fd8f5064c394be185e561822901e3b1f74c43f"
+    },
+    {
+      "path": "F182.SPW",
+      "class": "sound",
+      "size": 51244,
+      "sha256": "204444c2e58364eab7eba05e71d983754789398852c9cf5ac16e4260faefb0ea"
+    },
+    {
+      "path": "F186.SPW",
+      "class": "sound",
+      "size": 54316,
+      "sha256": "ddb3e94db92436f04247429f620a6648c28eb287ccd6502f8c47da7423bfc20f"
+    },
+    {
+      "path": "F187.SPW",
+      "class": "sound",
+      "size": 55340,
+      "sha256": "097db05126486d6f41deefb6b94bd5579f65e82ea72564ef8c32505508abb183"
+    },
+    {
+      "path": "F191.SPW",
+      "class": "sound",
+      "size": 37932,
+      "sha256": "3e0a4ad7ca0394e2c7cd06788d1ca336003ad416ec908f0ba3bc1d03684b9b0e"
+    },
+    {
+      "path": "F192.SPW",
+      "class": "sound",
+      "size": 33324,
+      "sha256": "23351a256ed125863ccbf4e50f391d53c2c9f8c83e4d5a18d5e2bc873b7cf8e2"
+    },
+    {
+      "path": "F196.SPW",
+      "class": "sound",
+      "size": 33324,
+      "sha256": "64d67b377eea4ed28588f85e30367f4453ac3fed0fe330f3b2d2f19d00eea20f"
+    },
+    {
+      "path": "F198.SPW",
+      "class": "sound",
+      "size": 61996,
+      "sha256": "081a4070b00c17721962a443b24c442d40e732f02aab822bf1cf998ceed1b921"
+    },
+    {
+      "path": "F201.SPW",
+      "class": "sound",
+      "size": 67628,
+      "sha256": "86962081ebd0cd1a2a4b7071ae8da276c9d68e1a4bfa147a65c712cc03068d4c"
+    },
+    {
+      "path": "F206.SPW",
+      "class": "sound",
+      "size": 95276,
+      "sha256": "bb014d67294cc109e571261178dd2411970dad6185d094ef81971e9d0a87a773"
+    },
+    {
+      "path": "F207.SPW",
+      "class": "sound",
+      "size": 47660,
+      "sha256": "0112d0e86a93a3445fe75800d7978dcbba7919ba3f2453bf535bfa305fb8d835"
+    },
+    {
+      "path": "F210.SPW",
+      "class": "sound",
+      "size": 52524,
+      "sha256": "62bd451206b28c881a29a655926d9ca2393c5753ed694aa42fe0d23daad7500a"
+    },
+    {
+      "path": "F211.SPW",
+      "class": "sound",
+      "size": 62508,
+      "sha256": "e1acd9a606ec21c08142340fa782a7644017c7210e763c33bf6aae7290a9190b"
+    },
+    {
+      "path": "F215.SPW",
+      "class": "sound",
+      "size": 93740,
+      "sha256": "7bf91d6643ec533ded6faf67e7feef5d4315ed2923d5093615ca2e11d1b26cb6"
+    },
+    {
+      "path": "F216.SPW",
+      "class": "sound",
+      "size": 37932,
+      "sha256": "3a3b035888085c9feb940b7ee3262d947961e3b3ea60463bede3a6ff173c17d8"
+    },
+    {
+      "path": "F217.SPW",
+      "class": "sound",
+      "size": 45100,
+      "sha256": "a9c7efdf3c1548d77baed231bff1aad297ba06e696459b53f30c4883b43936c2"
+    },
+    {
+      "path": "F219.SPW",
+      "class": "sound",
+      "size": 56620,
+      "sha256": "5e415828ea683ef0cc685074a90dfcf1079c37aab96a34d5d50a23dcc4ab0e52"
+    },
+    {
+      "path": "F220.SPW",
+      "class": "sound",
+      "size": 32556,
+      "sha256": "4a6d812130950b2e7d157a0319a8abce41211bc89e917bfb546c4827f5a9231d"
+    },
+    {
+      "path": "F224.SPW",
+      "class": "sound",
+      "size": 57644,
+      "sha256": "bb16377bd6f32fd3913c16ea1624aca87974bd96544035ba28a432f52b97c5c0"
+    },
+    {
+      "path": "F229.SPW",
+      "class": "sound",
+      "size": 53804,
+      "sha256": "372ed2bf25578fe1fc184fd26a1eddbbe6c72d8982be94f1b032654be6f4fdda"
+    },
+    {
+      "path": "F230.SPW",
+      "class": "sound",
+      "size": 48684,
+      "sha256": "996f6d8d343dbeda0b2cb9f1872d9a0f50a33d05c2f1afd90fbbdf84eea65510"
+    },
+    {
+      "path": "F231.SPW",
+      "class": "sound",
+      "size": 33068,
+      "sha256": "27349baa2ea624001206bce12f1245f8cf64c7cf6a8069cc4f433f009979bbae"
+    },
+    {
+      "path": "F232.SPW",
+      "class": "sound",
+      "size": 51244,
+      "sha256": "4b05e502c4338cd2ff691f143b8714a4f892d194d647ba6e89c182fa65e48126"
+    },
+    {
+      "path": "F234.SPW",
+      "class": "sound",
+      "size": 49964,
+      "sha256": "dd8d4a8ac215e6fbce1ce383c774ad313711e3e290655a9bc78a1651203ddfee"
+    },
+    {
+      "path": "F236.SPW",
+      "class": "sound",
+      "size": 48684,
+      "sha256": "73766dad33c414a05cc3c82d7b5b685ccec2ed508aa38f4c569c0b5ca5ccb66a"
+    },
+    {
+      "path": "F239.SPW",
+      "class": "sound",
+      "size": 45612,
+      "sha256": "ceb90998898b1801c891ad129016579493bcd57cbaa6ee576623aa776bbf8810"
+    },
+    {
+      "path": "F242.SPW",
+      "class": "sound",
+      "size": 43564,
+      "sha256": "984d1ab6d2cf4e2155c1c03af1305e2248fbdf07da0f6b75ef6ff27460d22893"
+    },
+    {
+      "path": "F243.SPW",
+      "class": "sound",
+      "size": 92460,
+      "sha256": "e5326dbfafa36a9e3dfa6c7a18060ce46c184a04b98d812ef252d6e91a8421d3"
+    },
+    {
+      "path": "F244.SPW",
+      "class": "sound",
+      "size": 50988,
+      "sha256": "1772fa299c4d9b266f53fa992551213ca125967ef7b08f1ac8258f929bc913e2"
+    },
+    {
+      "path": "F247.SPW",
+      "class": "sound",
+      "size": 66092,
+      "sha256": "50a4eab576bf5a863a966fcd2480d4395dd32f748a4077e448112e8fb45d8c75"
+    },
+    {
+      "path": "F249.SPW",
+      "class": "sound",
+      "size": 64044,
+      "sha256": "a09722e18247e6b4cec11c57c1c0dfece502e533defb87c556cafb80b3db5190"
+    },
+    {
+      "path": "F250.SPW",
+      "class": "sound",
+      "size": 50988,
+      "sha256": "62aee30715b2433ba39073a4ff5ed25c7809c649bc030ba10714c5b386be1a98"
+    },
+    {
+      "path": "F251.SPW",
+      "class": "sound",
+      "size": 68908,
+      "sha256": "c5441a7d91a25e800a61a253b331ad175360a60db28a574af910f085d4e7b9b1"
+    },
+    {
+      "path": "F255.SPW",
+      "class": "sound",
+      "size": 52268,
+      "sha256": "a143912e1ef93f1526729e1c43642523454181291e61afe5e99060d52564a428"
+    },
+    {
+      "path": "F256.SPW",
+      "class": "sound",
+      "size": 69164,
+      "sha256": "8283878d71be1de71d4d04304a67c2c1274ca48f55a8ecac91e30fa43e88f19e"
+    },
+    {
+      "path": "F265.SPW",
+      "class": "sound",
+      "size": 56620,
+      "sha256": "eaa2d77a923576d721820f966929460fc64fabfb238417c72a35db4c21115cdc"
+    },
+    {
+      "path": "F270.SPW",
+      "class": "sound",
+      "size": 59948,
+      "sha256": "55e5ed3a8b6d1a7e93b0252a5085b350a17cf9aab9994d97c91484050445f2a4"
+    },
+    {
+      "path": "F271.SPW",
+      "class": "sound",
+      "size": 50988,
+      "sha256": "1fed13b2d3c23066156a8d66ec8aee987340cc06d57076a8d9149954a708ba13"
+    },
+    {
+      "path": "F272.SPW",
+      "class": "sound",
+      "size": 56620,
+      "sha256": "82cc210ef2553c143621b44ec92a1c34b30bdfd04d37312c4334109d98d49b52"
+    },
+    {
+      "path": "F273.SPW",
+      "class": "sound",
+      "size": 80172,
+      "sha256": "0647ca7188fc5528a4d23ee0e76856d2b307ba90b4243e8ff64e3625c49c7a00"
+    },
+    {
+      "path": "F275.SPW",
+      "class": "sound",
+      "size": 77356,
+      "sha256": "3552dae511f65655db9559884ecbe4f3efa1420af5ba1e6104441ce42dc9ffed"
+    },
+    {
+      "path": "F276.SPW",
+      "class": "sound",
+      "size": 49964,
+      "sha256": "2e61611f37c7821df4b75de28cdc3db21fc3f9bc6201900f58d60dea22d5850d"
+    },
+    {
+      "path": "F278.SPW",
+      "class": "sound",
+      "size": 60972,
+      "sha256": "ffa77370379fe1286dce9bb254f59ab51f34c43910f243a45089667f36110934"
+    },
+    {
+      "path": "F279.SPW",
+      "class": "sound",
+      "size": 89644,
+      "sha256": "4c46b71120d62b12d0decf559f383404dd3f4d10ccc15c7527b2770e0cacb795"
+    },
+    {
+      "path": "F280.SPW",
+      "class": "sound",
+      "size": 92972,
+      "sha256": "a3f7fcaa6c40adb8112a5bf162cae7924bd8ebdec48b30a1fdaf5910d29b2550"
+    },
+    {
+      "path": "F281.SPW",
+      "class": "sound",
+      "size": 90156,
+      "sha256": "912f875167fa2be6264d2de78b93aa9471d973dd16d13108692160b44d736ffa"
+    },
+    {
+      "path": "F282.SPW",
+      "class": "sound",
+      "size": 95276,
+      "sha256": "41579eb60cda817650c68aa6ec0889c82e7eaaefdef752e568ff8446aa5db7b4"
+    },
+    {
+      "path": "F283.SPW",
+      "class": "sound",
+      "size": 59180,
+      "sha256": "a8509344f2b60eb828eeeb356766e3f3fef3315a9b539f8b5bbcb1bb40029bb0"
+    },
+    {
+      "path": "F284.SPW",
+      "class": "sound",
+      "size": 23340,
+      "sha256": "eb3c8c9d7fd77f26a0ab4c92db90ba6b98ab6e523436a3309d0b1486fd943d24"
+    },
+    {
+      "path": "FANTI14.SPW",
+      "class": "sound",
+      "size": 149036,
+      "sha256": "34763d60ae5cad8ebb5bec9b1ee2e9a8c7b8046984d7691dfb5151f9333c308a"
+    },
+    {
+      "path": "FARTY14.SPW",
+      "class": "sound",
+      "size": 115884,
+      "sha256": "1892c4a2c27a8949a8aa89ef3f8a42efd66c2a19237e39aad6aff4055df445ec"
+    },
+    {
+      "path": "FGUN14.SPW",
+      "class": "sound",
+      "size": 65534,
+      "sha256": "e3fbf85c1e264c04a0fb73d8d387f2b13be8350a1c80608fb0741ee6c29148ee"
+    },
+    {
+      "path": "FIGHT1.SPW",
+      "class": "sound",
+      "size": 172656,
+      "sha256": "c5e054c0d4e03872a239d12fb8cb66b445cd8ecf00646985525db13d7ea32f2b"
+    },
+    {
+      "path": "FIGHT5.SPW",
+      "class": "sound",
+      "size": 175162,
+      "sha256": "fd4693fe09af6f95d8824d09f4529c548f2e14411df85b3d7ea26682697ca1c4"
+    },
+    {
+      "path": "FIGHT7.SPW",
+      "class": "sound",
+      "size": 47916,
+      "sha256": "e4e3eb3d406103d8b7d1b5f5f5961e9cb18eb3261aa571bab9ff6cbd6acbdebe"
+    },
+    {
+      "path": "FIGHTER.FLC",
+      "class": "flc",
+      "size": 253452,
+      "sha256": "6c6cc6bdd1b554ae1ea66797c45dc9ca5827166d0ef30e8dca843e6c3f8473c2"
+    },
+    {
+      "path": "FQUIT.SPW",
+      "class": "sound",
+      "size": 12844,
+      "sha256": "c2b88da66b06dd8e0f1983ea80145a664d5a92fc15a2842da907871f1e82c1f3"
+    },
+    {
+      "path": "FTRUCK17.SPW",
+      "class": "sound",
+      "size": 49916,
+      "sha256": "80cc4069f46c4f80005f0d828340777dfa1cbb54d31949fb480a958de993be18"
+    },
+    {
+      "path": "FVP.FLC",
+      "class": "flc",
+      "size": 16462,
+      "sha256": "f0bdfc8a4ca7bfee487b3ccd5c9e220f2648f8227c288c743a6c050dfe28e780"
+    },
+    {
+      "path": "FXAGUN.FLC",
+      "class": "flc",
+      "size": 14164,
+      "sha256": "70fb61c98fa830662cc877a1a879de253aee20dbc3f3119aa2cd77c24e1b04e3"
+    },
+    {
+      "path": "FXDGUN.FLC",
+      "class": "flc",
+      "size": 13860,
+      "sha256": "f6bf516ac2e3578f7463e088b7bb775c50ef9ae99edbe41176d75e4408cdbb3c"
+    },
+    {
+      "path": "GBOATIDL.SPW",
+      "class": "sound",
+      "size": 301424,
+      "sha256": "95ea0e636484566a4031d9a51524e9a428de12e38d4ea94c8fd112d4318ab670"
+    },
+    {
+      "path": "GBOATMVE.SPW",
+      "class": "sound",
+      "size": 166256,
+      "sha256": "9fe461c8bfe849540281b27e90d93e9b4162b16a4c9c24a1b0a86d99a708b6f3"
+    },
+    {
+      "path": "GBOATSTP.SPW",
+      "class": "sound",
+      "size": 65324,
+      "sha256": "c284e23dc1cf7f1d94eadcc72d1057bd0d3921bbaa8cd69e4899e2b3be280fe6"
+    },
+    {
+      "path": "GOLDR17.SPW",
+      "class": "sound",
+      "size": 466032,
+      "sha256": "7058889a46eb94c02a5ff167e888dc0f7c81550ddd0695c2ff0575f1b816840c"
+    },
+    {
+      "path": "GOLDR18.SPW",
+      "class": "sound",
+      "size": 192044,
+      "sha256": "78d2dab8461bd0a8056f4677de35136e21d482512912e3f89b99dfa00f755180"
+    },
+    {
+      "path": "GOLDSM.FLC",
+      "class": "flc",
+      "size": 15954,
+      "sha256": "0271caf2c1ec5fdeab2b9fde06f7b3a1f0da1d22e4b32118f012ddc732ec1b0b"
+    },
+    {
+      "path": "GREEN_1.WRL",
+      "class": "data",
+      "size": 1148698,
+      "sha256": "fad64e38a8c405afd9dfe8a905e2b4d167c671d02f4422500f300175b839c321"
+    },
+    {
+      "path": "GREEN_2.WRL",
+      "class": "data",
+      "size": 1124116,
+      "sha256": "4663efd15a19949ffd6fb0f2b7a23475494d54c51c670f500ec5c0b5c0a95645"
+    },
+    {
+      "path": "GREEN_3.WRL",
+      "class": "data",
+      "size": 1464167,
+      "sha256": "fa3da4a51d99e9a69e28de3aadb984789a8f79016a1c286971fc2e8340e0b6b0"
+    },
+    {
+      "path": "GREEN_4.WRL",
+      "class": "data",
+      "size": 939751,
+      "sha256": "dbcfc4495334640776e6a0b1776651f904583aa87f193a43436e6b1f04635241"
+    },
+    {
+      "path": "GREEN_5.WRL",
+      "class": "data",
+      "size": 988915,
+      "sha256": "315a11f6a4cc9cf6066a9cba9f84fb2dde7df9ad3b3025779d06268f8938dcc8"
+    },
+    {
+      "path": "GREEN_6.WRL",
+      "class": "data",
+      "size": 1501040,
+      "sha256": "f1fcedbc7be8571ffad83133711a8d267ffa07d05b207dc8e0e9353e05e34204"
+    },
+    {
+      "path": "GREN_MSC.MSC",
+      "class": "music",
+      "size": 14642616,
+      "sha256": "b419251b1f40932538923e2d7ed614ddbd8e7dc4956dd312f2346a804c552c00"
+    },
+    {
+      "path": "GRNHOUSE.FLC",
+      "class": "flc",
+      "size": 13022,
+      "sha256": "7fb09253405f992817e4a7405eea881bda5422088b496329eb920f1c1752a84b"
+    },
+    {
+      "path": "HANGR.FLC",
+      "class": "flc",
+      "size": 18906,
+      "sha256": "3979d9d91382980ea8bff0f7c4ac9d5fa6abe9f830644a7022a2dd180f46fc7f"
+    },
+    {
+      "path": "HANGR17.SPW",
+      "class": "sound",
+      "size": 32556,
+      "sha256": "9e277593d599055a6057f76c099f7d8b82ddd6a201857db9f73c99c672319f25"
+    },
+    {
+      "path": "HANGR18.SPW",
+      "class": "sound",
+      "size": 33836,
+      "sha256": "c54c29ad95e54550033830e608ad0f50fd0d2b440b90eb61ddc54f47c918b21d"
+    },
+    {
+      "path": "HG1.FLC",
+      "class": "flc",
+      "size": 285600,
+      "sha256": "6c21b0675b72a4aa9c9e739c5d42a33dcfe0ccf821891cc6e56b62f9ab7dfb8c"
+    },
+    {
+      "path": "HITLARGE.SPW",
+      "class": "sound",
+      "size": 98886,
+      "sha256": "72fa4343a9166863f5a1c3551ab9eeffc170cdd89764e83f0723a5938b1e762c"
+    },
+    {
+      "path": "HITMED.SPW",
+      "class": "sound",
+      "size": 69420,
+      "sha256": "f2d04bf414335e384a9b0feaa47caa21ef1183de2f387ce347247d9f3457066f"
+    },
+    {
+      "path": "HITSMAL.SPW",
+      "class": "sound",
+      "size": 55898,
+      "sha256": "9759c12a3b2e6f3850856313d4d010c1eafb449100a637f35dc03b3a1cc4c4f2"
+    },
+    {
+      "path": "HVP17.SPW",
+      "class": "sound",
+      "size": 218352,
+      "sha256": "9fd6f9cae9c344e52b788a79f89a7da7d3203a75c42cbb0721ac1ef3da66a4ea"
+    },
+    {
+      "path": "HVP18.SPW",
+      "class": "sound",
+      "size": 79148,
+      "sha256": "65a759e18d20c6a87ca9712c2d5ee85ff6abce130e3b601fc1190caa7c28e9ff"
+    },
+    {
+      "path": "ICLOS0L.SPW",
+      "class": "sound",
+      "size": 47842,
+      "sha256": "257a958c8bfc2ddde30ebfc64034c89500f98c8e5015b3b089def778671b212d"
+    },
+    {
+      "path": "IHITS0.SPW",
+      "class": "sound",
+      "size": 9260,
+      "sha256": "d156067bc66d17a7765c11f1421ee44fbc6723bbe1bffc9ab0ee60d031914cee"
+    },
+    {
+      "path": "INFAN14.SPW",
+      "class": "sound",
+      "size": 75018,
+      "sha256": "0a9f2cf4385c4a73175b7cafc0f8c2a2b68d3d5e2ba814bfeaa8cb252757027a"
+    },
+    {
+      "path": "INFAN15.SPW",
+      "class": "sound",
+      "size": 60238,
+      "sha256": "63627fa1609f0c48193aaa53494beee0eb71ca26a0b23b64234254e8b595d0d4"
+    },
+    {
+      "path": "INFAN16.SPW",
+      "class": "sound",
+      "size": 67888,
+      "sha256": "c4de4b80da03135a56cb8c58990fd149702f55c94650ae1b12fc22c13cd82c15"
+    },
+    {
+      "path": "INFANTRY.FLC",
+      "class": "flc",
+      "size": 193984,
+      "sha256": "ff9010158b53264e78a50c59a43b702e384775e20bfb06f5148ac6073eb321a5"
+    },
+    {
+      "path": "INFIL14.SPW",
+      "class": "sound",
+      "size": 35226,
+      "sha256": "cd48a73ad656ad1576b53e0ebc9afbfa77802a1232cc4a306a3a5ecb38f6dda7"
+    },
+    {
+      "path": "INFIL15.SPW",
+      "class": "sound",
+      "size": 50790,
+      "sha256": "50f61ec7ad76344c98631c0e65c201a94b9665acf3bb0ed8a705764690e1c8f9"
+    },
+    {
+      "path": "INFIL16.SPW",
+      "class": "sound",
+      "size": 72338,
+      "sha256": "63cd3c393c618864bbcd99b6e918b8e1e1b2c05ed9894e0ecc7d2ffd93f5c3f2"
+    },
+    {
+      "path": "IOPEN0.SPW",
+      "class": "sound",
+      "size": 38564,
+      "sha256": "3634851f59f2079cfd9ebd82f1f7436478ca151c964d98a82a24d33e061fb6d8"
+    },
+    {
+      "path": "JUGGERN.FLC",
+      "class": "flc",
+      "size": 255748,
+      "sha256": "216a99cd23f3636abb105aa168c2f922670b5fd684916136725f721db1a5968b"
+    },
+    {
+      "path": "JUGGR1.SPW",
+      "class": "sound",
+      "size": 82416,
+      "sha256": "284abd23cbf47add86d527e9a4aa77465d48afd23f4fc66298045b5ea563a068"
+    },
+    {
+      "path": "JUGGR5.SPW",
+      "class": "sound",
+      "size": 81344,
+      "sha256": "c307398a676e4b6bb80a668b91ca9b76914ee131954511b1abf525fc12a0ba67"
+    },
+    {
+      "path": "JUGGR7.SPW",
+      "class": "sound",
+      "size": 26412,
+      "sha256": "57084a447f04a1cb14945aa77254e93410d16224237ebbfec42421948a828946"
+    },
+    {
+      "path": "KBUY0.SPW",
+      "class": "sound",
+      "size": 2604,
+      "sha256": "859965915d278c35a5e095a266eb202faf55b9cc7076b0ffa7a93b8d2df87c09"
+    },
+    {
+      "path": "KSEL0.SPW",
+      "class": "sound",
+      "size": 10412,
+      "sha256": "26091282da59a81bce162f334df72f03a1b4d544aa5e4de3780c7a3fb47f3fa2"
+    },
+    {
+      "path": "LMINE01.FLC",
+      "class": "flc",
+      "size": 14074,
+      "sha256": "3cf18b7efbcc857f62d3213869c8b016eaca2a2938fe51047f5c52b8ac6bbb0c"
+    },
+    {
+      "path": "LOAD.SPW",
+      "class": "sound",
+      "size": 17964,
+      "sha256": "9c29f1450a777508921df3be4bf8f28b9fd878b94c32bdb481113eb75894d7d5"
+    },
+    {
+      "path": "LOSE_MSC.MSC",
+      "class": "music",
+      "size": 6724768,
+      "sha256": "18674e69667c9cf4666c0e7674f43e0cd3d34698d30fa46734e43fe324f6e060"
+    },
+    {
+      "path": "LP_ISO.FLC",
+      "class": "flc",
+      "size": 15510,
+      "sha256": "3aee0eb669357347856d60fa4cb510333856d1fe78a7eec3c10c106018f9f585"
+    },
+    {
+      "path": "LVP17.SPW",
+      "class": "sound",
+      "size": 303088,
+      "sha256": "c213115d31aed07c2589002b64356a5ab1a1a6b96ef98d976832c8d94290be22"
+    },
+    {
+      "path": "LVP18.SPW",
+      "class": "sound",
+      "size": 190164,
+      "sha256": "1882852da70814a7541e178a71e6d1a1a8aa7d30fc8845430a687e8c8993a436"
+    },
+    {
+      "path": "LVP_ISO.FLC",
+      "class": "flc",
+      "size": 14098,
+      "sha256": "9b0677d8c32b1e695f207b85704d346b62034f09e95b23b89deb44206566ed6d"
+    },
+    {
+      "path": "MAA.FLC",
+      "class": "flc",
+      "size": 274730,
+      "sha256": "6dbe4cc08be51dd6a2f64d35bb7684cfb07a2d8c875b094b7ad128201152c956"
+    },
+    {
+      "path": "MAIN_MSC.MSC",
+      "class": "music",
+      "size": 17699272,
+      "sha256": "98bc4277c10650dd349361813b84dd2ebf1ea4c86e368a3a248ce19919ec2cc0"
+    },
+    {
+      "path": "MANMOVE.SPW",
+      "class": "sound",
+      "size": 212864,
+      "sha256": "e606a0fb3bb31457e6bc9148a1c2444c13baad888dd2cdf93c69f8e3a9a4a03b"
+    },
+    {
+      "path": "MANTI14.SPW",
+      "class": "sound",
+      "size": 80940,
+      "sha256": "3d0a249ec167861c6e7b5afd180f59a4de971caaa6e95c09c70152b872ee40f4"
+    },
+    {
+      "path": "MASTR17.SPW",
+      "class": "sound",
+      "size": 107632,
+      "sha256": "872c071e354d6a9c42eebc9cbbbe261c00759fead6c1daa7140f190b622bd869"
+    },
+    {
+      "path": "MAX.RES",
+      "class": "data",
+      "size": 17836096,
+      "sha256": "dd24703e9499f5c5fb2159b41c35554aa554e9eb3005f9b22ac79ed595e8fc8e"
+    },
+    {
+      "path": "MAXINT.MVE",
+      "class": "video",
+      "size": 71325284,
+      "sha256": "e1ad8344887c48299d612def706f7a1a43ae2c9fcffcb2ab22051a2f5516e164"
+    },
+    {
+      "path": "MAXMVE1.MVE",
+      "class": "video",
+      "size": 13540150,
+      "sha256": "3acb46f2bea8d78c42242c3747d02d814f34189e488d4eeeab2bd29cd0cf0129"
+    },
+    {
+      "path": "MAXMVE2.MVE",
+      "class": "video",
+      "size": 15309550,
+      "sha256": "9714cad19811e314500e4869658da0bf27595610e0b261c01207c232ed233244"
+    },
+    {
+      "path": "MB5.FLC",
+      "class": "flc",
+      "size": 287906,
+      "sha256": "c911987debf11259f20b12bc74070ce63e25c939da378cae2d1f39f126ba997d"
+    },
+    {
+      "path": "MBOATIDL.SPW",
+      "class": "sound",
+      "size": 209520,
+      "sha256": "db478b411948fcb8256adedaf2c77958de23d691e9050a0363b588b5721b3410"
+    },
+    {
+      "path": "MBOATMVE.SPW",
+      "class": "sound",
+      "size": 163440,
+      "sha256": "fe3a7360b3bd9f1e655e67799a736d8d74243ddfb0a5fc436835772230665363"
+    },
+    {
+      "path": "MBOATSTP.SPW",
+      "class": "sound",
+      "size": 43052,
+      "sha256": "14ac24be71b4b97586b99fe506db9c860f5bc387efa5b2ad80f4a76ddbb93b28"
+    },
+    {
+      "path": "MCHARGE.FLC",
+      "class": "flc",
+      "size": 260074,
+      "sha256": "cb29b90910497b0910b6e1e479c2d36ec9bc6cf3f7cc1b93df2496de6edf2e15"
+    },
+    {
+      "path": "MENGENS3.SPW",
+      "class": "sound",
+      "size": 5420,
+      "sha256": "ffa8be00e4965fd482f85a54ca04b13035265849d50a6029949af27243de5f2c"
+    },
+    {
+      "path": "MENGENS4.SPW",
+      "class": "sound",
+      "size": 4908,
+      "sha256": "c1dcd248cbcb22ee51f0837f696923f3244cf8c313ebdd7c2169997028d1a111"
+    },
+    {
+      "path": "MENU38.SPW",
+      "class": "sound",
+      "size": 6444,
+      "sha256": "e02317431d7d2bb6ca2dd9d80cb28ce3fe2da028e82ef428c6510159adf46441"
+    },
+    {
+      "path": "MGENR.FLC",
+      "class": "flc",
+      "size": 283090,
+      "sha256": "64f74b0ccd03465b47d6cc7db3dde54008bd7520ede1d29ce4646905f2b93def"
+    },
+    {
+      "path": "MINELAY.FLC",
+      "class": "flc",
+      "size": 212826,
+      "sha256": "855161a58ec4ff4e5cdb3584657bf3d1c82ce8e72992e6ca9f67f386a4b0d990"
+    },
+    {
+      "path": "MISLFIRE.SPW",
+      "class": "sound",
+      "size": 73132,
+      "sha256": "3c29a3f9c44a610a1d9bbe2c4f74b187d48ee989e2279194a813818323505215"
+    },
+    {
+      "path": "MISSLE_L.FLC",
+      "class": "flc",
+      "size": 313184,
+      "sha256": "b9add33d3159ef8a9ccd4f3d14209a9175b540fc8df28fedd8168903de46982e"
+    },
+    {
+      "path": "MLAYER17.SPW",
+      "class": "sound",
+      "size": 16172,
+      "sha256": "b3377ddf0c7a4e9744cfc94ba23e64c1f67a9fa18b16d59354870551af5d8f4f"
+    },
+    {
+      "path": "MLAYER18.SPW",
+      "class": "sound",
+      "size": 13954,
+      "sha256": "9ec4dd345cad5f10b2f59ce0ff90989439050c56e26bd479e51c46cf0de9e283"
+    },
+    {
+      "path": "MML.FLC",
+      "class": "flc",
+      "size": 285250,
+      "sha256": "93b47a39877ef10a1838d79b73c04123bfc4d17def5210e815802256bc1dfc9f"
+    },
+    {
+      "path": "MONOP17.SPW",
+      "class": "sound",
+      "size": 454768,
+      "sha256": "c6e0cd16de54292795d58ccce3cbe5aee492f80124b8bb530f0ad9aaa2271f5e"
+    },
+    {
+      "path": "MONOP18.SPW",
+      "class": "sound",
+      "size": 196652,
+      "sha256": "ffca616580e5dd06eabf49b30295909f9af59843861288ddd0ff6991d4b41be3"
+    },
+    {
+      "path": "MSLCR14.SPW",
+      "class": "sound",
+      "size": 41538,
+      "sha256": "6fa4c400bfab1498bc2ea18c636900c8f044e94844d1df56e6cff46e7c1ba533"
+    },
+    {
+      "path": "MSTAT18.SPW",
+      "class": "sound",
+      "size": 132462,
+      "sha256": "b9e6b5dd6c41ef439046037f120bcf9479e179f55c027151365715703d602800"
+    },
+    {
+      "path": "MSTRSTAT.FLC",
+      "class": "flc",
+      "size": 14990,
+      "sha256": "a01324b9f9a1ba409d202091273e28f14ecbd625c825cca740f52e1129bc109c"
+    },
+    {
+      "path": "PATCHES.RES",
+      "class": "data",
+      "size": 798150,
+      "sha256": "f2b8dc5293cac65e171099ca4dbf43f57e034cccd9c0f2290e70655cc0d71b10"
+    },
+    {
+      "path": "PING.SPW",
+      "class": "sound",
+      "size": 12972,
+      "sha256": "0610d94f428d90e45f5ed26baa36e4b04308201999aa27bc3065357808423703"
+    },
+    {
+      "path": "PLANLAND.SPW",
+      "class": "sound",
+      "size": 96556,
+      "sha256": "9420a87fc1032a52a4af0d8927a42eb727f52b98f273809affa1d26bf3ef0a55"
+    },
+    {
+      "path": "PLANOFF.SPW",
+      "class": "sound",
+      "size": 47148,
+      "sha256": "0762aa233ab4f8701c3868026373d2397570bb796d3b1c8a09bab34978af3aaf"
+    },
+    {
+      "path": "POWGN17.SPW",
+      "class": "sound",
+      "size": 237614,
+      "sha256": "7ac00d201881391a0538493f61862eadf2e44abd0e7004c7de69179cad940021"
+    },
+    {
+      "path": "POWGN18.SPW",
+      "class": "sound",
+      "size": 106656,
+      "sha256": "df77befcafab92376772d31311ec69cc969b3bfb6fc545abcd8e4dc90d6a57a8"
+    },
+    {
+      "path": "PWRGEN.FLC",
+      "class": "flc",
+      "size": 12186,
+      "sha256": "b9150d5a457edd283d74d501be2cfd10e4714df79c6424e0982d3a07bcfc381d"
+    },
+    {
+      "path": "RADAR.FLC",
+      "class": "flc",
+      "size": 14290,
+      "sha256": "29bea166dfa8fe8b447624cfaf75ea94f87cb93cf579b2a745e8530c3aa1ae98"
+    },
+    {
+      "path": "RADAR13.SPW",
+      "class": "sound",
+      "size": 123760,
+      "sha256": "c150fedacef0bd36ce1d4c75549e28512bec1ced2d889721f66f19482654c671"
+    },
+    {
+      "path": "RECNTR.FLC",
+      "class": "flc",
+      "size": 13152,
+      "sha256": "74a7a4f7fe3586174cad15d8a3e471db6dbe80ea8f1b095a21f3b1fa8e5b5e70"
+    },
+    {
+      "path": "REPAIR02.FLC",
+      "class": "flc",
+      "size": 372064,
+      "sha256": "0b7acbd85e57a1a8d0cb669d363ed7ccb635218bdbf769bba34dac9df82b6d5e"
+    },
+    {
+      "path": "REPAIR1.SPW",
+      "class": "sound",
+      "size": 58736,
+      "sha256": "6ebf770eb8e67f01bc4400056b6ff328c239cad66aaf423cb35faaf5ef222f37"
+    },
+    {
+      "path": "REPAIR17.SPW",
+      "class": "sound",
+      "size": 150840,
+      "sha256": "fd00e7586c4b6969567aa0d2f89f17b803ed2907ec3d9b60fc9868cf0ae1d553"
+    },
+    {
+      "path": "REPAIR5.SPW",
+      "class": "sound",
+      "size": 82396,
+      "sha256": "ff55dc5c450865c9a381de1d7b207451c0050ab4ee34f933de28c2b9081408d3"
+    },
+    {
+      "path": "REPAIR7.SPW",
+      "class": "sound",
+      "size": 19028,
+      "sha256": "bc054c2eeb3ed1d12ba1d042a15ca917876f6251ddbe5dbf9658fa3e523472f7"
+    },
+    {
+      "path": "RESEAR17.SPW",
+      "class": "sound",
+      "size": 414832,
+      "sha256": "58ac8ae556c03eaa9ded9c1d55d16ea79522660b2677a72f4b8db124b08811e9"
+    },
+    {
+      "path": "RESEAR18.SPW",
+      "class": "sound",
+      "size": 172844,
+      "sha256": "68ff19c2b1492a4384e97f7f659af05e4768d38c9ae8476bcda7dada1f60997e"
+    },
+    {
+      "path": "RESEARCH.FLC",
+      "class": "flc",
+      "size": 14554,
+      "sha256": "335e019dbd06a18a8838e1d3fca80f3c7b9e252a0708ce1243790fc55c2c1a6d"
+    },
+    {
+      "path": "ROAD.FLC",
+      "class": "flc",
+      "size": 11686,
+      "sha256": "4381435c2b05406b0081facf0bf641ca2fd7ccecf04d3e9b6aaa06f71c85d030"
+    },
+    {
+      "path": "SAVE1.CAM",
+      "class": "mission",
+      "size": 183047,
+      "sha256": "e25f962bf3dcf478335b3163e755f1d394c64fb1fe9653862bc3d38ae1b8d556"
+    },
+    {
+      "path": "SAVE1.DMO",
+      "class": "mission",
+      "size": 138580,
+      "sha256": "8c6e88998f8be866a831003294deead0f7e427622fd05b1b54ef867f1d6f30aa"
+    },
+    {
+      "path": "SAVE1.MPS",
+      "class": "mission",
+      "size": 249266,
+      "sha256": "2e5e7be790f4a03d85fe3943220e13040894fb7ef94455e425f10d0a5fb3388d"
+    },
+    {
+      "path": "SAVE1.SCE",
+      "class": "mission",
+      "size": 163369,
+      "sha256": "c8985d85117e72a1f7e821e220374cfa504bd1f955c5811d3be1be1f8e20646f"
+    },
+    {
+      "path": "SAVE1.TRA",
+      "class": "mission",
+      "size": 93398,
+      "sha256": "24c19a1201ad24cfdc0c4cfc158596a505284992e57b34d65f2ddc2b243ce549"
+    },
+    {
+      "path": "SAVE10.MPS",
+      "class": "mission",
+      "size": 251984,
+      "sha256": "a29856db9a28c9f64dca45cad767ebc31669e7b39b85ef9feb7a06ff303bf948"
+    },
+    {
+      "path": "SAVE10.SCE",
+      "class": "mission",
+      "size": 140903,
+      "sha256": "fd20cfe181b1da9871da3134c97f6476d49b0f589b0f3a5abd3ceed0a5fedb48"
+    },
+    {
+      "path": "SAVE10.TRA",
+      "class": "mission",
+      "size": 144585,
+      "sha256": "166c5137eca626b85916f39b10b6fdc3fd9b5ff2d7fd5e5544c6396c851b4371"
+    },
+    {
+      "path": "SAVE11.MPS",
+      "class": "mission",
+      "size": 248552,
+      "sha256": "77465bebe8cefdb3329c802fa55ac42ce531a99a201d20adce84c0db29446955"
+    },
+    {
+      "path": "SAVE11.SCE",
+      "class": "mission",
+      "size": 157471,
+      "sha256": "b1d99c48a3f308abd1ed4bded276c5b24e5da0f00300795ed20445f98a182388"
+    },
+    {
+      "path": "SAVE11.TRA",
+      "class": "mission",
+      "size": 160569,
+      "sha256": "935fb3c0948490480170ccf2c9c6660ae2f833a4518dc08972c0c2523355a9a7"
+    },
+    {
+      "path": "SAVE12.MPS",
+      "class": "mission",
+      "size": 246482,
+      "sha256": "9e57ebf688b754f89417feabfe79539596487a11d05771834766aa85d53265fa"
+    },
+    {
+      "path": "SAVE12.SCE",
+      "class": "mission",
+      "size": 178897,
+      "sha256": "68a5a75a9de28b428e20a2f8dfd9e471c1cacbd745da5742c3169fc83dad2e08"
+    },
+    {
+      "path": "SAVE12.TRA",
+      "class": "mission",
+      "size": 160935,
+      "sha256": "fd2db0fdd8a98bb3016c16fec90b1f680e78a83910e345b4e0162c45a35386cf"
+    },
+    {
+      "path": "SAVE13.SCE",
+      "class": "mission",
+      "size": 163211,
+      "sha256": "1e6fab79997f536c0c8de6230a445c0c4545f7bf6a22cb06a49a2d189dd443dd"
+    },
+    {
+      "path": "SAVE13.TRA",
+      "class": "mission",
+      "size": 161611,
+      "sha256": "ab169e63d7d0f03f2b2c640d9fcbc1dfb94810c9e378556d3468d153c7659ba9"
+    },
+    {
+      "path": "SAVE14.SCE",
+      "class": "mission",
+      "size": 185863,
+      "sha256": "da5d002ab0dcc133c163678592e4b459fe6275feea8e84edc481f97e424a447a"
+    },
+    {
+      "path": "SAVE14.TRA",
+      "class": "mission",
+      "size": 161915,
+      "sha256": "49a8abab703cef9101b6733668d8b0ccb6d67faac02c38a5bf4dc7532960563b"
+    },
+    {
+      "path": "SAVE15.SCE",
+      "class": "mission",
+      "size": 150791,
+      "sha256": "a8a27b3913511e67ceac3f0da093e1d123cbc776a55340e996a49b2ff2ee3714"
+    },
+    {
+      "path": "SAVE15.TRA",
+      "class": "mission",
+      "size": 161937,
+      "sha256": "9ac9193e3a41e2e37cf5314ccc429a4559e433155891727aacbb2860fa0adf4c"
+    },
+    {
+      "path": "SAVE16.SCE",
+      "class": "mission",
+      "size": 172561,
+      "sha256": "5e24064600898e7d044da7f418d3c895f8255a81542f90b8c6a335b49c441d58"
+    },
+    {
+      "path": "SAVE17.SCE",
+      "class": "mission",
+      "size": 156539,
+      "sha256": "659fe1ab6d696a5dacaf4572d5180158e1707965045a82c5a40f9fe13668cbbd"
+    },
+    {
+      "path": "SAVE18.SCE",
+      "class": "mission",
+      "size": 154367,
+      "sha256": "f115e93d4a52ba9a28939a651d85914ada0ca020153058929724c5ce80fb64bb"
+    },
+    {
+      "path": "SAVE19.SCE",
+      "class": "mission",
+      "size": 188324,
+      "sha256": "a223762f13ced61a5cd325bab4d72da5ffcb8d26c145042f2e9579a660ed3390"
+    },
+    {
+      "path": "SAVE2.CAM",
+      "class": "mission",
+      "size": 216410,
+      "sha256": "4fd41542e802db515bc92a1afc1a0676ac7052e20f7ce2890f6b4fa748789506"
+    },
+    {
+      "path": "SAVE2.MPS",
+      "class": "mission",
+      "size": 242048,
+      "sha256": "9613d3557d29385acccf006a0e0dfba50ab5cdf7e40e385e9b68b56057f3b69c"
+    },
+    {
+      "path": "SAVE2.SCE",
+      "class": "mission",
+      "size": 136641,
+      "sha256": "ea5d400404c3321ff1b34b56d028ac488b7dbb055811d254e86e27ccd10cadbf"
+    },
+    {
+      "path": "SAVE2.TRA",
+      "class": "mission",
+      "size": 133763,
+      "sha256": "964a248d6ba1e4595366712f11f7a7800474225a61f73117e7f5cfcd7642eb08"
+    },
+    {
+      "path": "SAVE20.SCE",
+      "class": "mission",
+      "size": 187313,
+      "sha256": "d7e88e8026c9709fc48d704361f90ced93b6ae85fb03b99b3dca398c1c4863cc"
+    },
+    {
+      "path": "SAVE21.SCE",
+      "class": "mission",
+      "size": 180493,
+      "sha256": "a8e8ee9909371170eb44069995f52ec3f44a42db658b6bc9c1cb0db56cad2bec"
+    },
+    {
+      "path": "SAVE22.SCE",
+      "class": "mission",
+      "size": 185833,
+      "sha256": "fbc1f269cadfe18655c0166a48fe27493bfb91fa0ee3b6036950598ad91b950d"
+    },
+    {
+      "path": "SAVE23.SCE",
+      "class": "mission",
+      "size": 198067,
+      "sha256": "c312c771a8c560f3a51bf3db5f63877f7c2d58bbe76bed8bf7d0446129a3298c"
+    },
+    {
+      "path": "SAVE24.SCE",
+      "class": "mission",
+      "size": 224913,
+      "sha256": "b2b391e19d8e399ac5f907b159119ffd13ceb5e8afda127b763216dbae2d3070"
+    },
+    {
+      "path": "SAVE3.CAM",
+      "class": "mission",
+      "size": 142955,
+      "sha256": "c5fb0253b5116b0b5dc7ab5edc197ff798b6cfc355b961c4ea98864fabc569ad"
+    },
+    {
+      "path": "SAVE3.MPS",
+      "class": "mission",
+      "size": 223802,
+      "sha256": "f57997258f167cd8843a469c87ca8d0b0cb9a205d96c4a9e0ad861eeac8b3c17"
+    },
+    {
+      "path": "SAVE3.SCE",
+      "class": "mission",
+      "size": 232737,
+      "sha256": "89d813b5fbe05dbb0c2c4e625de70a962460047389b322f7d64e85a85d606506"
+    },
+    {
+      "path": "SAVE3.TRA",
+      "class": "mission",
+      "size": 136343,
+      "sha256": "09f2722bf6b01c7b5f3e2be43ce9affeb232e18621df662c6d789c15f2ef6f9d"
+    },
+    {
+      "path": "SAVE4.CAM",
+      "class": "mission",
+      "size": 227957,
+      "sha256": "14e710e0a9c3c5ee017bb7f3b492f996892cf27e9943566858339216d0b955b8"
+    },
+    {
+      "path": "SAVE4.MPS",
+      "class": "mission",
+      "size": 216170,
+      "sha256": "d4c0610ceb8370f2d16d8d1c412a6b5efa98f3b8f7f7527b60c97fd74d0ed09f"
+    },
+    {
+      "path": "SAVE4.SCE",
+      "class": "mission",
+      "size": 215413,
+      "sha256": "920f0327b807a9a52981b698c994ccab9582a803c2916ee1ecec3c603cf0ae79"
+    },
+    {
+      "path": "SAVE4.TRA",
+      "class": "mission",
+      "size": 139505,
+      "sha256": "28b444c0e8d92f9fd89894b5527d15c08249075d8107865dd72261cd049d2ac4"
+    },
+    {
+      "path": "SAVE5.CAM",
+      "class": "mission",
+      "size": 192293,
+      "sha256": "04fb40113d068f81eae2b9701545c4fe049635fbe382ab61cce0209db2a81d10"
+    },
+    {
+      "path": "SAVE5.MPS",
+      "class": "mission",
+      "size": 254774,
+      "sha256": "613bd95aea9ec08cd1540da55a47b1b4f3b0baaa85da75425a45bced30963924"
+    },
+    {
+      "path": "SAVE5.SCE",
+      "class": "mission",
+      "size": 217929,
+      "sha256": "62d4ca2ca15324cb16f4d49a6beecf8b1fda2fe6f28519f5c63077a6f2834f2f"
+    },
+    {
+      "path": "SAVE5.TRA",
+      "class": "mission",
+      "size": 140675,
+      "sha256": "0e9619e645bb16ea93e231c1bbdc54839f1eefebad1e23dba01ae29597ccf355"
+    },
+    {
+      "path": "SAVE6.CAM",
+      "class": "mission",
+      "size": 174299,
+      "sha256": "3c5d41a8ced0b0a9561560a235038ed6d5534e13e90ad510299b04f37b78ca1c"
+    },
+    {
+      "path": "SAVE6.MPS",
+      "class": "mission",
+      "size": 238832,
+      "sha256": "f5b11ca96f41062a8e2b5b9f7be0e591fd8deacaac82219a8769dec57828945a"
+    },
+    {
+      "path": "SAVE6.SCE",
+      "class": "mission",
+      "size": 190154,
+      "sha256": "e11c5dd4f456c3c9f8ed1f657b4c530bafba3cc34e21842b0aa3728d3b58c377"
+    },
+    {
+      "path": "SAVE6.TRA",
+      "class": "mission",
+      "size": 142215,
+      "sha256": "708d7744c99175ec2680861433632b8640fc4e139a142ad609c362edee51651c"
+    },
+    {
+      "path": "SAVE7.CAM",
+      "class": "mission",
+      "size": 158621,
+      "sha256": "1d9da84128776d1bc264f26f1381d19c16dead2c0af9bba9dfe9433853a8f00e"
+    },
+    {
+      "path": "SAVE7.MPS",
+      "class": "mission",
+      "size": 241456,
+      "sha256": "6ff33d83005c12bbf77c85001082c4bdce7eb0a88a9d50ed4942bba4c99eb61b"
+    },
+    {
+      "path": "SAVE7.SCE",
+      "class": "mission",
+      "size": 149591,
+      "sha256": "fae6b52ce64bf2248b08ebdc3614210fe1c7e0a1e9219a0131cb36a92e049eca"
+    },
+    {
+      "path": "SAVE7.TRA",
+      "class": "mission",
+      "size": 141219,
+      "sha256": "575b555bff26baeafda70a3cf9226e8a5103ce4f8ff5928377d5b2e5cfa1b9c2"
+    },
+    {
+      "path": "SAVE8.CAM",
+      "class": "mission",
+      "size": 211599,
+      "sha256": "0891d72f39acbf972d72168060e99fdcd5dd5b571d2fee711b2b21f98ae67327"
+    },
+    {
+      "path": "SAVE8.MPS",
+      "class": "mission",
+      "size": 232082,
+      "sha256": "87984122cc9d8096b40a4fba1479f285cc6eb4288852dd3a01a1b304b87cde58"
+    },
+    {
+      "path": "SAVE8.SCE",
+      "class": "mission",
+      "size": 176485,
+      "sha256": "1aa8d83146e5a31ebc8efeed4f9e63f9ab48b326cd7ea3bb4c74eb696a5e8b0d"
+    },
+    {
+      "path": "SAVE8.TRA",
+      "class": "mission",
+      "size": 140675,
+      "sha256": "dbea01e3013b81bacafa1c834b2b26b05fc8cc225b4d88f2687812eb488e7c11"
+    },
+    {
+      "path": "SAVE9.CAM",
+      "class": "mission",
+      "size": 265951,
+      "sha256": "df4dbce57e7486956c51a74743c86059c900b4442f5de55db97b836d90205004"
+    },
+    {
+      "path": "SAVE9.MPS",
+      "class": "mission",
+      "size": 239468,
+      "sha256": "5396100cf35ca46ba76bd89f00510e353d563651904ea09c9675d5a3b809589f"
+    },
+    {
+      "path": "SAVE9.SCE",
+      "class": "mission",
+      "size": 163391,
+      "sha256": "83c1492d9c0125a217aaf7ba10d9d47a4a1429c0a50fe5ea6828054c1be9d23e"
+    },
+    {
+      "path": "SAVE9.TRA",
+      "class": "mission",
+      "size": 142721,
+      "sha256": "7694150b1e309b863437607ee4b04299b719356f1b4d41cfda8e28b26b256d43"
+    },
+    {
+      "path": "SAVELOAD.FLC",
+      "class": "flc",
+      "size": 238413,
+      "sha256": "8b7b03d0e9fcae61765a8334f5000905f6b08d4c90f9a6dc196dbf3cd766d1e5"
+    },
+    {
+      "path": "SBOATIDL.SPW",
+      "class": "sound",
+      "size": 261232,
+      "sha256": "95551aec697aa00315735f3b5c5c38529cdcf4f540afab44fa527c25dc05f305"
+    },
+    {
+      "path": "SBOATMVE.SPW",
+      "class": "sound",
+      "size": 254064,
+      "sha256": "d1180eb57189c228a378065660f4958b6eb55ab46f11bbf769a5956704eb9f54"
+    },
+    {
+      "path": "SBOATSTP.SPW",
+      "class": "sound",
+      "size": 121644,
+      "sha256": "c94f16cd7e84b74928def984d7c27b39f452ef99a71c737123c91f325f90ea7c"
+    },
+    {
+      "path": "SCALE.SPW",
+      "class": "sound",
+      "size": 89174,
+      "sha256": "30509ba68dafd9b0eb5da5b27d359fa2aff8548b8a33fd35ae2fe12123588fd1"
+    },
+    {
+      "path": "SCAN1.SPW",
+      "class": "sound",
+      "size": 58736,
+      "sha256": "513440833023ec8d55cddeef53e8d5c1587b395052e0cc842143c2916a2d2231"
+    },
+    {
+      "path": "SCAN5.SPW",
+      "class": "sound",
+      "size": 69488,
+      "sha256": "c64f58d0099757f8aaf5961e647f1bc9c066253866a11108b09cdabad2313885"
+    },
+    {
+      "path": "SCAN7.SPW",
+      "class": "sound",
+      "size": 25078,
+      "sha256": "378e96c1ed0a5fd531ec730e885a40ab263a0b9b80113accb79e41720e22ba9e"
+    },
+    {
+      "path": "SCANR1.FLC",
+      "class": "flc",
+      "size": 239314,
+      "sha256": "fdb0ae5ba24b555ce28f1a75eb6cee113fe35632ef480561b8733a0d7ce21076"
+    },
+    {
+      "path": "SCARGO02.FLC",
+      "class": "flc",
+      "size": 273832,
+      "sha256": "81303276e4ca3e0a0244b05a1077fab4de4c836cfa346468cb36d9290349b229"
+    },
+    {
+      "path": "SCOUT.FLC",
+      "class": "flc",
+      "size": 218500,
+      "sha256": "584862d6c485bbdd18317efb62e1eb627c47ec430b375d5a4715e6a2dae5c435"
+    },
+    {
+      "path": "SCOUT1.SPW",
+      "class": "sound",
+      "size": 110192,
+      "sha256": "1a76986bc6758503364d87acfb9c65e2d69881b744ad874dde8d7b692a2509fd"
+    },
+    {
+      "path": "SCOUT14.SPW",
+      "class": "sound",
+      "size": 98630,
+      "sha256": "5ece17ad679e0982ad9c654a5e364cd10c0300588bd2db283e6d0583bb8b0f88"
+    },
+    {
+      "path": "SCOUT2.SPW",
+      "class": "sound",
+      "size": 138864,
+      "sha256": "4410f5fed52837dbc3c834413b7d7dacf8f875e34e2f042b92000354c7680bca"
+    },
+    {
+      "path": "SCOUT5.SPW",
+      "class": "sound",
+      "size": 124528,
+      "sha256": "183e33b845ea173bda57bf8f0774c2803331639b610796ab1f226b3089692bd1"
+    },
+    {
+      "path": "SCOUT6.SPW",
+      "class": "sound",
+      "size": 124784,
+      "sha256": "857dc145c52424ef004e641a2596771feda3578b332d9a04dc544024a8dfee82"
+    },
+    {
+      "path": "SCOUT7.SPW",
+      "class": "sound",
+      "size": 23084,
+      "sha256": "c7af75895a475340bdcf76d5bb81516d68f1b1126db4d2aeae0ed60776aa501a"
+    },
+    {
+      "path": "SCOUT8.SPW",
+      "class": "sound",
+      "size": 46892,
+      "sha256": "cf42ce666c4b3cb6545d8350a941acb55723afca8f916e8dda67e7433e769273"
+    },
+    {
+      "path": "SEATRANS.FLC",
+      "class": "flc",
+      "size": 367642,
+      "sha256": "77acadb6a34b38ab2dd3109caf0f6ea26892c98855724e6b4c45d9cfeca6d7ea"
+    },
+    {
+      "path": "SF_ISO.FLC",
+      "class": "flc",
+      "size": 15282,
+      "sha256": "cb3689e2c69bcc9d2914d243bcb65c7cdaf60de6a92e9daba984093007928d08"
+    },
+    {
+      "path": "SHLDGEN.FLC",
+      "class": "flc",
+      "size": 14878,
+      "sha256": "b30cd141823c2ff68b4a34f775e9200dd852b7ee8a0c0b428cf5057fd2360f6d"
+    },
+    {
+      "path": "SHPYRD.FLC",
+      "class": "flc",
+      "size": 12586,
+      "sha256": "3fbc4f318fe8e7b0bd3cc7280ded396346d91eea00d609fff5a1299a4818354d"
+    },
+    {
+      "path": "SMINE01.FLC",
+      "class": "flc",
+      "size": 11820,
+      "sha256": "c7156c11d0a3f430588116299146c289eddeaaa09ae178080b7ffa80a8f242e4"
+    },
+    {
+      "path": "SMINE17.SPW",
+      "class": "sound",
+      "size": 46380,
+      "sha256": "b6cb0a233e7b5cf918e4daa38f78bf136dacf111a33131cc1955159d647a856e"
+    },
+    {
+      "path": "SMINE18.SPW",
+      "class": "sound",
+      "size": 82268,
+      "sha256": "be49a45ff845bba080b9e5bc24c5a6bcebcf83218232ecc1027ce8de858f477e"
+    },
+    {
+      "path": "SML.FLC",
+      "class": "flc",
+      "size": 274192,
+      "sha256": "2129be745a83b3541004c136d7d3743ea7be7450a1d0dc0510f1e67f2699c087"
+    },
+    {
+      "path": "SNOW_1.WRL",
+      "class": "data",
+      "size": 1419100,
+      "sha256": "c3f5c757d02197efab583091287a046b4b8991f2f0634281a7dd300d5fb365b0"
+    },
+    {
+      "path": "SNOW_2.WRL",
+      "class": "data",
+      "size": 1705890,
+      "sha256": "e90592f415271319fa53e8ec3605b4ff6abfc55915e938a91eedfea3d3ea9172"
+    },
+    {
+      "path": "SNOW_3.WRL",
+      "class": "data",
+      "size": 1578883,
+      "sha256": "a625d409ca1d5cd24cdeed165813e5b79c538b123491791016372492f5106801"
+    },
+    {
+      "path": "SNOW_4.WRL",
+      "class": "data",
+      "size": 808647,
+      "sha256": "a6367393db48e1621d5ac247c4c4b2aac07885317f3ca40d0f12b81a28596f2e"
+    },
+    {
+      "path": "SNOW_5.WRL",
+      "class": "data",
+      "size": 1722278,
+      "sha256": "11a9255e65af53b6438803d0aef4ca96ed9d57575da3cf13779838ccda25a6e9"
+    },
+    {
+      "path": "SNOW_6.WRL",
+      "class": "data",
+      "size": 931557,
+      "sha256": "d86feaba2d0af91065030a7aad2e206c3e2d26f780074ad436a84a5f7de226ee"
+    },
+    {
+      "path": "SNOW_MSC.MSC",
+      "class": "music",
+      "size": 16858900,
+      "sha256": "5fc1720eea937282d2137d6a4be773adb13a69f64fa2a2334a2305d0c025103f"
+    },
+    {
+      "path": "SPWR_ISO.FLC",
+      "class": "flc",
+      "size": 17628,
+      "sha256": "174edcd4fab2e77e031b75d88150b63e696331b23c9665c21241032130b13e25"
+    },
+    {
+      "path": "SS_ISO.FLC",
+      "class": "flc",
+      "size": 15392,
+      "sha256": "1bc7c5867a7c8d9d291654ce3c95a022f06c5059823e6d425aca4bc6f5f5e6e5"
+    },
+    {
+      "path": "SUB.FLC",
+      "class": "flc",
+      "size": 223326,
+      "sha256": "3544c72f822662ca5d53c479bf30376e29142a16aa24467863642f24dc16f8a2"
+    },
+    {
+      "path": "SUB14.SPW",
+      "class": "sound",
+      "size": 52524,
+      "sha256": "f22b93e689249d22367ab65b6526c19ca10c5fdf48bde48d0e43b95d4d80d55b"
+    },
+    {
+      "path": "SUB16.SPW",
+      "class": "sound",
+      "size": 147810,
+      "sha256": "4864bcac01e98797f13b74aeb664577fdf1974b07bf38cbc231f5bfd79959760"
+    },
+    {
+      "path": "SUB2.SPW",
+      "class": "sound",
+      "size": 310508,
+      "sha256": "762775db124a85bb98ddeb1f3a8f6668a94c56ed4e3f67b3ca5b51a3cd29ed46"
+    },
+    {
+      "path": "SUB6.SPW",
+      "class": "sound",
+      "size": 191136,
+      "sha256": "ca93d65f53e5982c5ee598b290109546e3908dc2f094bb4057c3a24cc616db02"
+    },
+    {
+      "path": "SUB8.SPW",
+      "class": "sound",
+      "size": 45100,
+      "sha256": "0f38617475af9528bc546de320db4aab393caf008cd6efd5946016338493f646"
+    },
+    {
+      "path": "SURVEYOR.FLC",
+      "class": "flc",
+      "size": 285378,
+      "sha256": "d4eb92852ca5e6865920986fc260dfd2e8dda7642e4beecf3a4562aade994ec0"
+    },
+    {
+      "path": "SURVY1.SPW",
+      "class": "sound",
+      "size": 86140,
+      "sha256": "f5ed000ab92ae5cfffacf769321652f1674e6d574226f5c01b29cab6b85e0dcc"
+    },
+    {
+      "path": "SURVY2.SPW",
+      "class": "sound",
+      "size": 88676,
+      "sha256": "33234ee218af562b80d143e156e47d7bfff9cc2e036f088e43f28e39277c578b"
+    },
+    {
+      "path": "SURVY5.SPW",
+      "class": "sound",
+      "size": 59760,
+      "sha256": "bb716aff0f8e9999cf529bd51ce415210cbca1acb82d2f72d9df428cf47cbed0"
+    },
+    {
+      "path": "SURVY6.SPW",
+      "class": "sound",
+      "size": 97848,
+      "sha256": "8b4faeedf3250889cf4cdea7c6fdc035b941f44384be32fc7996b25a0e8de6bd"
+    },
+    {
+      "path": "SURVY7.SPW",
+      "class": "sound",
+      "size": 43986,
+      "sha256": "de81a4cccc29334c5ad3e0105b47a5e0933a7ec718162650d8906e78d7bdb756"
+    },
+    {
+      "path": "SURVY8.SPW",
+      "class": "sound",
+      "size": 73040,
+      "sha256": "c98ebb3ffe79ac12b9582d527d318f5bb81e8833ff0a4f139090fa5414a339f2"
+    },
+    {
+      "path": "SVP.FLC",
+      "class": "flc",
+      "size": 15000,
+      "sha256": "9fbfaf326cea43574943997c92e10eca7e69ff45033186b5c520299da573b450"
+    },
+    {
+      "path": "TANK03.FLC",
+      "class": "flc",
+      "size": 229068,
+      "sha256": "9fb052104ca4846c4aee57345feb2029675d336af5d7bce2cbc03a4b730b0e2e"
+    },
+    {
+      "path": "TANK1.SPW",
+      "class": "sound",
+      "size": 58442,
+      "sha256": "c4fbd376de3f265897cac96014d2773553f0df990a053f79c7cb3576ecb81c48"
+    },
+    {
+      "path": "TANK5.SPW",
+      "class": "sound",
+      "size": 148592,
+      "sha256": "c1bd335e67cbc32de2532aab8890121a2a030351a90d778b1a04a60c9e0c3cdb"
+    },
+    {
+      "path": "TANK7.SPW",
+      "class": "sound",
+      "size": 22188,
+      "sha256": "2c5e748b80fd65731b439238a84a5752873da169c47d2b58be55b4d915ca56b3"
+    },
+    {
+      "path": "TANKA_1.SPW",
+      "class": "sound",
+      "size": 95946,
+      "sha256": "9dfcf0a3f887877daf383235fbab6153e556bd89a05832c1ea822d7c90cfd14b"
+    },
+    {
+      "path": "TANKA_5.SPW",
+      "class": "sound",
+      "size": 76656,
+      "sha256": "b57a46045d29549f31be90ba25650754885f3b3be95037cd28e1c6a4eacd1b21"
+    },
+    {
+      "path": "TANKA_7.SPW",
+      "class": "sound",
+      "size": 29214,
+      "sha256": "d4ea2dae1cd2bb1c71833210aaabf18a9acd3480542231d5520da2e1945fc8cd"
+    },
+    {
+      "path": "TANKC_1.SPW",
+      "class": "sound",
+      "size": 95946,
+      "sha256": "9dfcf0a3f887877daf383235fbab6153e556bd89a05832c1ea822d7c90cfd14b"
+    },
+    {
+      "path": "TANKC_5.SPW",
+      "class": "sound",
+      "size": 76656,
+      "sha256": "b57a46045d29549f31be90ba25650754885f3b3be95037cd28e1c6a4eacd1b21"
+    },
+    {
+      "path": "TANKC_7.SPW",
+      "class": "sound",
+      "size": 29214,
+      "sha256": "d4ea2dae1cd2bb1c71833210aaabf18a9acd3480542231d5520da2e1945fc8cd"
+    },
+    {
+      "path": "THALL.FLC",
+      "class": "flc",
+      "size": 13080,
+      "sha256": "b6fe96ae33b98f7eb821cf8836d01df1c08cc457bf2ac0c5db0ea5e21347b48b"
+    },
+    {
+      "path": "TRUCK.FLC",
+      "class": "flc",
+      "size": 282684,
+      "sha256": "ad824ed867aab03177cdb34babcd6f1abf95270ae767f91b01b0d046421022c2"
+    },
+    {
+      "path": "TRUCKIDL.SPW",
+      "class": "sound",
+      "size": 206704,
+      "sha256": "17bd6d55d220bbb9a11c96d4e6481f97753c644ce46e3ba4aefadfb3dbd9538f"
+    },
+    {
+      "path": "TRUCKMVE.SPW",
+      "class": "sound",
+      "size": 205168,
+      "sha256": "c29452fe6557fcd9e061de7af369d906b73970dbb244c9cdadba712f55ebd8a4"
+    },
+    {
+      "path": "TRUCKSTP.SPW",
+      "class": "sound",
+      "size": 35372,
+      "sha256": "7ef0084cf5006a9a51e1e0d52db83d747dc16148a904ec71a15057f1351b53df"
+    },
+    {
+      "path": "WIN9.CAM",
+      "class": "mission",
+      "size": 766,
+      "sha256": "fa4e3978a75557f37e14061c055dd1701a0a836727e75f52dbeb535492b189c2"
+    },
+    {
+      "path": "WINR_MSC.MSC",
+      "class": "music",
+      "size": 6981048,
+      "sha256": "35522a37d2f3c6d1de2efcc9a23420da643341b999cf03e70432425d79d24c3b"
+    },
+    {
+      "path": "WP.FLC",
+      "class": "flc",
+      "size": 17058,
+      "sha256": "0917377903cf226db7ff63987a74b53107e02eb4f0503aef0aa418506fe74ec6"
+    },
+    {
+      "path": "maxint.json",
+      "class": "subtitles",
+      "size": 29241,
+      "sha256": "d3a9eba4208975e4ff6d6991331605ee39d71993ff2b957b935022f5bc8cf86e"
+    }
+  ],
+  "missing": [],
+  "allowlisted_missing": [
+    {
+      "path": "SAVE2.DMO",
+      "class": "mission",
+      "referenced_by": [
+        "SC_D0002"
+      ],
+      "reason": "demo mission file allowlisted: the retail data set ships only SAVE1.DMO"
+    },
+    {
+      "path": "SAVE3.DMO",
+      "class": "mission",
+      "referenced_by": [
+        "SC_D0003"
+      ],
+      "reason": "demo mission file allowlisted: the retail data set ships only SAVE1.DMO"
+    },
+    {
+      "path": "bkg7_msc.msc",
+      "class": "music",
+      "referenced_by": [
+        "BKG7_MSC"
+      ],
+      "reason": "music track allowlisted: the retail data set does not ship BKG7_MSC/BKG8_MSC/BKG9_MSC"
+    },
+    {
+      "path": "bkg9_msc.msc",
+      "class": "music",
+      "referenced_by": [
+        "BKG8_MSC",
+        "BKG9_MSC"
+      ],
+      "reason": "music track allowlisted: the retail data set does not ship BKG7_MSC/BKG8_MSC/BKG9_MSC"
+    }
+  ]
+}

@@ -261,3 +261,28 @@ fn real_msc_tracks_are_stereo_pcm16_wav() {
     assert_eq!(clip.channels, 2);
     assert!(clip.frames() > 22_050, "трек длиннее секунды");
 }
+
+/// The distribution inventory duplicates the playlist constants because
+/// `max_assets` is the lower layer and cannot import `max_app::music`; the two
+/// definitions must not drift apart (stage 1 of `distro-installers.md` §F).
+#[test]
+fn distribution_inventory_music_lists_match_the_director() {
+    use max_app::music::{TRACK_LOSE, TRACK_WIN};
+
+    assert_eq!(
+        max_assets::inventory::MUSIC_PLAYLIST,
+        max_app::music::GAME_PLAYLIST
+    );
+    assert_eq!(
+        max_assets::inventory::PLANET_TRACKS,
+        max_app::music::PLANET_TRACKS
+    );
+    assert_eq!(
+        max_assets::inventory::OUTCOME_TRACKS,
+        [TRACK_WIN, TRACK_LOSE]
+    );
+    assert_eq!(
+        max_assets::inventory::MUSIC_TRACKS.len(),
+        max_app::music::GAME_PLAYLIST.len() + max_app::music::PLANET_TRACKS.len() + 2
+    );
+}
