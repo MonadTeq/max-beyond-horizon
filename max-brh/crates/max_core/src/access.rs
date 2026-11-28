@@ -2006,6 +2006,18 @@ pub(crate) fn clear_unit_group(state: &mut GameState, id: UnitId) {
     state.clear_group_member(id);
 }
 
+/// Group reset — the whole group of the unit is dissolved (the cascade-free
+/// counterpart of [`clear_unit_group`], see [`GameState::dissolve_group`]).
+///
+/// The oracle clears one unit (`GameManager_ClickUnit` → `unit2->ClearUnitList()`,
+/// `game_manager.cpp:6267`); the port drops the group of the clicked unit and of
+/// the previously focused group, so the rectangle selection cannot be resumed
+/// after the player moved the focus to a standalone unit or cancelled it with a
+/// right click on a free cell. Returns `false` when the unit has no group.
+pub(crate) fn dissolve_group(state: &mut GameState, id: UnitId) -> bool {
+    state.dissolve_group(id)
+}
+
 /// The unit's group (a copy of the list).
 #[inline]
 pub(crate) fn group_members_of(state: &GameState, id: UnitId) -> Option<Vec<UnitId>> {

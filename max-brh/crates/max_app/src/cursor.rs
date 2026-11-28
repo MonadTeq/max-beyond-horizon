@@ -7,8 +7,8 @@
 //! * [`CursorId`] — indices exactly as the `enum` in `cursor.hpp`;
 //! * [`CursorContext`] — a simplified `Cursor_GetDefaultWindowCursor` +
 //!   `GameManager_GetWindowCursor`: menu/panel/minimap → `HANDPTR`, map without
-//!   a selected unit → `MAP_PTR`, map with an order → `UNIT_GO`/`UNIT_NGO`,
-//!   over an own/foreign unit → `FRND_PTR`/`ENMY_PTR`;
+//!   a selected unit (and the rectangle drag) → `HANDPTR`, map with an order →
+//!   `UNIT_GO`/`UNIT_NGO`, over an own/foreign unit → `FRND_PTR`/`ENMY_PTR`;
 //! * [`CursorImage`] — an RGBA frame with a hotspot for the SDL layer (`Cursor::
 //!   from_surface`), headless tests work without SDL.
 //!
@@ -158,7 +158,9 @@ pub enum CursorHover {
 pub enum CursorContext {
     /// Menu/creation form (the usual arrow).
     Menu,
-    /// Map without a selected unit (`CURSOR_MAP`).
+    /// Map without a selected unit — `CURSOR_HAND` (the owner rule: with no unit
+    /// selected the pointer is the plain hand, not the "no-go" sign; the rectangle
+    /// drag below is the same hand in the oracle, `game_manager.cpp:4289-4302`).
     MapIdle,
     /// Map with a unit selected: hovering over a unit/an empty cell.
     MapSelected(CursorHover),
@@ -207,7 +209,7 @@ pub enum CursorContext {
 pub const fn cursor_for_context(context: CursorContext) -> CursorId {
     match context {
         CursorContext::Menu | CursorContext::Panel | CursorContext::Minimap => CursorId::Hand,
-        CursorContext::MapIdle => CursorId::Map,
+        CursorContext::MapIdle => CursorId::Hand,
         CursorContext::MapSelected(CursorHover::Friend) => CursorId::Friend,
         CursorContext::MapSelected(CursorHover::Enemy) => CursorId::Enemy,
         CursorContext::MapSelected(CursorHover::Empty) => CursorId::UnitGo,
@@ -917,17 +919,22 @@ pub fn military_cursor(
 ///
 /// The branch order is 1:1 C++ (the first suitable one wins):
 /// 1. a cell outside the map → `HANDPTR`;
-/// 2. end of turn or not the player's turn → `FRND_PTR`/`UNIT_NGO`;
-/// 3. the unit is not "ready for orders" (no selection, moving, firing, exploding,
+/// 2. the rectangle selection is being dragged (`RenderState == 2`) → `HANDPTR`
+///    (`game_manager.cpp:4300-4302`);
+/// 3. no unit selected (the HUD focus is empty, or the selected id is stale) →
+///    `HANDPTR` (owner rule; the oracle's branch 3 would show `FRND_PTR`/
+///    `UNIT_NGO` for `SelectedUnit == nullptr`);
+/// 4. end of turn or not the player's turn → `FRND_PTR`/`UNIT_NGO`;
+/// 5. the unit is not "ready for orders" (moving, firing, exploding,
 ///    disabled, loading, scaling, foreign) → `FRND_PTR`/`UNIT_NGO`;
-/// 4. an interrupted group order → `FRND_PTR`/`UNIT_NGO`;
-/// 5. `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING` of a ground builder →
+/// 6. an interrupted group order → `FRND_PTR`/`UNIT_NGO`;
+/// 7. `ORDER_BUILD`/`AWAIT_TAPE_POSITIONING` of a ground builder →
 ///    [`builder_unit_cursor`];
-/// 6. `ORDER_IDLE` → [`air_unit_cursor`] (`ACTVTPTR`);
-/// 7. `ORDER_STATE_EXECUTING_ORDER` and a valid target → [`military_cursor`];
-/// 8. `targeting_mode` → `FRND_PTR`/`UNIT_NGO`/`ENMY_PTR`;
-/// 9. `enter_mode` → `UNIT_GO`/`UNIT_NGO`;
-/// 10. by class: air — `LOAD`/`FRND_PTR`/`WAY`/`UNIT_GO`;
+/// 8. `ORDER_IDLE` → [`air_unit_cursor`] (`ACTVTPTR`);
+/// 9. `ORDER_STATE_EXECUTING_ORDER` and a valid target → [`military_cursor`];
+/// 10. `targeting_mode` → `FRND_PTR`/`UNIT_NGO`/`ENMY_PTR`;
+/// 11. `enter_mode` → `UNIT_GO`/`UNIT_NGO`;
+/// 12. by class: air — `LOAD`/`FRND_PTR`/`WAY`/`UNIT_GO`;
 ///     ground/sea — [`unit_action_cursor`]; stationary — `LOAD` (by the building
 ///     type), `TRANSFER`/`RELOAD` by the cursor mode, otherwise
 ///     `FRND_PTR`/`UNIT_NGO`.
@@ -956,6 +963,24 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
         return CursorId::Hand;
     }
 
+    // `GameManager_GetWindowCursor` (`game_manager.cpp:4289-4302`): while the
+    // rectangle selection is dragged (`RenderState == 2`) the window cursor is the
+    // hand, regardless of the unit that was selected at the press.
+    if app.hud().multi_select_frame().is_some() {
+        return CursorId::Hand;
+    }
+
+    // Owner rule: with no unit in focus the pointer over the map is the plain hand
+    // (`HANDPTR`), not the "no-go" sign of the oracle's `SelectedUnit == nullptr`
+    // arm (`game_manager.cpp:4305-4335`). A stale id (the unit died) is the same
+    // "nothing selected" case.
+    let Some(selected_id) = app.hud().selected else {
+        return CursorId::Hand;
+    };
+    let Some(selected) = state.unit(selected_id) else {
+        return CursorId::Hand;
+    };
+
     if state.game_state() == GameStateType::EndTurn || active_kind != TeamKind::Player {
         return if team_unit.is_some() {
             CursorId::Friend
@@ -963,17 +988,6 @@ pub fn window_cursor(app: &crate::App, grid: Point) -> CursorId {
             CursorId::UnitNoGo
         };
     }
-
-    let Some(selected_id) = app.hud().selected else {
-        return if team_unit.is_some() {
-            CursorId::Friend
-        } else {
-            CursorId::UnitNoGo
-        };
-    };
-    let Some(selected) = state.unit(selected_id) else {
-        return CursorId::UnitNoGo;
-    };
 
     // C++ branch 3: the unit does not accept orders.
     let not_ready = matches!(

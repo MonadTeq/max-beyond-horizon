@@ -451,35 +451,238 @@ fn the_frame_is_drawn_while_the_pointer_moves() {
     });
 }
 
+/// A free LAND cell near the camera, at least `gap` cells away from every cell of
+/// `taken` (so the newcomer is clearly outside the rectangle).
+fn free_spot(app: &App, taken: &[Point], gap: i16) -> Point {
+    let (center_x, center_y) = app.map_viewport().center();
+    let center = Point::new((center_x / 64) as i16, (center_y / 64) as i16);
+
+    let on_screen = |grid: Point| {
+        let (x, y) = cell_point(app, grid);
+
+        (64..=576).contains(&x) && (64..=400).contains(&y)
+    };
+
+    for radius in 0..10 {
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let grid = Point::new(center.x + dx, center.y + dy);
+
+                if grid.x < 1
+                    || grid.y < 1
+                    || grid.x + 1 >= max_core::geo::MAP_WIDTH
+                    || grid.y + 1 >= max_core::geo::MAP_HEIGHT
+                    || !on_screen(grid)
+                    || !is_free_land(app, grid)
+                {
+                    continue;
+                }
+
+                if taken
+                    .iter()
+                    .any(|cell| (cell.x - grid.x).abs() <= gap && (cell.y - grid.y).abs() <= gap)
+                {
+                    continue;
+                }
+
+                return grid;
+            }
+        }
+    }
+
+    panic!("no free cell near the camera ({center:?})");
+}
+
+/// A free 2×2 LAND block for a building, away from the group.
+fn free_building_site(app: &App, taken: &[Point]) -> Point {
+    let (center_x, center_y) = app.map_viewport().center();
+    let center = Point::new((center_x / 64) as i16, (center_y / 64) as i16);
+
+    let on_screen = |grid: Point| {
+        let (x, y) = cell_point(app, grid);
+
+        (64..=576).contains(&x) && (64..=400).contains(&y)
+    };
+
+    for radius in 0..10 {
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let site = Point::new(center.x + dx, center.y + dy);
+                let cells = [
+                    site,
+                    Point::new(site.x + 1, site.y),
+                    Point::new(site.x, site.y + 1),
+                    Point::new(site.x + 1, site.y + 1),
+                ];
+
+                if site.x < 1
+                    || site.y < 1
+                    || site.x + 2 >= max_core::geo::MAP_WIDTH
+                    || site.y + 2 >= max_core::geo::MAP_HEIGHT
+                    || !on_screen(site)
+                    || !on_screen(cells[3])
+                {
+                    continue;
+                }
+
+                if !cells.iter().all(|cell| is_free_land(app, *cell)) {
+                    continue;
+                }
+
+                if taken.iter().any(|cell| {
+                    cells.iter().any(|building| {
+                        (cell.x - building.x).abs() <= 1 && (cell.y - building.y).abs() <= 1
+                    })
+                }) {
+                    continue;
+                }
+
+                return site;
+            }
+        }
+    }
+
+    panic!("no free 2x2 building site near the camera ({center:?})");
+}
+
+fn spawn_building(app: &mut App, grid: Point) -> UnitId {
+    let flags = max_core::access::unit_type_flags(UnitType::MiningStation);
+
+    app.universe_mut()
+        .spawn_unit(UnitType::MiningStation, TeamId::RED, grid, flags)
+        .expect("building spawned")
+}
+
+/// Builds the three-tank group of the drag tests and returns the selection points.
+///
+/// The leader is selected first (the frame anchor), the press on the wing and the
+/// release past the tail run `Access_MultiSelect`.
+fn drag_group(app: &mut App) -> (Point, Point, Point, UnitId, UnitId, UnitId) {
+    let (left, right, below) = free_cluster(app);
+    let leader = spawn_tank(app, left);
+    let wing = spawn_tank(app, right);
+    let tail = spawn_tank(app, below);
+
+    click(app, cell_point(app, left));
+    drag(app, cell_point(app, right), cell_point(app, below));
+
+    assert_eq!(
+        app.state_ref().group_members_of(leader),
+        Some(vec![leader, wing, tail]),
+        "the drag created the three-unit group"
+    );
+
+    (left, right, below, leader, wing, tail)
+}
+
 #[test]
-fn selecting_a_member_makes_it_the_leader() {
+fn clicking_another_unit_dissolves_the_group_and_focuses_it() {
     with_big_stack(|| {
         let mut app = game_app();
-        let (left, right, below) = free_cluster(&app);
-        let leader = spawn_tank(&mut app, left);
-        let wing = spawn_tank(&mut app, right);
-        let tail = spawn_tank(&mut app, below);
+        let (left, right, below, leader, wing, tail) = drag_group(&mut app);
 
-        let left_point = cell_point(&app, left);
+        let spot = free_spot(&app, &[left, right, below], 3);
+        let newcomer = spawn_tank(&mut app, spot);
+        let spot_point = cell_point(&app, spot);
+        click(&mut app, spot_point);
+
+        assert_eq!(
+            app.hud().selected,
+            Some(newcomer),
+            "the click focuses the newcomer"
+        );
+        for member in [leader, wing, tail] {
+            assert_eq!(
+                app.state_ref().group_members_of(member),
+                None,
+                "`GameManager_ClickUnit` (`game_manager.cpp:6265-6289`) + the port's reset: \
+                 the group focused before the click is gone"
+            );
+        }
+        assert!(
+            log_has(&app, "Group reset"),
+            "the reset is reported: {:?}",
+            app.hud().log.lines()
+        );
+    });
+}
+
+#[test]
+fn clicking_a_group_member_dissolves_the_group() {
+    with_big_stack(|| {
+        let mut app = game_app();
+        let (_left, right, _below, leader, wing, tail) = drag_group(&mut app);
+
         let right_point = cell_point(&app, right);
-        let below_point = cell_point(&app, below);
+        click(&mut app, right_point);
 
-        click(&mut app, left_point);
-        drag(&mut app, right_point, below_point);
         assert_eq!(
-            app.state_ref().group_members_of(leader),
-            Some(vec![leader, wing, tail])
+            app.hud().selected,
+            Some(wing),
+            "the member becomes the focus"
         );
+        for member in [leader, wing, tail] {
+            assert_eq!(
+                app.state_ref().group_members_of(member),
+                None,
+                "`unit2->ClearUnitList()` (`game_manager.cpp:6267`): the clicked member leaves \
+                 the group and the group is reset"
+            );
+        }
+        assert!(log_has(&app, "Group reset"));
+    });
+}
 
-        // A click on a member selects it; `GameManager_MenuUnitSelect` moves it to the
-        // head of the group (`unit->MoveToFrontInUnitList()`, `game_manager.cpp:7242`).
-        click(&mut app, below_point);
+#[test]
+fn clicking_a_building_dissolves_the_group() {
+    with_big_stack(|| {
+        let mut app = game_app();
+        let (left, right, below, leader, wing, tail) = drag_group(&mut app);
 
-        assert_eq!(app.hud().selected, Some(tail));
+        let site = free_building_site(&app, &[left, right, below]);
+        let building = spawn_building(&mut app, site);
+        let site_point = cell_point(&app, site);
+        click(&mut app, site_point);
+
         assert_eq!(
-            app.state_ref().group_members_of(tail),
-            Some(vec![tail, leader, wing]),
-            "the selected member becomes the group leader"
+            app.hud().selected,
+            Some(building),
+            "the standalone building takes the focus"
         );
+        for member in [leader, wing, tail] {
+            assert_eq!(
+                app.state_ref().group_members_of(member),
+                None,
+                "focus on a building resets the rectangle selection"
+            );
+        }
+        assert!(log_has(&app, "Group reset"));
+    });
+}
+
+#[test]
+fn right_click_on_a_free_cell_dissolves_the_group() {
+    with_big_stack(|| {
+        let mut app = game_app();
+        let (left, right, below, leader, wing, tail) = drag_group(&mut app);
+
+        let spot = free_spot(&app, &[left, right, below], 2);
+        let (x, y) = cell_point(&app, spot);
+        handle_session_input(&mut app, InputEvent::RightClick(x, y));
+
+        assert_eq!(
+            app.hud().selected,
+            None,
+            "RMB on a free cell drops the focus"
+        );
+        for member in [leader, wing, tail] {
+            assert_eq!(
+                app.state_ref().group_members_of(member),
+                None,
+                "the group is reset with the focus (`GameManager_MenuUnitSelect(nullptr)`)"
+            );
+        }
+        assert!(log_has(&app, "Group reset"));
+        assert!(log_has(&app, "Cancelled"));
     });
 }

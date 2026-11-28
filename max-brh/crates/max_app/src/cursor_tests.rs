@@ -21,7 +21,7 @@ fn context_switches_cursor_like_cursor_setcursor() {
     assert_eq!(cursor_for_context(CursorContext::Menu), CursorId::Hand);
     assert_eq!(cursor_for_context(CursorContext::Panel), CursorId::Hand);
     assert_eq!(cursor_for_context(CursorContext::Minimap), CursorId::Hand);
-    assert_eq!(cursor_for_context(CursorContext::MapIdle), CursorId::Map);
+    assert_eq!(cursor_for_context(CursorContext::MapIdle), CursorId::Hand);
     assert_eq!(
         cursor_for_context(CursorContext::MapSelected(CursorHover::Friend)),
         CursorId::Friend
@@ -48,14 +48,13 @@ fn session_cursor_switches_between_panel_and_map() {
     assert_eq!(session_cursor(&app, None).0, CursorId::Hand);
     // Minimap (15,356) — HANDPTR, like the C++ default-window-cursor.
     assert_eq!(session_cursor(&app, Some((20, 360))).0, CursorId::Hand);
-    // Map without selection — `CURSOR_UNIT_NO_GO`: `GameManager_GetWindowCursor`
-    // (`game_manager.cpp:4305-4335`) has no `MAP_PTR` branch; `CURSOR_MAP`
-    // remains only as a `Cursor_DefaultWindowCursorLut` record that
-    // `GameManager_ProcessInput` always overrides.
-    assert_eq!(
-        session_cursor(&app, Some((300, 200))).0,
-        CursorId::UnitNoGo
-    );
+    // Map without a selection — `HANDPTR` (owner rule). `GameManager_GetWindowCursor`
+    // (`game_manager.cpp:4289-4302`) returns `CURSOR_HAND` for the rectangle drag; the
+    // no-selection case follows the same hand instead of the `UNIT_NGO` arm of
+    // `game_manager.cpp:4305-4335`. `CURSOR_MAP` is only a
+    // `Cursor_DefaultWindowCursorLut` record that `GameManager_ProcessInput` always
+    // overrides.
+    assert_eq!(session_cursor(&app, Some((300, 200))).0, CursorId::Hand);
 }
 
 #[test]

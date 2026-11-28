@@ -1,8 +1,11 @@
 //! Cursor table — 1:1 `GameManager_GetWindowCursor` (`game_manager.cpp:4215`).
 //!
 //! Every mode from the oracle is checked:
-//! * an empty map without selection → `UNIT_NGO` (`SelectedUnit == nullptr`);
-//! * an own unit → `FRND_PTR`;
+//! * an empty map / an own unit without a selection → `HANDPTR` (owner rule; the
+//!   drag arm of the same function already returns `CURSOR_HAND`,
+//!   `game_manager.cpp:4289-4302`);
+//! * the rectangle drag → `HANDPTR`, with and without a selected unit;
+//! * with a selection an own unit → `FRND_PTR`;
 //! * X-FER (`unit->cursor = CURSOR_ARROW_NE`) → `FRND_XFR` over compatible
 //!   cargo, otherwise `FRND_PTR` (`game_manager.cpp:6031-6047`);
 //! * repair (`CURSOR_ARROW_E`) → `FRND_FIX` (`:6049-6056`);
@@ -87,24 +90,83 @@ fn cursor_ids_match_the_cpp_enum(#[case] id: CursorId, #[case] value: u8, #[case
 }
 
 #[test]
-fn empty_map_without_selection_is_unit_no_go() {
-    // C++ `GameManager_GetWindowCursor` has no `MAP_PTR` branch:
-    // selection, an empty cell gives `CURSOR_UNIT_NO_GO` (`game_manager.cpp:4330-4335`).
-    let app = app();
+fn no_selection_on_the_map_is_the_hand_cursor() {
+    // Owner rule: with no unit selected the pointer over the map is `HANDPTR` —
+    // both over a free cell and over an own unit. The oracle's `SelectedUnit ==
+    // nullptr` arm (`game_manager.cpp:4305-4335`) would give `UNIT_NGO`/`FRND_PTR`;
+    // the drag arm of the same function (`:4289-4302`) already returns `CURSOR_HAND`.
+    let mut app = app();
+    let tank = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(41, 40)).expect("tank");
+    ready(&mut app, tank);
 
     assert_eq!(
         window_cursor(&app, Point::new(40, 40)),
-        CursorId::UnitNoGo
+        CursorId::Hand,
+        "no selection over a free cell → HANDPTR"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(41, 40)),
+        CursorId::Hand,
+        "no selection over an own unit → HANDPTR"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(0, 0)),
+        CursorId::Hand,
+        "the map corner is the same hand"
     );
 }
 
 #[test]
-fn own_unit_without_selection_is_friend() {
+fn dragging_the_selection_frame_is_the_hand_cursor() {
+    // `GameManager_GetWindowCursor` (`game_manager.cpp:4300-4302`): while the
+    // rectangle is being dragged (`RenderState == 2`) the cursor is `CURSOR_HAND`,
+    // even when a unit was selected before the press.
     let mut app = app();
     let tank = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(40, 40)).expect("tank");
     ready(&mut app, tank);
+    app.hud_mut().select(Some(tank));
 
-    assert_eq!(window_cursor(&app, Point::new(40, 40)), CursorId::Friend);
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 44)),
+        CursorId::UnitGo,
+        "a selected ready tank over a free cell → UNIT_GO"
+    );
+
+    // Arm the frame (`RenderState = 1`) and pass the 16 px threshold (`= 2`).
+    app.hud_mut().begin_multi_select((0, 0), (0, 0), Some(tank));
+    assert!(
+        app.hud_mut().update_multi_select((20, 0), (20, 0)),
+        "20 px is past the 16 px drag threshold"
+    );
+    assert!(
+        app.hud().multi_select_frame().is_some(),
+        "the frame is drawn while the drag is on"
+    );
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 44)),
+        CursorId::Hand,
+        "the drag turns the map cursor into the hand"
+    );
+
+    // The same hand without any selection.
+    app.hud_mut().select(None);
+    assert_eq!(
+        window_cursor(&app, Point::new(44, 44)),
+        CursorId::Hand,
+        "no selection during the drag → HANDPTR"
+    );
+}
+
+#[test]
+fn selected_unit_over_an_own_unit_without_orders_is_friend() {
+    let mut app = app();
+    let tank = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(40, 40)).expect("tank");
+    let other = spawn(&mut app, UnitType::Tank, TeamId::RED, Point::new(41, 40)).expect("other");
+    ready(&mut app, tank);
+    ready(&mut app, other);
+    app.hud_mut().select(Some(tank));
+
+    assert_eq!(window_cursor(&app, Point::new(41, 40)), CursorId::Friend);
 }
 
 #[test]

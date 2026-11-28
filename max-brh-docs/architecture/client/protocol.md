@@ -162,7 +162,7 @@ max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-brh-server,
 | 70 | 54 | C→S (+пиры) | синхронизация состояния юнитов: `team u16, sync_index u8, is_last bool, count u16, count×(unit_id u16 + Packet23Data) [+ командная статистика]` |
 | 71 | 55 | хост-режим (P2P) | heartbeat хоста — расширение BRH, транспортный пакет (`PLAN-host-mode.md`, `HOST_HEARTBEAT_PACKET_NUMBER`, `max_net::host`) |
 | 72 | 56 | хост-режим (P2P) | предложение/принятие/отказ takeover — расширение BRH (`PLAN-host-mode.md`, `HOST_TAKEOVER_PACKET_NUMBER`) |
-| 73 | 57 | C→S (+пиры) | выбор группы (рамка/Shift+клик) — расширение BRH: `team u16, mode u8 (0=рамка, 1=Shift, 2=сделать лидером), unit u16, member u16, upper_x i16, upper_y i16, lower_x i16, lower_y i16` (`Packet57GroupSelect`; оракул формирует группу локально, порту нужен детерминированный CRC) |
+| 73 | 57 | C→S (+пиры) | выбор группы (рамка/Shift+клик) — расширение BRH: `team u16, mode u8 (0=рамка, 1=Shift, 2=сделать лидером, 3=сброс группы), unit u16, member u16, upper_x i16, upper_y i16, lower_x i16, lower_y i16` (`Packet57GroupSelect`; оракул формирует группу локально, порту нужен детерминированный CRC) |
 
 Неиспользуемые/неопределённые номера APPL: 02–04, 15, 19, 21, 22, 25, 27
 (в `remote.hpp` они существуют как константы, но ни отправки, ни обработчика нет).
@@ -174,7 +174,11 @@ max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-brh-server,
 `snapshot_bytes`, куда входят таблицы групп), поэтому само **входное событие
 выбора** едет командой: каждый пир повторяет `Access_MultiSelect` /
 ветку Shift в `GameManager_UpdateSelection` / `MoveToFrontInUnitList` и
-получает те же `UnitGroup`, `group_speed` и приказы членов. C++ headless
+получает те же `UnitGroup`, `group_speed` и приказы членов. Режим `3` (сброс
+группы) — порт правила сброса выбора: оракул снимает список одного юнита
+(`GameManager_ClickUnit` → `unit2->ClearUnitList()`, `game_manager.cpp:6267`),
+а порт распускает всю группу, чтобы выделение рамкой не всплывало на следующем
+клике по члену и не меняло строй следующего группового приказа. C++ headless
 сервер такой пакет логирует как неизвестный и релеит без изменений
 (`remote.cpp`, ветка `default:`), собственную симуляцию он при этом не меняет.
 

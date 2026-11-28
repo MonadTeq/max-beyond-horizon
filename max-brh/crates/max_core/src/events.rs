@@ -1040,8 +1040,9 @@ fn apply_packet_12(
 /// The oracle's group list is local player input; the port runs one deterministic
 /// lockstep simulation on every peer, so the selection itself is replayed here:
 /// the rectangle (`Access_MultiSelect`), the Shift+click toggle
-/// (`GameManager_UpdateSelection`) and the "selected unit becomes the group leader"
-/// step (`GameManager_MenuUnitSelect` → `UnitInfo::MoveToFrontInUnitList`).
+/// (`GameManager_UpdateSelection`), the "selected unit becomes the group leader"
+/// step (`GameManager_MenuUnitSelect` → `UnitInfo::MoveToFrontInUnitList`) and the
+/// group reset (`GameManager_ClickUnit` → `ClearUnitList`).
 fn apply_packet_57(
     state: &mut GameState,
     packet: &crate::input::Packet57GroupSelect,
@@ -1065,6 +1066,16 @@ fn apply_packet_57(
             if let Some(id) = packet.unit {
                 if state.unit(id).is_some_and(|unit| unit.team == packet.team) {
                     state.move_to_front_in_group_list(id);
+                }
+            }
+        }
+        GroupSelectMode::Dissolve => {
+            // Group reset: the oracle clears one unit (`GameManager_ClickUnit` →
+            // `unit2->ClearUnitList()`, `game_manager.cpp:6267`); the port drops the
+            // whole group of the unit so the selection frame cannot be resumed.
+            if let Some(id) = packet.unit {
+                if state.unit(id).is_some_and(|unit| unit.team == packet.team) {
+                    crate::access::dissolve_group(state, id);
                 }
             }
         }

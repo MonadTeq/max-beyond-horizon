@@ -1565,6 +1565,63 @@ impl GameState {
         }
     }
 
+    /// Dissolves the whole group the unit belongs to — the port counterpart of
+    /// [`Self::clear_group_member`] applied to every member.
+    ///
+    /// Used by the group-reset input (`Packet57GroupSelect` mode `Dissolve`): the
+    /// oracle calls `UnitInfo::ClearUnitList` for a single unit
+    /// (`unitinfo.cpp:1908-1923`), and its cascade ends the group when one member
+    /// is left. Resetting while nobody is selected must not leave a list behind
+    /// (it would come back on the next selection of a member and change the
+    /// formation of the next group order), so every member is detached at once
+    /// and no group-order barrier runs: the group is gone, not merely smaller.
+    ///
+    /// `group_speed` of every member returns to zero, exactly as `ClearUnitList`
+    /// does for the unit it clears.
+    ///
+    /// Returns `false` when the unit has no group.
+    pub(crate) fn dissolve_group(&mut self, id: UnitId) -> bool {
+        let Some(slot) = self.lookup(id) else {
+            return false;
+        };
+        let Some(group_id) = self.unit_group.get(slot).copied().flatten() else {
+            return false;
+        };
+
+        let members = match self.groups.get_mut(group_id as usize) {
+            Some(entry) => entry.take().unwrap_or_default(),
+            None => Vec::new(),
+        };
+
+        for member in &members {
+            if let Some(member_slot) = self.lookup(*member) {
+                if let Some(entry) = self.unit_group.get_mut(member_slot) {
+                    if *entry == Some(group_id) {
+                        *entry = None;
+                    }
+                }
+            }
+
+            if let Some(unit) = self.unit(*member).cloned() {
+                if unit.group_speed != 0 {
+                    let mut unit = unit;
+                    unit.group_speed = 0;
+                    self.write_unit(*member, unit);
+                }
+            }
+        }
+
+        // The anchor itself may be missing from the list (a broken table): drop its
+        // pointer as well.
+        if let Some(entry) = self.unit_group.get_mut(slot) {
+            if *entry == Some(group_id) {
+                *entry = None;
+            }
+        }
+
+        true
+    }
+
     /// Removes a target from `UnitsManager_DelayedAttackTargets[team]`.
     pub fn remove_delayed_attack_target(&mut self, team: TeamId, id: UnitId) {
         if let Some(targets) = self.delayed_attack_targets.get_mut(team.0 as usize) {

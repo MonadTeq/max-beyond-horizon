@@ -402,6 +402,62 @@ fn group_order_is_dissolved_when_members_are_cleared() {
 }
 
 #[test]
+fn dissolve_group_detaches_every_member_and_resets_the_group_speed() {
+    let mut state = state();
+    let leader = spawn(
+        &mut state,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(5, 5),
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+    let wing = spawn(
+        &mut state,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(6, 5),
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+    let tail = spawn(
+        &mut state,
+        UnitType::Tank,
+        TeamId::RED,
+        Point::new(7, 5),
+        MOBILE_LAND_UNIT | SELECTABLE,
+    );
+    assign_unit_group(&mut state, leader, &[wing, tail]);
+
+    for id in [leader, wing, tail] {
+        state.unit_mut(id).expect("unit").group_speed = 9;
+    }
+
+    assert_eq!(state.group_members(leader), Some(vec![leader, wing, tail]));
+    // Any member anchors the same group (`GetUnitList` is shared).
+    assert!(
+        dissolve_group(&mut state, wing),
+        "the clicked member dissolves the group it belongs to"
+    );
+
+    for id in [leader, wing, tail] {
+        assert_eq!(
+            state.group_members(id),
+            None,
+            "every member is detached by the reset"
+        );
+        assert_eq!(
+            state.unit(id).expect("unit").group_speed,
+            0,
+            "`ClearUnitList` drops the shared movement budget (`unitinfo.cpp:1922`)"
+        );
+    }
+
+    assert!(
+        !dissolve_group(&mut state, leader),
+        "the group is gone, a second reset is a no-op"
+    );
+}
+
+#[test]
 fn team_unit_by_environments_is_bit_equivalent_to_raw_mobile_masks() {
     let mut state = state();
 

@@ -503,6 +503,14 @@ pub enum GroupSelectMode {
     /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`) from
     /// `GameManager_MenuUnitSelect` (`game_manager.cpp:7241-7243`).
     SelectUnit = 2,
+    /// Group reset — every member of the group containing `unit` leaves it
+    /// (`UnitInfo::ClearUnitList` per member, `unitinfo.cpp:1908-1923`) without
+    /// running the group-order barrier. The oracle has no single call for that:
+    /// `GameManager_ClickUnit` clears the clicked unit (`game_manager.cpp:6267`)
+    /// and the port also drops the group that was focused before the click, so a
+    /// rectangle selection cannot outlive a click on a standalone unit/building or
+    /// a right click on a free cell. `member` and the frame bounds are unused.
+    Dissolve = 3,
 }
 
 impl GroupSelectMode {
@@ -512,6 +520,7 @@ impl GroupSelectMode {
             0 => Some(Self::Box),
             1 => Some(Self::Toggle),
             2 => Some(Self::SelectUnit),
+            3 => Some(Self::Dissolve),
             _ => None,
         }
     }

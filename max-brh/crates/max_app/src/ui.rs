@@ -3935,6 +3935,33 @@ where
     let _ = app.universe.take_group_selection();
 }
 
+/// Queues the group reset of `id` — the `Dissolve` mode of
+/// [`max_core::input::Packet57GroupSelect`].
+///
+/// The group tables belong to the simulation (they take part in the lockstep
+/// snapshot barrier), so the UI never writes them: the reset is a command that
+/// every peer replays, exactly like the rectangle and Shift+click selection
+/// commands (`Access_MultiSelect` / `GameManager_UpdateSelection`).
+fn push_group_dissolve<D: Dispatcher>(app: &mut App<D>, id: UnitId)
+where
+    App<D>: SessionLocal,
+{
+    let team = app.player_team();
+
+    app.hud_mut()
+        .pending
+        .push(max_core::input::Command::GroupSelect(
+            max_core::input::Packet57GroupSelect {
+                team,
+                mode: max_core::input::GroupSelectMode::Dissolve,
+                unit: Some(id),
+                member: None,
+                upper: max_core::geo::Point::ZERO,
+                lower: max_core::geo::Point::ZERO,
+            },
+        ));
+}
+
 /// Tracks the armed rectangle selection on a pointer move — the
 /// `GameManager_GetWindowCursor` part of `GameManager_ProcessInput`
 /// (`game_manager.cpp:4280-4303`).
@@ -4389,6 +4416,33 @@ where
         }
 
         app.hud_mut().preview = None;
+
+        // `GameManager_ClickUnit` (`game_manager.cpp:6265-6289`): a click on another
+        // own unit clears the clicked unit's list (`unit2->ClearUnitList()`, `:6267`)
+        // and then selects it. The port also drops the group focused before the
+        // click, so a rectangle selection does not survive the move of the focus to
+        // a standalone unit or building (owner rule).
+        let focused_group = selected.and_then(|focused| app.state_ref().group_members_of(focused));
+        let clicked_group = app.state_ref().group_members_of(id);
+        let mut reset = false;
+
+        if let Some(focused) = selected {
+            if focused_group.is_some() {
+                push_group_dissolve(app, focused);
+                reset = true;
+            }
+        }
+
+        if clicked_group.is_some() && clicked_group != focused_group {
+            push_group_dissolve(app, id);
+            reset = true;
+        }
+
+        if reset {
+            app.hud_mut().push_log("Group reset");
+            apply_session_orders(app);
+        }
+
         session_focus_unit(app, id);
         app.hud_mut().push_log(format!("Selected {label}"));
         // `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage`:
@@ -4868,6 +4922,19 @@ where
     // statistics window are restored to black. Without a target the right button
     // is the original's "no unit selected" action (manual-run defect — RMB on an
     // empty cell did not drop the selection).
+    //
+    // The focused unit's group is reset with the focus (owner rule): the oracle
+    // only clears the list of a unit it selects (`GameManager_ClickUnit`,
+    // `:6267`), but a group left behind by the rectangle would come back on the
+    // next click of a member and change the formation of the next group order.
+    if let Some(selected) = app.hud().selected {
+        if app.state_ref().group_members_of(selected).is_some() {
+            push_group_dissolve(app, selected);
+            app.hud_mut().push_log("Group reset");
+            apply_session_orders(app);
+        }
+    }
+
     app.select_unit(None);
     app.hud_mut().clear_interaction();
     app.hud_mut().push_log("Cancelled");

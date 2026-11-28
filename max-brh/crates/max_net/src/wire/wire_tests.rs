@@ -649,6 +649,7 @@ fn packet_57_group_select_round_trips_in_every_mode() {
         GroupSelectMode::Box,
         GroupSelectMode::Toggle,
         GroupSelectMode::SelectUnit,
+        GroupSelectMode::Dissolve,
     ] {
         let packet = Packet::Command(Command::GroupSelect(Packet57GroupSelect {
             team: TeamId::GREEN,
