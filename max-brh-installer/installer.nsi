@@ -215,6 +215,13 @@ FunctionEnd
 Function .onInit
     SetShellVarContext current
 
+    ; Auto-advance to the finish page. AutoClose makes the wizard leave the install
+    ; page by itself as soon as every section has really finished, instead of
+    ; waiting for a Next click. MUI normally sets this in its own finish page, but
+    ; this installer uses a custom nsDialogs finish page, so the flag is set here
+    ; explicitly. It only affects the install page: the finish page stays open.
+    SetAutoClose true
+
     ; Language selection (RU/EN) before the wizard pages. MUI's dialog keeps the
     ; choice in memory only, so the portable install still writes no registry.
     !insertmacro MUI_LANGDLL_DISPLAY
@@ -515,14 +522,22 @@ Function BrhComponentsCreate
     EnableWindow $hChkGame 0
     SendMessage $hChkGame ${WM_SETFONT} $hFontBody 1
     SetCtlColors $hChkGame "E8DCC3" "100C08"
+    ; SetCtlColors does not reach the text of a themed check box (NSIS bug #443);
+    ; dropping the theme on the control is MUI's own workaround and makes the
+    ; owner's colors apply, so the label is readable on the dark card.
+    System::Call 'UXTHEME::SetWindowTheme(p$hChkGame, w " ", w " ")'
     System::Call 'user32::SetWindowPos(p$hChkGame, p0, i0,i0,i0,i0, i0x13)'
 
-    !insertmacro BrhNoteControl $hNote "$(BrhGameCompNote)" "8%" "45%" "86%" "20u"
+    !insertmacro BrhNoteControl $hNote "$(BrhGameCompNote)" "8%" "45%" "86%" "22u"
 
-    ${NSD_CreateCheckBox} 6% 57% 88% 12u "$(BrhShortcut)"
+    ; The two checkboxes get a full row between them: the upper note wraps to two
+    ; lines in both languages, and at a larger DPI the old 57% park made the second
+    ; box collide with it (the label looked attached to the note).
+    ${NSD_CreateCheckBox} 6% 63% 88% 12u "$(BrhShortcut)"
     Pop $hChkShortcut
     SendMessage $hChkShortcut ${WM_SETFONT} $hFontBody 1
     SetCtlColors $hChkShortcut "E8DCC3" "100C08"
+    System::Call 'UXTHEME::SetWindowTheme(p$hChkShortcut, w " ", w " ")'
     System::Call 'user32::SetWindowPos(p$hChkShortcut, p0, i0,i0,i0,i0, i0x13)'
 
     ; Preserve an existing shortcut across upgrades: show it as checked.
@@ -530,7 +545,7 @@ Function BrhComponentsCreate
     ${NSD_Check} $hChkShortcut
     brh_no_existing_shortcut:
 
-    !insertmacro BrhNoteControl $hBody "$(BrhShortcutNote)" "8%" "63%" "86%" "28u"
+    !insertmacro BrhNoteControl $hBody "$(BrhShortcutNote)" "8%" "70%" "86%" "28u"
 
     nsDialogs::Show
 FunctionEnd
@@ -550,6 +565,14 @@ Function BrhInstfilesShow
     FindWindow $hPage "#32770" "" $HWNDPARENT
     Call BrhHideChrome
     Call BrhFitPage
+
+    ; This page needs no click: it leaves by itself when the installation is really
+    ; complete (SetAutoClose in .onInit). The Next button is therefore hidden -
+    ; only the progress art and Cancel remain. BrhFinishCreate shows it again.
+    GetDlgItem $R8 $HWNDPARENT 1
+    ${If} $R8 != 0
+        ShowWindow $R8 0
+    ${EndIf}
 
     System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i0, i0, i$PageW, i$PageH, p$hPage, p0, p0, p0) p.r5'
     System::Call 'user32::LoadImage(p0, t "${UIDIR}\frame.bmp", i0, i0, i0, i0x10) p.r6'
@@ -633,23 +656,111 @@ FunctionEnd
 
 ; --- Finish
 
+; Measures the pixel height of the text in control $0 wrapped to that control's
+; width with the body font. Result in $2 (0 when it cannot be measured).
+; The finish page places the launch row from the real text height: the wrapped
+; height differs between RU and EN and grows with the install path length, so a
+; fixed percentage either glued the checkbox to the paragraph above it or pushed
+; it out of the content card.
+Function BrhTextHeight
+    StrCpy $2 0
+    ${If} $0 == 0
+    ${OrIf} $hFontBody == 0
+        Return
+    ${EndIf}
+
+    System::Call 'user32::GetClientRect(p$0, @r3)'
+    System::Call '*$3(i, i, i.r4, i)'
+    ${If} $4 <= 0
+        Return
+    ${EndIf}
+
+    ; DrawText with DT_CALCRECT | DT_WORDBREAK follows the same wrapping rules as
+    ; the static control, so the result is the height the label will really use.
+    System::Call 'user32::GetDC(p0) p.r5'
+    System::Call 'gdi32::SelectObject(p$5, p$hFontBody) p.r6'
+    System::Call '*(i, i, i, i) p.r7'
+    System::Call '*$7(i 0, i 0, i $4, i 0)'
+    System::Call 'user32::DrawTextW(p$5, t r1, i -1, p$7, i 0x0410|0x2000) i.r8'
+    System::Call '*$7(i, i, i, i.r2)'
+    System::Call 'gdi32::SelectObject(p$5, p$6) p.r9'
+    System::Call 'user32::ReleaseDC(p0, p$5)'
+FunctionEnd
+
 Function BrhFinishCreate
     !insertmacro BrhBeginPage
     !insertmacro BrhTitle "$(BrhFinishTitle)"
 
-    ${NSD_CreateBitmap} 6% 38% 88% 24% ""
+    ${NSD_CreateBitmap} 6% 36% 88% 21% ""
     Pop $hBg
     ${NSD_SetStretchedBitmap} $hBg "${UIDIR}\banner-strip.bmp" $hBmpExtra
     System::Call 'user32::SetWindowPos(p$hBg, p0, i0,i0,i0,i0, i0x13)'
 
-    !insertmacro BrhNoteControl $hBody "$(BrhFinishText)" "6%" "64%" "88%" "22%"
+    !insertmacro BrhNoteControl $hBody "$(BrhFinishText)" "6%" "58%" "88%" "10%"
 
-    ${NSD_CreateCheckBox} 6% 86% 60% 12u "$(BrhRunGame)"
+    StrCpy $0 $hBody
+    StrCpy $1 "$(BrhFinishText)"
+    Call BrhTextHeight
+    ${If} $2 < 17
+        StrCpy $2 68
+    ${EndIf}
+
+    ; The launch row is created early so its own height (which depends on the DPI)
+    ; is known; the layout is then solved from the bottom edge of the content card:
+    ; the row is pinned there, the text block sits above it with a fixed gap, and
+    ; the banner takes the rest. A long install path wraps the text to more lines
+    ; and squeezes the banner instead of pushing the row over the text.
+    ${NSD_CreateCheckBox} "6%" "58%" "88%" "12u" "$(BrhRunGame)"
     Pop $hRunGame
     ${NSD_Check} $hRunGame
     SendMessage $hRunGame ${WM_SETFONT} $hFontBody 1
     SetCtlColors $hRunGame "E8DCC3" "100C08"
-    System::Call 'user32::SetWindowPos(p$hRunGame, p0, i0,i0,i0,i0, i0x13)'
+    System::Call 'UXTHEME::SetWindowTheme(p$hRunGame, w " ", w " ")'
+
+    System::Call 'user32::GetWindowRect(p$hBody, @r3)'
+    System::Call 'user32::MapWindowPoints(p0, p$hPage, pr3, i2)'
+    System::Call '*$3(i.r4, i.r5, i.r6, i.r7)'
+
+    System::Call 'user32::GetWindowRect(p$hRunGame, @r3)'
+    System::Call 'user32::MapWindowPoints(p0, p$hPage, pr3, i2)'
+    System::Call '*$3(i, i.r8, i, i.r9)'
+
+    IntOp $R0 $PageH * 96
+    IntOp $R0 $R0 / 100          ; content card bottom
+    IntOp $8 $9 - $8             ; launch row height
+    IntOp $9 $R0 - $8
+    IntOp $9 $9 - 8              ; row top, pinned to the card bottom
+    IntOp $R1 $9 - 16            ; text bottom with a clear gap above the row
+    IntOp $R1 $R1 - $2           ; text top
+
+    ; Text block: exact left edge and width, measured height plus one pixel.
+    IntOp $6 $6 - $4
+    IntOp $7 $2 + 2
+    System::Call 'user32::SetWindowPos(p$hBody, p0, i$4, i$R1, i$6, i$7, i0x14)'
+
+    ; Banner between the title and the text; hidden rather than squashed to a
+    ; sliver when the text needs the room.
+    IntOp $R2 $R1 - 10
+    IntOp $R3 $PageH * 36
+    IntOp $R3 $R3 / 100
+    IntOp $R4 $R2 - $R3
+    ${If} $R4 < 40
+        ShowWindow $hBg 0
+    ${Else}
+        System::Call 'user32::SetWindowPos(p$hBg, p0, i$4, i$R3, i$6, i$R4, i0x14)'
+    ${EndIf}
+
+    ; Launch row: the box sits on the text margin and its label reads to the right
+    ; of the box, on a line of its own. HWND_TOP keeps the row above the content
+    ; card; a plain move (SWP_NOZORDER) can leave it behind the card.
+    System::Call 'user32::SetWindowPos(p$hRunGame, p0, i$4, i$9, i$6, i$8, i0x10)'
+    System::Call 'user32::InvalidateRect(p$hPage, p0, i1)'
+
+    ; The install page hid the Next button; this page needs it as Close/Finish.
+    GetDlgItem $R0 $HWNDPARENT 1
+    ${If} $R0 != 0
+        ShowWindow $R0 1
+    ${EndIf}
 
     nsDialogs::Show
 FunctionEnd
@@ -680,6 +791,7 @@ Function un.BrhOptionsCreate
     Pop $hChkShortcut
     SendMessage $hChkShortcut ${WM_SETFONT} $hFontBody 1
     SetCtlColors $hChkShortcut "E8DCC3" "100C08"
+    System::Call 'UXTHEME::SetWindowTheme(p$hChkShortcut, w " ", w " ")'
     System::Call 'user32::SetWindowPos(p$hChkShortcut, p0, i0,i0,i0,i0, i0x13)'
 
     !insertmacro BrhNoteControl $hBody "$(BrhDeleteSavesNote)" "8%" "50%" "86%" "30%"
@@ -768,35 +880,41 @@ Section "$(SecGame)" SecGame
     SectionIn RO
 
     SetOutPath "$INSTDIR"
-    File "${STAGE}\game.exe"
-    File "${STAGE}\SDL3.dll"
-    File "${STAGE}\LICENSE"
-    File "${STAGE}\THIRD_PARTY_LICENSES.txt"
-    File "${STAGE}\README.txt"
-    File "${STAGE}\CHANGELOG.md"
 
-    ; The template is installed only when the player does not have settings yet,
-    ; so an upgrade never overwrites settings.
-    IfFileExists "$INSTDIR\settings.jsonc" brh_keep_settings
-    File "${STAGE}\settings.jsonc"
-    brh_keep_settings:
-
+    ; Pristine folders the game writes into; created before the payload, so an
+    ; upgrade keeps whatever is already there.
     CreateDirectory "$INSTDIR\saves"
     CreateDirectory "$INSTDIR\missions"
 
-    StrCpy $0 8
-    Call BrhProgress
+    ; Payload and progress. scripts/build-installer.ps1 generates both: every
+    ; group of File commands is followed by the percentage of payload bytes copied
+    ; so far, so the bar follows the real copying instead of an arbitrary scale.
+    ; It stops at 99% here - 100% is only reported once the installation has
+    ; really finished (see the end of this section).
     !ifdef DATAGROUPS
-        ; Chunked File commands generated by scripts/build-installer.ps1; each
-        ; chunk reports a percentage so the owner's progress art advances.
         !include "${DATAGROUPS}"
     !else
+        File "${STAGE}\game.exe"
+        File "${STAGE}\SDL3.dll"
+        File "${STAGE}\LICENSE"
+        File "${STAGE}\THIRD_PARTY_LICENSES.txt"
+        File "${STAGE}\README.txt"
+        File "${STAGE}\CHANGELOG.md"
+
+        ; The template is installed only when the player does not have settings
+        ; yet, so an upgrade never overwrites settings.
+        IfFileExists "$INSTDIR\settings.jsonc" brh_keep_settings
+        File "${STAGE}\settings.jsonc"
+        brh_keep_settings:
+
         SetOutPath "$INSTDIR\data"
         File /r "${STAGE}\data\*.*"
+        StrCpy $0 60
+        Call BrhProgress
 
         SetOutPath "$INSTDIR\remaster"
         File /r "${STAGE}\remaster\*.*"
-        StrCpy $0 98
+        StrCpy $0 99
         Call BrhProgress
     !endif
 
@@ -809,8 +927,13 @@ Section "$(SecGame)" SecGame
         CreateShortcut "${SHORTCUT_LINK}" "$INSTDIR\game.exe" "" "$INSTDIR\game.exe" 0
     ${EndIf}
 
+    ; Real completion: every payload byte is on disk, the uninstaller is written
+    ; and the optional shortcut exists. Only now the bar reaches 100%; the short
+    ; pause lets the final frame paint, then SetAutoClose (see .onInit) moves the
+    ; wizard to the finish page on its own - the user never presses Next.
     StrCpy $0 100
     Call BrhProgress
+    Sleep 900
 SectionEnd
 
 Section "Uninstall"
