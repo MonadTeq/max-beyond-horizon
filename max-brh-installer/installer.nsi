@@ -180,8 +180,6 @@ Var hBmpCard
 Var hBmpExtra
 Var hPanel
 Var hPanelBmp
-Var hInstBg
-Var hInstBgBmp
 Var hInstStatus
 Var PageW
 Var PageH
@@ -333,10 +331,33 @@ Function BrhFitPage
     System::Call 'user32::SetWindowPos(p$hPage, p0, i0, i0, i$PageW, i$PageH, i0x14)'
 FunctionEnd
 
+; Full-page background shared by every page (custom nsDialogs pages and the two
+; instfiles pages). The frame art is scaled to the page rectangle with
+; LoadAndSetImage /RESIZETOFIT, so its pixels map linearly onto 0..PageW and
+; 0..PageH. The M.A.X. inscription is part of that art and is centred in the
+; source image (640x480): the black bar under the tagline spans x=230..408, i.e.
+; its centre is 319..320 - the image centre. Scaling therefore puts the
+; inscription on PageW / 2 on every page, at any window size and DPI.
+;
+; A plain SS_BITMAP static (STM_SETIMAGE without /RESIZETOFIT) must not be used
+; here: such a static ignores the requested width/height and resizes itself to
+; the 640x480 bitmap, so the art is painted 1:1 from the page origin - cropped on
+; the right when the page is narrower than the art and left-aligned (artwork off
+; centre, bare strip on the right) when the page is wider, e.g. at a large DPI.
+;
+; WS_CLIPSIBLINGS is required as well: the background is the bottom-most child,
+; and a static without it repaints over overlapping siblings even when they sit
+; above it in z-order - which hid the content card, the banner and the check
+; boxes on every custom page.
+!macro BrhPageBg
+    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5400000E, i0, i0, i$PageW, i$PageH, p$hPage, p0, p0, p0) p.r5'
+    ${NSD_SetStretchedBitmap} $5 "${UIDIR}\frame.bmp" $6
+    StrCpy $hBg $5
+    StrCpy $hBmpFrame $6
+!macroend
+
 Function BrhPageBase
-    ${NSD_CreateBitmap} 0 0 100% 100% ""
-    Pop $hBg
-    ${NSD_SetStretchedBitmap} $hBg "${UIDIR}\frame.bmp" $hBmpFrame
+    !insertmacro BrhPageBg
 
     ${NSD_CreateBitmap} 4% 26% 92% 70% ""
     Pop $hCard
@@ -397,9 +418,7 @@ Function un.BrhFitPage
 FunctionEnd
 
 Function un.BrhPageBase
-    ${NSD_CreateBitmap} 0 0 100% 100% ""
-    Pop $hBg
-    ${NSD_SetStretchedBitmap} $hBg "${UIDIR}\frame.bmp" $hBmpFrame
+    !insertmacro BrhPageBg
 
     ${NSD_CreateBitmap} 4% 26% 92% 70% ""
     Pop $hCard
@@ -574,11 +593,7 @@ Function BrhInstfilesShow
         ShowWindow $R8 0
     ${EndIf}
 
-    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i0, i0, i$PageW, i$PageH, p$hPage, p0, p0, p0) p.r5'
-    System::Call 'user32::LoadImage(p0, t "${UIDIR}\frame.bmp", i0, i0, i0, i0x10) p.r6'
-    SendMessage $5 0x0172 0 $6
-    StrCpy $hInstBg $5
-    StrCpy $hInstBgBmp $6
+    !insertmacro BrhPageBg
 
     ; The console panel from the owner's art (308x162) is centred above the
     ; status line; the progress bar sits inside its horizontal groove.
@@ -596,8 +611,8 @@ Function BrhInstfilesShow
     StrCpy $hPanel $5
     StrCpy $hPanelBmp $6
 
-    System::Call 'user32::SetWindowPos(p$hInstBg, p1, i0,i0,i0,i0, i0x13)'
-    System::Call 'user32::SetWindowPos(p$hPanel, p$hInstBg, i0,i0,i0,i0, i0x13)'
+    System::Call 'user32::SetWindowPos(p$hBg, p1, i0,i0,i0,i0, i0x13)'
+    System::Call 'user32::SetWindowPos(p$hPanel, p$hBg, i0,i0,i0,i0, i0x13)'
 
     ; Live progress fill made from the owner's progress-bar art. The native
     ; NSIS bar is hidden; BrhProgress reveals this bitmap from the left. The
@@ -813,11 +828,7 @@ Function un.BrhUninstfilesShow
     Call un.BrhHideChrome
     Call un.BrhFitPage
 
-    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i0, i0, i$PageW, i$PageH, p$hPage, p0, p0, p0) p.r5'
-    System::Call 'user32::LoadImage(p0, t "${UIDIR}\frame.bmp", i0, i0, i0, i0x10) p.r6'
-    SendMessage $5 0x0172 0 $6
-    StrCpy $hInstBg $5
-    StrCpy $hInstBgBmp $6
+    !insertmacro BrhPageBg
 
     IntOp $R0 $PageW - ${PANEL_W}
     IntOp $R0 $R0 / 2
@@ -833,8 +844,8 @@ Function un.BrhUninstfilesShow
     StrCpy $hPanel $5
     StrCpy $hPanelBmp $6
 
-    System::Call 'user32::SetWindowPos(p$hInstBg, p1, i0,i0,i0,i0, i0x13)'
-    System::Call 'user32::SetWindowPos(p$hPanel, p$hInstBg, i0,i0,i0,i0, i0x13)'
+    System::Call 'user32::SetWindowPos(p$hBg, p1, i0,i0,i0,i0, i0x13)'
+    System::Call 'user32::SetWindowPos(p$hPanel, p$hBg, i0,i0,i0,i0, i0x13)'
 
     GetDlgItem $R2 $hPage 1004
     GetDlgItem $R3 $hPage 1006
