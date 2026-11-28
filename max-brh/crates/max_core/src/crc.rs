@@ -228,7 +228,7 @@ pub const REPLAY_DIGEST_MAGIC: &[u8; 8] = b"MAXRPL1\0";
 /// | `game_state`, `active_turn_team`, `player_team`, `play_mode` | u8×4 |
 /// | `unit_id_counter` | u32 |
 /// | `rng.state()` | u32×4 |
-/// | per team `0..PLAYER_TEAM_MAX`: `team_type`, `finished_turn`, `team_points`, `gold`, 8×(`research_level`,`turns_to_complete`,`allocation`), 93×`unit_counters`, 93×`casualties` | see code |
+/// | per team `0..PLAYER_TEAM_MAX`: `team_type`, `finished_turn`, `team_points`, `gold`, 8×(`research_level`,`turns_to_complete`,`allocation`), 93×`team_unit_counters`, 93×`casualties` | see code |
 /// | `unit_count` | u32 |
 /// | units in [`GameState::unit_ids_in_order`] order (5 lists + outside lists) | see code |
 /// | CRC16 of all preceding bytes | u16 |
@@ -269,7 +269,7 @@ pub(crate) fn replay_digest_bytes(state: &GameState) -> Vec<u8> {
             put_u32(&mut out, topic.allocation);
         }
 
-        for value in &info.unit_counters {
+        for value in &info.team_unit_counters {
             put_u32(&mut out, *value);
         }
 

@@ -146,7 +146,7 @@ fn team_info_reset_restores_every_field() {
     };
     info.team_points = 0xDEAD_BEEF;
     info.number_of_objects_created = 4095;
-    info.unit_counters[UnitType::Tank as usize] = 0xFFFF_FFFF;
+    info.team_unit_counters[UnitType::Tank as usize] = 0xFFFF_FFFF;
     info.score_graph[49] = -32768;
     info.stats_factories_built = -2;
     info.stats_mines_built = 3;
@@ -165,7 +165,7 @@ fn team_info_reset_restores_every_field() {
     assert_eq!(info.team_points, 0);
     assert_eq!(info.number_of_objects_created, 0);
     // C++ `CTInfo::Reset`: `unit_counters[i] = 1` for all 93 types.
-    assert!(info.unit_counters.iter().all(|count| *count == 1));
+    assert!(info.team_unit_counters.iter().all(|count| *count == 1));
     assert!(info.score_graph.iter().all(|value| *value == 0));
     assert!(info.casualties.iter().all(|value| *value == 0));
     assert_eq!(
@@ -202,7 +202,7 @@ fn real_save_team_sections_are_consistent() {
             );
             // Every unit counter is a real play counter, not the reset value.
             assert!(
-                info.unit_counters.iter().any(|count| *count > 1),
+                info.team_unit_counters.iter().any(|count| *count > 1),
                 "{tag} team {team}: the save has units, so some counter is > 1"
             );
 

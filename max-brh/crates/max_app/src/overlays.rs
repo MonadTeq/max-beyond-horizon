@@ -520,7 +520,8 @@ fn draw_unit_label<D: Dispatcher>(
         return 0;
     }
 
-    let text = crate::panels::unit_name(unit);
+    // `unit->GetDisplayName` (`drawmap.cpp:774`): `"Mk II Scout 7"`.
+    let text = crate::panels::unit_display_name(unit);
 
     draw_map_label(
         frame,

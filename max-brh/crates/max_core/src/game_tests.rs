@@ -40,7 +40,7 @@ fn spawn_assigns_ids_and_lists_in_cpp_order() {
     );
     // `CTInfo::Reset` starts name counters at 1 (`ctinfo.hpp:49-51`).
     assert_eq!(unit.unit_id, 1);
-    assert_eq!(state.teams[0].unit_counter(UnitType::Tank as u16), 2);
+    assert_eq!(state.teams[0].team_unit_counter(UnitType::Tank as u16), 2);
 }
 
 /// `MapHash::Add` is called with `mode = false`, which is the C++

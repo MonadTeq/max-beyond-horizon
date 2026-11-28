@@ -125,7 +125,7 @@ pub struct UnitStatsMenu {
     pub unit_type: UnitType,
     /// Team (the base-values column and the portrait palette).
     pub team: TeamId,
-    /// Display name (`UnitInfo::GetDisplayName`, the port's user-friendly name).
+    /// Display name — `UnitInfo::GetDisplayName` (`"Mk I Scout 7"`).
     pub name: String,
     /// `Unit::GetDescription()` (`""` — none in the data).
     pub description: &'static str,
@@ -175,7 +175,9 @@ impl UnitStatsMenu {
             unit: unit.id,
             unit_type: unit.unit_type,
             team: unit.team,
-            name: crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string(),
+            // `UnitStatsMenu::UnitStatsMenu` (`unitstats.cpp:520`):
+            // `unit->GetDisplayName(text, sizeof(text))` — `"Mk II Scout 7"`.
+            name: crate::unit_names::unit_display_name(unit),
             description: crate::cargo_unit_data::unit_description(unit.unit_type),
             rows,
             portrait,

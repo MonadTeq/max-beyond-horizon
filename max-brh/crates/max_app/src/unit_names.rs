@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use max_core::enums::UnitType;
+use max_core::unit::UnitInfo;
 use serde::Deserialize;
 
 /// UFN JSON resource (70 records; generated/verified against the canon manually).
@@ -91,6 +92,93 @@ pub fn unit_plural_name(unit: UnitType) -> String {
     } else {
         format!("{singular}s")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Instance names (`UnitInfo::GetName` / `GetDisplayName`)
+// ---------------------------------------------------------------------------
+
+/// One Roman digit — an exact port of `UnitInfo::CalcRomanDigit`
+/// (`unitinfo.cpp:805-826`).
+///
+/// `value` is one decimal digit of the "mark" level: `0..=9` in normal play,
+/// but the C++ loop also accepts larger values (it appends `one` that many
+/// times after subtracting 5/4), so the port keeps the same arithmetic instead
+/// of a `0..=9` match — `version / 100` for a level above 999 takes this path.
+///
+/// C++ appends into a fixed 20-byte buffer (`Text_AppendUtf8(..., size)`);
+/// the port builds a `String` — the C++ call sites already limit the level to
+/// `GET_VERSION`-sized values (`game_manager.cpp:2864` caps the upgrade loop
+/// at 30), so the truncation never triggers.
+pub fn calc_roman_digit(out: &mut String, mut value: u32, one: &str, five: &str, ten: &str) {
+    if value == 9 {
+        out.push_str(one);
+        out.push_str(ten);
+        return;
+    }
+
+    if value >= 5 {
+        out.push_str(five);
+        value -= 5;
+    }
+
+    if value >= 4 {
+        out.push_str(one);
+        out.push_str(five);
+        value -= 4;
+    }
+
+    for _ in 0..value {
+        out.push_str(one);
+    }
+}
+
+/// `UnitInfo::GetVersion` (`unitinfo.cpp:915-925`): the upgrade "mark" level in
+/// Roman numerals — `1` → `I`, `2` → `II`, `4` → `IV`, `9` → `IX`, `30` → `XXX`.
+///
+/// The level is `UnitValues::version` (starts at 1 and grows on upgrades,
+/// `unitvalues.cpp`); the port keeps the C++ three-digit decomposition.
+pub fn roman_version(mut version: u32) -> String {
+    let mut out = String::new();
+
+    calc_roman_digit(&mut out, version / 100, "C", "D", "M");
+    version %= 100;
+    calc_roman_digit(&mut out, version / 10, "X", "L", "C");
+    version %= 10;
+    calc_roman_digit(&mut out, version, "I", "V", "X");
+
+    out
+}
+
+/// `UnitInfo::GetName` (`unitinfo.cpp:757-779`): the user name if set,
+/// otherwise `"%s %i"` — the type name and the instance number
+/// ([`UnitInfo::unit_id`]).
+///
+/// `None` → `"Scout 7"`, `Some("Oddball")` → `"Oddball"` (the number is not
+/// appended to a user name — C++ prints the stored string as is).
+pub fn unit_name(unit: &UnitInfo) -> String {
+    match &unit.name {
+        Some(name) => name.clone(),
+        None => format!(
+            "{} {}",
+            unit_user_friendly_name(unit.unit_type),
+            unit.unit_id
+        ),
+    }
+}
+
+/// `UnitInfo::GetDisplayName` (`unitinfo.cpp:781-803`): `"Mk %s %s"` — the
+/// Roman "mark" level of the unit's values and [`unit_name`].
+///
+/// `Mk I Scout 7` for an unnamed Scout at level 1; a named unit keeps the prefix:
+/// `Mk II Oddball`. The level comes from the unit's own `base_values` (upgrades
+/// copy the values into the instance), default 1 → `Mk I`.
+pub fn unit_display_name(unit: &UnitInfo) -> String {
+    format!(
+        "Mk {} {}",
+        roman_version(u32::from(unit.base_values.version)),
+        unit_name(unit)
+    )
 }
 
 #[cfg(test)]

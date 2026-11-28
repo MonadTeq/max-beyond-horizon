@@ -51,7 +51,7 @@ fn state_sync_chunks_fit_transport_and_put_the_tail_last() {
     state
         .team_mut(TeamId::GREEN)
         .expect("GREEN slot")
-        .unit_counters[UnitType::Tank as usize] = 9;
+        .team_unit_counters[UnitType::Tank as usize] = 9;
     state
         .team_mut(TeamId::GREEN)
         .expect("GREEN slot")

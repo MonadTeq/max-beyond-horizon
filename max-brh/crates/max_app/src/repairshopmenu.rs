@@ -467,14 +467,15 @@ impl RepairShopMenu {
             }
 
             // `RepairShopSlot::Draw` writes the display name into the picture area
-            // (`Text_TextBox(..., 10, 3, width - 20, height - 6, GNW_TEXT_OUTLINE)`).
-            let name = crate::unit_names::unit_user_friendly_name(unit.unit_type);
+            // (`Text_TextBox(..., 10, 3, width - 20, height - 6, GNW_TEXT_OUTLINE)`);
+            // the C++ text is `unit->GetDisplayName()` (`repairshopmenu.cpp:253`).
+            let name = crate::unit_names::unit_display_name(unit);
             let name_rect = PixelRect::new(image.ulx + 10, image.uly + 4, image.width - 20, 12);
             painted += draw_text_gnw_centered(
                 frame,
                 name_rect,
                 font,
-                name,
+                &name,
                 palette.rgba(crate::panels::GREEN),
             )
             .max(0) as u32;

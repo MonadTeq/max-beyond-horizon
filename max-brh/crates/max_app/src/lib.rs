@@ -74,6 +74,7 @@ pub mod press;
 pub mod profile;
 pub mod qa;
 pub mod render;
+pub mod rename;
 pub mod repairshopmenu;
 pub mod researchmenu;
 pub mod saveload;
@@ -2032,6 +2033,49 @@ impl<D: Dispatcher> App<D> {
         let menu = self.unit_stats.as_ref()?;
 
         Some(menu.input(event))
+    }
+
+    // -----------------------------------------------------------------------
+    // In-place unit rename (C++ `GameManager_TextEditUnitName`)
+    // -----------------------------------------------------------------------
+
+    /// Opens the rename field over the corner portrait —
+    /// `GameManager_FlicButtonRFunction` (`game_manager.cpp:3993-4023`).
+    ///
+    /// The C++ corner portrait is a button (`Gamemanager_FlicButton`) that is
+    /// enabled only when `unit->team == GameManager_PlayerTeam` and
+    /// `UnitsManager_TeamInfo[PlayerTeam].team_type == TEAM_TYPE_PLAYER`
+    /// (`game_manager.cpp:7140`); a click on it creates the `TextEdit` unless one
+    /// is already open. The same gate is repeated here, so a click on the
+    /// portrait of a foreign/AI unit does nothing.
+    ///
+    /// `true` — the field is open (freshly opened or already open).
+    pub fn open_unit_rename(&mut self) -> bool {
+        let team = self.player_team();
+
+        let Some(unit) = self.selected_unit() else {
+            return false;
+        };
+
+        if unit.team != team
+            || self.state_ref().teams()[team.0 as usize].team_type != TeamKind::Player
+        {
+            return false;
+        }
+
+        let unit = unit.clone();
+
+        self.hud_mut().open_rename(&unit)
+    }
+
+    /// Open rename field (read-only) — the drawing path of the corner portrait.
+    pub fn unit_rename(&self) -> Option<&rename::RenameEditor> {
+        self.hud().rename()
+    }
+
+    /// Closes the rename field without committing (`Esc`, selection change).
+    pub fn close_unit_rename(&mut self) -> Option<Box<rename::RenameEditor>> {
+        self.hud_mut().close_rename()
     }
 
     // -----------------------------------------------------------------------

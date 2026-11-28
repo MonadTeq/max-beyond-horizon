@@ -870,7 +870,7 @@ pub(crate) fn apply_state_sync(state: &mut GameState, packet: &StateSyncPacket) 
 
         // Id counters — before deleting extra units, as in C++.
         state.teams[slot].number_of_objects_created = tail.number_of_objects_created;
-        state.teams[slot].unit_counters = tail.unit_counters;
+        state.teams[slot].team_unit_counters = tail.unit_counters;
 
         remove_extra_units(state, packet.team);
         state.state_sync_unit_ids[slot].clear();
@@ -1004,7 +1004,9 @@ fn apply_packet_43(state: &mut GameState, packet: &crate::input::Packet43Rename)
     let Some(mut unit) = state.unit(packet.unit).cloned() else {
         return ApplyOutcome::UnknownUnit;
     };
-    unit.name = packet.name.clone();
+    // `Remote_ReceiveNetPacket_43` → `UnitInfo::SetName`: an empty string clears
+    // the own name (the C++ `char*` becomes `nullptr`), it does not store `""`.
+    unit.set_name(&packet.name);
     state.write_unit(packet.unit, unit);
     ApplyOutcome::Applied
 }

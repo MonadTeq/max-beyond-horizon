@@ -2430,6 +2430,18 @@ where
         return session_mouse_wheel(app, notches);
     }
 
+    // In-place unit rename (C++ `GameManager_TextEditUnitName`,
+    // `game_manager.cpp:5371-5381`): while the field is open every key is offered
+    // to the `TextEdit` first — printable input edits, `Backspace` deletes,
+    // `Enter` commits (packet 43), `Esc` restores. Mouse events pass through, as
+    // in C++ (a map click still gives orders, and a selection change closes the
+    // field — `GameManager_MenuUnitSelect`).
+    if app.unit_rename().is_some() {
+        if let InputEvent::Key(key) = event {
+            return session_rename_input(app, key);
+        }
+    }
+
     // Selected unit command menu (C++ `GameManager_PopupButtons`) — modal:
     // while it is open, the map/panels/chat receive no orders, and a click outside the menu
     // or Esc closes it (like `GameManager_DeinitPopupButtons`).
@@ -3451,6 +3463,15 @@ where
 {
     if let Some(button) = panels::panel_button_at(x, y) {
         return session_panel_button(app, button, x);
+    }
+
+    // The corner portrait is a `GNW` button in C++ (`Gamemanager_FlicButton`,
+    // `game_manager.cpp:3993-4023`): a click on it starts the in-place rename of
+    // the selected unit. The button is enabled only for an own unit of a player
+    // team — [`crate::App::open_unit_rename`] repeats that gate.
+    if max_render::layout::CORNER_FLIC.contains(x, y) {
+        app.open_unit_rename();
+        return Transition::None;
     }
 
     // Minimap: 112×112 world cells in the window (15,356). In 2x mode the click
@@ -4923,14 +4944,89 @@ where
 
 /// Unit caption for the log: the name (if set) and the type.
 ///
-/// Without an own name (`unit.name`) the caption is the type UFN
-/// ([`crate::unit_names::unit_user_friendly_name`]), not the variant's `Debug` name.
+/// Without an own name ([`UnitInfo::name`] is `None`) the caption is the type UFN
+/// ([`crate::unit_names::unit_user_friendly_name`]), not the variant's `Debug` name;
+/// with one — `"<name> [Type]"`. The instance number stays a presentation detail of
+/// the 1:1 windows ([`crate::panels::unit_name`]), so the log lines of the QA
+/// scenarios (`assert log=Selected`) keep their shape.
 fn unit_label(unit: &UnitInfo) -> String {
-    if unit.name.is_empty() {
-        crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
-    } else {
-        format!("{} [{:?}]", unit.name, unit.unit_type)
+    match &unit.name {
+        None => crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string(),
+        Some(name) => format!("{name} [{:?}]", unit.unit_type),
     }
+}
+
+/// Input of the in-place unit rename (C++ `GameManager_TextEditUnitName`).
+///
+/// Oracle: `GameManager_ProcessKey` (`game_manager.cpp:5371-5381`) offers the
+/// key to `TextEdit::ProcessKeyPress` first and swallows it (`key = -1`) when
+/// the field handles it — printable characters arrive through
+/// `ProcessUTF8Input`, `Backspace` deletes, `Enter` commits
+/// (`UnitInfo::SetName` + `Remote_SendNetPacket_43`), `Esc` restores the
+/// previous value. The port closes the field on `Esc` instead of leaving an
+/// inactive `TextEdit`: the visible result is the same (the name is unchanged)
+/// and the editor cannot swallow keys afterwards.
+fn session_rename_input<D: Dispatcher>(app: &mut App<D>, key: Key) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    match key {
+        Key::Char(character) => {
+            if let Some(editor) = app.hud_mut().rename_mut() {
+                editor.push_char(character);
+            }
+        }
+        Key::Backspace => {
+            if let Some(editor) = app.hud_mut().rename_mut() {
+                editor.backspace();
+            }
+        }
+        Key::Enter => return submit_rename(app),
+        Key::Escape => {
+            if app.close_unit_rename().is_some() {
+                app.hud_mut().push_log("Rename cancelled");
+            }
+        }
+        Key::Tab
+        | Key::Up
+        | Key::Down
+        | Key::Left
+        | Key::Right
+        | Key::PageUp
+        | Key::PageDown
+        | Key::Alt(_)
+        | Key::Other => {}
+    }
+
+    Transition::None
+}
+
+/// Commits the open rename field as [`Command::Rename`] — packet **43**
+/// (`Remote_SendNetPacket_43`, `remote.cpp`).
+///
+/// The command channel decides like for every other UI command: a lockstep
+/// match queues packet 43 for `net::flush_hud_orders`, the local match applies
+/// it in this frame. An empty field is a valid commit — `UnitInfo::SetName("")`
+/// clears the own name (the corner portrait falls back to `GetName`).
+fn submit_rename<D: Dispatcher>(app: &mut App<D>) -> Transition
+where
+    App<D>: SessionLocal,
+{
+    let Some(editor) = app.close_unit_rename() else {
+        return Transition::None;
+    };
+    let line = editor.log_line();
+    let command = editor.command();
+
+    app.hud_mut().push_log(line);
+
+    if app.session_channel().is_lockstep() {
+        app.hud_mut().pending.push(command);
+    } else {
+        app.apply_immediate(command);
+    }
+
+    Transition::None
 }
 
 /// Session frame: the map from [`App::render_frame`] + the HUD (M4.2) over it.

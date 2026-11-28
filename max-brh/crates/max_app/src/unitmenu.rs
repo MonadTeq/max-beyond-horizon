@@ -1415,47 +1415,13 @@ pub fn clear_order(
     )
 }
 
-/// The "mark number" line — `UnitInfo::GetVersion` (`unitinfo.cpp:2930`):
+/// The "mark number" line — `UnitInfo::GetVersion` (`unitinfo.cpp:915-925`):
 /// Roman numerals of the `UnitValues` version (`Mk I`, `Mk II`, …).
-pub fn roman_version(mut version: u16) -> String {
-    fn digit(out: &mut String, count: u16, one: &str, five: &str, ten: &str) {
-        match count {
-            0 => {}
-            1 => out.push_str(one),
-            2 => out.push_str(&one.repeat(2)),
-            3 => out.push_str(&one.repeat(3)),
-            4 => {
-                out.push_str(one);
-                out.push_str(five);
-            }
-            5 => out.push_str(five),
-            6 => {
-                out.push_str(five);
-                out.push_str(one);
-            }
-            7 => {
-                out.push_str(five);
-                out.push_str(&one.repeat(2));
-            }
-            8 => {
-                out.push_str(five);
-                out.push_str(&one.repeat(3));
-            }
-            _ => {
-                out.push_str(one);
-                out.push_str(ten);
-            }
-        }
-    }
-
-    let mut out = String::new();
-    digit(&mut out, version / 100, "C", "D", "M");
-    version %= 100;
-    digit(&mut out, version / 10, "X", "L", "C");
-    version %= 10;
-    digit(&mut out, version, "I", "V", "X");
-
-    out
+///
+/// The exact `CalcRomanDigit` port lives in [`crate::unit_names::roman_version`]
+/// (one implementation for the display names and this message).
+pub fn roman_version(version: u16) -> String {
+    crate::unit_names::roman_version(u32::from(version))
 }
 
 /// Result of `Upg. All` — orders and the message (`UnitsManager_Popup_OnClick_UpgradeAll`).

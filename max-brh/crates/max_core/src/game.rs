@@ -1791,13 +1791,14 @@ impl GameState {
         // this, foreign bases were visible on the map and minimap without reconnaissance.
         crate::combat::init_stealth_status(&mut unit, self.ai.all_visible);
 
-        // `UnitsManager_DeployUnit`: the type name counter in the team.
+        // `UnitsManager_DeployUnit` (`units_manager.cpp:2377-2379`): the type
+        // name counter in the team — `unit->unit_id = unit_counters[type];
+        // ++unit_counters[type]`. The returned number is the low byte of the
+        // counter (a `u8` in both engines), so the instance numbers cycle
+        // through 256 values; the counter itself stays a `u32` (see
+        // [`crate::team::TeamInfo::take_team_unit_counter`]).
         if let Some(team_info) = self.teams.get_mut(team_index) {
-            let counter = team_info.unit_counter(unit_type as u16);
-            unit.unit_id = counter as u8;
-            if let Some(slot) = team_info.unit_counters.get_mut(unit_type as usize) {
-                *slot = slot.wrapping_add(1);
-            }
+            unit.unit_id = team_info.take_team_unit_counter(unit_type as u16);
         }
 
         if unit_type == UnitType::Infiltrator {
@@ -3626,7 +3627,7 @@ impl GameState {
             for value in &info.score_graph {
                 put_i16(&mut out, *value);
             }
-            for value in &info.unit_counters {
+            for value in &info.team_unit_counters {
                 put_u32(&mut out, *value);
             }
             for value in &info.casualties {

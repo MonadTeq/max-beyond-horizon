@@ -491,14 +491,20 @@ fn captions_and_fonts_match_game_manager() {
 }
 
 #[test]
-fn unit_name_falls_back_to_the_type() {
+fn unit_name_falls_back_to_the_type_and_instance_number() {
     use max_core::enums::UnitType;
     use max_core::unit::UnitInfo;
 
     let mut unit = UnitInfo::new(UnitType::Tank, max_core::TeamId::RED, max_core::UnitId(1));
-    assert_eq!(unit_name(&unit), "Tank");
-    unit.name = "AVENGER".to_string();
+    unit.unit_id = 7;
+    // `UnitInfo::GetName`: the type UFN and the instance number.
+    assert_eq!(unit_name(&unit), "Tank 7");
+    // `UnitInfo::GetDisplayName`: the mark of the unit's values (`Mk I` by default).
+    assert_eq!(unit_display_name(&unit), "Mk I Tank 7");
+
+    unit.set_name("AVENGER");
     assert_eq!(unit_name(&unit), "AVENGER");
+    assert_eq!(unit_display_name(&unit), "Mk I AVENGER");
 }
 
 /// The panels load from the real `MAX.RES`, and every zone changes pixels.

@@ -1164,13 +1164,17 @@ impl Panels {
             layout::UNIT_DESCRIPTION.uly,
             true,
         );
-        let described = app.selected_unit().map(unit_name).or_else(|| {
+        // `GameManager_GetWindowCursor` (`game_manager.cpp:4229`): the description strip
+        // shows `UnitInfo::GetDisplayName` of the unit under the cursor
+        // (`"Mk II Scout 7"`); the port also falls back to the selected unit so
+        // that the strip is not empty when the pointer is off the map.
+        let described = app.selected_unit().map(unit_display_name).or_else(|| {
             panel.cursor_grid.and_then(|(x, y)| {
                 state
                     .units_at(max_core::geo::Point::new(x, y))
                     .into_iter()
                     .find_map(|id| state.unit(*id))
-                    .map(unit_name)
+                    .map(unit_display_name)
             })
         });
         if let Some(name) = described {
@@ -1293,15 +1297,65 @@ impl Panels {
         // — the status `0xA2` one line lower). The original draws them over the FLC frame and
         // during animation repaints only the lines below `text_height` — here
         // the panel is drawn entirely, so the text is simply applied last.
+        //
+        // The text is `UnitInfo::GetDisplayName` (`game_manager.cpp:7179`):
+        // `"Mk I Tank 7"`. While the in-place rename is open the `Mk <roman> `
+        // prefix stays and the rest of the line is the editable field —
+        // `GameManager_FlicButtonRFunction` (`game_manager.cpp:4004-4023`): the
+        // edit box starts at `Text_GetWidth(display) - Text_GetWidth(name)`,
+        // i.e. right after the prefix.
         let font = GnwFontId::Font2.font();
-        draw_text_gnw(
-            frame,
-            area.ulx,
-            area.uly,
-            font,
-            &unit_name(unit),
-            palette.rgba(GREEN),
-        );
+        let editing = app
+            .hud()
+            .rename
+            .as_ref()
+            .filter(|editor| editor.unit == unit.id);
+
+        match editing {
+            Some(editor) => {
+                let prefix = format!(
+                    "Mk {} ",
+                    crate::unit_names::roman_version(u32::from(unit.base_values.version))
+                );
+
+                draw_text_gnw(
+                    frame,
+                    area.ulx,
+                    area.uly,
+                    font,
+                    &prefix,
+                    palette.rgba(GREEN),
+                );
+                // C++ `TextEdit` keeps the field text white while it is fully
+                // selected (`DrawFullText`: `is_selected` → color `0xFF`), then the
+                // window color (green) once the player types; the blinking cursor
+                // `|` (`DrawTillCursor`) is drawn statically at the end of the text.
+                let field = if editor.selected {
+                    editor.text.clone()
+                } else {
+                    format!("{}|", editor.text)
+                };
+
+                draw_text_gnw(
+                    frame,
+                    area.ulx + font.text_width(&prefix),
+                    area.uly,
+                    font,
+                    &field,
+                    palette.rgba(if editor.selected { 0xFF } else { GREEN }),
+                );
+            }
+            None => {
+                draw_text_gnw(
+                    frame,
+                    area.ulx,
+                    area.uly,
+                    font,
+                    &unit_display_name(unit),
+                    palette.rgba(GREEN),
+                );
+            }
+        }
         draw_text_gnw(
             frame,
             area.ulx,
@@ -1561,17 +1615,26 @@ pub fn map_viewport(viewport: &Viewport) -> Viewport {
     )
 }
 
-/// Unit name for the panels (`UnitInfo::GetDisplayName`): the name or the User-Friendly Name.
+/// Unit name for the panels — `UnitInfo::GetName` (`unitinfo.cpp:757-779`).
 ///
-/// If the unit has no own name (`unit.name`), the panel shows the type
-/// UFN — [`crate::unit_names::unit_user_friendly_name`], not the variant's `Debug`
-/// name (`MiningStation` → «Mining Station»).
+/// The stored user name ([`UnitInfo::name`], `None` = never renamed) or
+/// `"{Type} {unit_id}"` — the UFN of the type and the instance number
+/// (`"Tank 7"`). The formatting lives in [`crate::unit_names::unit_name`];
+/// this wrapper keeps the panel call sites short.
+///
+/// The type part is the UFN ([`crate::unit_names::unit_user_friendly_name`]),
+/// not the variant's `Debug` name (`MiningStation` → «Mining Station»).
 pub fn unit_name(unit: &UnitInfo) -> String {
-    if unit.name.is_empty() {
-        crate::unit_names::unit_user_friendly_name(unit.unit_type).to_string()
-    } else {
-        unit.name.clone()
-    }
+    crate::unit_names::unit_name(unit)
+}
+
+/// Unit caption of the original — `UnitInfo::GetDisplayName`
+/// (`unitinfo.cpp:781-803`): `"Mk I Tank 7"`.
+///
+/// The corner portrait, the description bar (`hover`), the `UnitStats` title,
+/// the repair-shop list and the map name overlay all use this form.
+pub fn unit_display_name(unit: &UnitInfo) -> String {
+    crate::unit_names::unit_display_name(unit)
 }
 
 /// Statistics row label — `_(id)` from `game_manager.cpp` (`language.json`).

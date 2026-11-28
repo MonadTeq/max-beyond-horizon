@@ -7,9 +7,9 @@ fn team_info_reset_matches_cpp() {
     let info = TeamInfo::new();
     assert_eq!(info.team_type, TeamKind::None);
     assert_eq!(info.team_clan, TeamClan::Random);
-    assert!(info.unit_counters.iter().all(|&value| value == 1));
+    assert!(info.team_unit_counters.iter().all(|&value| value == 1));
     assert!(info.casualties.iter().all(|&value| value == 0));
-    assert_eq!(info.unit_counter(0), 1);
+    assert_eq!(info.team_unit_counter(0), 1);
 }
 
 #[test]
@@ -137,14 +137,46 @@ fn gold_boundaries() {
 fn team_info_type_indexed_accessors() {
     let mut info = TeamInfo::new();
     let last = crate::unit_values::UNIT_COUNT as u16 - 1;
-    assert_eq!(info.unit_counter(0), 1);
-    assert_eq!(info.unit_counter(last), 1);
+    assert_eq!(info.team_unit_counter(0), 1);
+    assert_eq!(info.team_unit_counter(last), 1);
     assert_eq!(info.casualties_for(0), 0);
     assert_eq!(info.casualties_for(last), 0);
-    info.unit_counters[last as usize] = 77;
+    info.team_unit_counters[last as usize] = 77;
     info.casualties[0] = 5;
-    assert_eq!(info.unit_counter(last), 77);
+    assert_eq!(info.team_unit_counter(last), 77);
     assert_eq!(info.casualties_for(0), 5);
+}
+
+/// `UnitsManager_DeployUnit` (`units_manager.cpp:2377-2379`): the counter gives
+/// the instance number and is advanced; `unit_id` is a `u8`, so the numbers run
+/// through the 256-value cycle `1, 2, …, 255, 0, 1, …`.
+#[test]
+fn deployment_counter_starts_at_one_and_cycles_every_256_units() {
+    use crate::enums::UnitType;
+
+    let mut info = TeamInfo::new();
+    let tank = UnitType::Tank as u16;
+
+    // The first instance of a type is number 1, the counter becomes 2.
+    assert_eq!(info.take_team_unit_counter(tank), 1);
+    assert_eq!(info.team_unit_counter(tank), 2);
+    assert_eq!(info.take_team_unit_counter(tank), 2);
+    assert_eq!(info.team_unit_counter(tank), 3);
+
+    // A `u8` counter at its last value gives 255, then the numbers wrap to 0.
+    info.team_unit_counters[tank as usize] = 255;
+    assert_eq!(info.take_team_unit_counter(tank), 255);
+    assert_eq!(info.take_team_unit_counter(tank), 0);
+    assert_eq!(info.take_team_unit_counter(tank), 1);
+
+    // The counter itself stays a `u32` (`CTInfo::unit_counters[UNIT_END]`);
+    // V70 persists only its low byte (saveload.cpp:839,852-856).
+    assert_eq!(info.team_unit_counter(tank), 258);
+
+    // The counters are per type: another type is unaffected.
+    let scout = UnitType::Scout as u16;
+    assert_eq!(info.team_unit_counter(scout), 1);
+    assert_eq!(info.take_team_unit_counter(scout), 1);
 }
 
 /// Complex lookup/removal semantics of `TeamUnits`.

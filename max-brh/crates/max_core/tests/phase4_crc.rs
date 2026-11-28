@@ -393,8 +393,8 @@ fn mutations() -> Vec<Mutation> {
             packet_45_changes: false,
         },
         Mutation {
-            name: "unit_counters",
-            apply: |state| state.teams_mut()[0].unit_counters[0] ^= 1,
+            name: "team_unit_counters",
+            apply: |state| state.teams_mut()[0].team_unit_counters[0] ^= 1,
             packet_45_changes: false,
         },
         Mutation {

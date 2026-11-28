@@ -151,8 +151,13 @@ pub struct UnitInfo {
     pub y: u16,
     /// Map cell.
     pub grid: Point,
-    /// Unit name (variable length in V70, without a terminator).
-    pub name: String,
+    /// User-defined unit name — C++ `UnitInfo::name` (`char*`, `nullptr` = no name).
+    ///
+    /// V70 stores it as a `u16` length + bytes without a terminator
+    /// (`state-model.md` §3.9): length 0 is exactly the C++ `nullptr`, so `None`
+    /// round-trips to an empty record. [`UnitInfo::unit_id`] and the type name
+    /// are the fallback of `UnitInfo::GetName` — they are **not** stored here.
+    pub name: Option<String>,
     /// Owning team (including [`TeamId::ALIEN`] = 4).
     pub team: TeamId,
     /// Type sequence number within the team (for names).
@@ -343,7 +348,7 @@ impl UnitInfo {
             x: 0,
             y: 0,
             grid: Point::new(-1, -1),
-            name: String::new(),
+            name: None,
             team,
             unit_id: 0,
             angle: 0,
@@ -462,6 +467,15 @@ impl UnitInfo {
     #[inline]
     pub const fn get_id(&self) -> UnitId {
         self.id
+    }
+
+    /// C++ `UnitInfo::SetName` (`unitinfo.cpp:928`): stores the user name, an
+    /// empty string clears it (`delete[] name; name = nullptr`).
+    ///
+    /// The packet-43 receive path and the rename UI both go through this method,
+    /// so "clear" has one meaning in the port: [`Self::name`] becomes `None`.
+    pub fn set_name(&mut self, name: &str) {
+        self.name = (!name.is_empty()).then(|| name.to_string());
     }
 
     /// Experience: for `COMMANDO`/`REGENERATING_UNIT` C++ stores it in `storage`

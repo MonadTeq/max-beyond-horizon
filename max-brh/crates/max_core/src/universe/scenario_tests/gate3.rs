@@ -596,7 +596,7 @@ fn observe_unit_name(state: &GameState, ids: &Gate3Ids) -> String {
     // `UnitInfo::name` is outside the canonical digest (ADR §3).
     state
         .unit(ids.green)
-        .map(|unit| unit.name.clone())
+        .map(|unit| unit.name.clone().unwrap_or_default())
         .unwrap_or_default()
 }
 

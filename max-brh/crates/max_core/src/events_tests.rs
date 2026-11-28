@@ -354,7 +354,17 @@ fn rename_and_unknown_unit() {
             name: "Tank 1".into(),
         }),
     );
-    assert_eq!(state.unit(id).unwrap().name, "Tank 1");
+    assert_eq!(state.unit(id).unwrap().name.as_deref(), Some("Tank 1"));
+
+    // `UnitInfo::SetName("")` clears the own name — the C++ `char*` becomes `nullptr`.
+    apply_command(
+        &mut state,
+        &Command::Rename(crate::input::Packet43Rename {
+            unit: id,
+            name: String::new(),
+        }),
+    );
+    assert_eq!(state.unit(id).unwrap().name, None);
 
     assert_eq!(
         apply_command(
@@ -507,7 +517,7 @@ fn packet_54_applies_state_and_removes_extra_units() {
     assert_eq!(state.teams[green].stats_gold_spent_on_upgrades, 60);
     assert_eq!(state.teams[green].number_of_objects_created, 12);
     assert_eq!(
-        state.teams[green].unit_counters[UnitType::Tank as usize],
+        state.teams[green].team_unit_counters[UnitType::Tank as usize],
         13
     );
     assert_eq!(state.teams[green].research_topics[0].research_level, 1);

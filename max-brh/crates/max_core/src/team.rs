@@ -70,8 +70,16 @@ pub struct TeamInfo {
     /// Created-object counter 1..8191 — the basis for the hash id
     /// (`number_of_objects_created`).
     pub number_of_objects_created: u16,
-    /// Per-type name counters (C++ `uint32_t[UNIT_END]`, in V70 — u8[93]).
-    pub unit_counters: [u32; UNIT_COUNT],
+    /// Per-type name counters — the production ordinal of a unit instance
+    /// (C++ `CTInfo::unit_counters[UNIT_END]`, in V70 — `u8[93]`).
+    ///
+    /// The counter is per team **and** type, starts at 1 (`CTInfo::Reset`,
+    /// `ctinfo.hpp:49-51`) and advances on every deployment
+    /// ([`TeamInfo::take_team_unit_counter`]). The consumer is
+    /// [`crate::unit::UnitInfo::unit_id`] (a `u8`), so the numbers an instance
+    /// can get cycle through the u8 space — 256 values (V70 stores the counter
+    /// as one byte, `saveload.cpp:839/852-856`).
+    pub team_unit_counters: [u32; UNIT_COUNT],
     /// Team points for the last 50 turns.
     pub score_graph: [i16; SCORE_GRAPH_LEN],
     /// How many factories were built.
@@ -104,7 +112,7 @@ impl TeamInfo {
             research_topics: [ResearchTopicInfo::default(); RESEARCH_TOPIC_COUNT],
             team_points: 0,
             number_of_objects_created: 0,
-            unit_counters: [1; UNIT_COUNT],
+            team_unit_counters: [1; UNIT_COUNT],
             score_graph: [0; SCORE_GRAPH_LEN],
             stats_factories_built: 0,
             stats_mines_built: 0,
@@ -120,10 +128,35 @@ impl TeamInfo {
         *self = Self::new();
     }
 
-    /// `unit_counters` counter for a type (C++ — `unit_counters[UNIT_END]`).
+    /// `team_unit_counters` counter for a type — the value the next instance of
+    /// that type will carry in [`crate::unit::UnitInfo::unit_id`].
+    ///
+    /// Read-only: the counter is advanced only by [`Self::take_team_unit_counter`],
+    /// the C++ `UnitsManager_DeployUnit` path.
     #[inline]
-    pub fn unit_counter(&self, unit_type: u16) -> u32 {
-        self.unit_counters[unit_type as usize]
+    pub fn team_unit_counter(&self, unit_type: u16) -> u32 {
+        self.team_unit_counters[unit_type as usize]
+    }
+
+    /// `UnitsManager_DeployUnit` (`units_manager.cpp:2377-2379`): returns the
+    /// instance number for the unit being deployed and advances the counter.
+    ///
+    /// ```c
+    /// unit->unit_id = team_info->unit_counters[unit_type];
+    /// ++team_info->unit_counters[unit_type];
+    /// ```
+    ///
+    /// `unit_id` is a `u8` in both engines, so the returned number is the low
+    /// byte of the counter: `1, 2, …, 255, 0, 1, …` — a 256-value cycle. The
+    /// counter itself stays a `u32` like `CTInfo`; V70 only persists its low
+    /// byte (`saveload.cpp:839/852-856`), which is exactly what the truncation
+    /// gives.
+    pub fn take_team_unit_counter(&mut self, unit_type: u16) -> u8 {
+        let counter = &mut self.team_unit_counters[unit_type as usize];
+        let unit_id = *counter as u8;
+        *counter = counter.wrapping_add(1);
+
+        unit_id
     }
 
     /// Losses by type (used by victory/defeat conditions).

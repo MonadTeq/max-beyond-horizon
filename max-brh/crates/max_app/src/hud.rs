@@ -436,6 +436,17 @@ pub struct HudState {
     /// (`MESSAGE_BOX_INFO`/`NOTICE`/`WARNING`). UI state, not part of the
     /// snapshot/CRC.
     pub hint_style: crate::panels::MessageBoxStyle,
+    /// Open in-place unit rename (C++ `GameManager_TextEditUnitName`).
+    ///
+    /// UI state: not part of the snapshot/CRC — the committed name enters the
+    /// state only through packet **43** ([`crate::rename::RenameEditor::command`]).
+    /// `None` — the corner portrait shows `UnitInfo::GetDisplayName` as usual.
+    ///
+    /// Boxed: `App` is created on the stack by the frame/tests, and a few dozen
+    /// bytes per `App` are enough to change the margin of the
+    /// `presentation_gate` stack (two `App`s are alive in one frame there), so the
+    /// transient editor does not grow `HudState` inline.
+    pub rename: Option<Box<crate::rename::RenameEditor>>,
 }
 
 impl Default for HudState {
@@ -464,6 +475,7 @@ impl HudState {
             shift_pressed: false,
             hint: None,
             hint_style: crate::panels::MessageBoxStyle::Info,
+            rename: None,
         }
     }
 
@@ -483,7 +495,42 @@ impl HudState {
             self.enter_mode = false;
             self.targeting_mode = false;
         }
+        // `GameManager_MenuUnitSelect` (`game_manager.cpp:7147-7150`) deletes the
+        // open `TextEdit` of the corner portrait on every selection event.
+        self.rename = None;
         self.selected = id;
+    }
+
+    /// Opens the in-place rename field for `unit` — C++
+    /// `GameManager_FlicButtonRFunction` (`game_manager.cpp:3993-4023`).
+    ///
+    /// The C++ button is enabled only for an own unit of a `TEAM_TYPE_PLAYER`
+    /// team; that gate is checked by [`crate::App::open_unit_rename`]. The editor
+    /// is not re-created when it is already open (a second click keeps the typed
+    /// text).
+    pub fn open_rename(&mut self, unit: &max_core::unit::UnitInfo) -> bool {
+        if self.rename.as_ref().is_some_and(|editor| editor.unit == unit.id) {
+            return true;
+        }
+
+        self.rename = Some(Box::new(crate::rename::RenameEditor::new(unit)));
+        true
+    }
+
+    /// Open rename field (read-only).
+    pub fn rename(&self) -> Option<&crate::rename::RenameEditor> {
+        self.rename.as_deref()
+    }
+
+    /// Open rename field (editable) — key input of `TextEdit::ProcessKeyPress`.
+    pub fn rename_mut(&mut self) -> Option<&mut crate::rename::RenameEditor> {
+        self.rename.as_deref_mut()
+    }
+
+    /// Closes the field without committing — the C++ `delete GameManager_TextEditUnitName`
+    /// (`Esc`, a selection change, or the window closing).
+    pub fn close_rename(&mut self) -> Option<Box<crate::rename::RenameEditor>> {
+        self.rename.take()
     }
 
     /// Writes a line to the log.
@@ -499,6 +546,7 @@ impl HudState {
         self.enter_mode = false;
         self.targeting_mode = false;
         self.hint = None;
+        self.rename = None;
     }
 
     /// Resets the order modes but keeps the selection.
@@ -1932,11 +1980,9 @@ pub fn unit_panel_lines(state: StateRef<'_>, id: UnitId) -> Vec<String> {
         return vec!["(unit gone)".to_string()];
     };
 
-    let name = if unit.name.is_empty() {
-        crate::unit_names::unit_user_friendly_name(unit.unit_type)
-    } else {
-        unit.name.as_str()
-    };
+    // `UnitInfo::GetName`: the user name or `"Type <unit_id>"` — the same caption
+    // as the 1:1 panels ([`crate::panels::unit_name`]).
+    let name = crate::panels::unit_name(unit);
     let max_hits = unit.base_values.get_attribute(ATTRIB_HITS);
     let max_ammo = unit.base_values.get_attribute(ATTRIB_AMMO);
 

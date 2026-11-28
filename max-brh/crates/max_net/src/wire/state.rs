@@ -737,7 +737,7 @@ fn state_sync_tail(state: max_core::universe::StateRef<'_>, team: TeamId) -> Sta
             allocation: source.allocation as i32,
         };
     }
-    for (destination, source) in tail.unit_counters.iter_mut().zip(info.unit_counters.iter()) {
+    for (destination, source) in tail.unit_counters.iter_mut().zip(info.team_unit_counters.iter()) {
         *destination = *source;
     }
 

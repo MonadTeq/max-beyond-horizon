@@ -391,7 +391,7 @@ fn every_team_and_ui_field_survives_a_write_cycle() {
         }
         info.team_points = 0x8000_0000 + team as u32;
         info.number_of_objects_created = 0x1000 + team as u16;
-        for (index, counter) in info.unit_counters.iter_mut().enumerate() {
+        for (index, counter) in info.team_unit_counters.iter_mut().enumerate() {
             *counter = (index % 251) as u32;
         }
         for (index, value) in info.score_graph.iter_mut().enumerate() {
@@ -450,7 +450,7 @@ fn every_unit_field_survives_a_write_cycle() {
     unit.info.flags ^= 0x0001_0000;
     unit.info.grid = Point::new(3, 4);
     unit.info.target_grid = Point::new(9, 10);
-    unit.info.name = "Phase 4 unit".to_string();
+    unit.info.name = Some("Phase 4 unit".to_string());
     unit.info.team = TeamId::GREEN;
     unit.info.unit_id = 200;
     unit.info.angle = 7;

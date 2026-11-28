@@ -1082,10 +1082,12 @@ impl<'a> Reader<'a> {
                 length: name_length,
             });
         }
+        // `UnitInfo::name` in V70: a `u16` length + bytes, no terminator
+        // (`state-model.md` §3.9). Length 0 is the C++ `nullptr` = no own name.
         let name = if name_length == 0 {
-            String::new()
+            None
         } else {
-            String::from_utf8_lossy(self.take(name_length)?).into_owned()
+            Some(String::from_utf8_lossy(self.take(name_length)?).into_owned())
         };
         let mut info = UnitInfo::new(unit_type, TeamId::RED, id);
         // The presentation part of the V70 object — alongside the simulation
@@ -1290,7 +1292,7 @@ impl<'a> Reader<'a> {
         info.team_points = self.u32()?;
         info.number_of_objects_created = self.u16()?;
         let counters = self.bytes::<{ UNIT_END as usize }>()?;
-        for (slot, value) in info.unit_counters.iter_mut().zip(counters.iter()) {
+        for (slot, value) in info.team_unit_counters.iter_mut().zip(counters.iter()) {
             *slot = u32::from(*value);
         }
         let mut ui = TeamInfoUi::default();
@@ -1915,8 +1917,10 @@ impl Writer {
         self.u16(info.y);
         self.i16(info.grid.x);
         self.i16(info.grid.y);
-        self.u16(info.name.len() as u16);
-        self.bytes(info.name.as_bytes());
+        // `None` = the C++ `nullptr`: a zero-length record (state-model §3.9).
+        let name = info.name.as_deref().unwrap_or("");
+        self.u16(name.len() as u16);
+        self.bytes(name.as_bytes());
         self.point(presentation.shadow_offset);
         self.u8(info.team.0);
         self.u8(info.unit_id);
@@ -2150,7 +2154,7 @@ impl Writer {
             }
             self.u32(info.team_points);
             self.u16(info.number_of_objects_created);
-            for counter in info.unit_counters {
+            for counter in info.team_unit_counters {
                 self.u8(counter as u8);
             }
             for location in ui.screen_locations {

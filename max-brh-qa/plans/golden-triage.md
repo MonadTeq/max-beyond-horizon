@@ -23,3 +23,30 @@
 «Устарело» — диагноз с указанием коммита и причины; обновление эталона — **только**
 с комментарием «какой коммит, что изменилось». Реальный дрейф (не осознанный) —
 **не обновлять эталон, чинить**.
+
+## 2026-11-28 — имена экземпляров юнитов («Mk II Scout 7»)
+
+Осознанное изменение презентации (анализ
+`max-brh-docs/analysis/unit-name-group-select.md` §1; рабочее дерево, без коммита):
+угловой портрет, полоса описания, заголовок `UnitStats`, список ремонтного
+ангара и оверлей имён рисуют `UnitInfo::GetDisplayName` — `"Mk <roman> <name>"`,
+где `<name>` — `GetName` (`"Tank 7"` для неназванного юнита, а не только тип).
+Дрейф — исключительно текст имени; остальные пиксели совпадают.
+
+| Кадр | Было (HEAD) | Стало | Дельта | Причина |
+|---|---|---|---|---|
+| `panels/panel-names.png` | 0.906 % (`ok`) | 1.759 % | +2600 px | имена над юнитами: `"Mk I Tank 1"` вместо `"Tank"` |
+| `production/build-done-waiting.png` | ~0.881 % (`ok`) | 1.040 % | +487 px | портрет/описание: `"Mk I Training Hall 1"` |
+| `production/factory-unit-ready.png` | ~0.919 % (`ok`) | 1.119 % | +615 px | то же + оверлей имени |
+| `production/factory-unit-label-blink.png` | ~0.919 % (`ok`) | 1.119 % | +615 px | то же |
+
+Эталоны пересняты из `max-brh-qa/out/{panels,production}`. Проверено на baseline
+(HEAD без изменений): дрейф `panel-names`/`build-done-waiting`/`factory-unit-*`
+укладывался в порог 1 %, то есть новые расхождения вызваны только форматом имени.
+
+**Предсуществующие дрейфы не перепинены** (baseline тоже красный, к этой задаче
+не относятся): `production/build-site-invalid|select` (1.84/1.88 % на HEAD),
+`sp-tb-turn1` (2.12 %), `sp-full/game-moved|options` (1.76/2.08 %),
+`missile-line-1|2|impact` (2.27/2.27/2.44 %), `edge-cases/edge-unicode-name`
+(1.66 %), `victory/victory-options` (1.62 %). Официальный гейт `qa-all.sh`
+(`visual-screens` + `preferences`) — PASS.

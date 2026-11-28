@@ -113,7 +113,7 @@ fn save1_all_sections_are_present() {
     assert_eq!(save.team_units[0].complexes.len(), 2);
     assert_eq!(save.team_units[1].complexes.len(), 3);
     assert_eq!(
-        save.teams[0].unit_counters[UnitType::GoldRefinery as usize],
+        save.teams[0].team_unit_counters[UnitType::GoldRefinery as usize],
         2
     );
     // UI fields: red camera (85, 52), zoom 35, unit 0x0057 selected.

@@ -1461,6 +1461,9 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
         let head = menu.queue.first().copied().or_else(|| menu.selected_type());
         let build_rate = menu.build_rate;
         let queue_len = menu.queue.len();
+        let factory = menu.factory;
+        let team = menu.team;
+        let builder = menu.unit;
         self.build_menu = Some(menu);
 
         match command {
@@ -1478,6 +1481,38 @@ impl<D: max_core::universe::Dispatcher> crate::App<D> {
                 self.build_menu = None;
 
                 Some(match head {
+                    // `MobileBuildMenu::Build` (`buildmenu.cpp:936-947`): the mobile
+                    // builder has issued the order, and the message names the instance
+                    // the next produced unit will carry — the team counter **before**
+                    // the deployment increments it (`DeployUnit`,
+                    // `units_manager.cpp:2377-2379`):
+                    // `"%s %i will be available in %i turns."` (three gender variants
+                    // of `_(fa62)/(9eb5)/(01fa)`, identical in en-US).
+                    Some(unit_type) if !factory => {
+                        let state = self.state_ref();
+                        let counter = state
+                            .teams()
+                            .get(team.0 as usize)
+                            .map(|info| info.team_unit_counter(unit_type as u16))
+                            .unwrap_or(1);
+                        let turns = state
+                            .unit(builder)
+                            .map(|unit| {
+                                state
+                                    .turns_and_consumption(
+                                        unit,
+                                        unit_type,
+                                        i32::from(build_rate.max(1)),
+                                    )
+                                    .0
+                            })
+                            .unwrap_or(0);
+
+                        format!(
+                            "{} {counter} will be available in {turns} turns.",
+                            unit_name(unit_type)
+                        )
+                    }
                     Some(unit_type) => format!(
                         "Build order: {} ({queue_len} in queue, {build_rate}x)",
                         unit_name(unit_type)
