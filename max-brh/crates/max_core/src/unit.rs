@@ -309,6 +309,17 @@ pub struct UnitInfo {
     // --- C++ runtime fields (not serialized in V70) ---
     /// Group speed.
     pub group_speed: u16,
+    /// Formation snapshot of the unit's own cell at the moment the group was
+    /// formed — C++ `UnitInfo::attack_site` (`unitinfo.hpp:411`).
+    ///
+    /// Written by [`crate::access::update_multi_selection`]
+    /// (`Access_UpdateMultiSelection`, `access.cpp:2380-2381`): the group order
+    /// places every member by `member.attack_site - leader.attack_site +
+    /// leader.move_to` (`Access_GroupAttackOrder`, `access.cpp:1252-1253`), so the
+    /// formation is the one the player framed. Runtime field: not in V70, and not
+    /// in the snapshot/CRC — it is derived on every peer from the synchronized
+    /// group commands.
+    pub attack_site: Point,
     /// Live attack number (0 = none).
     pub live_attack: u32,
     /// Unit "in transit" (moving between cells).
@@ -421,6 +432,7 @@ impl UnitInfo {
             enemy_unit: None,
             build_list: Vec::new(),
             group_speed: 0,
+            attack_site: Point::ZERO,
             live_attack: 0,
             in_transit: false,
             pin_count: 0,

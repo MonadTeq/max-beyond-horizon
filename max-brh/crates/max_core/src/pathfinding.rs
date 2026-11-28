@@ -219,6 +219,7 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
     }
 
     let previous_state = unit.state;
+    let has_group = state.group_members(request.unit).is_some();
     let mut unit = unit;
     let path_steps = path.as_ref().map(|path| path.steps.clone());
     unit.path = path.map(UnitPath::Ground);
@@ -228,6 +229,13 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
             assign_ground_path(&mut unit, &steps, request.destination);
         }
     }
+
+    // `PathRequest::Finish` (`pathrequest.cpp:145-215`). The group branches are
+    // ordered exactly like the oracle: a `MOVE_GETTING_PATH` unit restores its
+    // orders, a group member with a path **stays in `NEW_ORDER`** and only runs
+    // the start barrier (`Access_ProcessNewGroupOrder`) — no member moves before
+    // every member's path is ready.
+    let mut group_barrier = false;
 
     if unit.path.is_none() {
         if order == UnitOrder::MoveToAttack {
@@ -239,15 +247,12 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
                     UnitOrderState::ExecutingOrder,
                 );
                 state.write_unit(request.unit, unit);
+                access::process_new_group_order(state, request.unit);
                 return;
             }
         }
 
         unit_order::blocked_on_path_request(&mut unit, false, state.disable_fire);
-
-        if previous_state == UnitOrderState::NewOrder {
-            access::clear_unit_group(state, request.unit);
-        }
     } else if order == UnitOrder::Build {
         // `UnitsManager_StartBuild` — P3 site logic; the state does not change.
         unit.state = UnitOrderState::InProgress;
@@ -257,13 +262,21 @@ fn finish_path(state: &mut GameState, request: &PathRequest, path: Option<Ground
         } else {
             unit_order::restore_orders(&mut unit);
         }
+    } else if has_group {
+        group_barrier = true;
     } else {
         unit.state = UnitOrderState::InProgress;
     }
 
+    let path_ready = unit.path.is_some() && previous_state != UnitOrderState::MoveGettingPath;
+    let path_failed = unit.path.is_none();
+
     state.write_unit(request.unit, unit);
 
-    if state.group_members(request.unit).is_some() {
+    if path_failed && previous_state == UnitOrderState::NewOrder && has_group {
+        // A group member without a path leaves the group (`ClearUnitList`).
+        access::clear_unit_group(state, request.unit);
+    } else if group_barrier && path_ready {
         access::process_new_group_order(state, request.unit);
     }
 }

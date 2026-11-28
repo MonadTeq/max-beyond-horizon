@@ -2,6 +2,30 @@
 
 ### Добавлено
 
+- **Выбор группы рамкой и групповое перемещение (`access.cpp:2177-2253/1218-1289`).**
+  Рамка: нажатие на карте — якорь, порог **16 px** (`game_manager.cpp:4280-4303`),
+  жёлтая рамка min/max с клиппингом по окну карты
+  (`GameManager_RenderMultiSelectIndicator`, `:997-1035`), отпускание —
+  `Access_MultiSelect` (`:6513-6525`, клетки `(ulx+16)/64…(lrx-16)/64`).
+  Мультивыбор: якорь — свой мобильный юнит в `EXECUTING_ORDER`, не disabled, в рамке;
+  члены — свои мобильные `EXECUTING`/`READY`, не disabled, **лимит 10**;
+  «только сам» → группы нет; членам `ORDER_AWAIT`, `move_to = attack_site = своя
+  клетка` (`Access_UpdateMultiSelection`, `:2370-2388`). Группа —
+  `GameState::unit_group`/`groups` (лидер = голова списка), Shift+клик добавляет/убирает
+  (`game_manager.cpp:6303-6334`), выбор члена делает его лидером
+  (`MoveToFrontInUnitList`, `:7242`). Групповой приказ — только лидеру:
+  `group_speed = min(speed)+1` (`:1195-1216`), цель члена
+  `attack_site − лидер.attack_site + лидер.move_to` с клампом (`:1252-1253`),
+  старт всех после готовности всех путей (`Access_ProcessNewGroupOrder`,
+  `:2321-2368`), неудача пути члена — выход из группы, `ORDER_MOVE_TO_UNIT` —
+  роспуск. Отображение: полный селектор у лидера, 1-px жёлтая рамка у членов
+  (`drawmap.cpp:674-690/813-833`). Вход выбора синхронизируется порт-пакетом **57**
+  (`Packet57GroupSelect`: рамка/Shift/смена лидера) — оракул формирует группу
+  локально, порту нужен одинаковый CRC на всех пирах. CRC/снапшот не изменились
+  (группа пуста без выбора). Тесты: 17 unit (`access_tests`), 7 интеграционных
+  (`max_app/tests/group_select.rs`), round-trip пакета 57; QA-матрица PASS,
+  host-smoke PASS.
+
 - **Кампания, этап 3b — стори-экраны intro/victory/defeat (`menu.cpp:766-864`).**
   Модуль `max_app::story`: `StoryScreen` из `StoryBlock` дескриптора миссии —
   текст `GNW_TEXT_FONT_1` (600 px, (20,20) 600×400, `Fonts_BrightSilverColor`),

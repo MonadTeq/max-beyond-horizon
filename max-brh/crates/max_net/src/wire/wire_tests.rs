@@ -2,12 +2,13 @@ use super::*;
 use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_types::geo::{PathStep, Point};
 use max_types::input::{
-    ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload, Packet00TurnBarrier,
-    Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order, Packet09TeamState,
-    Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed, Packet14DeployUnit,
-    Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished, Packet43Rename,
-    Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier, Packet53ComplexSummary,
-    PayloadP1, PayloadP2, PayloadP3, PayloadP4, PayloadP5,
+    ComplexSummaryEntry, GroupSelectMode, MissionSupplyEntry, MovePathData, OrderPayload,
+    Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order,
+    Packet09TeamState, Packet11ComplexOrder, Packet12MissionSupply, Packet13Seed,
+    Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move, Packet41MoveFinished,
+    Packet43Rename, Packet45CrcBarrier, Packet50StopUnit, Packet52EndTurnBarrier,
+    Packet53ComplexSummary, Packet57GroupSelect, PayloadP1, PayloadP2, PayloadP3, PayloadP4,
+    PayloadP5,
 };
 use max_types::team::ResearchTopicInfo;
 
@@ -636,6 +637,49 @@ fn packet_43_rename_uses_smart_string() {
     })));
     assert_eq!(&bytes[..3], &[0x7B, 0x01, 0x00]);
     assert_eq!(&bytes[3..5], &[7, 0]);
+}
+
+/// Packet **57** (BRH extension): the group-selection command.
+///
+/// The type byte is `0x50 + 57 = 0x89`; the body is
+/// `team u16, mode u8, unit u16, member u16, upper i16×2, lower i16×2`.
+#[test]
+fn packet_57_group_select_round_trips_in_every_mode() {
+    for mode in [
+        GroupSelectMode::Box,
+        GroupSelectMode::Toggle,
+        GroupSelectMode::SelectUnit,
+    ] {
+        let packet = Packet::Command(Command::GroupSelect(Packet57GroupSelect {
+            team: TeamId::GREEN,
+            mode,
+            unit: Some(UnitId(7)),
+            member: Some(UnitId(9)),
+            upper: Point::new(320, 320),
+            lower: Point::new(511, 447),
+        }));
+        let bytes = round_trip(packet);
+
+        assert_eq!(bytes[0], 0x89, "APPL type of packet 57");
+        assert_eq!(bytes.len(), 1 + 2 + 1 + 2 + 2 + 4 + 4);
+    }
+
+    // A frame without units (`unit`/`member` = 0 on the wire).
+    round_trip(Packet::Command(Command::GroupSelect(
+        Packet57GroupSelect {
+            team: TeamId::RED,
+            mode: GroupSelectMode::Box,
+            unit: None,
+            member: None,
+            upper: Point::ZERO,
+            lower: Point::ZERO,
+        },
+    )));
+
+    // An unknown mode byte is rejected, not silently coerced.
+    let mut body = vec![0x89];
+    body.extend_from_slice(&[0x00, 0x00, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert!(Packet::decode(&body).is_err(), "mode 9 is not a selection");
 }
 
 #[test]

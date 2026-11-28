@@ -2656,7 +2656,12 @@ fn init_unit_path(ctx: &mut OrderContext<'_>) {
             ctx.unit.state = UnitOrderState::MoveGettingPath;
         }
     } else if ctx.world.group_members(ctx.id).is_some() {
+        // `Access_GroupAttackOrder(unit, true)` writes the group speed and the
+        // member orders into the state — including the leader's own new order, so
+        // the working copy must be re-read before it is committed
+        // (`UnitsManager_InitUnitPath`, `units_manager.cpp:4804-4805`).
         access::group_attack_order(ctx.world, ctx.id, true);
+        ctx.sync_from_world();
     } else if ctx.unit.is_air() && ctx.unit.orders != UnitOrder::MoveToAttack {
         let target = ctx.data.move_to;
         ctx.unit.path =

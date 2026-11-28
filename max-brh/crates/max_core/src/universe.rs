@@ -843,6 +843,16 @@ impl<'a> StateRef<'a> {
     pub fn group_members_of(&self, id: UnitId) -> Option<Vec<UnitId>> {
         crate::access::group_members_of(self.state, id)
     }
+    /// The head of the unit's group (`UnitInfo::GetFirstFromUnitList`) — the group
+    /// leader of `Access_MultiSelect` (`access.cpp:2249-2251`).
+    pub fn group_leader_of(&self, id: UnitId) -> Option<UnitId> {
+        self.state.group_leader(id)
+    }
+
+    /// Number of units in the unit's group (`SmartList::GetCount`); `0` — no group.
+    pub fn group_member_count(&self, id: UnitId) -> usize {
+        self.state.group_member_count(id)
+    }
 
     /// `Access_IsAccessible` (`access.rs:365`).
     pub fn is_accessible(&self, unit_type: UnitType, team: TeamId, grid: Point, flags: u32) -> u32 {
@@ -1948,6 +1958,13 @@ impl<D: Dispatcher> GameUniverse<D> {
     /// `GameState::take_unit_sounds` (`game.rs:2083`).
     pub fn take_unit_sounds(&mut self) -> Vec<UnitSound> {
         self.state.take_unit_sounds()
+    }
+
+    /// `GameState::take_group_selection` (`game.rs`): the leader a just applied
+    /// group-selection command focused — a UI report of `Access_MultiSelect` →
+    /// `GameManager_MenuUnitSelect(parent)` and of the Shift+click branch.
+    pub fn take_group_selection(&mut self) -> Option<UnitId> {
+        self.state.take_group_selection()
     }
 
     /// Applies an authoritative state sync (packet 54) immediately — the **FSM

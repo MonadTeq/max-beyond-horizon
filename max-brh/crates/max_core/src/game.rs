@@ -494,6 +494,15 @@ pub(crate) struct GameState {
     unit_group: Vec<Option<u32>>,
     /// Group lists (C++ `SmartList<UnitInfo> UnitInfoGroup`).
     pub(crate) groups: Vec<Option<Vec<UnitId>>>,
+    /// The leader a just applied group-selection command focused — the HUD report of
+    /// `Access_MultiSelect` → `GameManager_MenuUnitSelect(parent)`
+    /// (`access.cpp:2249-2251`) and of the Shift+click branch
+    /// (`game_manager.cpp:6323`).
+    ///
+    /// Not part of the snapshot/CRC (like `production_events`): the group list is
+    /// the simulation state, this field only tells the owner's HUD which unit to
+    /// select ([`Self::take_group_selection`]).
+    pub(crate) last_group_leader: Option<UnitId>,
     /// Path request queue (`PathsManager::m_pending_requests`).
     pub(crate) path_requests: std::collections::VecDeque<PathRequest>,
     /// `UnitsManager_DelayedAttackTargets[team]` — reaction fire targets.
@@ -724,6 +733,7 @@ impl GameState {
             map_hash: MapHash::for_standard_map(),
             unit_group: Vec::new(),
             groups: Vec::new(),
+            last_group_leader: None,
             path_requests: std::collections::VecDeque::new(),
             delayed_attack_targets: std::array::from_fn(|_| Vec::new()),
             delayed_reactions_team: TeamId::RED,
@@ -922,6 +932,7 @@ impl GameState {
         self.order_data.clear();
         self.unit_group.clear();
         self.groups.clear();
+        self.last_group_leader = None;
         self.lists = std::array::from_fn(|_| Vec::new());
         self.unit_hash = UnitHash::new(HASH_UNIT_HASH_SIZE);
 
@@ -1392,28 +1403,72 @@ impl GameState {
         self.groups.get(group as usize)?.clone()
     }
 
-    /// `AllocateUnitList` + `AssignUnitList` for the leader: creates a group.
-    #[cfg(test)]
-    pub fn create_group_with_leader(&mut self, leader: UnitId) -> u32 {
+    /// The head of the unit's group (`UnitInfo::GetFirstFromUnitList`,
+    /// `unitinfo.cpp:603`) — the group leader: the renderer draws the full selector
+    /// on it and the yellow member frames on the rest (`drawmap.cpp:802-833`).
+    pub fn group_leader(&self, id: UnitId) -> Option<UnitId> {
+        self.group_members(id)?.first().copied()
+    }
+
+    /// Number of units in the unit's group (`SmartList::GetCount`); `0` — no group.
+    pub fn group_member_count(&self, id: UnitId) -> usize {
+        self.group_members(id).map_or(0, |members| members.len())
+    }
+
+    /// Takes the leader a just applied group-selection command focused — the HUD
+    /// report of `Access_MultiSelect` → `GameManager_MenuUnitSelect(parent)`
+    /// (`access.cpp:2249-2251`) and of the Shift+click branch
+    /// (`game_manager.cpp:6323`).
+    pub fn take_group_selection(&mut self) -> Option<UnitId> {
+        self.last_group_leader.take()
+    }
+
+    /// `UnitInfo::AllocateUnitList` (`unitinfo.cpp:1894`): allocates an empty group
+    /// list and attaches it to `id`. Returns the group number.
+    pub(crate) fn allocate_unit_list(&mut self, id: UnitId) -> Option<u32> {
+        let slot = self.lookup(id)?;
         let group_id = self.groups.len() as u32;
-        self.groups.push(Some(vec![leader]));
-        if let Some(slot) = self.lookup(leader) {
+        self.groups.push(Some(Vec::new()));
+        if let Some(entry) = self.unit_group.get_mut(slot) {
+            *entry = Some(group_id);
+        }
+        Some(group_id)
+    }
+
+    /// `UnitInfo::AssignUnitList` (`unitinfo.cpp:1896`): attaches `id` to the group
+    /// of `leader` and appends it at the **back**, so the leader stays the head.
+    /// When the leader has no group yet, the list is allocated first.
+    ///
+    /// C++ overwrites the old list pointer without removing the unit from the old
+    /// list; every caller clears the unit first (`Access_MultiSelect`,
+    /// `GameManager_UpdateSelection`). The port detaches here as well, so a missed
+    /// `ClearUnitList` cannot leave a ghost member in another group.
+    pub(crate) fn assign_unit_list(&mut self, id: UnitId, leader: UnitId) {
+        if !self.has_unit(id) || !self.has_unit(leader) {
+            return;
+        }
+
+        if id != leader {
+            self.clear_group_pointer(id);
+        }
+
+        let group_id = match self.unit_group_of(leader) {
+            Some(group_id) => group_id,
+            None => match self.allocate_unit_list(leader) {
+                Some(group_id) => {
+                    if let Some(Some(group)) = self.groups.get_mut(group_id as usize) {
+                        group.push(leader);
+                    }
+                    group_id
+                }
+                None => return,
+            },
+        };
+
+        if let Some(slot) = self.lookup(id) {
             if let Some(entry) = self.unit_group.get_mut(slot) {
                 *entry = Some(group_id);
             }
-        }
-        group_id
-    }
-
-    /// Assigns a unit to a group (`UnitInfo::AssignUnitList`).
-    #[cfg(test)]
-    pub fn assign_group_member(&mut self, id: UnitId, group_id: u32) {
-        if !self.has_unit(id) {
-            return;
-        }
-        let Some(slot) = self.lookup(id) else { return };
-        if let Some(entry) = self.unit_group.get_mut(slot) {
-            *entry = Some(group_id);
         }
         if let Some(Some(group)) = self.groups.get_mut(group_id as usize) {
             if !group.contains(&id) {
@@ -1422,8 +1477,26 @@ impl GameState {
         }
     }
 
-    /// `UnitInfo::ClearUnitList` — removes a unit from the group list.
-    pub fn clear_group_member(&mut self, id: UnitId) {
+    /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`): the selected member
+    /// becomes the head — the group leader (`game_manager.cpp:7242`).
+    pub(crate) fn move_to_front_in_group_list(&mut self, id: UnitId) {
+        let Some(group_id) = self.unit_group_of(id) else {
+            return;
+        };
+        if let Some(Some(group)) = self.groups.get_mut(group_id as usize) {
+            group.retain(|member| *member != id);
+            group.insert(0, id);
+        }
+    }
+
+    /// Group number of the unit (`UnitInfo::unit_list`), without cloning the list.
+    fn unit_group_of(&self, id: UnitId) -> Option<u32> {
+        let slot = self.lookup(id)?;
+        self.unit_group.get(slot).copied().flatten()
+    }
+
+    /// Drops only the unit → group link (no list bookkeeping).
+    fn clear_group_pointer(&mut self, id: UnitId) {
         let Some(slot) = self.lookup(id) else { return };
         let Some(group_id) = self.unit_group.get(slot).copied().flatten() else {
             return;
@@ -1432,14 +1505,62 @@ impl GameState {
             *entry = None;
         }
         if let Some(group) = self.groups.get_mut(group_id as usize) {
-            match group {
-                Some(members) => {
-                    members.retain(|member| *member != id);
-                    if members.is_empty() {
-                        *group = None;
-                    }
+            if let Some(members) = group {
+                members.retain(|member| *member != id);
+                if members.is_empty() {
+                    *group = None;
                 }
-                None => {}
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Group lists — legacy test helpers
+    // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Group lists — cascade
+    // -----------------------------------------------------------------------
+
+    /// `UnitInfo::ClearUnitList` (`unitinfo.cpp:1908-1923`): removes the unit from
+    /// its group list.
+    ///
+    /// The oracle cascade is kept: a group that shrinks to a single member dissolves
+    /// (`(*unit_list->Begin()).ClearUnitList()`), and a group with two or more
+    /// survivors runs the group-order barrier (`Access_ProcessNewGroupOrder(this)`),
+    /// which may start or block the running group order. The cleared unit's
+    /// [group_speed](crate::unit::UnitInfo::group_speed) drops to zero, as in C++.
+    pub fn clear_group_member(&mut self, id: UnitId) {
+        let Some(slot) = self.lookup(id) else { return };
+        let Some(group_id) = self.unit_group.get(slot).copied().flatten() else {
+            return;
+        };
+        if let Some(entry) = self.unit_group.get_mut(slot) {
+            *entry = None;
+        }
+
+        let mut survivors: Vec<UnitId> = Vec::new();
+        if let Some(group) = self.groups.get_mut(group_id as usize) {
+            if let Some(members) = group {
+                members.retain(|member| *member != id);
+                survivors = members.clone();
+                if members.is_empty() {
+                    *group = None;
+                }
+            }
+        }
+
+        if let Some(unit) = self.unit(id) {
+            let mut unit = unit.clone();
+            unit.group_speed = 0;
+            self.write_unit(id, unit);
+        }
+
+        match survivors.len() {
+            0 => {}
+            1 => self.clear_group_member(survivors[0]),
+            _ => {
+                crate::access::process_new_group_order(self, survivors[0]);
             }
         }
     }

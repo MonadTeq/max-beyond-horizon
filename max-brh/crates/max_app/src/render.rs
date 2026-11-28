@@ -2406,6 +2406,19 @@ impl<D: Dispatcher> App<D> {
         stats.overlay_pixels += crate::overlays::draw_range_scan(frame, self, viewport, &palette);
     }
 
+    /// `COLOR_YELLOW` of the multi-selection overlays — the member frames
+    /// (`DrawMap_RenderColorsDisplay`, `drawmap.cpp:674-690`) and the rectangle
+    /// (`GameManager_RenderMultiSelectIndicator`, `game_manager.cpp:997-1035`).
+    ///
+    /// The palette index has no RGB of its own; without assets (headless/demo/tests)
+    /// the DOS yellow is used so the selection stays visible.
+    fn group_overlay_color(&self) -> max_render::buffer::Rgba {
+        match self.assets().and_then(UiPalette::from_assets) {
+            Some(palette) => palette.rgba(crate::overlays::COLOR_YELLOW),
+            None => max_render::buffer::Rgba::from_rgb([255, 255, 0]),
+        }
+    }
+
     fn draw_units(
         &self,
         frame: &mut RgbaBuffer,
@@ -2482,6 +2495,17 @@ impl<D: Dispatcher> App<D> {
         // `UnitInfoGroup::RenderGroups` (`unitinfogroup.cpp:181-237`): the group
         // layers first, then the cell order — so the aircraft groups are drawn
         // after every ground/sea/stationary sprite of the frame.
+        //
+        // Yellow frames of the multi-selection: every member of the selected
+        // unit's group (`GameManager_SelectedUnit->GetUnitList()`,
+        // `DrawMap_RenderColorsDisplay(unit)`, `drawmap.cpp:802-806/674-690`).
+        let selected_group: Vec<max_core::unit::UnitId> = self
+            .hud()
+            .selected
+            .and_then(|id| self.state_ref().group_members_of(id))
+            .unwrap_or_default();
+        let group_color = self.group_overlay_color();
+
         for index in draw_order_layered(&positions, &layers) {
             let Some(unit) = self.state_ref().unit(visible[index]) else {
                 continue;
@@ -2650,6 +2674,34 @@ impl<D: Dispatcher> App<D> {
                 {
                     stats.selector_units += 1;
                 }
+            } else if selected_group.contains(&visible[index]) {
+                // A group member: the 1-px yellow frame of
+                // `DrawMap_RenderColorsDisplay(unit)` (`drawmap.cpp:674-690`).
+                if crate::overlays::draw_group_member_frame(
+                    frame,
+                    viewport,
+                    unit,
+                    (grid_x, grid_y),
+                    group_color,
+                ) > 0
+                {
+                    stats.selector_units += 1;
+                }
+            }
+        }
+
+        // The rectangle selection frame over the sprites —
+        // `GameManager_RenderMultiSelectIndicator` (`game_manager.cpp:997-1035`),
+        // drawn by the frame loop while `GameManager_RenderState == 2`.
+        if let Some(drag) = self.hud().multi_select_frame() {
+            if let Some(bounds) = drag.bounds() {
+                stats.overlay_pixels += crate::overlays::draw_multi_select_frame(
+                    frame,
+                    viewport,
+                    bounds.0,
+                    bounds.1,
+                    group_color,
+                );
             }
         }
 

@@ -253,6 +253,7 @@ pub(crate) fn apply_command(state: &mut GameState, command: &Command) -> ApplyOu
         Command::UpgradeUnitType(upgrade) => apply_packet_10(state, upgrade),
         Command::UpgradeUnit(upgrade) => apply_packet_20(state, upgrade),
         Command::Rename(rename) => apply_packet_43(state, rename),
+        Command::GroupSelect(select) => apply_packet_57(state, select),
         Command::Seed(seed) => {
             // Packet 13 is the only simulation seeding point
             // (DESIGN §6.1). C++ stores the seed in `Remote_RngSeed` and applies it
@@ -340,6 +341,14 @@ fn apply_packet_08(state: &mut GameState, packet: &Packet08Order) -> ApplyOutcom
 
     if connectors_due {
         crate::complex::update_connectors(state, packet.unit);
+    }
+
+    // `GameManager_SetUnitOrder` (`game_manager.cpp:4183-4185`): a boarding order
+    // (`ORDER_MOVE_TO_UNIT`) breaks the group. C++ does it in the player-order
+    // helper before `UnitsManager_SetNewOrder`; the port does it while applying
+    // the resulting command, so **every** lockstep peer drops the group.
+    if packet.payload.order() == Some(UnitOrder::MoveToUnit) {
+        crate::access::clear_unit_group(state, packet.unit);
     }
 
     // The port places the site at order time (`DeployConstructionSiteUtilities` +
@@ -1022,6 +1031,45 @@ fn apply_packet_12(
     state.teams[packet.team.0 as usize].stats_gold_spent_on_upgrades =
         packet.gold_spent_on_upgrades;
     state.mission_supplies[packet.team.0 as usize] = Some(packet.clone());
+    ApplyOutcome::Applied
+}
+
+/// Packet **57** — group selection (BRH extension, see
+/// [`crate::input::Packet57GroupSelect`]).
+///
+/// The oracle's group list is local player input; the port runs one deterministic
+/// lockstep simulation on every peer, so the selection itself is replayed here:
+/// the rectangle (`Access_MultiSelect`), the Shift+click toggle
+/// (`GameManager_UpdateSelection`) and the "selected unit becomes the group leader"
+/// step (`GameManager_MenuUnitSelect` → `UnitInfo::MoveToFrontInUnitList`).
+fn apply_packet_57(
+    state: &mut GameState,
+    packet: &crate::input::Packet57GroupSelect,
+) -> ApplyOutcome {
+    use crate::input::GroupSelectMode;
+
+    if !is_valid_team_index(packet.team) {
+        return ApplyOutcome::Ignored;
+    }
+
+    match packet.mode {
+        GroupSelectMode::Box => {
+            crate::access::multi_select(state, packet.team, packet.unit, packet.upper, packet.lower);
+        }
+        GroupSelectMode::Toggle => {
+            crate::access::toggle_group_member(state, packet.team, packet.unit, packet.member);
+        }
+        GroupSelectMode::SelectUnit => {
+            // Only the owner may reorder its own group (`GameManager_MenuUnitSelect`
+            // runs on the unit's owner), so a foreign unit is ignored.
+            if let Some(id) = packet.unit {
+                if state.unit(id).is_some_and(|unit| unit.team == packet.team) {
+                    state.move_to_front_in_group_list(id);
+                }
+            }
+        }
+    }
+
     ApplyOutcome::Applied
 }
 

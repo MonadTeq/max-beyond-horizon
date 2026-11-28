@@ -115,6 +115,101 @@ fn draw_color_frame(frame: &mut RgbaBuffer, rect: PixelRect, color: Rgba) -> u32
     painted
 }
 
+/// The `COLOR_YELLOW` multi-selection frame around one group member —
+/// `DrawMap_RenderUnit` (`drawmap.cpp:802-806`) →
+/// `DrawMap_RenderColorsDisplay(unit)` (`drawmap.cpp:674-690`).
+///
+/// The oracle frame is anchored on `unit->x - 32` (the sprite center minus half a
+/// cell) with `size = Gfx_ZoomLevel - 2`, i.e. a full 1-px rectangle around the
+/// unit — **not** four corner brackets. A member of the selected unit's group gets
+/// it while the group list is shared with `GameManager_SelectedUnit`.
+pub fn draw_group_member_frame(
+    frame: &mut RgbaBuffer,
+    viewport: &Viewport,
+    unit: &UnitInfo,
+    visual: (f32, f32),
+    color: Rgba,
+) -> u32 {
+    let (world_x, world_y) = crate::render::unit_anchor_world(unit, visual);
+    let (screen_x, screen_y) = viewport.world_to_screen(world_x - 32, world_y - 32);
+    let ulx = screen_x + 1;
+    let uly = screen_y + 1;
+    let size = viewport.zoom() as i32 - 2;
+
+    if ulx + size < 0 || uly + size < 0 {
+        return 0;
+    }
+    if ulx >= frame.width() as i32 || uly >= frame.height() as i32 {
+        return 0;
+    }
+
+    draw_color_frame(
+        frame,
+        PixelRect::new(ulx, uly, size.max(0), size.max(0)),
+        color,
+    )
+}
+
+/// `GameManager_RenderMultiSelectIndicator` (`game_manager.cpp:997-1035`): the
+/// yellow frame of the rectangle selection.
+///
+/// The bounds are in map pixels (`GameManager_MultiSelectBounds`); the oracle draws
+/// each of the four lines only when that edge falls inside the map window and clips
+/// the line itself to the window (`map_ulx2..map_lrx2`, `:1013-1016`), which the
+/// buffer write does here.
+pub fn draw_multi_select_frame(
+    frame: &mut RgbaBuffer,
+    viewport: &Viewport,
+    upper: (i32, i32),
+    lower: (i32, i32),
+    color: Rgba,
+) -> u32 {
+    let (ulx, uly) = viewport.world_to_screen(upper.0, upper.1);
+    let (lrx, lry) = viewport.world_to_screen(lower.0, lower.1);
+    let width = frame.width() as i32;
+    let height = frame.height() as i32;
+    let mut painted = 0u32;
+
+    let clamp_x = |x: i32| x.clamp(0, width - 1);
+    let clamp_y = |y: i32| y.clamp(0, height - 1);
+
+    // The oracle enters the drawing only when the selection rectangle intersects
+    // the map window at all (`:1009-1012`).
+    if ulx > width - 1 || lrx < 0 || uly > height - 1 || lry < 0 {
+        return 0;
+    }
+
+    // Top edge (`:1018-1021`) — only when its own row is inside the window.
+    if uly >= 0 && uly < height {
+        for x in clamp_x(ulx)..=clamp_x(lrx) {
+            painted += u32::from(frame.set(x, uly, color));
+        }
+    }
+
+    // Right edge (`:1022-1025`).
+    if lrx >= 0 && lrx < width {
+        for y in clamp_y(uly)..=clamp_y(lry) {
+            painted += u32::from(frame.set(lrx, y, color));
+        }
+    }
+
+    // Bottom edge (`:1026-1029`).
+    if lry >= 0 && lry < height {
+        for x in clamp_x(ulx)..=clamp_x(lrx) {
+            painted += u32::from(frame.set(x, lry, color));
+        }
+    }
+
+    // Left edge (`:1030-1033`).
+    if ulx >= 0 && ulx < width {
+        for y in clamp_y(uly)..=clamp_y(lry) {
+            painted += u32::from(frame.set(ulx, y, color));
+        }
+    }
+
+    painted
+}
+
 /// Palette index of the team color by its slot — `TeamUnits::hash_team_id`
 /// (`resource_manager.cpp:969-981`).
 ///

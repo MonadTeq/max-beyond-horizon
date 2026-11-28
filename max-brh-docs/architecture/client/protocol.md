@@ -160,9 +160,23 @@ max_net (Rust) ──WS JSON (ws://, TCP 8081)──► Horizon (max-brh-server,
 | 68 | 52 | C→S (+пиры) | барьер конца хода: `team u16, counter u8` |
 | 69 | 53 | C→S (+пиры) | итоги баз на начало хода: `team u16, turn i32, count u16, count×(complex_id u16+6×i16)` |
 | 70 | 54 | C→S (+пиры) | синхронизация состояния юнитов: `team u16, sync_index u8, is_last bool, count u16, count×(unit_id u16 + Packet23Data) [+ командная статистика]` |
+| 71 | 55 | хост-режим (P2P) | heartbeat хоста — расширение BRH, транспортный пакет (`PLAN-host-mode.md`, `HOST_HEARTBEAT_PACKET_NUMBER`, `max_net::host`) |
+| 72 | 56 | хост-режим (P2P) | предложение/принятие/отказ takeover — расширение BRH (`PLAN-host-mode.md`, `HOST_TAKEOVER_PACKET_NUMBER`) |
+| 73 | 57 | C→S (+пиры) | выбор группы (рамка/Shift+клик) — расширение BRH: `team u16, mode u8 (0=рамка, 1=Shift, 2=сделать лидером), unit u16, member u16, upper_x i16, upper_y i16, lower_x i16, lower_y i16` (`Packet57GroupSelect`; оракул формирует группу локально, порту нужен детерминированный CRC) |
 
 Неиспользуемые/неопределённые номера APPL: 02–04, 15, 19, 21, 22, 25, 27
 (в `remote.hpp` они существуют как константы, но ни отправки, ни обработчика нет).
+
+**Пакет 57 — расширение порта.** Оракул формирует группу только локально
+(`Access_MultiSelect` из `GameManager_ProcessInput`, `game_manager.cpp:6518`) и
+передаёт лишь следствия (08/38 на каждого члена). Порт исполняет одну
+детерминированную симуляцию на всех пирах (барьер 45 сравнивает
+`snapshot_bytes`, куда входят таблицы групп), поэтому само **входное событие
+выбора** едет командой: каждый пир повторяет `Access_MultiSelect` /
+ветку Shift в `GameManager_UpdateSelection` / `MoveToFrontInUnitList` и
+получает те же `UnitGroup`, `group_speed` и приказы членов. C++ headless
+сервер такой пакет логирует как неизвестный и релеит без изменений
+(`remote.cpp`, ветка `default:`), собственную симуляцию он при этом не меняет.
 
 ## 4. Инварианты
 

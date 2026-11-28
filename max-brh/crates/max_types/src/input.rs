@@ -489,6 +489,72 @@ pub struct Packet43Rename {
     pub name: String,
 }
 
+/// Selection mode of [`Packet57GroupSelect`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GroupSelectMode {
+    /// Rectangle selection — `Access_MultiSelect` (`access.cpp:2177-2253`),
+    /// called on the left-button release (`game_manager.cpp:6513-6525`).
+    Box = 0,
+    /// Shift+click add/remove — the `GameManager_IsShiftKeyPressed` branch of
+    /// `GameManager_UpdateSelection` (`game_manager.cpp:6303-6325`).
+    Toggle = 1,
+    /// The selected unit goes to the head of its group —
+    /// `UnitInfo::MoveToFrontInUnitList` (`unitinfo.cpp:1926`) from
+    /// `GameManager_MenuUnitSelect` (`game_manager.cpp:7241-7243`).
+    SelectUnit = 2,
+}
+
+impl GroupSelectMode {
+    /// Decodes the wire byte (`None` — unknown mode).
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Box),
+            1 => Some(Self::Toggle),
+            2 => Some(Self::SelectUnit),
+            _ => None,
+        }
+    }
+}
+
+/// Packet **57** — unit group selection (a BRH port extension).
+///
+/// The original forms the group locally: `Access_MultiSelect` runs in the
+/// player's `GameManager_ProcessInput` (`game_manager.cpp:6518`) and the group
+/// list (`UnitInfo::unit_list`) is never transmitted — only its effects travel
+/// (`Access_UpdateMultiSelection` sends packet **38** per member,
+/// `access.cpp:2384-2386`; a group order sends packet **08** per member).
+///
+/// The port runs one deterministic lockstep simulation on every peer and its
+/// snapshot/CRC barrier requires the same group tables everywhere, so the
+/// *selection input* is a command: every peer replays the same
+/// `Access_MultiSelect`/`GameManager_UpdateSelection`/`MoveToFrontInUnitList`
+/// and derives the same `UnitGroup`, `group_speed` and member orders.
+///
+/// The packet has no counterpart in the oracle's `REMOTE_PACKET_*` enumeration
+/// (which ends at 52); 53/54 are the fork's complex summary and state sync, and
+/// 55/56 are reserved by the host-mode extensions (`HOST_HEARTBEAT_PACKET_NUMBER`,
+/// `HOST_TAKEOVER_PACKET_NUMBER`, `max_net::host`). The C++ headless server logs it
+/// as an unknown packet and relays it unchanged (`remote.cpp`, `default:` branch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Packet57GroupSelect {
+    /// `team u16` — the player whose units are selected.
+    pub team: TeamId,
+    /// `mode u8` — see [`GroupSelectMode`].
+    pub mode: GroupSelectMode,
+    /// `unit u16` — the unit selected before the drag (box, the group anchor —
+    /// `GameManager_SelectedUnit`) or the selected/clicked unit
+    /// (`SelectUnit`, `Toggle`); 0 — no unit.
+    pub unit: Option<crate::unit::UnitId>,
+    /// `member u16` — the clicked unit of a Shift+click (`unit2`); 0 — none.
+    pub member: Option<crate::unit::UnitId>,
+    /// `upper_x/upper_y i16` — one corner of the frame in map pixels
+    /// (`GameManager_MultiSelectBounds` upper-left).
+    pub upper: Point,
+    /// `lower_x/lower_y i16` — the other corner in map pixels.
+    pub lower: Point,
+}
+
 /// Packet **13** — RNG seed (the only seeding point of the simulation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Packet13Seed {
@@ -572,6 +638,8 @@ pub enum PacketKind {
     MoveFinished = 0x29,
     /// Rename.
     Rename = 0x2B,
+    /// Group selection (BRH extension, no oracle packet).
+    GroupSelect = 0x39,
     /// CRC barrier.
     CrcBarrier = 0x2D,
     /// Emergency stop.
@@ -619,6 +687,8 @@ pub enum Command {
     UpgradeUnit(Packet20UpgradeUnit),
     /// 43.
     Rename(Packet43Rename),
+    /// 55 — group selection (BRH extension).
+    GroupSelect(Packet57GroupSelect),
     /// 13.
     Seed(Packet13Seed),
     /// 14.
@@ -647,6 +717,7 @@ impl Command {
             Self::UpgradeUnitType(_) => PacketKind::UpgradeUnitType,
             Self::UpgradeUnit(_) => PacketKind::UpgradeUnit,
             Self::Rename(_) => PacketKind::Rename,
+            Self::GroupSelect(_) => PacketKind::GroupSelect,
             Self::Seed(_) => PacketKind::Seed,
             Self::Deploy(_) => PacketKind::DeployUnit,
             Self::MissionSupply(_) => PacketKind::MissionSupply,

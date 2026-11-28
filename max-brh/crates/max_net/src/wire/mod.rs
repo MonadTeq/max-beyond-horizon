@@ -47,8 +47,9 @@ use max_types::unit::UnitId;
 pub const TRANSPORT_APPL_PACKET_ID: u8 = 0x50;
 /// `TRANSPORT_MAX_PACKET_SIZE` — maximum ENet application payload.
 pub const MAX_PACKET_SIZE: usize = 1440;
-/// Highest defined APPL number in this crate (packet 54 → type `0x86`).
-pub const MAX_APPL_PACKET_NUMBER: u8 = 0x36;
+/// Highest APPL number this crate dispatches as a command (packet 57 → type
+/// `0x89`). Numbers 55/56 belong to the host-mode extensions (`max_net::host`).
+pub const MAX_APPL_PACKET_NUMBER: u8 = 0x39;
 
 /// One decoded APPL packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,7 +202,7 @@ impl Packet {
         match kind {
             // Commands (max_types::input::Command).
             0x00 | 0x01 | 0x06 | 0x08 | 0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x12 | 0x14
-            | 0x26 | 0x29 | 0x2B | 0x2D | 0x32 | 0x34 | 0x35 => {
+            | 0x26 | 0x29 | 0x2B | 0x2D | 0x32 | 0x34 | 0x35 | 0x39 => {
                 Ok(Self::Command(command::decode_command(kind, r)?))
             }
             // Lobby.

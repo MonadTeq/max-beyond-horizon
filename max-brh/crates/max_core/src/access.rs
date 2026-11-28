@@ -1492,10 +1492,436 @@ fn path_is_in_path(unit: &UnitInfo, grid: Point) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Group orders (`UnitInfoGroup`)
+// Group selection and group orders (`UnitInfoGroup`)
 // ---------------------------------------------------------------------------
 
-/// `Access_ProcessGroupAirPath` (`access.cpp`): the air path of a group member.
+/// `MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT` — the group member mask
+/// of `Access_MultiSelect` (`access.cpp:2190`).
+pub const MOBILE_UNIT_MASK: u32 = MOBILE_AIR_UNIT | MOBILE_SEA_UNIT | MOBILE_LAND_UNIT;
+
+/// Maximum number of units in a group — `unit_count >= 10`
+/// (`Access_MultiSelect`, `access.cpp:2234`); the same limit guards the Shift+click
+/// add (`units->GetCount() < 10`, `game_manager.cpp:6319`).
+pub const UNIT_GROUP_LIMIT: usize = 10;
+
+/// Cell rectangle of a multi-selection: `(bounds.ulx + 16) / 64 … (bounds.lrx - 16) / 64`
+/// (`access.cpp:2183-2186`). Both corners are inclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SelectionCells {
+    pub(crate) ulx: i32,
+    pub(crate) uly: i32,
+    pub(crate) lrx: i32,
+    pub(crate) lry: i32,
+}
+
+impl SelectionCells {
+    /// `Access_MultiSelect` cell conversion for a rectangle given in map pixels.
+    pub(crate) fn from_bounds(upper: Point, lower: Point) -> Self {
+        let ulx = upper.x.min(lower.x);
+        let uly = upper.y.min(lower.y);
+        let lrx = upper.x.max(lower.x);
+        let lry = upper.y.max(lower.y);
+
+        Self {
+            ulx: trunc_div(i32::from(ulx) + 16, 64),
+            uly: trunc_div(i32::from(uly) + 16, 64),
+            lrx: trunc_div(i32::from(lrx) - 16, 64),
+            lry: trunc_div(i32::from(lry) - 16, 64),
+        }
+    }
+
+    pub(crate) fn contains(&self, grid: Point) -> bool {
+        i32::from(grid.x) >= self.ulx
+            && i32::from(grid.x) <= self.lrx
+            && i32::from(grid.y) >= self.uly
+            && i32::from(grid.y) <= self.lry
+    }
+}
+
+/// C++ integer division (truncation toward zero) — `bounds` may be a few pixels
+/// outside the map window, so `(x - 16) / 64` can be negative.
+fn trunc_div(value: i32, divisor: i32) -> i32 {
+    value / divisor
+}
+
+/// `ORDER_DISABLE`, or `ORDER_IDLE` with a prior `ORDER_DISABLE` — the
+/// "unit is switched off" test of `Access_MultiSelect` (`access.cpp:2193-2194`)
+/// and of the Shift+click branch (`game_manager.cpp:6305-6306`).
+fn is_disabled_unit(unit: &UnitInfo) -> bool {
+    unit.orders == UnitOrder::Disable
+        || (unit.orders == UnitOrder::Idle && unit.prior_orders == UnitOrder::Disable)
+}
+
+/// `Access_MultiSelect` (`access.cpp:2177-2253`): the rectangle selection.
+///
+/// * the anchor — the unit selected before the drag: own, mobile,
+///   `EXECUTING_ORDER`, inside the frame, not disabled; it becomes the group
+///   leader;
+/// * members — own mobile units in `EXECUTING_ORDER`/`READY_TO_EXECUTE_ORDER`,
+///   not disabled, taken out of their old groups;
+/// * the limit is [`UNIT_GROUP_LIMIT`]; a frame that resolves to a single unit
+///   does **not** create a group;
+/// * the members get the formation snapshot
+///   ([`update_multi_selection`]: `ORDER_AWAIT`, `move_to = attack_site = own cell`).
+///
+/// Returns the unit the selection must focus (`GameManager_MenuUnitSelect(parent)`,
+/// `access.cpp:2249-2251`), i.e. the group leader.
+///
+/// Port divergence: the oracle's `AssignUnitList` pushes the anchor a **second**
+/// time when the frame scan reaches it (`parent->AssignUnitList(parent)` appends
+/// `parent` to the list it just allocated), which occupies a phantom list slot.
+/// The port keeps one entry per unit; the counted `unit_count` — and therefore
+/// the frame limit — is the same in both models.
+pub(crate) fn multi_select(
+    state: &mut GameState,
+    team: TeamId,
+    anchor: Option<UnitId>,
+    upper: Point,
+    lower: Point,
+) -> Option<UnitId> {
+    let selection = SelectionCells::from_bounds(upper, lower);
+    let mut parent: Option<UnitId> = None;
+    let mut unit_count = 0usize;
+
+    if let Some(id) = anchor {
+        if let Some(unit) = state.unit(id) {
+            if unit.team == team
+                && unit.flags & MOBILE_UNIT_MASK != 0
+                && unit.state == UnitOrderState::ExecutingOrder
+                && selection.contains(unit.grid)
+                && !is_disabled_unit(unit)
+            {
+                parent = Some(id);
+                clear_unit_group(state, id);
+                state.allocate_unit_list(id);
+                unit_count = 1;
+            }
+        }
+    }
+
+    'scan: for y in selection.uly..=selection.lry {
+        for x in selection.ulx..=selection.lrx {
+            let Some(id) = get_team_unit(state, Point::new(x as i16, y as i16), team, MOBILE_UNIT_MASK)
+            else {
+                continue;
+            };
+            let Some(unit) = state.unit(id) else { continue };
+
+            if !matches!(
+                unit.state,
+                UnitOrderState::ExecutingOrder | UnitOrderState::ReadyToExecuteOrder
+            ) || is_disabled_unit(unit)
+            {
+                continue;
+            }
+
+            clear_unit_group(state, id);
+
+            if parent.is_none() {
+                state.allocate_unit_list(id);
+                parent = Some(id);
+                unit_count += 1;
+            }
+
+            if let Some(leader) = parent {
+                state.assign_unit_list(id, leader);
+            }
+
+            if parent != Some(id) {
+                unit_count += 1;
+            }
+
+            // `limit_reached` in the oracle stops the whole scan.
+            if unit_count >= UNIT_GROUP_LIMIT {
+                break 'scan;
+            }
+        }
+    }
+
+    let parent = parent?;
+
+    if unit_count > 0 {
+        if unit_count == 1 {
+            // `if (unit_count == 1) parent->ClearUnitList();` — a single unit is
+            // a plain selection, not a group.
+            clear_unit_group(state, parent);
+        } else {
+            update_multi_selection(state, parent);
+        }
+
+        // `if (parent != unit) GameManager_MenuUnitSelect(parent);`
+        // (`access.cpp:2249-2251`) — the HUD report of the focused leader.
+        state.last_group_leader = Some(parent);
+
+        Some(parent)
+    } else {
+        None
+    }
+}
+
+/// `Access_UpdateMultiSelection` (`access.cpp:2370-2388`): the leader goes to the
+/// head, every member waits in place and remembers its own cell as the formation
+/// slot (`move_to = attack_site = grid`, path dropped).
+pub(crate) fn update_multi_selection(state: &mut GameState, leader: UnitId) {
+    state.move_to_front_in_group_list(leader);
+
+    let Some(members) = state.group_members(leader) else {
+        return;
+    };
+
+    for id in members {
+        let Some(mut unit) = state.unit(id).cloned() else {
+            continue;
+        };
+
+        unit.orders = UnitOrder::Await;
+        unit.attack_site = unit.grid;
+        unit.path = None;
+
+        let mut data = state.order_data(id);
+        data.move_to = unit.grid;
+        unit.target_grid = unit.grid;
+        state.set_order_data(id, data);
+        state.write_unit(id, unit);
+    }
+}
+
+/// The Shift+click branch of `GameManager_UpdateSelection`
+/// (`game_manager.cpp:6303-6325`):
+///
+/// * `unit2` is the head of a group led by `unit1` — the member leaves the group;
+/// * otherwise both must be own enabled mobile units in `EXECUTING_ORDER`, and a
+///   group with fewer than [`UNIT_GROUP_LIMIT`] members accepts the new one, which
+///   is re-snapshotted ([`update_multi_selection`]).
+///
+/// `unit1` is the selected unit (the leader), `unit2` the clicked one.
+pub(crate) fn toggle_group_member(
+    state: &mut GameState,
+    team: TeamId,
+    unit1: Option<UnitId>,
+    unit2: Option<UnitId>,
+) {
+    let (Some(unit1), Some(unit2)) = (unit1, unit2) else {
+        return;
+    };
+    let (Some(first), Some(second)) = (state.unit(unit1).cloned(), state.unit(unit2).cloned()) else {
+        return;
+    };
+
+    if second.team != team
+        || is_disabled_unit(&second)
+        || first.team != team
+        || is_disabled_unit(&first)
+    {
+        return;
+    }
+
+    // `if (unit2->GetFirstFromUnitList() == unit1) { unit2->ClearUnitList(); }` —
+    // the clicked unit is the head of the selected unit's group: it leaves (for
+    // `unit1 == unit2` this dissolves the whole group, the oracle's `unit2` is
+    // `unit1` itself there).
+    if state.group_leader(unit2) == Some(unit1) {
+        clear_unit_group(state, unit2);
+        state.last_group_leader = Some(unit1);
+        return;
+    }
+
+    if unit1 == unit2 {
+        return;
+    }
+
+    let both_mobile = second.flags & MOBILE_UNIT_MASK != 0 && first.flags & MOBILE_UNIT_MASK != 0;
+    let both_executing = first.state == UnitOrderState::ExecutingOrder
+        && second.state == UnitOrderState::ExecutingOrder;
+
+    if both_mobile && both_executing && state.group_member_count(unit1) < UNIT_GROUP_LIMIT {
+        clear_unit_group(state, unit2);
+        state.assign_unit_list(unit2, unit1);
+        update_multi_selection(state, unit1);
+        state.last_group_leader = Some(unit1);
+    }
+}
+
+/// `Access_UpdateGroupSpeed` (`access.cpp:1195-1216`): the group's movement
+/// budget is `min(speed) + 1` of its members.
+///
+/// Returns `false` while a member is still moving (`ORDER_MOVE`/`ORDER_MOVE_TO_ATTACK`
+/// in `IN_PROGRESS`/`IN_TRANSITION`/`NEW_ORDER`) — the group order is not issued
+/// then. `min(speed) + 1` is written to **every** member; the members spend it as
+/// one budget ([`crate::unit_order::paths_calculate_step`]).
+pub(crate) fn update_group_speed(state: &mut GameState, leader: UnitId) -> bool {
+    let Some(members) = state.group_members(leader) else {
+        return false;
+    };
+
+    let mut max_speed = i32::MAX - 1;
+
+    for id in &members {
+        let Some(unit) = state.unit(*id) else { continue };
+        if matches!(unit.orders, UnitOrder::Move | UnitOrder::MoveToAttack)
+            && matches!(
+                unit.state,
+                UnitOrderState::InProgress
+                    | UnitOrderState::InTransition
+                    | UnitOrderState::NewOrder
+            )
+        {
+            return false;
+        }
+        if i32::from(unit.speed) < max_speed {
+            max_speed = i32::from(unit.speed);
+        }
+    }
+
+    for id in &members {
+        if let Some(mut unit) = state.unit(*id).cloned() {
+            unit.group_speed = (max_speed + 1).clamp(1, i32::from(u16::MAX)) as u16;
+            state.write_unit(*id, unit);
+        }
+    }
+
+    true
+}
+
+/// `Access_GroupAttackOrder` (`access.cpp:1218-1289`): a group order is issued to
+/// the leader only and expanded to the members.
+///
+/// * attack order (`ORDER_MOVE_TO_ATTACK`): every armed member that can hit the
+///   leader's enemy gets `move_to = leader.move_to`, the enemy and a new
+///   `ORDER_MOVE_TO_ATTACK`/`NEW_ORDER` order;
+/// * move order: the member target is `member.attack_site − leader.attack_site +
+///   leader.move_to`, clamped to the map — the formation stays. Members that would
+///   not move keep their order; air members are parked as the pending air group
+///   leader (`UnitsManager_PendingAirGroupLeader`), the rest request a path with
+///   `AccessModifier_EnemySameClassBlocks`.
+pub(crate) fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
+    if !update_group_speed(state, leader) {
+        return;
+    }
+
+    let Some(group) = state.group_members(leader) else {
+        return;
+    };
+    let Some(leader_unit) = state.unit(leader).cloned() else {
+        return;
+    };
+    let leader_data = state.order_data(leader);
+
+    let enemy = if leader_unit.orders == UnitOrder::MoveToAttack {
+        leader_unit.enemy_unit
+    } else {
+        None
+    };
+
+    let map_width = i32::from(state.map.size.width);
+    let map_height = i32::from(state.map.size.height);
+
+    for id in group {
+        let Some(friendly) = state.unit(id).cloned() else {
+            continue;
+        };
+
+        // `(mode || (friendly->group_speed - 1) != 0)`: a member that already
+        // spent its whole budget is skipped unless this is the first order.
+        if !(mode || friendly.group_speed.saturating_sub(1) != 0) {
+            continue;
+        }
+
+        if !matches!(
+            friendly.orders,
+            UnitOrder::Move | UnitOrder::MoveToAttack | UnitOrder::Await
+        ) {
+            continue;
+        }
+
+        if leader_unit.orders == UnitOrder::MoveToAttack {
+            let Some(enemy_id) = enemy else { continue };
+            let Some(enemy_unit) = state.unit(enemy_id) else {
+                continue;
+            };
+
+            if friendly
+                .base_values
+                .get_attribute(crate::unit_values::ATTRIB_ATTACK)
+                != 0
+                && is_valid_attack_target(state, &friendly, enemy_unit)
+            {
+                let mut unit = friendly;
+                unit.group_speed = 0;
+                unit.enemy_unit = Some(enemy_id);
+
+                let mut data = state.order_data(id);
+                data.move_to = leader_data.move_to;
+                data.fire_on = leader_data.move_to;
+                unit.target_grid = leader_data.move_to;
+                state.set_order_data(id, data);
+
+                unit_order::set_new_order_int(
+                    &mut unit,
+                    UnitOrder::MoveToAttack,
+                    UnitOrderState::NewOrder,
+                );
+                state.write_unit(id, unit);
+                crate::pathfinding::request_path(state, id, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
+            }
+        } else {
+            let target = Point::new(
+                (i32::from(friendly.attack_site.x) - i32::from(leader_unit.attack_site.x)
+                    + i32::from(leader_data.move_to.x))
+                .clamp(0, map_width - 1) as i16,
+                (i32::from(friendly.attack_site.y) - i32::from(leader_unit.attack_site.y)
+                    + i32::from(leader_data.move_to.y))
+                .clamp(0, map_height - 1) as i16,
+            );
+
+            let mut unit = friendly;
+            let mut data = state.order_data(id);
+            data.move_to = target;
+            unit.target_grid = target;
+            state.set_order_data(id, data);
+
+            if unit.grid != target {
+                unit.path = None;
+
+                if unit.orders == UnitOrder::MoveToAttack {
+                    unit.orders = UnitOrder::Await;
+                    unit.state = UnitOrderState::ExecutingOrder;
+                }
+
+                if unit.is_air() {
+                    unit_order::set_new_order_int(
+                        &mut unit,
+                        UnitOrder::Move,
+                        UnitOrderState::NewOrder,
+                    );
+                    state.write_unit(id, unit);
+                    state.pending_air_group_leader = Some(id);
+                } else {
+                    state.write_unit(id, unit);
+                    if crate::pathfinding::request_path(
+                        state,
+                        id,
+                        ACCESS_MODIFIER_ENEMY_SAME_CLASS_BLOCKS,
+                    ) {
+                        if let Some(mut unit) = state.unit(id).cloned() {
+                            unit_order::set_new_order_int(
+                                &mut unit,
+                                UnitOrder::Move,
+                                UnitOrderState::NewOrder,
+                            );
+                            state.write_unit(id, unit);
+                        }
+                    }
+                }
+            } else {
+                state.write_unit(id, unit);
+            }
+        }
+    }
+}
+
+/// `Access_ProcessGroupAirPath` (`access.cpp:2255`): the air path of a group
+/// member; a failure blocks the member and dissolves its group.
 pub(crate) fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool {
     let Some(unit) = state.unit(id).cloned() else {
         return false;
@@ -1515,11 +1941,13 @@ pub(crate) fn process_group_air_path(state: &mut GameState, id: UnitId) -> bool 
     true
 }
 
-/// `Access_ProcessNewGroupOrder` (`access.cpp:2321`).
+/// `Access_ProcessNewGroupOrder` (`access.cpp:2321-2368`): the start barrier of a
+/// group order — **no** member starts before every member has a route.
 ///
-/// In C++ a group is a `SmartList<UnitInfo>`; here — `GameState::groups`.
-/// Returns `false` if the path is still being built (the leader stays in
-/// `PendingAirGroupLeader`), `true` if the group order is allowed.
+/// Returns `false` while a member is still waiting for its path (or has just been
+/// given its air path), `true` when the whole group may start: then every member in
+/// `NEW_ORDER` moves to `ISSUING_PATH` (the next order pass makes it
+/// `IN_PROGRESS`).
 pub(crate) fn process_new_group_order(state: &mut GameState, leader: UnitId) -> bool {
     let Some(group) = state.group_members(leader) else {
         return false;
@@ -1534,21 +1962,19 @@ pub(crate) fn process_new_group_order(state: &mut GameState, leader: UnitId) -> 
                 }
                 return false;
             }
+            // A member died while waiting: it leaves the group.
             clear_unit_group(state, id);
         }
     }
 
+    let Some(group) = state.group_members(leader) else {
+        return false;
+    };
+
     for id in group {
-        let Some(unit) = state.unit(id) else { continue };
-        if unit.state == UnitOrderState::NewOrder {
-            let result =
-                crate::pathfinding::request_path(state, id, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
-            if let Some(mut unit) = state.unit(id).cloned() {
-                unit.state = if result {
-                    UnitOrderState::MoveGettingPath
-                } else {
-                    UnitOrderState::IssuingPath
-                };
+        if let Some(mut unit) = state.unit(id).cloned() {
+            if unit.state == UnitOrderState::NewOrder {
+                unit.state = UnitOrderState::IssuingPath;
                 state.write_unit(id, unit);
             }
         }
@@ -1562,38 +1988,22 @@ pub(crate) fn process_new_group_order(state: &mut GameState, leader: UnitId) -> 
 #[cfg(test)]
 pub(crate) fn assign_unit_group(state: &mut GameState, leader: UnitId, members: &[UnitId]) -> u32 {
     clear_unit_group(state, leader);
-    let group_id = state.create_group_with_leader(leader);
+    let group_id = state
+        .allocate_unit_list(leader)
+        .expect("the leader leads a group");
+    if let Some(Some(group)) = state.groups.get_mut(group_id as usize) {
+        group.push(leader);
+    }
     for id in members {
-        state.assign_group_member(*id, group_id);
+        state.assign_unit_list(*id, leader);
     }
     group_id
 }
 
-/// `UnitInfo::ClearUnitList` — remove a unit from a group list.
+/// `UnitInfo::ClearUnitList` — remove a unit from a group list (the full cascade
+/// lives in [`GameState::clear_group_member`]).
 pub(crate) fn clear_unit_group(state: &mut GameState, id: UnitId) {
     state.clear_group_member(id);
-}
-
-/// `Access_GroupAttackOrder` (`access.cpp`): a group attack order. In C++
-/// it walks the group list; here — only member routes (without `Ai_*`).
-pub(crate) fn group_attack_order(state: &mut GameState, leader: UnitId, mode: bool) {
-    let Some(group) = state.group_members(leader) else {
-        return;
-    };
-    for id in group {
-        let Some(unit) = state.unit(id) else { continue };
-        if unit.is_air() && unit.orders != UnitOrder::MoveToAttack {
-            if mode {
-                process_group_air_path(state, id);
-            }
-        } else if unit.state == UnitOrderState::NewOrder {
-            crate::pathfinding::request_path(state, id, ACCESS_MODIFIER_SAME_CLASS_BLOCKS);
-            if let Some(mut unit) = state.unit(id).cloned() {
-                unit.state = UnitOrderState::MoveGettingPath;
-                state.write_unit(id, unit);
-            }
-        }
-    }
 }
 
 /// The unit's group (a copy of the list).

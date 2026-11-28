@@ -53,7 +53,7 @@ use max_assets::MissionRegistry;
 use max_core::enums::Planet;
 use max_core::geo::{Point as GridPoint, MAP_HEIGHT, MAP_WIDTH};
 use max_core::input::{Command, Packet18Chat};
-use max_core::unit::UnitInfo;
+use max_core::unit::{UnitId, UnitInfo};
 use max_core::universe::{Dispatcher, LocalDispatcher};
 use max_core::victory::MissionCategory;
 use max_net::{CreateGameParams, GameInfo, HorizonClient, CLIENT_NAME, HORIZON_PROTOCOL_VERSION};
@@ -2305,6 +2305,12 @@ where
             app.note_mouse_click(x, y);
             // Visual press of the clicked button (manual-run defect 4).
             app.note_button_press(x, y);
+            // Every press starts a fresh `GameManager_RenderState`: the rectangle
+            // selection is armed only by a press that reaches the map
+            // (`game_manager.cpp:6487-6492`). A press consumed by a panel, a popup or
+            // a modal window drops a stale frame, so a later release cannot turn it
+            // into a box selection.
+            app.hud_mut().multi_select = None;
         }
         InputEvent::MouseRelease(..) => app.release_button_press(),
         _ => {}
@@ -2494,6 +2500,11 @@ where
                 app.hud_mut().hover_button = hud::hud_button_at(width, height, x, y);
             }
 
+            // The rectangle selection follows the pointer — `GameManager_GetWindowCursor`
+            // (`game_manager.cpp:4280-4303`) sets `RenderState = 2` once the drag
+            // passes the 16 px threshold.
+            session_multi_select_track(app, x, y, chrome);
+
             Transition::None
         }
         InputEvent::MouseRelease(x, y) => {
@@ -2505,6 +2516,11 @@ where
                 if let Some(button) = panels::panel_button_at(x, y) {
                     return session_panel_zoom_release(app, button);
                 }
+            }
+
+            // Rectangle selection release (`game_manager.cpp:6513-6525`).
+            if let Some(transition) = session_multi_select_release(app, x, y, chrome) {
+                return transition;
             }
 
             Transition::None
@@ -3547,7 +3563,7 @@ where
         // window, no popup (the active team is the computer).
         app.close_unit_menu();
         app.hud_mut().preview = None;
-        app.hud_mut().select(Some(id));
+        session_focus_unit(app, id);
         app.hud_mut().push_log(format!("Selected {label}"));
         session_show_unit_status(app, id);
         return Transition::None;
@@ -3831,8 +3847,8 @@ where
     // list order is the `MapHash` order — the top of the stack first
     // (`MapHash::AddEx` pushes a new unit to the front, `hash.cpp:170-174`).
     if let Some(next) = hud::next_stacked_unit(app.state_ref(), id, cell) {
-        app.hud_mut().select(Some(next));
         app.hud_mut().preview = None;
+        session_focus_unit(app, next);
 
         let next_label = app
             .state_ref()
@@ -3876,6 +3892,160 @@ fn popup_click_cell<D: Dispatcher>(app: &App<D>, x: i32, y: i32) -> Option<GridP
         .then(|| GridPoint::new(grid_x, grid_y))
 }
 
+/// Selects a unit and makes it the head of its group —
+/// `GameManager_MenuUnitSelect` (`game_manager.cpp:7141-7149`):
+///
+/// ```cpp
+/// if (unit->GetUnitList()) { unit->MoveToFrontInUnitList(); }
+/// GameManager_SelectedUnit = unit;
+/// ```
+///
+/// The head is the group leader (`UnitInfo::GetFirstFromUnitList`): the renderer
+/// draws the full selector on it and the yellow member frame on the rest
+/// (`drawmap.cpp:802-833`). Moving the head is a simulation change, so it travels
+/// as a [`max_core::input::Packet57GroupSelect`] command like every other order: a
+/// local match applies it at once (`apply_now`), a lockstep match queues it for the
+/// session driver.
+fn session_focus_unit<D: Dispatcher>(app: &mut App<D>, id: UnitId)
+where
+    App<D>: SessionLocal,
+{
+    app.select_unit(Some(id));
+
+    if app.state_ref().group_member_count(id) <= 1 {
+        return;
+    }
+
+    let team = app.player_team();
+    app.hud_mut().preview = None;
+    app.hud_mut()
+        .pending
+        .push(max_core::input::Command::GroupSelect(
+            max_core::input::Packet57GroupSelect {
+                team,
+                mode: max_core::input::GroupSelectMode::SelectUnit,
+                unit: Some(id),
+                member: None,
+                upper: max_core::geo::Point::ZERO,
+                lower: max_core::geo::Point::ZERO,
+            },
+        ));
+    apply_session_orders(app);
+    // The applied command re-focuses the leader (the same unit).
+    let _ = app.universe.take_group_selection();
+}
+
+/// Tracks the armed rectangle selection on a pointer move — the
+/// `GameManager_GetWindowCursor` part of `GameManager_ProcessInput`
+/// (`game_manager.cpp:4280-4303`).
+///
+/// `x`/`y` arrive in frame pixels; with the 1:1 chrome the pointer is first mapped
+/// into the map area ([`panels::screen_to_map`]) and then into map pixels
+/// (`GameManager_ScaledMousePosition`).
+fn session_multi_select_track<D: Dispatcher>(app: &mut App<D>, x: i32, y: i32, chrome: bool)
+where
+    App<D>: SessionLocal,
+{
+    if app.hud().multi_select.is_none() {
+        return;
+    }
+
+    let Some((map_x, map_y)) = (if chrome {
+        panels::screen_to_map(x, y)
+    } else {
+        Some((x, y))
+    }) else {
+        return;
+    };
+    let world = app.map_viewport().screen_to_world(map_x, map_y);
+
+    app.hud_mut().update_multi_select((map_x, map_y), world);
+}
+
+/// The release of the left button — `GameManager_ProcessInput`
+/// (`game_manager.cpp:6513-6525`):
+///
+/// * `RenderState == 2` (the drag passed the 16 px threshold) — the frame becomes
+///   a [`max_core::input::Packet57GroupSelect`] command (`Access_MultiSelect`) and
+///   the focused leader is selected (`GameManager_MenuUnitSelect(parent)`);
+/// * `RenderState == 1` — a plain click: the armed frame is dropped, the press
+///   action has already run.
+///
+/// `None` — there was no armed drag (or it was a plain click), the caller keeps its
+/// transition.
+fn session_multi_select_release<D: Dispatcher>(
+    app: &mut App<D>,
+    x: i32,
+    y: i32,
+    chrome: bool,
+) -> Option<Transition>
+where
+    App<D>: SessionLocal,
+{
+    if app.hud().multi_select.is_none() {
+        return None;
+    }
+
+    let pointer = if chrome {
+        panels::screen_to_map(x, y)
+    } else {
+        Some((x, y))
+    };
+    if let Some((map_x, map_y)) = pointer {
+        let world = app.map_viewport().screen_to_world(map_x, map_y);
+        app.hud_mut().update_multi_select((map_x, map_y), world);
+    }
+
+    let drag = app.hud_mut().take_multi_select()?;
+
+    let Some(bounds) = drag.bounds() else {
+        // Below the threshold: a plain click, nothing else to do.
+        return None;
+    };
+
+    let upper = max_core::geo::Point::new(
+        bounds.0 .0.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+        bounds.0 .1.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+    );
+    let lower = max_core::geo::Point::new(
+        bounds.1 .0.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+        bounds.1 .1.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16,
+    );
+
+    app.hud_mut().preview = None;
+    let team = app.player_team();
+    app.hud_mut()
+        .pending
+        .push(max_core::input::Command::GroupSelect(
+            max_core::input::Packet57GroupSelect {
+                team,
+                mode: max_core::input::GroupSelectMode::Box,
+                unit: drag.unit,
+                member: None,
+                upper,
+                lower,
+            },
+        ));
+    apply_session_orders(app);
+
+    // `Access_MultiSelect` → `GameManager_MenuUnitSelect(parent)`
+    // (`access.cpp:2249-2251`): the leader of the new group becomes the selected
+    // unit.
+    if let Some(leader) = app.universe.take_group_selection() {
+        app.select_unit(Some(leader));
+    }
+
+    let members = app
+        .hud()
+        .selected
+        .and_then(|id| app.state_ref().group_members_of(id))
+        .map_or(0, |members| members.len());
+    app.hud_mut()
+        .push_log(format!("Group: {members} unit(s) selected"));
+
+    Some(Transition::None)
+}
+
 /// LMB on the map: select/attack/command, order an air/naval/ground move or an
 /// activation (`CURSOR_UNIT_GO`/`CURSOR_FRIEND`/`CURSOR_ENEMY`/`CURSOR_ACTIVATE`).
 fn session_map_left_click<D: Dispatcher>(
@@ -3890,6 +4060,18 @@ where
     // `GameManager_ProcessPlayerInput` (`game_manager.cpp:6711`): releasing LMB
     // on the map — `PlaySfx(KCARG0)`.
     app.play_sfx(Sfx::Click);
+
+    // The rectangle selection is armed on the press — `GameManager_ProcessInput`
+    // (`game_manager.cpp:6487-6492`): `RenderState = 1`, both corners of
+    // `MultiSelectBounds` are the press point. The port resolves the map click on the
+    // press (a documented divergence: the QA input channel sends no release), so the
+    // press action below still runs; a drag past 16 px turns the release into
+    // `Access_MultiSelect`, and its `Access_UpdateMultiSelection` re-snapshots every
+    // member to `ORDER_AWAIT` in its own cell, superseding the press action.
+    let press_world = viewport.screen_to_world(x, y);
+    let press_unit = app.hud().selected;
+    app.hud_mut()
+        .begin_multi_select((x, y), press_world, press_unit);
 
     let team = app.player_team();
     let grid = viewport.screen_to_grid(x, y);
@@ -4000,6 +4182,43 @@ where
 
     if unit_team == team {
         let selected = app.hud().selected;
+
+        // Shift+click — the multi-selection add/remove branch of
+        // `GameManager_UpdateSelection` (`game_manager.cpp:6303-6334`). The oracle
+        // runs it **before** `GameManager_ClickUnit` and returns `false`, so the
+        // click gives no other action: the clicked unit joins the selected unit's
+        // group (limit 10), leaves it, or the group dissolves when its head is
+        // clicked. The selection stays the leader (`Access_UpdateMultiSelection`
+        // moves it to the front).
+        if app.hud().shift_pressed {
+            if let Some(leader) = selected {
+                app.hud_mut().preview = None;
+                app.hud_mut()
+                    .pending
+                    .push(max_core::input::Command::GroupSelect(
+                        max_core::input::Packet57GroupSelect {
+                            team,
+                            mode: max_core::input::GroupSelectMode::Toggle,
+                            unit: Some(leader),
+                            member: Some(id),
+                            upper: max_core::geo::Point::ZERO,
+                            lower: max_core::geo::Point::ZERO,
+                        },
+                    ));
+                apply_session_orders(app);
+
+                if let Some(leader) = app.universe.take_group_selection() {
+                    app.select_unit(Some(leader));
+                }
+
+                let count = app.state_ref().group_member_count(id);
+                app.hud_mut()
+                    .push_log(format!("Group: {count} unit(s) (Shift+click)"));
+
+                return Transition::None;
+            }
+        }
+
         // Modes that take priority over the air hover: C++ checks
         // `targeting_mode`/`enter_mode` before the class branch
         // (`game_manager.cpp:4384`/`:4416`); `enter_mode` is cleared below when
@@ -4169,8 +4388,8 @@ where
             );
         }
 
-        app.hud_mut().select(Some(id));
         app.hud_mut().preview = None;
+        session_focus_unit(app, id);
         app.hud_mut().push_log(format!("Selected {label}"));
         // `GameManager_UnitSelect` → `GameManager_DrawUnitStatusMessage`:
         // the hint above the map about the current construction of the selected builder.
@@ -4358,7 +4577,7 @@ where
     }
 
     app.close_unit_menu();
-    app.hud_mut().select(Some(id));
+    session_focus_unit(app, id);
     app.hud_mut().preview = None;
     app.hud_mut().clear_hint();
     app.hud_mut().push_log(format!("Selected {label}"));
@@ -4611,7 +4830,7 @@ where
             app.hud_mut().preview = None;
             // `GameManager_UnitSelect` — no popup (`GameManager_ClickUnit`
             // opens it on the repeated LMB instead).
-            app.hud_mut().select(Some(id));
+            session_focus_unit(app, id);
             app.hud_mut().push_log(format!("Selected {label}"));
             session_show_unit_status(app, id);
 
@@ -4767,6 +4986,36 @@ where
                 "[order] result=no-go-container selected={} to=({},{})",
                 selected.0, destination.x, destination.y
             );
+        }
+
+        return Transition::None;
+    }
+
+    // A group leader gets the order the way the oracle gives it — packet 08 with
+    // `ORDER_MOVE`/`INIT` and **no** path (`GameManager_SetUnitOrder`,
+    // `game_manager.cpp:4152-4194`): the simulation's `UnitsManager_InitUnitPath`
+    // sees the group and runs `Access_GroupAttackOrder` (`units_manager.cpp:4804-4805`),
+    // which assigns the formation targets and starts the members only after every
+    // path is ready (`Access_ProcessNewGroupOrder`). A packet-38 order would arrive
+    // in `IN_PROGRESS`, skip that branch and leave the members behind.
+    if app.state_ref().group_member_count(selected) > 1 {
+        match hud::build_group_move_order(app.state_ref(), selected, destination) {
+            Some(command) => {
+                let members = app.state_ref().group_member_count(selected);
+                app.hud_mut().preview = None;
+                app.hud_mut().pending.push(command);
+                app.hud_mut().push_log(format!(
+                    "Move (group {members}): ({}, {})",
+                    destination.x, destination.y
+                ));
+                apply_session_orders(app);
+            }
+            None => {
+                app.hud_mut().push_log(format!(
+                    "No group move to ({}, {})",
+                    destination.x, destination.y
+                ));
+            }
         }
 
         return Transition::None;

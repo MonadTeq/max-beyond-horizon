@@ -13,13 +13,13 @@
 use max_types::enums::{UnitOrder, UnitOrderState, UnitType};
 use max_types::geo::{PathStep, Point};
 use max_types::input::{
-    Command, ComplexSummaryEntry, MissionSupplyEntry, MovePathData, OrderPayload,
+    Command, ComplexSummaryEntry, GroupSelectMode, MissionSupplyEntry, MovePathData, OrderPayload,
     Packet00TurnBarrier, Packet01FrameBarrier, Packet06FinishedTurn, Packet08Order,
     Packet09TeamState, Packet10UpgradeUnitType, Packet11ComplexOrder, Packet12MissionSupply,
     Packet13Seed, Packet14DeployUnit, Packet18Chat, Packet20UpgradeUnit, Packet38Move,
     Packet41MoveFinished, Packet43Rename, Packet45CrcBarrier, Packet50StopUnit,
-    Packet52EndTurnBarrier, Packet53ComplexSummary, PayloadLevel, PayloadP1, PayloadP2, PayloadP3,
-    PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
+    Packet52EndTurnBarrier, Packet53ComplexSummary, Packet57GroupSelect, PayloadLevel, PayloadP1,
+    PayloadP2, PayloadP3, PayloadP4, PayloadP5, UPGRADE_VALUE_COUNT,
 };
 use max_types::team::{ResearchTopicInfo, TeamId};
 use max_types::unit::UnitId;
@@ -718,6 +718,42 @@ fn write_packet_43(w: &mut Writer, packet: &Packet43Rename) -> WireResult<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Packet 57 — group selection (BRH extension, no oracle layout)
+// ---------------------------------------------------------------------------
+
+fn read_packet_57(r: &mut Reader<'_>) -> WireResult<Command> {
+    let team = read_team(r)?;
+    let mode = r.read_u8()?;
+    let mode = GroupSelectMode::from_u8(mode).ok_or(WireError::InvalidValue {
+        kind: "GroupSelectMode",
+        value: u32::from(mode),
+    })?;
+    let unit = read_parent(r)?;
+    let member = read_parent(r)?;
+    let upper = read_point(r)?;
+    let lower = read_point(r)?;
+
+    Ok(Command::GroupSelect(Packet57GroupSelect {
+        team,
+        mode,
+        unit,
+        member,
+        upper,
+        lower,
+    }))
+}
+
+fn write_packet_57(w: &mut Writer, packet: &Packet57GroupSelect) -> WireResult<()> {
+    write_team(w, packet.team);
+    w.write_u8(packet.mode as u8);
+    write_parent(w, packet.unit);
+    write_parent(w, packet.member);
+    write_point(w, packet.upper);
+    write_point(w, packet.lower);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -743,6 +779,7 @@ pub fn decode_command(kind: u8, r: &mut Reader<'_>) -> WireResult<Command> {
         0x32 => read_packet_50(r),
         0x34 => read_packet_52(r),
         0x35 => read_packet_53(r),
+        0x39 => read_packet_57(r),
         other => Err(WireError::Unencodable { kind: other }),
     }
 }
@@ -799,6 +836,7 @@ pub fn encode_command(command: &Command, w: &mut Writer) -> WireResult<()> {
         Command::Move(packet) => write_packet_38(w, packet),
         Command::MoveFinished(packet) => write_packet_41(w, packet),
         Command::Rename(packet) => write_packet_43(w, packet),
+        Command::GroupSelect(packet) => write_packet_57(w, packet),
         Command::CrcBarrier(packet) => {
             write_team(w, packet.team);
             w.write_u8(packet.next_turn_index);

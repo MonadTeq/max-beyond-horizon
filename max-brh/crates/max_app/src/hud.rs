@@ -285,6 +285,67 @@ impl ChatInput {
 }
 
 // ---------------------------------------------------------------------------
+// Rectangle selection
+// ---------------------------------------------------------------------------
+
+/// Rectangle selection drag — C++ `GameManager_RenderState` 1/2 with
+/// `GameManager_MultiSelectBounds` (`game_manager.cpp:4280-4303`, `:6487-6524`).
+///
+/// `RenderState == 1` — the button is down, the pointer has not moved past the
+/// threshold yet (nothing is drawn, the release is a plain click);
+/// `RenderState == 2` — the drag is on: the yellow frame is drawn and the release
+/// runs `Access_MultiSelect` (`:6513-6525`).
+///
+/// UI state: not part of the snapshot/CRC — the released frame becomes a
+/// [`max_types::input::Packet55GroupSelect`] command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultiSelectDrag {
+    /// Press point in map-window pixels — the threshold is measured against it
+    /// (`labs(MousePosition2.x - MouseX) > 16`, `game_manager.cpp:4283-4284`).
+    pub press_screen: (i32, i32),
+    /// Press point in map pixels (`GameManager_ScaledMousePosition`) — one corner
+    /// of the frame.
+    pub anchor: (i32, i32),
+    /// Current pointer in map pixels once the threshold is passed; `None` while the
+    /// drag is still armed (`RenderState == 1`).
+    pub current: Option<(i32, i32)>,
+    /// The unit selected at press — `GameManager_SelectedUnit` passed to
+    /// `Access_MultiSelect` (`game_manager.cpp:6518`).
+    pub unit: Option<UnitId>,
+}
+
+impl MultiSelectDrag {
+    /// Drag threshold in pixels — `labs(dx) > 16 || labs(dy) > 16`
+    /// (`game_manager.cpp:4283-4284`).
+    pub const THRESHOLD: i32 = 16;
+
+    /// Starts an armed drag (`RenderState = 1`).
+    pub fn new(press_screen: (i32, i32), anchor: (i32, i32), unit: Option<UnitId>) -> Self {
+        Self {
+            press_screen,
+            anchor,
+            current: None,
+            unit,
+        }
+    }
+
+    /// Whether the pointer already passed the threshold (`RenderState == 2`).
+    pub fn is_dragging(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// `GameManager_MultiSelectBounds`: both corners in map pixels, normalized.
+    pub fn bounds(&self) -> Option<((i32, i32), (i32, i32))> {
+        let current = self.current?;
+
+        Some((
+            (self.anchor.0.min(current.0), self.anchor.1.min(current.1)),
+            (self.anchor.0.max(current.0), self.anchor.1.max(current.1)),
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Path preview
 // ---------------------------------------------------------------------------
 
@@ -447,6 +508,12 @@ pub struct HudState {
     /// `presentation_gate` stack (two `App`s are alive in one frame there), so the
     /// transient editor does not grow `HudState` inline.
     pub rename: Option<Box<crate::rename::RenameEditor>>,
+    /// Rectangle selection in progress — C++ `GameManager_RenderState` /
+    /// `GameManager_MultiSelectBounds` (`game_manager.cpp:6487-6524`).
+    ///
+    /// UI state: not part of the snapshot/CRC — the released rectangle becomes a
+    /// [`max_types::input::Packet55GroupSelect`] command.
+    pub multi_select: Option<MultiSelectDrag>,
 }
 
 impl Default for HudState {
@@ -476,6 +543,7 @@ impl HudState {
             hint: None,
             hint_style: crate::panels::MessageBoxStyle::Info,
             rename: None,
+            multi_select: None,
         }
     }
 
@@ -547,6 +615,7 @@ impl HudState {
         self.targeting_mode = false;
         self.hint = None;
         self.rename = None;
+        self.multi_select = None;
     }
 
     /// Resets the order modes but keeps the selection.
@@ -587,6 +656,54 @@ impl HudState {
     /// `MessageManager_ClearMessageBox`: removes the hint.
     pub fn clear_hint(&mut self) {
         self.hint = None;
+    }
+
+    /// Arms the rectangle selection on a left press over the map —
+    /// `GameManager_ProcessInput` (`game_manager.cpp:6487-6492`):
+    /// `RenderState = 1`, both corners of `MultiSelectBounds` are the press point.
+    ///
+    /// `press_screen`/`anchor` are map-window pixels; `unit` is the unit selected
+    /// at press (`GameManager_SelectedUnit`).
+    pub fn begin_multi_select(
+        &mut self,
+        press_screen: (i32, i32),
+        anchor: (i32, i32),
+        unit: Option<UnitId>,
+    ) {
+        self.multi_select = Some(MultiSelectDrag::new(press_screen, anchor, unit));
+    }
+
+    /// Tracks the pointer for the armed drag — `GameManager_GetWindowCursor`
+    /// (`game_manager.cpp:4280-4303`): once the pointer is more than 16 px away from
+    /// the press point, `RenderState` becomes `2` and the frame is drawn.
+    ///
+    /// Returns `true` when the drag is on.
+    pub fn update_multi_select(&mut self, pointer_screen: (i32, i32), pointer_map: (i32, i32)) -> bool {
+        let Some(drag) = self.multi_select.as_mut() else {
+            return false;
+        };
+
+        let dx = (pointer_screen.0 - drag.press_screen.0).abs();
+        let dy = (pointer_screen.1 - drag.press_screen.1).abs();
+
+        if drag.current.is_none() && (dx > MultiSelectDrag::THRESHOLD || dy > MultiSelectDrag::THRESHOLD) {
+            drag.current = Some(pointer_map);
+        } else if drag.current.is_some() {
+            drag.current = Some(pointer_map);
+        }
+
+        drag.is_dragging()
+    }
+
+    /// The finished drag (if it passed the threshold) and a cleared state —
+    /// the release branch of `GameManager_ProcessInput` (`:6513-6525`).
+    pub fn take_multi_select(&mut self) -> Option<MultiSelectDrag> {
+        self.multi_select.take()
+    }
+
+    /// The frame being dragged right now (for rendering).
+    pub fn multi_select_frame(&self) -> Option<MultiSelectDrag> {
+        self.multi_select.filter(MultiSelectDrag::is_dragging)
     }
 
     /// Requests to close the turn (the End Turn button in a network session).
@@ -800,6 +917,60 @@ pub fn build_move_order(state: StateRef<'_>, id: UnitId, destination: Point) -> 
     let preview = PathPreview::new(id, unit.grid, destination, path.steps);
 
     Some(MoveOrder { command, preview })
+}
+
+/// Builds a **group** move order (packet **08**, processor `P3`, `ORDER_MOVE`/`Init`).
+///
+/// A group leader is ordered exactly like the oracle orders it in
+/// `GameManager_SetUnitOrder` (`game_manager.cpp:4152-4194`): no path is built on
+/// the player's side — the simulation's `UnitsManager_InitUnitPath`
+/// (`units_manager.cpp:4804-4805`) sees the group list and runs
+/// `Access_GroupAttackOrder`, which sets every member's formation target, waits for
+/// all paths ([`max_core::access`]) and only then starts the whole group.
+///
+/// The single-unit path ([`build_move_order`], packet 38 with a ready path) is
+/// deliberately not used here: a packet-38 order arrives in `IN_PROGRESS`, skips
+/// `InitUnitPath` and would leave the members behind.
+pub fn build_group_move_order(
+    state: StateRef<'_>,
+    id: UnitId,
+    destination: Point,
+) -> Option<Command> {
+    let unit = state.unit(id)?;
+
+    if unit.hits == 0 || unit.grid == destination {
+        return None;
+    }
+
+    if destination.x < 0
+        || destination.y < 0
+        || destination.x >= MAP_WIDTH
+        || destination.y >= MAP_HEIGHT
+    {
+        return None;
+    }
+
+    Some(Command::Order(Packet08Order {
+        unit: id,
+        payload: OrderPayload::P3(PayloadP3 {
+            p2: PayloadP2 {
+                p1: PayloadP1 {
+                    order: UnitOrder::Move,
+                    state: UnitOrderState::Init,
+                    prior_order: unit.orders,
+                    prior_state: unit.state,
+                    disabled_reaction_fire: unit.disabled_reaction_fire,
+                },
+                parent_unit: unit.parent_unit,
+                experience: unit.experience,
+            },
+            move_to: destination,
+            fire_on: Point::ZERO,
+            enemy_unit: unit.enemy_unit,
+            transfer_cargo: unit.transfer_cargo,
+            stealth_dice_roll: unit.stealth_dice_roll,
+        }),
+    }))
 }
 
 /// Builds an attack order (packet **08**, processor `P3`) on the enemy `target`.
