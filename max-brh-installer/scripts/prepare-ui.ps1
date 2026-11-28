@@ -126,8 +126,23 @@ try {
         -Value ("#{0:X2}{1:X2}{2:X2}" -f $sample.R, $sample.G, $sample.B)
 
     # Live progress-bar fill: the native NSIS progress bar is hidden and this
-    # bitmap is clipped from the left by BrhProgress as the install advances.
-    Save-Bmp24 -Image $progressImage -Path (Join-Path $OutDir 'bar-fill.bmp') -Width 225 -Height 16
+    # bitmap is revealed from the left by BrhProgress as the install advances.
+    #
+    # Geometry: bar-fill.bmp is exactly the size of the decorative groove in
+    # install_in_progress_ui.png (the recessed slot of the console panel), so the
+    # static control never has to scale it. The slot opens at x=47..266,
+    # y=87..104 in that art (measured on the source PNG, see installer.nsi).
+    #
+    # The source art (342x17) is a golden strip over a dark base band that acts
+    # as its drop shadow. Only the golden part belongs inside the metal groove;
+    # the dark base would read as an unfilled half of the slot. Rows 0..8 are
+    # cropped and stretched vertically to the slot height, while the horizontal
+    # 1:1 slice keeps the pixel-level texture of the owner's art intact.
+    $slotWidth = 220
+    $slotHeight = 18
+    Save-Bmp24 -Image $progressImage -Path (Join-Path $OutDir 'bar-fill.bmp') `
+        -Width $slotWidth -Height $slotHeight `
+        -SourceRect (New-Object System.Drawing.Rectangle(10, 0, $slotWidth, 9))
 }
 finally {
     $frameImage.Dispose()

@@ -92,6 +92,8 @@ if (Test-Path $output) { Remove-Item $output -Force }
 
 $arguments = @(
     '/V3',
+    '/INPUTCHARSET',
+    'UTF8',
     "/DSTAGE=$StageDir",
     "/DUIDIR=$UIDir",
     "/DDATAGROUPS=$dataGroups",

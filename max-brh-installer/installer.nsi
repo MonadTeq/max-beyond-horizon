@@ -27,6 +27,22 @@ Unicode true
   !define OUTFILE "dist\MAX-BRH-0.1.28a-setup.exe"
 !endif
 
+; Geometry of the install-page console art (resources/install_in_progress_ui.png,
+; 308x162) measured on the source PNG. The decorative horizontal groove is a
+; recessed slot in the middle of the panel:
+;   * raised rim:     top bevel y=79..85, front lip y=106..112
+;   * slot opening:   x=44..267, y=86..105  (224x20)
+;   * lit inner floor x=50..266, y=89..105
+; The progress fill is inset one pixel inside the opening (x=47..266, y=87..104)
+; so the top bevel and the front lip stay visible on every side, and the fill
+; never spills over the rim or beyond the panel.
+!define PANEL_W 308
+!define PANEL_H 162
+!define SLOT_LEFT 47
+!define SLOT_TOP 87
+!define SLOT_W 220
+!define SLOT_H 18
+
 !define MUI_ICON "${UIDIR}\game-icon.ico"
 !define MUI_UNICON "${UIDIR}\game-icon.ico"
 !define MUI_ABORTWARNING
@@ -542,8 +558,8 @@ Function BrhInstfilesShow
     StrCpy $hInstBgBmp $6
 
     ; The console panel from the owner's art (308x162) is centred above the
-    ; status line; the progress bar sits in its horizontal slot.
-    IntOp $R0 $PageW - 308
+    ; status line; the progress bar sits inside its horizontal groove.
+    IntOp $R0 $PageW - ${PANEL_W}
     IntOp $R0 $R0 / 2
     StrCpy $R1 80
     ${If} $PageH < 300
@@ -551,7 +567,7 @@ Function BrhInstfilesShow
     ${EndIf}
     StrCpy $PanelY $R1
 
-    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R0, i$R1, i308, i162, p$hPage, p0, p0, p0) p.r5'
+    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R0, i$R1, i${PANEL_W}, i${PANEL_H}, p$hPage, p0, p0, p0) p.r5'
     System::Call 'user32::LoadImage(p0, t "${UIDIR}\panel.bmp", i0, i0, i0, i0x10) p.r6'
     SendMessage $5 0x0172 0 $6
     StrCpy $hPanel $5
@@ -561,16 +577,20 @@ Function BrhInstfilesShow
     System::Call 'user32::SetWindowPos(p$hPanel, p$hInstBg, i0,i0,i0,i0, i0x13)'
 
     ; Live progress fill made from the owner's progress-bar art. The native
-    ; NSIS bar is hidden; BrhProgress clips this bitmap from the left.
-    IntOp $R6 $R0 + 40
-    IntOp $R7 $PanelY + 83
+    ; NSIS bar is hidden; BrhProgress reveals this bitmap from the left. The
+    ; control is created at the left edge of the groove and kept one pixel
+    ; inside the slot opening on every side (see the SLOT_* defines).
+    IntOp $R6 $R0 + ${SLOT_LEFT}
+    IntOp $R7 $PanelY + ${SLOT_TOP}
     StrCpy $BarFillX $R6
     StrCpy $BarFillY $R7
-    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R6, i$R7, i2, i16, p$hPage, p0, p0, p0) p.r5'
+    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R6, i$R7, i2, i${SLOT_H}, p$hPage, p0, p0, p0) p.r5'
     System::Call 'user32::LoadImage(p0, t "${UIDIR}\bar-fill.bmp", i0, i0, i0, i0x10) p.r6'
     SendMessage $5 0x0172 0 $6
     StrCpy $hBarFill $5
     StrCpy $hBarFillBmp $6
+    ; Draw the fill directly above the panel art (the groove background), and
+    ; keep it inside the slot opening so the painted rim stays on top visually.
     System::Call 'user32::SetWindowPos(p$hBarFill, p$hPanel, i0,i0,i0,i0, i0x13)'
 
     GetDlgItem $R2 $hPage 1004
@@ -596,12 +616,13 @@ FunctionEnd
 ; Sets the custom progress fill (0..100) and updates the status line.
 Function BrhProgress
     ${If} $hBarFill != 0
-        IntOp $1 225 * $0
+        IntOp $1 ${SLOT_W} * $0
         IntOp $1 $1 / 100
         ${If} $1 < 2
             StrCpy $1 2
         ${EndIf}
-        System::Call 'user32::SetWindowPos(p$hBarFill, p0, i$BarFillX, i$BarFillY, i$1, i16, i0x14)'
+        ; Height stays at the slot height; only the left-to-right reveal grows.
+        System::Call 'user32::SetWindowPos(p$hBarFill, p0, i$BarFillX, i$BarFillY, i$1, i${SLOT_H}, i0x14)'
         ${If} $hInstStatus != 0
             SendMessage $hInstStatus ${WM_SETTEXT} 0 "STR:$(BrhInstalling) $0%"
         ${EndIf}
@@ -686,7 +707,7 @@ Function un.BrhUninstfilesShow
     StrCpy $hInstBg $5
     StrCpy $hInstBgBmp $6
 
-    IntOp $R0 $PageW - 308
+    IntOp $R0 $PageW - ${PANEL_W}
     IntOp $R0 $R0 / 2
     StrCpy $R1 80
     ${If} $PageH < 300
@@ -694,7 +715,7 @@ Function un.BrhUninstfilesShow
     ${EndIf}
     StrCpy $PanelY $R1
 
-    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R0, i$R1, i308, i162, p$hPage, p0, p0, p0) p.r5'
+    System::Call 'user32::CreateWindowEx(i0, t "STATIC", t "", i0x5000000E, i$R0, i$R1, i${PANEL_W}, i${PANEL_H}, p$hPage, p0, p0, p0) p.r5'
     System::Call 'user32::LoadImage(p0, t "${UIDIR}\panel.bmp", i0, i0, i0, i0x10) p.r6'
     SendMessage $5 0x0172 0 $6
     StrCpy $hPanel $5
@@ -711,9 +732,11 @@ Function un.BrhUninstfilesShow
     ShowWindow $R4 0
     ShowWindow $R5 0
 
-    IntOp $R6 $R0 + 40
-    IntOp $R7 $PanelY + 82
-    System::Call 'user32::SetWindowPos(p$R2, p0, i$R6, i$R7, i225, i18, i0x14)'
+    ; The uninstaller keeps the native NSIS progress bar; it is placed in the same
+    ; groove rectangle as the custom fill of the install page.
+    IntOp $R6 $R0 + ${SLOT_LEFT}
+    IntOp $R7 $PanelY + ${SLOT_TOP}
+    System::Call 'user32::SetWindowPos(p$R2, p0, i$R6, i$R7, i${SLOT_W}, i${SLOT_H}, i0x14)'
     System::Call 'user32::SetWindowPos(p$R2, p0, i0,i0,i0,i0, i0x13)'
 
     IntOp $R8 $PanelY + 172
