@@ -466,3 +466,139 @@ fn antialiasing_never_changes_the_render_scale() {
         assert_eq!(resolved.render_scale.render_size(), expected, "{aa:?}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Launch path resolution (`distro-installers.md` §B)
+// ---------------------------------------------------------------------------
+
+/// A unique temporary directory of the test.
+fn temp_dir(tag: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!(
+        "max_brh_settings_{tag}_{}_{stamp}",
+        std::process::id()
+    ));
+
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+fn write_settings(dir: &Path, scale: u32) {
+    std::fs::write(
+        dir.join(SETTINGS_FILE_NAME),
+        format!("{{ \"display\": {{ \"scale\": {scale} }} }}"),
+    )
+    .expect("write settings.jsonc");
+}
+
+/// The portable catalog: `game.exe` and `settings.jsonc` share the game root.
+#[test]
+fn installed_layout_reads_settings_next_to_the_executable() {
+    let root = temp_dir("installed");
+    let exe_dir = root.join("game");
+    let cwd = root.join("foreign");
+    std::fs::create_dir_all(&exe_dir).expect("exe dir");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+    write_settings(&exe_dir, 2);
+    write_settings(&cwd, 4);
+
+    let path = resolve_path(
+        Some(&exe_dir.join("game.exe")),
+        Some(&exe_dir),
+        Some(&cwd),
+        None,
+    );
+
+    assert_eq!(path, exe_dir.join(SETTINGS_FILE_NAME));
+    assert_eq!(
+        Settings::load(&path)
+            .expect("settings")
+            .expect("present")
+            .render_scale(),
+        RenderScale::Hd2
+    );
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// An installed build never reads a `settings.jsonc` from a foreign CWD: with no
+/// file in the catalog the built-in defaults apply.
+#[test]
+fn installed_layout_ignores_the_working_directory() {
+    let root = temp_dir("installed-cwd");
+    let exe_dir = root.join("game");
+    let cwd = root.join("foreign");
+    std::fs::create_dir_all(&exe_dir).expect("exe dir");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+    write_settings(&cwd, 4);
+
+    let path = resolve_path(
+        Some(&exe_dir.join("game.exe")),
+        Some(&exe_dir),
+        Some(&cwd),
+        None,
+    );
+
+    assert_ne!(
+        path,
+        cwd.join(SETTINGS_FILE_NAME),
+        "CWD не участвует в поиске установленной версии"
+    );
+    assert!(!path.is_file());
+    assert_eq!(
+        Settings::load_or_default(&path).expect("defaults"),
+        Settings::default()
+    );
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// `game.exe` may live in a subdirectory of the catalog; the game root is the
+/// second candidate.
+#[test]
+fn game_root_is_searched_when_the_exe_lives_in_a_subdirectory() {
+    let root = temp_dir("subdir");
+    let bin = root.join("bin");
+    let cwd = root.join("foreign");
+    std::fs::create_dir_all(&bin).expect("bin");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+    write_settings(&root, 2);
+
+    let path = resolve_path(
+        Some(&bin.join("game.exe")),
+        Some(&root),
+        Some(&cwd),
+        None,
+    );
+
+    assert_eq!(path, root.join(SETTINGS_FILE_NAME));
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// A development checkout keeps the historical repository-root candidate.
+#[test]
+fn development_checkout_keeps_the_repository_root_candidate() {
+    let root = temp_dir("dev");
+    let repo = root.join("repo");
+    let exe_dir = root.join("target/debug");
+    let cwd = root.join("foreign");
+    for dir in [&repo, &exe_dir, &cwd] {
+        std::fs::create_dir_all(dir).expect("dir");
+    }
+    write_settings(&repo, 4);
+
+    let path = resolve_path(
+        Some(&exe_dir.join("max_app.exe")),
+        Some(&repo),
+        Some(&cwd),
+        Some(&repo),
+    );
+
+    assert_eq!(path, repo.join(SETTINGS_FILE_NAME));
+
+    std::fs::remove_dir_all(root).ok();
+}

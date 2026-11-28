@@ -150,10 +150,12 @@ struct Cli {
     /// `--aa off|fxaa|smaa`: GPU anti-aliasing of the output layer
     /// (`gpu-aa-design.md`).
     aa: Option<AaMode>,
-    /// `--remaster-dir DIR`: HD asset root (default `<workspace>/max-brh/target/remaster`).
+    /// `--remaster-dir DIR`: HD asset root (default `<catalog>/remaster` in the
+    /// portable layout, `<workspace>/max-brh/target/remaster` in a checkout).
     remaster_dir: Option<PathBuf>,
-    /// `--settings PATH`: the `settings.jsonc` file (default `settings.jsonc` in
-    /// the working directory or the repository root).
+    /// `--settings PATH`: the `settings.jsonc` file (default: next to the
+    /// executable/game root, otherwise the working directory or the repository
+    /// root of a development checkout).
     settings: Option<PathBuf>,
     /// Where to write the `.qa` manual game script (`--ui --record`).
     record: Option<PathBuf>,
@@ -246,6 +248,9 @@ impl Cli {
         let mut data_dir_set = false;
         let mut assets_dir_set = false;
         let mut patches_explicit = false;
+        // `--data-dir`/`--max-res`/`--palette` name the data explicitly: the
+        // portable catalog must not silently replace those paths.
+        let mut data_paths_explicit = false;
         let mut args = args.into_iter();
 
         while let Some(arg) = args.next() {
@@ -429,6 +434,7 @@ impl Cli {
                     let dir = args.next().context("--data-dir требует каталог")?;
                     cli.config = cli.config.with_data_dir(dir);
                     data_dir_set = true;
+                    data_paths_explicit = true;
                 }
                 "--assets-dir" => {
                     let dir = args.next().context("--assets-dir требует каталог")?;
@@ -442,6 +448,7 @@ impl Cli {
                 "--max-res" => {
                     cli.config.max_res =
                         PathBuf::from(args.next().context("--max-res требует путь")?);
+                    data_paths_explicit = true;
                 }
                 "--patches" => {
                     cli.config.patches_res =
@@ -456,6 +463,7 @@ impl Cli {
                 "--palette" => {
                     cli.config.color_pal =
                         PathBuf::from(args.next().context("--palette требует путь")?);
+                    data_paths_explicit = true;
                 }
                 "--width" => {
                     cli.config.screen_width = parse_u32(&mut args, "--width")?;
@@ -577,6 +585,22 @@ impl Cli {
         if !assets_dir_set && !patches_explicit && !cli.config.patches_res.exists() {
             if let Some(root) = repository_root() {
                 cli.config = cli.config.with_assets_dir(root.join("assets"));
+            }
+        }
+
+        // Portable catalog (`distro-installers.md` §B): the data marker (`data/`
+        // in an installed build, `max-original/` in a checkout) is searched from
+        // the executable directory, so the game reads and writes inside its own
+        // catalog even when the working directory is foreign. Explicitly named
+        // data paths (`--data-dir`/`--max-res`/`--palette`) keep priority.
+        if !data_paths_explicit {
+            let exe = std::env::current_exe().ok();
+            let cwd = std::env::current_dir().ok();
+
+            if let Some(catalog) =
+                max_app::layout::detect(&cli.config, exe.as_deref(), cwd.as_deref())
+            {
+                cli.config = cli.config.with_catalog(&catalog);
             }
         }
 
@@ -1579,21 +1603,25 @@ fn run_ui(cli: &Cli) -> Result<()> {
     }
 
     // `settings.jsonc`: the window/display settings, `CLI > file > default`
-    // (`max_app::settings`). It is read once at launch. A missing default file
-    // keeps the built-in defaults; an explicit `--settings` path or a malformed
-    // file must be visible instead of silently ignored.
+    // (`max_app::settings`). It is read once at launch. The portable catalog's
+    // file (next to the executable/game root) wins over the development
+    // repository/CWD candidates; a missing file keeps the built-in defaults, while
+    // an explicit `--settings` path or a malformed file must be visible instead of
+    // silently ignored.
     let settings_path = match cli.settings.clone() {
         Some(path) => path,
         None => {
-            let local = max_app::settings::default_path();
+            let exe = std::env::current_exe().ok();
+            let cwd = std::env::current_dir().ok();
+            let exe_dir = exe.as_deref().and_then(std::path::Path::parent);
+            let root = repository_root();
 
-            if local.exists() {
-                local
-            } else {
-                repository_root()
-                    .map(|root| root.join(max_app::settings::SETTINGS_FILE_NAME))
-                    .unwrap_or(local)
-            }
+            max_app::settings::resolve_path(
+                exe_dir,
+                cli.config.game_root.as_deref(),
+                cwd.as_deref(),
+                root.as_deref(),
+            )
         }
     };
     let settings = match Settings::load(&settings_path)? {
@@ -1642,9 +1670,10 @@ fn run_ui(cli: &Cli) -> Result<()> {
         resolved.aa,
         resolved.window_scale,
         resolved.fullscreen,
-        cli.remaster_dir
-            .clone()
-            .unwrap_or_else(|| max_app::default_remaster_root(repository_root().as_deref())),
+        cli.remaster_dir.clone().unwrap_or_else(|| {
+            let root = cli.config.game_root.clone().or_else(repository_root);
+            max_app::default_remaster_root(root.as_deref())
+        }),
         app.assets(),
     )?;
     let mut ctx = UiContext::new(
@@ -2990,8 +3019,9 @@ max-brh — клиент M.A.X. (core + net + assets + render)
                          (по умолчанию max-brh/target/remaster)
     --settings PATH      settings.jsonc с разрешением/сглаживанием/масштабом/
                          полным экраном (приоритет CLI > settings.jsonc >
-                         дефолт; по умолчанию settings.jsonc в рабочем каталоге
-                         или корне репозитория)
+                         дефолт; по умолчанию settings.jsonc рядом с exe
+                         (каталог игры), в dev-раскладке — рабочий каталог
+                         или корень репозитория)
     --fps                печатать статистику 60 Гц (`PRESENT: …`) в stderr
                           раз в 600 кадров (бюджет 16.67 мс)
     --seed N             seed ГПСЧ для --new-game

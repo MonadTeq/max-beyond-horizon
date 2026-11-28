@@ -66,17 +66,32 @@ pub const fn vram_quota(scale: RenderScale) -> usize {
     }
 }
 
-/// Default remaster root: `<workspace>/target/remaster` (R2 artifact location).
+/// Default remaster root: `<game_root>/remaster` (the portable catalog).
 ///
-/// `repository_root` is the application's repository lookup (the same heuristic
-/// `main.rs` uses for the game data); when it is absent the path stays relative
-/// to the working directory, which never blocks the launch — a missing
-/// manifest simply means "no HD assets" and every layer falls back.
-pub fn default_remaster_root(repository_root: Option<&Path>) -> PathBuf {
-    match repository_root {
-        Some(root) => root.join("max-brh").join("target").join(REMASTER_DIR),
-        None => PathBuf::from("target").join(REMASTER_DIR),
+/// The HD package is part of the distribution (`distro-installers.md` §B), so the
+/// layers are expected next to the executable. A development checkout keeps R2's
+/// artifact location `<workspace>/max-brh/target/remaster`: it is used when the
+/// game root has no `remaster/` but carries the `max-brh/` workspace directory.
+/// Without a game root the path stays relative to the working directory, which
+/// never blocks the launch — a missing manifest simply means "no HD assets" and
+/// every layer falls back.
+pub fn default_remaster_root(game_root: Option<&Path>) -> PathBuf {
+    let Some(root) = game_root else {
+        return PathBuf::from("target").join(REMASTER_DIR);
+    };
+    let portable = root.join(REMASTER_DIR);
+
+    if portable.is_dir() {
+        return portable;
     }
+
+    let workspace = root.join("max-brh");
+
+    if workspace.is_dir() {
+        return workspace.join("target").join(REMASTER_DIR);
+    }
+
+    portable
 }
 
 /// An HD sprite bank of one `MAX.RES` sprite resource.

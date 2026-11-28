@@ -2646,10 +2646,22 @@ impl<D: Dispatcher> crate::App<D> {
         }
     }
 
-    /// Settings file: `<save_dir>/preferences.ini` (C++ `settings.json` in
-    /// `FilePathGamePref`).
+    /// Settings file: `<catalog>/preferences.ini`, otherwise `<save_dir>/preferences.ini`
+    /// (C++ `settings.json` in `FilePathGamePref`).
+    ///
+    /// An explicit `--save-dir` keeps the file next to the saves (the historical
+    /// behavior and the tests); in the portable catalog it lives at the catalog
+    /// root next to `settings.jsonc` (`distro-installers.md` §B), so a player can
+    /// copy the catalog as a whole.
     pub fn preferences_path(&self) -> PathBuf {
-        self.save_dir().join("preferences.ini")
+        let config = self.config();
+
+        config
+            .save_dir
+            .clone()
+            .or_else(|| config.game_root.clone())
+            .unwrap_or_else(|| self.save_dir())
+            .join("preferences.ini")
     }
 
     /// Saves the settings to disk; an error goes to the HUD log (no crash).

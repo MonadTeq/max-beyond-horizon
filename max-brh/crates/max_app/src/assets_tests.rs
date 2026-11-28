@@ -592,6 +592,105 @@ fn exe_ancestors_are_searched_up_to_the_data_root() {
     std::fs::remove_dir_all(root).ok();
 }
 
+/// Portable install layout (`distro-installers.md` §B): `game.exe`,
+/// `data/MAX.RES`, `PATCHES.RES` and `COLOR.PAL` live in one catalog. The data is
+/// found by the `data/` marker from the exe directory even when the CWD is foreign.
+#[test]
+fn portable_data_marker_is_found_from_the_exe_directory() {
+    let root = temp_dir("portable");
+    let cwd = root.join("foreign");
+    let data = root.join("data");
+    std::fs::create_dir_all(&cwd).expect("cwd");
+    std::fs::create_dir_all(&data).expect("data dir");
+
+    let max_res = data.join(MAX_RES_NAME);
+    let palette = data.join(COLOR_PAL_NAME);
+    let patches = data.join(PATCHES_RES_NAME);
+    std::fs::write(&max_res, b"RES0").expect("write MAX.RES");
+    std::fs::write(&palette, b"palette").expect("write COLOR.PAL");
+    std::fs::write(&patches, b"RES0").expect("write PATCHES.RES");
+
+    let config = AppConfig::default();
+    let exe = root.join("game.exe");
+    let roots = data_search_roots_from(&config, Some(&cwd), Some(&exe));
+
+    assert!(
+        roots.contains(&root),
+        "каталог игры должен войти в поиск: {roots:?}"
+    );
+
+    let (path, warning) = resolve_max_res_at(&config, &roots);
+    assert_eq!(path, max_res, "MAX.RES по маркеру data");
+    assert!(warning.is_some());
+
+    let (path, warning) = resolve_color_pal_at(&config, &roots);
+    assert_eq!(path, palette, "COLOR.PAL рядом с MAX.RES по маркеру data");
+    assert!(warning.is_some());
+
+    let (path, warning) = resolve_patches_res_at(&config, &roots);
+    assert_eq!(path, patches, "PATCHES.RES рядом с MAX.RES по маркеру data");
+    assert!(warning.is_some());
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// The development layout wins when both markers are present: a checkout must
+/// keep loading the Interplay oracle, not a stray `data/` directory.
+#[test]
+fn development_marker_has_priority_over_the_portable_one() {
+    let root = temp_dir("markers");
+    let dev = root.join(DATA_DIR_NAME);
+    let portable = root.join("data");
+    std::fs::create_dir_all(&dev).expect("dev dir");
+    std::fs::create_dir_all(&portable).expect("portable dir");
+    std::fs::write(dev.join(MAX_RES_NAME), b"RES0dev").expect("write dev MAX.RES");
+    std::fs::write(portable.join(MAX_RES_NAME), b"RES0portable").expect("write data MAX.RES");
+
+    let config = AppConfig::default();
+    let exe = root.join("game.exe");
+    let roots = data_search_roots_from(&config, Some(&root), Some(&exe));
+
+    let (path, _) = resolve_max_res_at(&config, &roots);
+    assert_eq!(
+        path,
+        dev.join(MAX_RES_NAME),
+        "max-original имеет приоритет над data"
+    );
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// The executable may sit in a subdirectory (`bin/game.exe`); the catalog is
+/// found upward at the nearest `data/` marker.
+#[test]
+fn exe_ancestors_are_searched_up_to_the_portable_data_root() {
+    let root = temp_dir("portable-up");
+    let bin = root.join("bin");
+    let data = root.join("data");
+    std::fs::create_dir_all(&bin).expect("bin");
+    std::fs::create_dir_all(&data).expect("data dir");
+    std::fs::write(data.join(MAX_RES_NAME), b"RES0").expect("write MAX.RES");
+
+    let exe = bin.join("game.exe");
+    let roots = exe_search_roots(&exe);
+
+    assert_eq!(roots.first(), Some(&bin), "первый корень — сам каталог exe");
+    assert!(
+        roots.contains(&root),
+        "корень с маркером data должен войти в поиск: {roots:?}"
+    );
+
+    let config = AppConfig {
+        max_res: bin.join("data/MAX.RES"),
+        ..Default::default()
+    };
+    let (path, _) = resolve_max_res_at(&config, &roots);
+
+    assert_eq!(path, data.join(MAX_RES_NAME));
+
+    std::fs::remove_dir_all(root).ok();
+}
+
 #[test]
 fn missing_color_pal_falls_back_next_to_max_res() {
     let dir = temp_dir("palette");

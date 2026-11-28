@@ -49,20 +49,53 @@ fn stats_sum_every_layer_class() {
     assert!((stats.total_mib() - 1500.0 / (1024.0 * 1024.0)).abs() < f64::EPSILON);
 }
 
+/// Unique temporary directory of the test.
+fn temp_dir(tag: &str) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!(
+        "max_brh_hd_{tag}_{}_{stamp}",
+        std::process::id()
+    ));
+
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+/// The portable catalog keeps the HD package next to the game; a development
+/// checkout keeps the R2 artifact location under `max-brh/target/`.
 #[test]
-fn default_remaster_root_follows_the_workspace_layout() {
-    let root = default_remaster_root(Some(Path::new("D:/dev/max-port-debug")));
+fn default_remaster_root_follows_the_game_catalog_layout() {
+    let root = temp_dir("portable");
+    std::fs::create_dir_all(root.join(REMASTER_DIR)).expect("remaster dir");
 
     assert_eq!(
-        root,
-        Path::new("D:/dev/max-port-debug/max-brh/target/remaster")
+        default_remaster_root(Some(&root)),
+        root.join(REMASTER_DIR),
+        "установленная раскладка: <каталог игры>/remaster"
     );
-    // Without a repository root the path stays relative: `RemasterCache::open`
-    // then sees an empty manifest and every layer falls back.
+
+    // A development checkout has no catalog `remaster/`, but carries the
+    // `max-brh/` workspace: the historical artifact path is kept.
+    let dev = temp_dir("dev");
+    std::fs::create_dir_all(dev.join("max-brh")).expect("workspace dir");
+
+    assert_eq!(
+        default_remaster_root(Some(&dev)),
+        dev.join("max-brh/target/remaster")
+    );
+
+    // Without a game root the path stays relative: `RemasterCache::open` then
+    // sees an empty manifest and every layer falls back.
     assert_eq!(
         default_remaster_root(None),
         Path::new("target/remaster").to_path_buf()
     );
+
+    std::fs::remove_dir_all(root).ok();
+    std::fs::remove_dir_all(dev).ok();
 }
 
 #[test]

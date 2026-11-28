@@ -56,6 +56,7 @@ pub mod hotseat;
 pub mod hud;
 pub mod intro;
 pub mod landing;
+pub mod layout;
 pub mod local;
 pub mod mem;
 pub mod menu;
@@ -127,9 +128,9 @@ use crate::net::NetworkDispatcher;
 pub use allocmenu::{AllocAction, AllocMenu, AllocMenuAssets};
 pub use assets::{
     data_search_roots, resolve_color_pal, resolve_max_res, resolve_patches_res, Assets,
-    AssetsReport, LoadedSprite, SpriteInfo, COLOR_PAL_NAME, DATA_DIR_NAME, MAX_RES_NAME,
-    PATCHES_RES_FALLBACKS, PLANET_GROUP_PICTURES, UNIT_SPRITES, UNIT_TYPES_WITHOUT_SHADOW_DATA,
-    UNIT_TYPES_WITHOUT_SPRITE_DATA, WORLD_ASSETS,
+    AssetsReport, LoadedSprite, SpriteInfo, COLOR_PAL_NAME, DATA_DIR_NAME, DATA_DIR_NAMES,
+    MAX_RES_NAME, PATCHES_RES_FALLBACKS, PATCHES_RES_NAME, PLANET_GROUP_PICTURES, UNIT_SPRITES,
+    UNIT_TYPES_WITHOUT_SHADOW_DATA, UNIT_TYPES_WITHOUT_SPRITE_DATA, WORLD_ASSETS,
 };
 pub use audio::{AudioBackend, AudioPlayer, NoopBackend, PlayMode, MENU_CLICK};
 pub use buildmenu::{BuildMenu, BuildMenuAction, BuildMenuAssets};
@@ -144,6 +145,7 @@ pub use hud::{
     unit_at_screen, HudButton, HudLayout, HudState, HudView, MessageLog, MoveOrder, PathPreview,
 };
 pub use landing::{LandingAction, LandingScreen};
+pub use layout::{Catalog, MISSIONS_DIR_NAME, SAVES_DIR_NAME};
 pub use local::{
     LocalGame, LocalOutcome, LocalPhase, LocalSetup, LocalUpdate, SessionChannel, LOCAL_TEAM_COUNT,
 };
@@ -274,8 +276,16 @@ pub struct AppConfig {
     pub save_dir: Option<PathBuf>,
     /// `FilePathGameData` — the V70 save directory of the mission categories
     /// (campaign, training, demo, scenario, multiplayer scenario), C++
-    /// `SaveLoad_GetFilePath` (`saveload.cpp:72-78`). `None` — next to `MAX.RES`.
+    /// `SaveLoad_GetFilePath` (`saveload.cpp:72-78`). `None` — `<game_root>/missions`
+    /// in the portable layout, otherwise next to `MAX.RES`.
     pub save_data_dir: Option<PathBuf>,
+    /// The portable game catalog (`distro-installers.md` §B): `data/`, `saves/`,
+    /// `missions/`, `remaster/`, `preferences.ini` and `settings.jsonc` live here.
+    ///
+    /// `None` — no catalog was resolved (a library/test configuration): the
+    /// historical defaults next to `MAX.RES` stay in effect. The launch code sets
+    /// it through [`layout::Catalog`]; QA and tests set the save paths explicitly.
+    pub game_root: Option<PathBuf>,
     /// Autosave at the end of the turn (`SETUP.auto_save`, enabled by default).
     pub autosave: bool,
 }
@@ -301,6 +311,7 @@ impl Default for AppConfig {
             demo_turns: 5,
             save_dir: None,
             save_data_dir: None,
+            game_root: None,
             autosave: true,
         }
     }

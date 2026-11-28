@@ -125,12 +125,67 @@ impl VideoChoice {
 /// File name of the client window settings.
 pub const SETTINGS_FILE_NAME: &str = "settings.jsonc";
 
-/// Default path of the settings file: `settings.jsonc` in the working directory.
+/// Last-resort settings path: `settings.jsonc` in the working directory.
 ///
-/// `main.rs` additionally tries the repository root (the same heuristic as the
-/// game data paths), and `--settings PATH` overrides both.
+/// [`resolve_path`] is what the launch uses; this name remains the built-in
+/// default when no executable/catalog context is known, and `--settings PATH`
+/// overrides both.
 pub fn default_path() -> PathBuf {
     PathBuf::from(SETTINGS_FILE_NAME)
+}
+
+/// Resolves the launch `settings.jsonc` path (`distro-installers.md` §B).
+///
+/// Priority:
+/// 1. the directory of the running executable — in the portable layout
+///    `game.exe` and `settings.jsonc` share the catalog root;
+/// 2. the game catalog root ([`crate::layout::Catalog`]) when the executable
+///    lives in a subdirectory;
+/// 3. only for a development checkout (`repository_root` is known): the
+///    repository root and the working directory (the historical behavior);
+/// 4. the built-in default ([`default_path`]).
+///
+/// An installed build therefore never reads a `settings.jsonc` from a foreign
+/// working directory. A missing file is not an error: the caller applies the
+/// built-in defaults. `--settings PATH` is handled by the caller and skips this
+/// search.
+pub fn resolve_path(
+    exe: Option<&Path>,
+    game_root: Option<&Path>,
+    cwd: Option<&Path>,
+    repository_root: Option<&Path>,
+) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let mut push = |path: PathBuf| {
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    };
+
+    if let Some(dir) = exe.and_then(Path::parent) {
+        push(dir.join(SETTINGS_FILE_NAME));
+    }
+
+    if let Some(root) = game_root {
+        push(root.join(SETTINGS_FILE_NAME));
+    }
+
+    // A development checkout: `cargo run` keeps the file in the repository root
+    // (or next to the working directory), like before the portable layout.
+    if let Some(root) = repository_root {
+        push(root.join(SETTINGS_FILE_NAME));
+
+        if let Some(cwd) = cwd {
+            push(cwd.join(SETTINGS_FILE_NAME));
+        }
+    }
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .or_else(|| candidates.into_iter().next())
+        .unwrap_or_else(default_path)
 }
 
 /// The `display` section: which resolution the window renders at.

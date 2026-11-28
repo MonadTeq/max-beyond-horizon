@@ -63,10 +63,21 @@ pub const PATCHES_RES_FALLBACKS: [&str; 3] = [
     "max-cpp-port/assets/PATCHES.RES",
 ];
 
-/// Game data directory name at the delivery root (`max-original/`).
+/// Data directory names at the delivery root, in priority order.
+///
+/// * `max-original` — the development checkout (the Interplay oracle directory);
+/// * `data` — the portable install layout (`<install-dir>/data/MAX.RES`, …,
+///   `distro-installers.md` §B).
+///
+/// The first marker found next to the executable wins, so a development
+/// checkout keeps its layout while an installed game is found by `data/`.
+pub const DATA_DIR_NAMES: [&str; 2] = ["max-original", "data"];
+/// Development-checkout data directory name (`DATA_DIR_NAMES[0]`).
 pub const DATA_DIR_NAME: &str = "max-original";
 /// Main data archive name.
 pub const MAX_RES_NAME: &str = "MAX.RES";
+/// Mission rules archive name (lives in the data directory of a portable build).
+pub const PATCHES_RES_NAME: &str = "PATCHES.RES";
 /// Palette name.
 pub const COLOR_PAL_NAME: &str = "COLOR.PAL";
 
@@ -74,12 +85,17 @@ pub const COLOR_PAL_NAME: &str = "COLOR.PAL";
 ///
 /// Order:
 /// 1. the [`AppConfig::max_res`] directory and its parent (data next to the config);
-/// 2. the current directory and its parent (historical behavior, launch from `max-brh/`);
-/// 3. the directory of the running **exe** ([`std::env::current_exe`]) and up the tree
-///    to the nearest directory with `max-original` inclusive.
+/// 2. the directory of the running **exe** ([`std::env::current_exe`]) and up the tree
+///    to the nearest directory with a data marker ([`DATA_DIR_NAMES`]) inclusive;
+/// 3. the current directory and its parent (historical behavior, launch from `max-brh/`).
 ///
-/// Point 3 is the TC-1109 fix: `bin\release\max_app.exe` (or `target\debug\…` in the
-/// checkout) finds the data even if the CWD is a foreign directory.
+/// The exe roots come before the CWD: an installed game must find its own catalog
+/// even if the process was started inside another directory that happens to look
+/// like a game data root.
+///
+/// Point 2 is the TC-1109/portable fix: `bin\release\max_app.exe` (or
+/// `target\debug\…` in the checkout) and `<install-dir>/game.exe` find the data even
+/// if the CWD is a foreign directory.
 pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().ok();
     let exe = std::env::current_exe().ok();
@@ -87,8 +103,9 @@ pub fn data_search_roots(config: &AppConfig) -> Vec<PathBuf> {
     data_search_roots_from(config, cwd.as_deref(), exe.as_deref())
 }
 
-/// [`data_search_roots`] with explicit CWD/exe — for tests with temporary directories.
-fn data_search_roots_from(
+/// [`data_search_roots`] with explicit CWD/exe — for tests with temporary directories
+/// and for the portable catalog detection ([`crate::layout`]).
+pub(crate) fn data_search_roots_from(
     config: &AppConfig,
     cwd: Option<&std::path::Path>,
     exe: Option<&std::path::Path>,
@@ -108,6 +125,12 @@ fn data_search_roots_from(
         }
     }
 
+    if let Some(exe) = exe {
+        for root in exe_search_roots(exe) {
+            push(root, &mut roots);
+        }
+    }
+
     if let Some(cwd) = cwd {
         push(cwd.to_path_buf(), &mut roots);
         if let Some(parent) = cwd.parent() {
@@ -115,21 +138,15 @@ fn data_search_roots_from(
         }
     }
 
-    if let Some(exe) = exe {
-        for root in exe_search_roots(exe) {
-            push(root, &mut roots);
-        }
-    }
-
     roots
 }
 
-/// The exe directory and up to the nearest directory with `max-original` (inclusive).
+/// The exe directory and up to the nearest directory with a data marker (inclusive).
 ///
-/// If there is no `max-original` nearby, only the exe directory remains: climbing
-/// higher without a data marker is dangerous — this could accidentally find another
-/// repository's `assets/` (see the test `absent_everywhere_keeps_the_configured_path`).
-fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
+/// If no marker is nearby, only the exe directory remains: climbing higher without
+/// a data marker is dangerous — this could accidentally find another repository's
+/// `assets/` (see the test `absent_everywhere_keeps_the_configured_path`).
+pub(crate) fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let Some(dir) = exe.parent() else {
         return roots;
@@ -138,13 +155,21 @@ fn exe_search_roots(exe: &std::path::Path) -> Vec<PathBuf> {
     roots.push(dir.to_path_buf());
 
     for ancestor in dir.ancestors().skip(1) {
-        if ancestor.join(DATA_DIR_NAME).is_dir() {
+        if data_marker_in(ancestor).is_some() {
             roots.push(ancestor.to_path_buf());
             break;
         }
     }
 
     roots
+}
+
+/// The first data marker present in `dir`, in [`DATA_DIR_NAMES`] priority order.
+pub(crate) fn data_marker_in(dir: &std::path::Path) -> Option<&'static str> {
+    DATA_DIR_NAMES
+        .iter()
+        .copied()
+        .find(|name| dir.join(name).is_dir())
 }
 
 /// Finds `MAX.RES` for **asset loading** if the config path is missing.
@@ -162,32 +187,53 @@ pub fn resolve_max_res(config: &AppConfig) -> (PathBuf, Option<String>) {
     resolve_max_res_at(config, &data_search_roots(config))
 }
 
-/// [`resolve_max_res`] over the given search roots (for tests).
-fn resolve_max_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Option<String>) {
+/// [`resolve_max_res`] over the given search roots (for tests and [`crate::layout`]).
+pub(crate) fn resolve_max_res_at(
+    config: &AppConfig,
+    roots: &[PathBuf],
+) -> (PathBuf, Option<String>) {
     let configured = &config.max_res;
 
     if configured.is_file() {
         return (configured.clone(), None);
     }
 
-    for root in roots {
-        for candidate in [
-            root.join(DATA_DIR_NAME).join(MAX_RES_NAME),
-            root.join(MAX_RES_NAME),
-        ] {
-            if candidate.is_file() {
-                let warning = format!(
-                    "{} не найден; MAX.RES грузится из fallback {} (проверьте --data-dir/--max-res)",
-                    configured.display(),
-                    candidate.display()
-                );
+    if let Some(candidate) = find_max_res_in(roots) {
+        let warning = format!(
+            "{} не найден; MAX.RES грузится из fallback {} (проверьте --data-dir/--max-res)",
+            configured.display(),
+            candidate.display()
+        );
 
-                return (candidate, Some(warning));
-            }
-        }
+        return (candidate, Some(warning));
     }
 
     (configured.clone(), None)
+}
+
+/// The first `MAX.RES` under `roots`: marker directories first, then the root itself.
+///
+/// Unlike [`resolve_max_res_at`] it never consults the configured path, so the
+/// portable catalog detection ([`crate::layout::detect`]) can prefer the game
+/// catalog over a CWD-relative default.
+pub(crate) fn find_max_res_in(roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in roots {
+        for marker in DATA_DIR_NAMES {
+            let candidate = root.join(marker).join(MAX_RES_NAME);
+
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+
+        let candidate = root.join(MAX_RES_NAME);
+
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 /// Finds `PATCHES.RES` for **asset loading** (SC_*/tables, sprites).
@@ -212,6 +258,27 @@ fn resolve_patches_res_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Op
         for relative in PATCHES_RES_FALLBACKS {
             let candidate = base.join(relative);
 
+            if candidate.is_file() {
+                let warning = format!(
+                    "{} не найден; PATCHES.RES грузится из fallback {} (data_hash хендшейка не меняется)",
+                    configured.display(),
+                    candidate.display()
+                );
+
+                return (candidate, Some(warning));
+            }
+        }
+
+        // The portable layout keeps `PATCHES.RES` next to `MAX.RES`
+        // (`<install-dir>/data/`, `distro-installers.md` §B). The data marker is
+        // checked last so a development checkout keeps the historical fallbacks.
+        let mut candidates = vec![base.join(PATCHES_RES_NAME)];
+
+        for marker in DATA_DIR_NAMES {
+            candidates.push(base.join(marker).join(PATCHES_RES_NAME));
+        }
+
+        for candidate in candidates {
             if candidate.is_file() {
                 let warning = format!(
                     "{} не найден; PATCHES.RES грузится из fallback {} (data_hash хендшейка не меняется)",
@@ -249,7 +316,10 @@ fn resolve_color_pal_at(config: &AppConfig, roots: &[PathBuf]) -> (PathBuf, Opti
 
     for root in roots {
         candidates.push(root.join(COLOR_PAL_NAME));
-        candidates.push(root.join(DATA_DIR_NAME).join(COLOR_PAL_NAME));
+
+        for marker in DATA_DIR_NAMES {
+            candidates.push(root.join(marker).join(COLOR_PAL_NAME));
+        }
     }
 
     for candidate in candidates {

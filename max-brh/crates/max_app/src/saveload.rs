@@ -1076,29 +1076,44 @@ fn offset_rect(rect: PixelRect, window: PixelRect) -> PixelRect {
 // The save directory belongs to the `AppConfig`, not to the match: it is needed by
 // every application type (the network application writes `preferences.ini` too).
 impl<D: max_core::universe::Dispatcher> crate::App<D> {
-    /// `FilePathGamePref`: `--save-dir`, otherwise the `MAX.RES` directory.
+    /// `FilePathGamePref`: `--save-dir`, otherwise `<game_root>/saves`.
     ///
-    /// C++ keeps the user preference path (`SDL_GetPrefPath`) separate from the game
-    /// data path; the port has no SDL preference directory, so both default to the
-    /// game data directory (documented simplification of S1.4).
+    /// In the portable layout (`distro-installers.md` §B) the game root is the
+    /// catalog the game was installed into, so player saves never leave it. A
+    /// library/test configuration without a catalog keeps the historical default
+    /// ([`Self::save_data_dir`], next to `MAX.RES`).
     pub fn save_dir(&self) -> PathBuf {
-        self.config()
+        let config = self.config();
+
+        config
             .save_dir
             .clone()
+            .or_else(|| {
+                config
+                    .game_root
+                    .as_ref()
+                    .map(|root| root.join(crate::layout::SAVES_DIR_NAME))
+            })
             .unwrap_or_else(|| self.save_data_dir())
     }
 
-    /// `FilePathGameData`: `--save-data-dir`, otherwise the `MAX.RES` directory.
+    /// `FilePathGameData`: `--save-data-dir`, otherwise `<game_root>/missions`.
+    ///
+    /// Without a portable catalog the path is the `MAX.RES` directory (the S1.4
+    /// simplification: the port has no SDL preference directory).
     pub fn save_data_dir(&self) -> PathBuf {
-        self.config()
+        let config = self.config();
+
+        config
             .save_data_dir
             .clone()
             .or_else(|| {
-                self.config()
-                    .max_res
-                    .parent()
-                    .map(std::path::Path::to_path_buf)
+                config
+                    .game_root
+                    .as_ref()
+                    .map(|root| root.join(crate::layout::MISSIONS_DIR_NAME))
             })
+            .or_else(|| config.max_res.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
